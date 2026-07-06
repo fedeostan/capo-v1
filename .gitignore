@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/scripts/twilio-mcp/node_modules
 /.pnp
 .pnp.*
 .yarn/*

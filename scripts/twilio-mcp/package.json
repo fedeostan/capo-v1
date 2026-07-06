@@ -1,0 +1,8 @@
+{
+  "name": "capo-twilio-mcp-vendor",
+  "private": true,
+  "description": "Vendored, version-pinned install of the official Twilio MCP server, patched before launch so its tool schemas pass Anthropic's tool-name validation.",
+  "dependencies": {
+    "@twilio-alpha/mcp": "0.7.0"
+  }
+}

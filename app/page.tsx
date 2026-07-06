@@ -1,65 +1,56 @@
-import Image from "next/image";
+import type { UIMessage } from 'ai';
+import { getDb } from '@/src/db/client';
+import { ensureRuntime, loadWindow } from '@/src/agent/memory/conversation';
+import Chat, { type PendingProposal } from './chat';
 
-export default function Home() {
+export const dynamic = 'force-dynamic';
+
+// Loads the visible window of the perpetual thread (messages after the latest
+// summary watermark) so the UI survives reloads along with Capo's memory.
+// Proposal card state is derived from proposals.status — never from stale
+// client state — and pending proposals whose cards fell behind the summary
+// watermark are surfaced separately so they can always be resolved.
+export default async function Page() {
+  let initialMessages: UIMessage[] = [];
+  const proposalStatuses: Record<string, string> = {};
+  const orphanedPending: PendingProposal[] = [];
+  try {
+    const db = getDb();
+    const { companyId, conversationId } = await ensureRuntime(db);
+    const { rows } = await loadWindow(db, conversationId);
+
+    const inViewProposalIds = new Set<string>();
+    initialMessages = rows.map(row => {
+      const content = row.content as { parts?: UIMessage['parts'] } | null;
+      const parts = content?.parts ?? [];
+      for (const part of parts) {
+        const proposalId = (part as { output?: { proposalId?: unknown } }).output?.proposalId;
+        if (typeof proposalId === 'string') inViewProposalIds.add(proposalId);
+      }
+      return {
+        id: row.id,
+        // events render as centered system notes in the UI
+        role: row.role === 'event' ? ('system' as const) : (row.role as 'user' | 'assistant'),
+        parts,
+      };
+    });
+
+    const { data: proposals } = await db
+      .from('proposals')
+      .select('id, status, rendered_text')
+      .eq('company_id', companyId);
+    for (const p of proposals ?? []) {
+      if (inViewProposalIds.has(p.id)) {
+        proposalStatuses[p.id] = p.status;
+      } else if (p.status === 'pending') {
+        orphanedPending.push({ proposalId: p.id, renderedText: p.rendered_text });
+      }
+    }
+  } catch {
+    // env not configured yet — start with an empty thread and let the API
+    // route surface the real error
+  }
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <Chat initialMessages={initialMessages} proposalStatuses={proposalStatuses} orphanedPending={orphanedPending} />
   );
 }

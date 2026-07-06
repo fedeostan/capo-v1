@@ -1,0 +1,66 @@
+import {
+  ToolLoopAgent,
+  convertToModelMessages,
+  readUIMessageStream,
+  stepCountIs,
+  toUIMessageStream,
+  type UIMessage,
+} from 'ai';
+import { getDb } from '@/src/db/client';
+import { toAiTools } from '@/src/capabilities';
+import type { ToolContext } from '@/src/capabilities/types';
+import type { InboundMessage, OutboundSink } from '@/src/channels/types';
+import { buildSystemPrompt } from './context';
+import { getModel } from './models';
+import {
+  ensureRuntime,
+  loadWindow,
+  persistAssistantMessage,
+  persistUserMessage,
+  toThread,
+} from './memory/conversation';
+import { maybeSummarize } from './memory/summarizer';
+
+// The Interaction Agent loop: context → model → tools → sink. Channel-agnostic
+// by contract — message in, output pushed to the sink, nothing returned. The
+// core also owns persistence: the assistant stream is tee'd so the channel
+// gets chunks live while the final message is accumulated for the DB.
+export async function handleInbound(inbound: InboundMessage, sink: OutboundSink): Promise<void> {
+  const db = getDb();
+  const { companyId, conversationId } = await ensureRuntime(db);
+
+  await persistUserMessage(db, conversationId, inbound.text, inbound.channel);
+  const thread = toThread(await loadWindow(db, conversationId));
+
+  const ctx: ToolContext = {
+    companyId,
+    conversationId,
+    db,
+    actor: 'manager',
+    recentUserTexts: thread.recentUserTexts,
+  };
+
+  const agent = new ToolLoopAgent({
+    model: getModel('conversation'),
+    instructions: await buildSystemPrompt(db, companyId, thread.summary),
+    tools: toAiTools(ctx),
+    stopWhen: stepCountIs(12),
+  });
+
+  const result = await agent.stream({
+    messages: await convertToModelMessages(thread.uiMessages),
+  });
+
+  const [forSink, forPersistence] = toUIMessageStream({ stream: result.stream }).tee();
+  sink.mergeAssistantStream(forSink);
+
+  let finalMessage: UIMessage | undefined;
+  for await (const message of readUIMessageStream({ stream: forPersistence })) {
+    finalMessage = message;
+  }
+  if (finalMessage) {
+    await persistAssistantMessage(db, conversationId, finalMessage, inbound.channel);
+  }
+
+  await maybeSummarize(db, conversationId);
+}
