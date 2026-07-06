@@ -3,6 +3,7 @@
 import { useChat } from '@ai-sdk/react';
 import { getToolName, isToolUIPart, type UIMessage } from 'ai';
 import { useEffect, useRef, useState } from 'react';
+import Markdown from './markdown';
 import MicButton from './mic-button';
 
 const TOOL_LABELS: Record<string, string> = {
@@ -115,12 +116,16 @@ function Chip({ children }: { children: React.ReactNode }) {
 function Part({
   part,
   proposalStatuses,
+  markdown,
 }: {
   part: UIMessage['parts'][number];
   proposalStatuses: Record<string, string>;
+  markdown?: boolean;
 }) {
   if (part.type === 'text') {
-    return part.text ? <p className="whitespace-pre-wrap">{part.text}</p> : null;
+    if (!part.text) return null;
+    // Capo writes markdown; the manager's own text stays literal.
+    return markdown ? <Markdown text={part.text} /> : <p className="whitespace-pre-wrap">{part.text}</p>;
   }
   if (isToolUIPart(part)) {
     const name = getToolName(part);
@@ -225,7 +230,12 @@ export default function Chat({
                 }
               >
                 {message.parts.map((part, i) => (
-                  <Part key={`${message.id}-${i}`} part={part} proposalStatuses={proposalStatuses} />
+                  <Part
+                    key={`${message.id}-${i}`}
+                    part={part}
+                    proposalStatuses={proposalStatuses}
+                    markdown={message.role === 'assistant'}
+                  />
                 ))}
               </div>
             </div>
