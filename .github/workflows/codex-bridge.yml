@@ -1,0 +1,56 @@
+name: Codex Review Bridge
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+# One-line fix once you see Codex's real bot login on your first live PR:
+# tighten this from a substring match to an exact-match string.
+env:
+  CODEX_ACTOR_PATTERN: "codex"
+
+permissions:
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: codex-bridge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  bridge:
+    # Only act on reviews from a bot-type actor whose login matches the
+    # expected pattern, on a PR whose branch lives in this repo (not a fork).
+    # A plain user account cannot have `type == 'Bot'`, so this meaningfully
+    # narrows who could ever spoof this trigger.
+    if: |
+      github.event.review.user.type == 'Bot' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping @claude if the actor looks like Codex
+        env:
+          GH_TOKEN: ${{ secrets.BRIDGE_PAT }}
+          ACTOR: ${{ github.event.review.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          echo "Detected actor: $ACTOR"
+
+          if ! echo "$ACTOR" | tr '[:upper:]' '[:lower:]' | grep -q "$(echo "$CODEX_ACTOR_PATTERN" | tr '[:upper:]' '[:lower:]')"; then
+            echo "Actor does not match Codex pattern ('$CODEX_ACTOR_PATTERN'); skipping."
+            exit 0
+          fi
+
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(cat <<'EOF'
+          @claude Codex left review feedback on this PR (see the review
+          above). Read it critically: implement fixes only for
+          recommendations you independently judge to be correct and safe for
+          this codebase, in line with AGENTS.md's review-priority guidance.
+          Do not apply a suggestion just because it was made — if you
+          disagree with one, leave a short comment explaining why instead of
+          acting on it. Run lint, typecheck, and build locally before
+          pushing.
+          EOF
+          )"
