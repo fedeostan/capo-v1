@@ -49,9 +49,17 @@ export function ScreenShell({
 }) {
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col">
-      <header className="border-b border-zinc-500/20 px-4 py-3">
-        <h1 className="text-lg font-semibold">{title}</h1>
-        {subtitle && <p className="text-xs text-zinc-500">{subtitle}</p>}
+      <header className="flex items-start justify-between gap-3 border-b border-zinc-500/20 px-4 py-3">
+        <div>
+          <h1 className="text-lg font-semibold">{title}</h1>
+          {subtitle && <p className="text-xs text-zinc-500">{subtitle}</p>}
+        </div>
+        {/* plain form POST: sign-out works even before client JS hydrates */}
+        <form method="post" action="/auth/signout">
+          <button type="submit" className="pt-1 text-xs text-zinc-500 underline">
+            Sair
+          </button>
+        </form>
       </header>
       <main className="flex-1 space-y-5 overflow-y-auto px-4 py-4">{children}</main>
     </div>

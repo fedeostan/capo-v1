@@ -6,14 +6,14 @@ import {
   toUIMessageStream,
   type UIMessage,
 } from 'ai';
-import { getDb } from '@/src/db/client';
 import { toAiTools } from '@/src/capabilities';
+import type { Db } from '@/src/db/client';
 import type { ToolContext } from '@/src/capabilities/types';
 import type { InboundMessage, OutboundSink } from '@/src/channels/types';
 import { buildSystemPrompt } from './context';
 import { getModel } from './models';
 import {
-  ensureRuntime,
+  ensureConversation,
   loadWindow,
   persistAssistantMessage,
   persistUserMessage,
@@ -25,9 +25,18 @@ import { maybeSummarize } from './memory/summarizer';
 // by contract — message in, output pushed to the sink, nothing returned. The
 // core also owns persistence: the assistant stream is tee'd so the channel
 // gets chunks live while the final message is accumulated for the DB.
-export async function handleInbound(inbound: InboundMessage, sink: OutboundSink): Promise<void> {
-  const db = getDb();
-  const { companyId, conversationId } = await ensureRuntime(db);
+//
+// The caller supplies the tenant: web passes the logged-in manager's
+// RLS-scoped client + companyId (so even a misbehaving tool physically cannot
+// cross tenants); a future system channel (WhatsApp inbound) would resolve
+// the company by sender phone and pass the service client instead.
+export async function handleInbound(
+  db: Db,
+  companyId: string,
+  inbound: InboundMessage,
+  sink: OutboundSink,
+): Promise<void> {
+  const conversationId = await ensureConversation(db, companyId);
 
   await persistUserMessage(db, conversationId, inbound.text, inbound.channel);
   const thread = toThread(await loadWindow(db, conversationId));

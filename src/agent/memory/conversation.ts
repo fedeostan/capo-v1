@@ -5,31 +5,30 @@ import type { Json, Tables } from '@/src/db/types';
 // Memory tier 1: the conversational/episodic thread. One perpetual thread per
 // company, shared across channels — channel is a message attribute.
 
-export interface Runtime {
-  companyId: string;
-  conversationId: string;
-}
+// companyId always arrives from the caller's resolved identity (requireAuth /
+// getApiAuth) — never from "first company". No module-scope caching: a warm
+// serverless instance is shared across tenants, so anything cached here would
+// leak one company's thread to another.
 
-let cachedRuntime: Runtime | undefined;
-
-export async function ensureRuntime(db: Db): Promise<Runtime> {
-  if (cachedRuntime) return cachedRuntime;
-  const { data: company } = await db.from('companies').select('id').order('created_at').limit(1).maybeSingle();
-  if (!company) throw new Error('No company found — is the database seeded?');
-  let { data: conversation } = await db
+// Read-only lookup for render paths (the chat page must never write).
+export async function findConversation(db: Db, companyId: string): Promise<string | null> {
+  const { data } = await db
     .from('conversations')
     .select('id')
-    .eq('company_id', company.id)
+    .eq('company_id', companyId)
     .order('created_at')
     .limit(1)
     .maybeSingle();
-  if (!conversation) {
-    const { data, error } = await db.from('conversations').insert({ company_id: company.id }).select('id').single();
-    if (error) throw new Error(`Failed to create conversation: ${error.message}`);
-    conversation = data;
-  }
-  cachedRuntime = { companyId: company.id, conversationId: conversation.id };
-  return cachedRuntime;
+  return data?.id ?? null;
+}
+
+// Find-or-create for the write path (first inbound message of a company).
+export async function ensureConversation(db: Db, companyId: string): Promise<string> {
+  const existing = await findConversation(db, companyId);
+  if (existing) return existing;
+  const { data, error } = await db.from('conversations').insert({ company_id: companyId }).select('id').single();
+  if (error) throw new Error(`Failed to create conversation: ${error.message}`);
+  return data.id;
 }
 
 type MessageRow = Tables<'messages'>;

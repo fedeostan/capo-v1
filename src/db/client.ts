@@ -5,7 +5,12 @@ export type Db = SupabaseClient<Database>;
 
 let client: Db | undefined;
 
-// Server-only: uses the service-role key (RLS is deny-all for anon access).
+// Server-only SYSTEM client: the service-role key bypasses RLS entirely.
+// Nothing on the user request path may use this — chat, dashboard, proposals
+// and transcription all run on the RLS-scoped client from user-client.ts.
+// getDb() exists for system paths that legitimately act across tenants:
+// operator scripts and the future Execution Agents / dispatch seam. (The n8n
+// dispatch is external and connects to Postgres directly.)
 export function getDb(): Db {
   if (!client) {
     const url = process.env.SUPABASE_URL;

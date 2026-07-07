@@ -270,6 +270,38 @@ export type Database = {
           },
         ]
       }
+      profiles: {
+        Row: {
+          company_id: string
+          created_at: string
+          full_name: string
+          id: string
+          phone: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          full_name: string
+          id: string
+          phone: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          full_name?: string
+          id?: string
+          phone?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profiles_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       proposals: {
         Row: {
           action_args: Json
@@ -615,6 +647,10 @@ export type Database = {
       }
     }
     Functions: {
+      complete_onboarding: {
+        Args: { p_company_name: string; p_full_name: string; p_phone: string }
+        Returns: string
+      }
       finalize_proposal: {
         Args: { p_event: string; p_id: string; p_status: string }
         Returns: undefined

@@ -1,6 +1,7 @@
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from 'ai';
 import { handleInbound } from '@/src/agent/core';
 import { webSink } from '@/src/channels/web';
+import { getApiAuth } from '@/src/auth/session';
 
 export const maxDuration = 120;
 
@@ -17,13 +18,16 @@ function lastUserText(messages: UIMessage[]): string {
 }
 
 export async function POST(req: Request) {
+  const auth = await getApiAuth();
+  if (!auth) return Response.json({ error: 'Não autenticado' }, { status: 401 });
+
   const { messages } = (await req.json()) as { messages?: UIMessage[] };
   const text = lastUserText(messages ?? []).trim();
   if (!text) return new Response('Empty message', { status: 400 });
 
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
-      await handleInbound({ channel: 'web', text }, webSink(writer));
+      await handleInbound(auth.db, auth.companyId, { channel: 'web', text }, webSink(writer));
     },
   });
 

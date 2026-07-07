@@ -1,12 +1,14 @@
 import type { Metadata } from 'next';
-import { loadTasks } from '../dashboard-data';
-import { OverdueList, ScreenShell } from '../dashboard-ui';
+import { requireAuth } from '@/src/auth/session';
+import { loadTasks } from '@/app/dashboard-data';
+import { OverdueList, ScreenShell } from '@/app/dashboard-ui';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Atrasadas — Capo' };
 
 export default async function AtrasadasPage() {
-  const tasks = await loadTasks('overdue');
+  const ctx = await requireAuth();
+  const tasks = await loadTasks(ctx, 'overdue');
   const subtitle =
     tasks.length > 0
       ? `${tasks.length} ${tasks.length === 1 ? 'tarefa' : 'tarefas'} com o prazo passado`
