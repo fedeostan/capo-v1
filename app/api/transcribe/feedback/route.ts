@@ -1,8 +1,7 @@
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { getModel } from '@/src/agent/models';
-import { getDb } from '@/src/db/client';
-import { ensureRuntime } from '@/src/agent/memory/conversation';
+import { getApiAuth } from '@/src/auth/session';
 
 export const maxDuration = 30;
 
@@ -29,6 +28,9 @@ function buildExtractionPrompt(transcript: string, final: string): string {
 }
 
 export async function POST(req: Request) {
+  const auth = await getApiAuth();
+  if (!auth) return Response.json({ error: 'Não autenticado' }, { status: 401 });
+
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: 'Invalid body' }, { status: 400 });
   const { transcript, final } = parsed.data;
@@ -46,8 +48,7 @@ export async function POST(req: Request) {
     const capped = termsSchema.parse(terms.slice(0, 10));
     if (capped.length === 0) return Response.json({ learned: 0 });
 
-    const db = getDb();
-    const { companyId } = await ensureRuntime(db);
+    const { db, companyId } = auth;
     // The unique index is on lower(term), which PostgREST upsert can't
     // target — match case-insensitively in code (the table is tiny).
     const { data: existing } = await db

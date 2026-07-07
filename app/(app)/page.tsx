@@ -1,7 +1,7 @@
 import type { UIMessage } from 'ai';
-import { getDb } from '@/src/db/client';
-import { ensureRuntime, loadWindow } from '@/src/agent/memory/conversation';
-import Chat, { type PendingProposal } from './chat';
+import { requireAuth } from '@/src/auth/session';
+import { findConversation, loadWindow } from '@/src/agent/memory/conversation';
+import Chat, { type PendingProposal } from '@/app/chat';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,12 +11,16 @@ export const dynamic = 'force-dynamic';
 // client state — and pending proposals whose cards fell behind the summary
 // watermark are surfaced separately so they can always be resolved.
 export default async function Page() {
+  const { db, companyId } = await requireAuth();
+
   let initialMessages: UIMessage[] = [];
   const proposalStatuses: Record<string, string> = {};
   const orphanedPending: PendingProposal[] = [];
-  try {
-    const db = getDb();
-    const { companyId, conversationId } = await ensureRuntime(db);
+
+  // Render is read-only: no conversation yet just means an empty thread — the
+  // chat API creates it on the first message.
+  const conversationId = await findConversation(db, companyId);
+  if (conversationId) {
     const { rows } = await loadWindow(db, conversationId);
 
     const inViewProposalIds = new Set<string>();
@@ -46,10 +50,8 @@ export default async function Page() {
         orphanedPending.push({ proposalId: p.id, renderedText: p.rendered_text });
       }
     }
-  } catch {
-    // env not configured yet — start with an empty thread and let the API
-    // route surface the real error
   }
+
   return (
     <Chat initialMessages={initialMessages} proposalStatuses={proposalStatuses} orphanedPending={orphanedPending} />
   );

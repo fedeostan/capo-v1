@@ -1,7 +1,6 @@
 import { generateText } from 'ai';
 import { getModel } from '@/src/agent/models';
-import { getDb } from '@/src/db/client';
-import { ensureRuntime } from '@/src/agent/memory/conversation';
+import { getApiAuth, type AuthContext } from '@/src/auth/session';
 
 export const maxDuration = 60;
 
@@ -26,9 +25,10 @@ function buildTranscriptionInstruction(workerNames: string[], jobNames: string[]
   return lines.join('\n');
 }
 
-async function fetchVocabulary(): Promise<{ workerNames: string[]; jobNames: string[]; learnedTerms: string[] }> {
-  const db = getDb();
-  const { companyId } = await ensureRuntime(db);
+async function fetchVocabulary({
+  db,
+  companyId,
+}: AuthContext): Promise<{ workerNames: string[]; jobNames: string[]; learnedTerms: string[] }> {
   const [workers, jobs, learned] = await Promise.all([
     db.from('workers').select('name').eq('company_id', companyId).limit(50),
     db.from('jobs').select('name').eq('company_id', companyId).limit(50),
@@ -50,6 +50,9 @@ async function fetchVocabulary(): Promise<{ workerNames: string[]; jobNames: str
 }
 
 export async function POST(req: Request) {
+  const auth = await getApiAuth();
+  if (!auth) return Response.json({ error: 'Não autenticado' }, { status: 401 });
+
   const form = await req.formData();
   const audio = form.get('audio');
   if (!(audio instanceof File) || audio.size === 0) {
@@ -61,7 +64,7 @@ export async function POST(req: Request) {
 
   try {
     // Vocabulary is best-effort: a transcription without name hints beats a 500.
-    const { workerNames, jobNames, learnedTerms } = await fetchVocabulary().catch(() => ({
+    const { workerNames, jobNames, learnedTerms } = await fetchVocabulary(auth).catch(() => ({
       workerNames: [] as string[],
       jobNames: [] as string[],
       learnedTerms: [] as string[],

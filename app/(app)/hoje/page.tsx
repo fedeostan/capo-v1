@@ -1,12 +1,14 @@
 import type { Metadata } from 'next';
-import { loadDayLabel, loadTasks } from '../dashboard-data';
-import { ScreenShell, TasksByObra } from '../dashboard-ui';
+import { requireAuth } from '@/src/auth/session';
+import { loadDayLabel, loadTasks } from '@/app/dashboard-data';
+import { ScreenShell, TasksByObra } from '@/app/dashboard-ui';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Hoje — Capo' };
 
 export default async function HojePage() {
-  const [tasks, label] = await Promise.all([loadTasks('active_today'), loadDayLabel(0)]);
+  const ctx = await requireAuth();
+  const [tasks, label] = await Promise.all([loadTasks(ctx, 'active_today'), loadDayLabel(ctx, 0)]);
   return (
     <ScreenShell title="Hoje" subtitle={label ?? undefined}>
       <TasksByObra tasks={tasks} empty="Nada agendado para hoje." />
