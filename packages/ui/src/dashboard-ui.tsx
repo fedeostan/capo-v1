@@ -124,22 +124,54 @@ export function TasksByObra({ tasks, empty }: { tasks: DashboardTask[]; empty: s
   );
 }
 
-// Obras: active jobs with their task tallies.
-export function ObrasList({ obras, empty }: { obras: DashboardObra[]; empty: string }) {
+// Obras: active jobs with their task tallies and completion progress.
+// overdueByObra (obra id → count) is optional so existing callers keep
+// working; when present, obras with overdue tasks get a red badge.
+export function ObrasList({
+  obras,
+  empty,
+  overdueByObra,
+}: {
+  obras: DashboardObra[];
+  empty: string;
+  overdueByObra?: Record<string, number>;
+}) {
   if (obras.length === 0) return <EmptyState text={empty} />;
   const plural = (n: number | null, one: string, many: string) => `${n ?? 0} ${n === 1 ? one : many}`;
   return (
     <section className="space-y-2">
-      {obras.map(obra => (
-        <div key={obra.id} className="rounded-xl border border-zinc-500/20 p-3">
-          <p className="text-sm font-medium">{obra.name}</p>
-          {obra.address && <p className="text-xs text-zinc-500">{obra.address}</p>}
-          <p className="mt-1 text-xs text-zinc-500">
-            {plural(obra.pendentes, 'pendente', 'pendentes')} ·{' '}
-            {plural(obra.concluidas, 'concluída', 'concluídas')}
-          </p>
-        </div>
-      ))}
+      {obras.map(obra => {
+        const done = obra.concluidas ?? 0;
+        const total = done + (obra.pendentes ?? 0);
+        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+        const overdue = obra.id ? (overdueByObra?.[obra.id] ?? 0) : 0;
+        return (
+          <div key={obra.id} className="rounded-xl border border-zinc-500/20 p-3">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-sm font-medium">{obra.name}</p>
+              {overdue > 0 && (
+                <span className="shrink-0 text-xs font-medium text-red-600">
+                  {plural(overdue, 'atrasada', 'atrasadas')}
+                </span>
+              )}
+            </div>
+            {obra.address && <p className="text-xs text-zinc-500">{obra.address}</p>}
+            {total > 0 && (
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-500/15">
+                {/* TODO(Federico): microcopy/visual dial — bar color per taste. */}
+                <div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
+              </div>
+            )}
+            <p className="mt-1 text-xs text-zinc-500">
+              {total > 0
+                ? `${done} de ${total} concluídas (${pct}%)`
+                : 'sem tarefas registadas'}
+              {' · '}
+              {plural(obra.pendentes, 'pendente', 'pendentes')}
+            </p>
+          </div>
+        );
+      })}
     </section>
   );
 }

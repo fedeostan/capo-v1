@@ -46,3 +46,16 @@ export async function loadObras({ db, companyId }: AuthContext): Promise<Dashboa
     .order('name', { ascending: true });
   return data ?? [];
 }
+
+// Overdue tallies per obra for the progress view. Reuses the dashboard_tasks
+// bucket (same lisbon_today() clock as everything else) — no new SQL surface.
+// Tasks without an obra land under the empty-string key.
+export async function loadOverdueByObra(ctx: AuthContext): Promise<Record<string, number>> {
+  const overdue = await loadTasks(ctx, 'overdue');
+  const counts: Record<string, number> = {};
+  for (const task of overdue) {
+    const key = task.job_id ?? '';
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
