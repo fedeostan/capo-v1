@@ -9,7 +9,8 @@
     "./conversation": "./src/agent/memory/conversation.ts",
     "./capabilities/propose": "./src/capabilities/propose.ts",
     "./channels/types": "./src/channels/types.ts",
-    "./channels/web": "./src/channels/web.ts"
+    "./channels/web": "./src/channels/web.ts",
+    "./channels/whatsapp": "./src/channels/whatsapp.ts"
   },
   "scripts": {
     "lint": "eslint .",
