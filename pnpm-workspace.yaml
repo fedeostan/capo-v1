@@ -1,0 +1,19 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Postinstall scripts are blocked by default; these two only fetch their
+# prebuilt native binaries (Next image optimization / ESLint import resolver).
+allowBuilds:
+  sharp: true
+  unrs-resolver: true
+
+# Supply-chain hardening (solo-maintained repo — prefer strict defaults).
+blockExoticSubdeps: true
+minimumReleaseAge: 10080
+trustPolicy: no-downgrade
+# Several long-established transitives (undici-types, eslint-import-resolver-
+# typescript, …) shipped versions without the provenance earlier releases had —
+# ecosystem gaps, not takeovers. The threat this policy targets is a FRESH
+# malicious publish, so only enforce it for versions younger than 30 days.
+trustPolicyIgnoreAfter: 43200
