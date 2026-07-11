@@ -6,5 +6,9 @@
   "exports": {
     "./typescript/*": "./typescript/*",
     "./eslint/*": "./eslint/*"
+  },
+  "dependencies": {
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10"
   }
 }
