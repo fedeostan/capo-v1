@@ -9,7 +9,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 // Paths reachable without a session. /offline and the PWA plumbing must stay
 // public: the service worker caches /offline at install time, and a redirect
 // to /login would poison that cache.
-const PUBLIC_PATHS = ['/login', '/auth', '/offline', '/manifest.webmanifest', '/sw.js'];
+// /auth/signout is deliberately NOT public: sign-out only makes sense with an
+// existing session, and any signed-out request there just redirects to /login.
+const PUBLIC_PATHS = ['/login', '/offline', '/manifest.webmanifest', '/sw.js'];
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(`${p}/`));

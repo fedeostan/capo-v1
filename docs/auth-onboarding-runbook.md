@@ -6,30 +6,25 @@ Supabase dashboard and on first deploy. Do these **once**, in order.
 ## 1. Supabase dashboard config (one-time)
 
 **Auth → Providers → Email**
-- Enable **Email** provider; enable **Magic Link** (email OTP). Passwords are
-  unused.
+- Enable **Email** provider (email + password login). Magic Link / email OTP
+  is unused — no email templates, no confirm route, no token expiry to
+  babysit.
 - Turn **OFF** "Allow new users to sign up" (Auth → Providers → Email, or
   Auth → Settings depending on dashboard version). Pilot is invite-only. The
-  app also passes `shouldCreateUser: false`, so this is belt-and-braces.
+  app only ever calls `signInWithPassword` — there is no sign-up path in the
+  code — so this is belt-and-braces.
 
 **Auth → URL Configuration**
 - **Site URL** = the production Vercel URL (e.g. `https://capo.vercel.app`).
-- **Redirect allow-list**: add `http://localhost:3000/**`, the production URL
-  `/**`, and Vercel preview pattern `https://*-<team>.vercel.app/**`.
-
-**Auth → Email Templates** — repoint both templates at our confirm route so
-the SSR token_hash flow works (default templates use a different link shape):
-- **Magic Link** template link →
-  `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email`
-- **Invite user** template link →
-  `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite`
+  (Only relevant to auth emails, which the login flow no longer sends; set it
+  anyway so any future password-reset email points at the right host.)
 
 **Auth → Settings (recommended while here)**
 - Confirm **JWT signing** uses **asymmetric keys** (default for new projects).
   If symmetric, `getClaims()` silently falls back to a network `getUser()` per
   request — flip to asymmetric to keep verification local.
-- Enable **Leaked password protection** (flagged by the security advisor;
-  harmless for us since we don't use passwords, but clears the warning).
+- Enable **Leaked password protection** — we use real passwords now, so this
+  is doing actual work (rejects passwords found in known breaches).
 
 ## 2. Environment variables (Vercel + local)
 
@@ -43,15 +38,18 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_0CJYE011Ohtx13NCyeiB6w_wpiq_
 
 `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` stay as-is (system paths + n8n).
 
-## 3. Invite the first user + adopt the seeded company
+## 3. Create the first user + adopt the seeded company
 
 The seeded company (`7ec5e733-5fea-4fe6-a843-b496373f6c65` — 5 workers, 4 jobs,
 11 tasks, its conversation + memories) must attach to Federico so nothing
 orphans and he skips the fresh-company onboarding.
 
-1. **Auth → Users → Invite user** → `ostanfederico@gmail.com`. He gets the
-   invite email; the link lands on `/auth/confirm` and creates his
-   `auth.users` row.
+1. **Auth → Users → Create new user** (the green "Add user" button, NOT
+   "Invite user" — invites send an OTP email, which we no longer handle).
+   Enter `ostanfederico@gmail.com`, set a password, and tick
+   **Auto Confirm User** so no confirmation email is needed. This creates his
+   `auth.users` row immediately. Share the password out-of-band (e.g. a
+   message) — he can sign in at `/login` right away.
 2. Once his auth row exists, bind it to the seeded company (SQL editor / MCP
    `execute_sql`):
 
@@ -68,9 +66,10 @@ orphans and he skips the fresh-company onboarding.
    Now `requireAuth()` finds his profile → he goes straight to the app;
    `/onboarding` auto-skips. All seeded data is his.
 
-Every subsequent pilot manager is a normal invite: they land on
-`/onboarding`, enter company name + phone, and `complete_onboarding()` creates
-a fresh company + profile for them.
+Every subsequent pilot manager is the same "Create new user" flow (email +
+password, auto-confirm, share the password out-of-band): on first login they
+land on `/onboarding`, enter company name + phone, and `complete_onboarding()`
+creates a fresh company + profile for them.
 
 ## 4. n8n — no change
 
@@ -99,8 +98,10 @@ rollout: the view returned rows for two distinct companies as `postgres`.
 
 ## Known follow-ups (not blocking)
 
-- **Email delivery**: Supabase built-in SMTP is rate-limited (~a few/hour) —
-  fine for the 2-user pilot; wire Resend/Postmark custom SMTP before wider
-  invites.
-- Custom SMTP + asymmetric-key confirmation are the two things to double-check
-  before onboarding real managers at volume.
+- **Password reset**: there is no self-serve "forgot password" flow — the
+  operator resets passwords by hand in the dashboard (Auth → Users → … →
+  Reset password). Fine for a 1-2 person pilot; build a reset flow (which
+  brings back email delivery + custom SMTP) before onboarding managers at
+  volume.
+- Asymmetric-key JWT signing is the other thing to double-check before wider
+  rollout.

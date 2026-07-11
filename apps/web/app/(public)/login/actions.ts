@@ -3,29 +3,28 @@
 import { redirect } from 'next/navigation';
 import { createUserClient } from '@capo/db/user-client';
 
-// Magic-link request. shouldCreateUser: false is the structural invite-only
-// boundary — an unknown email can never create an account, whatever the
-// dashboard toggle says. The response is deliberately identical for known
-// and unknown emails (no account enumeration), so errors are swallowed after
-// logging.
-export async function sendMagicLink(formData: FormData): Promise<void> {
+// Password sign-in. Invite-only is structural: signInWithPassword can never
+// create an account, so unknown emails simply fail. The error message is
+// deliberately identical for "unknown email" and "wrong password" (no account
+// enumeration) — errors are swallowed after logging.
+export async function signIn(formData: FormData): Promise<void> {
   const email = String(formData.get('email') ?? '')
     .trim()
     .toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    redirect('/login?erro=email');
+  const password = String(formData.get('password') ?? '');
+  if (!email || !password) {
+    redirect('/login?erro=credenciais');
   }
 
   const supabase = await createUserClient();
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { shouldCreateUser: false },
-  });
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
-    // "Signups not allowed for otp" (unknown email) lands here too — same UX
-    // as success, but keep a server-side trace for real delivery failures.
-    console.error('signInWithOtp failed:', error.message);
+    // Wrong password and unknown email both land here — same UX, but keep a
+    // server-side trace for real outages (rate limits, network).
+    console.error('signInWithPassword failed:', error.message);
+    redirect('/login?erro=credenciais');
   }
 
-  redirect('/login?enviado=1');
+  // Session cookie is already set by createUserClient's SSR cookie adapter.
+  redirect('/');
 }
