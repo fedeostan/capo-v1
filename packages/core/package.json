@@ -1,0 +1,33 @@
+{
+  "name": "@capo/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./agent": "./src/agent/core.ts",
+    "./models": "./src/agent/models.ts",
+    "./conversation": "./src/agent/memory/conversation.ts",
+    "./capabilities/propose": "./src/capabilities/propose.ts",
+    "./channels/types": "./src/channels/types.ts",
+    "./channels/web": "./src/channels/web.ts",
+    "./channels/whatsapp": "./src/channels/whatsapp.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.8",
+    "@ai-sdk/google": "^4.0.8",
+    "@capo/db": "workspace:*",
+    "ai": "^7.0.15",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@capo/config": "workspace:*",
+    "@types/node": "^22",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10",
+    "typescript": "^5"
+  }
+}

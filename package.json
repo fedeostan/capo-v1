@@ -1,36 +1,17 @@
 {
-  "name": "capo-v1",
+  "name": "capo",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@11.1.2",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
-  },
-  "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.8",
-    "@ai-sdk/google": "^4.0.8",
-    "@ai-sdk/react": "^4.0.16",
-    "@supabase/ssr": "0.12.0",
-    "@supabase/supabase-js": "^2.110.0",
-    "ai": "^7.0.15",
-    "next": "16.2.10",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
-    "react-markdown": "^10.1.0",
-    "remark-breaks": "^4.0.0",
-    "remark-gfm": "^4.0.1",
-    "zod": "^4.4.3"
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "build": "turbo run build",
+    "rls-matrix": "node scripts/rls-isolation-matrix.mjs"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.10",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "@supabase/supabase-js": "^2.110.0",
+    "turbo": "^2.5.0"
   }
 }

@@ -1,0 +1,14 @@
+{
+  "name": "@capo/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./typescript/*": "./typescript/*",
+    "./eslint/*": "./eslint/*"
+  },
+  "dependencies": {
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10"
+  }
+}

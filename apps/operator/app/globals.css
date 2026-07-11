@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+/* Tailwind v4 auto-detects sources only inside this app — workspace packages
+   must be declared or their classes vanish from the built CSS. */
+@source "../../../packages/ui/src";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
