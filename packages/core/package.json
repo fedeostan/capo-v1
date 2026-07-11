@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@capo/config": "workspace:*",
+    "@types/node": "^22",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "typescript": "^5"
