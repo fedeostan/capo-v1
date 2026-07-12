@@ -49,6 +49,20 @@ interface WhatsAppWebhookBody {
   }[];
 }
 
+// Meta's free test-tier "allowed recipients" list stores Buenos Aires
+// (area code 11) mobile numbers in the legacy domestic format (54 + area
+// code + 15 + local number) rather than the wa_id's modern format
+// (54 + 9 + area code + local number). Sending to the wa_id directly is
+// rejected with "(#131030) Recipient phone number not in allowed list"
+// even though it's the same number and inbound matching (above) works
+// fine. This is a test-tier-only quirk — a verified production number has
+// no allow-list, so this becomes a no-op once the pilot graduates. Buenos
+// Aires only for now; extend the regex if a non-11 area code joins.
+function testTierArSendTarget(waId: string): string {
+  const match = /^549(\d{2})(\d{8})$/.exec(waId);
+  return match ? `54${match[1]}15${match[2]}` : waId;
+}
+
 function signatureValid(raw: string, header: string | null, appSecret: string): boolean {
   if (!header?.startsWith('sha256=')) return false;
   const expected = createHmac('sha256', appSecret).update(raw).digest('hex');
@@ -108,7 +122,11 @@ export async function POST(request: NextRequest) {
     // agent loop runs after the response, within the function's maxDuration.
     after(async () => {
       try {
-        const { sink, delivery } = whatsappSink({ accessToken, phoneNumberId, to: message.from });
+        const { sink, delivery } = whatsappSink({
+          accessToken,
+          phoneNumberId,
+          to: testTierArSendTarget(message.from),
+        });
         await handleInbound(db, companyId, { channel: 'whatsapp', text }, sink);
         await delivery;
       } catch (err) {
