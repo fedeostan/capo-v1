@@ -3,6 +3,7 @@ import { after, NextResponse, type NextRequest } from 'next/server';
 import { getDb } from '@capo/db/client';
 import { handleInbound } from '@capo/core/agent';
 import { whatsappSink } from '@capo/core/channels/whatsapp';
+import { getBillingState } from '../../../lib/billing';
 import { logEvent } from '../../../lib/log';
 
 // WhatsApp manager channel — Meta Cloud API webhook (see
@@ -120,6 +121,13 @@ export async function POST(request: NextRequest) {
     const text = message.text!.body;
     const companyId = profile.company_id;
     logEvent('whatsapp.inbound_handled', { companyId, messageId: message.id });
+
+    // WhatsApp is NEVER gated by billing during the pilot — just log so a
+    // blocked company's usage is visible without interrupting the channel.
+    const billing = await getBillingState({ db, companyId });
+    if (billing.enabled && billing.blocked) {
+      logEvent('billing.whatsapp_ungated', { companyId });
+    }
 
     // Ack Meta fast (retries + duplicate delivery kick in otherwise); the
     // agent loop runs after the response, within the function's maxDuration.

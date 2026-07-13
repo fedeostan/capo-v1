@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { requireAuth } from '@capo/db/session';
+import { assertNotBlocked } from '@/lib/billing';
 import { logEvent } from '@/lib/log';
 
 // A manager tapping "Concluir"/"Reabrir" on the obra detail page IS an
@@ -9,7 +10,9 @@ import { logEvent } from '@/lib/log';
 // domain write only happens through Capo). Direct status update on the
 // RLS-scoped client; company_id filter is belt-and-braces on top of RLS.
 async function setTaskStatus(taskId: string, status: 'done' | 'pending', event: string): Promise<void> {
-  const { db, companyId } = await requireAuth();
+  const ctx = await requireAuth();
+  await assertNotBlocked(ctx);
+  const { db, companyId } = ctx;
   const { data, error } = await db
     .from('tasks')
     .update({ status, updated_at: new Date().toISOString() })

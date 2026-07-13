@@ -4,10 +4,11 @@ import { updateSession } from '@capo/db/proxy-session';
 // Next 16 proxy (the middleware successor): refresh the Supabase session and
 // gate unauthenticated traffic before anything renders.
 export async function proxy(request: NextRequest) {
-  // The WhatsApp webhook is Meta→server traffic with no browser session; its
-  // structural gate is the X-Hub-Signature-256 HMAC inside the route. Running
-  // the session machinery here would only 401 every legitimate delivery.
-  if (request.nextUrl.pathname === '/api/whatsapp') {
+  // The WhatsApp and Stripe webhooks are server→server traffic with no
+  // browser session; their structural gates are inside the routes (HMAC
+  // signature, Stripe signature respectively). Running the session machinery
+  // here would only 401 every legitimate delivery.
+  if (request.nextUrl.pathname === '/api/whatsapp' || request.nextUrl.pathname === '/api/stripe/webhook') {
     return NextResponse.next();
   }
   return await updateSession(request);

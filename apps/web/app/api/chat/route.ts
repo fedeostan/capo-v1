@@ -2,6 +2,7 @@ import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } 
 import { handleInbound } from '@capo/core/agent';
 import { webSink } from '@capo/core/channels/web';
 import { getApiAuth } from '@capo/db/session';
+import { assertNotBlocked, BillingBlockedError } from '@/lib/billing';
 import { logEvent } from '../../../lib/log';
 
 export const maxDuration = 120;
@@ -21,6 +22,13 @@ function lastUserText(messages: UIMessage[]): string {
 export async function POST(req: Request) {
   const auth = await getApiAuth();
   if (!auth) return Response.json({ error: 'Não autenticado' }, { status: 401 });
+
+  try {
+    await assertNotBlocked(auth);
+  } catch (e) {
+    if (e instanceof BillingBlockedError) return Response.json({ error: e.message }, { status: 402 });
+    throw e;
+  }
 
   const { messages } = (await req.json()) as { messages?: UIMessage[] };
   const text = lastUserText(messages ?? []).trim();

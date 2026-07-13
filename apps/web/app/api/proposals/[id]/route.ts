@@ -1,5 +1,6 @@
 import { getApiAuth } from '@capo/db/session';
 import { resolveProposal } from '@capo/core/capabilities/propose';
+import { assertNotBlocked, BillingBlockedError } from '@/lib/billing';
 
 // Approve/reject a proposal. Execution is deterministic — the stored
 // action_args run through the target tool after re-validation; no model is
@@ -15,6 +16,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   if (decision !== 'approve' && decision !== 'reject') {
     return Response.json({ error: 'decision must be "approve" or "reject"' }, { status: 400 });
+  }
+
+  try {
+    await assertNotBlocked(auth);
+  } catch (e) {
+    if (e instanceof BillingBlockedError) return Response.json({ error: e.message }, { status: 402 });
+    throw e;
   }
 
   try {

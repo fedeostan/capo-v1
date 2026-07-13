@@ -26,3 +26,21 @@ the final, complete list lands in Phase 8.
    `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=1` in Vercel (production env) → redeploy.
    Until this env var is set, the "Entrar com Google" button simply doesn't
    render — no broken UI, no dead link.
+
+## Phase 5 — Stripe billing (€45/mo, 14-day trial)
+
+1. **Stripe**: create an account (or use an existing one) → create Product
+   "Capo" with a recurring Price of €45/mo EUR → copy the Price id
+   (`STRIPE_PRICE_ID`) and the account's secret key (`STRIPE_SECRET_KEY`) →
+   set both in Vercel (production env, project `capo-v1`).
+2. **Stripe → Webhooks**: add an endpoint `https://<prod>/api/stripe/webhook`
+   subscribed to `checkout.session.completed`, `customer.subscription.updated`,
+   `customer.subscription.deleted` → copy the signing secret
+   (`STRIPE_WEBHOOK_SECRET`) into Vercel → redeploy.
+3. **Verify**: run one Stripe test-mode checkout end to end (Assinar on
+   `/subscricao` → Stripe Checkout → back to the app) and confirm the
+   company's `subscription_status` flips to `active` in Supabase.
+   Until steps 1–3 are done, billing is fully disabled app-wide (no
+   `STRIPE_SECRET_KEY` → `/subscricao` shows "faturação ainda não
+   disponível", the webhook 503s, and no write path is ever gated) — the app
+   ships and works correctly before any of this exists.
