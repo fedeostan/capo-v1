@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
-import { signIn } from './actions';
+import Link from 'next/link';
+import { signIn, signInWithGoogle } from './actions';
 
 export const metadata: Metadata = { title: 'Entrar — Capo' };
 
@@ -10,6 +11,10 @@ const NOTICES: Record<string, { tone: 'ok' | 'err'; text: string }> = {
     tone: 'err',
     text: 'Email ou palavra-passe incorretos. Confirma e tenta de novo.',
   },
+  'erro-link-invalido': {
+    tone: 'err',
+    text: 'O link expirou ou já foi usado. Pede um novo.',
+  },
 };
 
 export default async function LoginPage({
@@ -19,6 +24,7 @@ export default async function LoginPage({
 }) {
   const params = await searchParams;
   const notice = params.erro ? NOTICES[`erro-${params.erro}`] : undefined;
+  const googleEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === '1';
 
   return (
     <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 px-6 pb-16">
@@ -58,6 +64,26 @@ export default async function LoginPage({
           Entrar
         </button>
       </form>
+
+      {googleEnabled && (
+        <form action={signInWithGoogle}>
+          <button
+            type="submit"
+            className="w-full rounded-lg border border-zinc-500/30 py-2.5 text-sm font-semibold hover:bg-zinc-500/10"
+          >
+            Entrar com Google
+          </button>
+        </form>
+      )}
+
+      <div className="flex justify-between text-sm text-zinc-500">
+        <Link href="/recuperar" className="underline">
+          Esqueceste-te da password?
+        </Link>
+        <Link href="/registar" className="underline">
+          Criar conta
+        </Link>
+      </div>
 
       {notice && (
         <p

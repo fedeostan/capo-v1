@@ -29,6 +29,8 @@ export const createTaskInput = z.object({
     .describe('Assigned worker — use list_workers to find ids.'),
   start_date: startDate,
   due_date: isoDate.optional(),
+  duration_days: z.number().int().positive().optional().describe('Estimated work duration in days.'),
+  materials: z.array(z.string()).optional().describe('Materials needed for this task.'),
 });
 
 export const createTask: CapoTool<z.infer<typeof createTaskInput>> = {
@@ -48,6 +50,8 @@ export const createTask: CapoTool<z.infer<typeof createTaskInput>> = {
         assignee_worker_id: input.assignee_worker_id ?? null,
         start_date: input.start_date ?? null,
         due_date: input.due_date ?? null,
+        duration_days: input.duration_days ?? null,
+        materials: input.materials ?? null,
         source: ctx.actor,
       })
       .select()
@@ -66,6 +70,8 @@ export const updateTaskInput = z.object({
   assignee_worker_id: z.string().uuid().optional(),
   start_date: startDate,
   due_date: isoDate.optional(),
+  duration_days: z.number().int().positive().optional().describe('Estimated work duration in days.'),
+  materials: z.array(z.string()).optional().describe('Materials needed for this task.'),
 });
 
 export const updateTask: CapoTool<z.infer<typeof updateTaskInput>> = {
@@ -96,7 +102,7 @@ export const listTasksInput = z.object({
 
 export const listTasks: CapoTool<z.infer<typeof listTasksInput>> = {
   name: 'list_tasks',
-  description: 'List tasks, optionally filtered by job, worker, or status. Read-only.',
+  description: 'List tasks (including duration_days, materials, and dependencies), optionally filtered by job, worker, or status. Read-only.',
   inputSchema: listTasksInput,
   async execute(input, ctx) {
     let query = ctx.db
@@ -110,7 +116,20 @@ export const listTasks: CapoTool<z.infer<typeof listTasksInput>> = {
     if (input.status) query = query.eq('status', input.status);
     const { data, error } = await query;
     if (error) throw new Error(`list_tasks failed: ${error.message}`);
-    return { tasks: data };
+
+    // task_dependencies has two FKs into tasks (self-referencing), which
+    // makes PostgREST embedding ambiguous — a plain follow-up query is
+    // simpler and unambiguous than an FK-hinted embed.
+    const taskIds = (data ?? []).map(t => t.id);
+    const dependenciesByTask: Record<string, string[]> = {};
+    if (taskIds.length > 0) {
+      const { data: deps } = await ctx.db.from('task_dependencies').select('task_id, depends_on_task_id').in('task_id', taskIds);
+      for (const d of deps ?? []) {
+        (dependenciesByTask[d.task_id] ??= []).push(d.depends_on_task_id);
+      }
+    }
+    const tasks = (data ?? []).map(t => ({ ...t, depends_on_task_ids: dependenciesByTask[t.id] ?? [] }));
+    return { tasks };
   },
 };
 

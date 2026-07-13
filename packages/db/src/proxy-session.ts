@@ -11,7 +11,21 @@ import { NextResponse, type NextRequest } from 'next/server';
 // to /login would poison that cache.
 // /auth/signout is deliberately NOT public: sign-out only makes sense with an
 // existing session, and any signed-out request there just redirects to /login.
-const PUBLIC_PATHS = ['/login', '/offline', '/manifest.webmanifest', '/sw.js'];
+// /auth/confirm and /auth/callback are the routes that ESTABLISH a session
+// (email confirmation, password recovery, Google OAuth exchange) — they must
+// be reachable before one exists.
+const PUBLIC_PATHS = [
+  '/login',
+  '/offline',
+  '/manifest.webmanifest',
+  '/sw.js',
+  '/registar',
+  '/recuperar',
+  '/nova-password',
+  '/auth/confirm',
+  '/auth/callback',
+  '/landing',
+];
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(`${p}/`));
@@ -54,6 +68,13 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
 
   const { pathname } = request.nextUrl;
 
+  // Anonymous '/' shows the marketing landing page instead of the chat —
+  // rewrite (URL stays '/'), not redirect, so PWA start_url and any shared
+  // '/' link keep working. Authenticated '/' is untouched below.
+  if (!user && pathname === '/') {
+    return NextResponse.rewrite(new URL('/landing', request.url));
+  }
+
   if (!user && !isPublic(pathname)) {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
@@ -64,7 +85,7 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     return NextResponse.redirect(url);
   }
 
-  if (user && pathname === '/login') {
+  if (user && (pathname === '/login' || pathname === '/registar')) {
     const url = request.nextUrl.clone();
     url.pathname = '/';
     url.search = '';

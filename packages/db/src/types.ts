@@ -21,16 +21,28 @@ export type Database = {
           created_at: string
           id: string
           name: string
+          stripe_customer_id: string | null
+          stripe_subscription_id: string | null
+          subscription_status: string
+          trial_ends_at: string
         }
         Insert: {
           created_at?: string
           id?: string
           name: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          subscription_status?: string
+          trial_ends_at?: string
         }
         Update: {
           created_at?: string
           id?: string
           name?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          subscription_status?: string
+          trial_ends_at?: string
         }
         Relationships: []
       }
@@ -418,8 +430,10 @@ export type Database = {
           created_at: string
           description: string | null
           due_date: string | null
+          duration_days: number | null
           id: string
           job_id: string | null
+          materials: string[] | null
           source: string
           start_date: string | null
           status: string
@@ -432,8 +446,10 @@ export type Database = {
           created_at?: string
           description?: string | null
           due_date?: string | null
+          duration_days?: number | null
           id?: string
           job_id?: string | null
+          materials?: string[] | null
           source: string
           start_date?: string | null
           status?: string
@@ -446,8 +462,10 @@ export type Database = {
           created_at?: string
           description?: string | null
           due_date?: string | null
+          duration_days?: number | null
           id?: string
           job_id?: string | null
+          materials?: string[] | null
           source?: string
           start_date?: string | null
           status?: string

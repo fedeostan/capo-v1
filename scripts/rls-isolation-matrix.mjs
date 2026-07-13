@@ -247,6 +247,17 @@ async function runAdversarial(attacker, victim) {
       error ? `code=${error.code}` : 'INSERT SUCCEEDED (leak!)');
     if (!error) await admin.from('proposals').delete().eq('company_id', attacker.companyId).eq('rendered_text', 'cross-tenant proposal');
   }
+
+  // Attack 3 (billing, 0011): a tenant must never be able to grant itself an
+  // active subscription by writing subscription_status directly — the
+  // column-level revoke should reject this with a permission error (42501),
+  // not a policy check_violation (there's no row-level policy to fail; the
+  // grant itself no longer exists for this column).
+  {
+    const { error } = await db.from('companies').update({ subscription_status: 'active' }).eq('id', attacker.companyId);
+    check('adversarial: tenant self-upgrade of subscription_status blocked', error != null,
+      error ? `code=${error.code}` : 'UPDATE SUCCEEDED (billing bypass!)');
+  }
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
@@ -261,13 +272,14 @@ try {
   await runAdversarial(tenantA, tenantB);
 
   const matrixChecks = results.filter(r => !r.name.includes('bonus') && !r.name.startsWith('adversarial'));
+  const adversarialChecks = results.filter(r => r.name.startsWith('adversarial'));
   console.log('');
   for (const r of results) {
     console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.detail && !r.ok ? ` — ${r.detail}` : ''}`);
   }
   console.log('');
   console.log(`Matrix: ${matrixChecks.filter(r => r.ok).length}/${matrixChecks.length} visibility checks passed; ` +
-    `adversarial: ${results.filter(r => r.name.startsWith('adversarial') && r.ok).length}/2 blocked; failures: ${failures}`);
+    `adversarial: ${adversarialChecks.filter(r => r.ok).length}/${adversarialChecks.length} blocked; failures: ${failures}`);
 } catch (err) {
   console.error(`\nFATAL: ${err.message}`);
   failures += 1;

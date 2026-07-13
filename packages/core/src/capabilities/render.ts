@@ -106,6 +106,41 @@ export async function renderProposal(db: Db, companyId: string, actionName: stri
       if (changes.length === 0) throw new RenderError('Alteração vazia');
       return `Alterar trabalhador ${name}: ${changes.join('; ')}.`;
     }
+    case 'apply_plan': {
+      const jn = await jobName(db, companyId, args.job_id);
+      const tasks: {
+        key: string;
+        title: string;
+        start_date: string;
+        due_date: string;
+        duration_days: number;
+        materials?: string[];
+        assignee_worker_id?: string;
+        depends_on?: string[];
+      }[] = args.tasks;
+      if (tasks.length === 0) throw new RenderError('Plano vazio');
+
+      const keyToIndex = new Map(tasks.map((t, i) => [t.key, i + 1]));
+      const allDates = tasks.flatMap(t => [t.start_date, t.due_date]).sort();
+      const rangeStart = fmtDate(allDates[0]);
+      const rangeEnd = fmtDate(allDates[allDates.length - 1]);
+
+      const lines = await Promise.all(
+        tasks.map(async (t, i) => {
+          const head = [`${i + 1}. ${t.title} — ${fmtDate(t.start_date)} → ${fmtDate(t.due_date)} (${t.duration_days} dia${t.duration_days === 1 ? '' : 's'})`];
+          if (t.assignee_worker_id) head.push(`· ${await workerName(db, companyId, t.assignee_worker_id)}`);
+          const extra: string[] = [];
+          if (t.depends_on?.length) {
+            const nums = t.depends_on.map(k => keyToIndex.get(k)).filter((n): n is number => n != null);
+            if (nums.length > 0) extra.push(`   ⤷ depois de: ${nums.join(', ')}`);
+          }
+          if (t.materials?.length) extra.push(`   materiais: ${t.materials.join(', ')}`);
+          return [head.join(' '), ...extra].join('\n');
+        }),
+      );
+
+      return `Plano para a obra «${jn}» — ${tasks.length} tarefa${tasks.length === 1 ? '' : 's'}, ${rangeStart} a ${rangeEnd}\n${lines.join('\n')}`;
+    }
     default:
       throw new RenderError(`No template for action "${actionName}"`);
   }

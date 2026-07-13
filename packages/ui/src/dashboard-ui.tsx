@@ -72,9 +72,22 @@ export function ScreenShell({
   );
 }
 
-export function EmptyState({ text }: { text: string }) {
-  return <p className="py-10 text-center text-sm text-zinc-500">{text}</p>;
+export function EmptyState({ text, cta }: { text: string; cta?: { href: string; label: string } }) {
+  return (
+    <div className="py-10 text-center text-sm text-zinc-500">
+      <p>{text}</p>
+      {cta && (
+        <a href={cta.href} className="mt-2 inline-block text-emerald-600 underline dark:text-emerald-400">
+          {cta.label}
+        </a>
+      )}
+    </div>
+  );
 }
+
+// Every dashboard empty state funnels back to the chat — the dashboard is
+// read-mostly, so "nothing here yet" always means "go ask Capo".
+const TALK_TO_CAPO = { href: '/', label: 'Falar com o Capo' };
 
 function TaskCard({ task, showOverdue }: { task: DashboardTask; showOverdue?: boolean }) {
   return (
@@ -104,7 +117,7 @@ function TaskCard({ task, showOverdue }: { task: DashboardTask; showOverdue?: bo
 
 // Hoje/Amanhã: tasks grouped under their obra.
 export function TasksByObra({ tasks, empty }: { tasks: DashboardTask[]; empty: string }) {
-  if (tasks.length === 0) return <EmptyState text={empty} />;
+  if (tasks.length === 0) return <EmptyState text={empty} cta={TALK_TO_CAPO} />;
   const groups = new Map<string, DashboardTask[]>();
   for (const task of tasks) {
     const key = task.job_name ?? 'Sem obra';
@@ -136,7 +149,7 @@ export function ObrasList({
   empty: string;
   overdueByObra?: Record<string, number>;
 }) {
-  if (obras.length === 0) return <EmptyState text={empty} />;
+  if (obras.length === 0) return <EmptyState text={empty} cta={TALK_TO_CAPO} />;
   const plural = (n: number | null, one: string, many: string) => `${n ?? 0} ${n === 1 ? one : many}`;
   return (
     <section className="space-y-2">
@@ -146,7 +159,11 @@ export function ObrasList({
         const pct = total > 0 ? Math.round((done / total) * 100) : 0;
         const overdue = obra.id ? (overdueByObra?.[obra.id] ?? 0) : 0;
         return (
-          <div key={obra.id} className="rounded-xl border border-zinc-500/20 p-3">
+          <a
+            key={obra.id}
+            href={obra.id ? `/obras/${obra.id}` : undefined}
+            className="block rounded-xl border border-zinc-500/20 p-3 hover:border-zinc-500/40"
+          >
             <div className="flex items-baseline justify-between gap-2">
               <p className="text-sm font-medium">{obra.name}</p>
               {overdue > 0 && (
@@ -169,10 +186,86 @@ export function ObrasList({
               {' · '}
               {plural(obra.pendentes, 'pendente', 'pendentes')}
             </p>
-          </div>
+          </a>
         );
       })}
     </section>
+  );
+}
+
+// Obra detail: the plan timeline. Row shape kept local to this component
+// (rather than importing a capabilities type from @capo/core) so @capo/ui
+// stays a pure presentation package with no core dependency.
+export interface TimelineTask {
+  id: string;
+  title: string;
+  status: string;
+  start_date: string | null;
+  due_date: string | null;
+  duration_days: number | null;
+  materials: string[] | null;
+  assignee_name: string | null;
+  depends_on_titles: string[];
+}
+
+function formatDayHeading(iso: string): string {
+  const date = new Date(`${iso}T00:00:00Z`);
+  return new Intl.DateTimeFormat('pt-PT', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' }).format(date);
+}
+
+export function TimelineList({
+  tasks,
+  empty,
+  renderExtra,
+}: {
+  tasks: TimelineTask[];
+  empty: string;
+  // Optional per-row slot (e.g. Concluir/Reabrir buttons) — kept as a plain
+  // render prop so this package never has to import a mutation/action.
+  renderExtra?: (task: TimelineTask) => React.ReactNode;
+}) {
+  if (tasks.length === 0) return <EmptyState text={empty} cta={TALK_TO_CAPO} />;
+  const groups = new Map<string, TimelineTask[]>();
+  for (const task of tasks) {
+    const key = task.start_date ?? 'sem-data';
+    groups.set(key, [...(groups.get(key) ?? []), task]);
+  }
+  return (
+    <>
+      {[...groups.entries()].map(([key, groupTasks]) => (
+        <section key={key} className="space-y-2">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            {key === 'sem-data' ? 'Sem data' : formatDayHeading(key)}
+          </h2>
+          {groupTasks.map(task => (
+            <div key={task.id} className="rounded-xl border border-zinc-500/20 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{task.title}</p>
+                  <p className="text-xs text-zinc-500">{task.assignee_name ?? 'Sem responsável'}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <StatusBadge status={task.status} />
+                  {renderExtra?.(task)}
+                </div>
+              </div>
+              {task.depends_on_titles.length > 0 && (
+                <p className="mt-1 text-xs text-zinc-500">⤷ depois de: {task.depends_on_titles.join(', ')}</p>
+              )}
+              {task.materials && task.materials.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {task.materials.map(m => (
+                    <span key={m} className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[11px] text-zinc-500">
+                      {m}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </section>
+      ))}
+    </>
   );
 }
 

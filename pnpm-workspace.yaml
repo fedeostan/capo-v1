@@ -5,6 +5,7 @@ packages:
 # Postinstall scripts are blocked by default; these two only fetch their
 # prebuilt native binaries (Next image optimization / ESLint import resolver).
 allowBuilds:
+  esbuild: false
   sharp: true
   unrs-resolver: true
 

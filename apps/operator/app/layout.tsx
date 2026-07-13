@@ -12,6 +12,7 @@ const NAV = [
   { href: '/conversations', label: 'Conversations' },
   { href: '/tasks', label: 'Tasks' },
   { href: '/dispatch', label: 'Dispatch log' },
+  { href: '/signups', label: 'Signups' },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

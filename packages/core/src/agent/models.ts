@@ -6,7 +6,7 @@ import type { LanguageModel } from 'ai';
 // Swapping or adding a model is an edit here, nowhere else. The transcription
 // role is the XPRIZE Gemini qualifying call, wired via @ai-sdk/google
 // (direct, not a gateway, to unambiguously go "through the Gemini API").
-export type ModelRole = 'conversation' | 'summarizer' | 'transcription' | 'extraction';
+export type ModelRole = 'conversation' | 'summarizer' | 'transcription' | 'extraction' | 'planner';
 
 const registry: Record<ModelRole, () => LanguageModel> = {
   conversation: () => anthropic('claude-sonnet-5'),
@@ -16,6 +16,10 @@ const registry: Record<ModelRole, () => LanguageModel> = {
   // model as summarizer today, but its own role — swapping one must never
   // silently change the other.
   extraction: () => anthropic('claude-haiku-4-5-20251001'),
+  // generateObject call behind generate_plan: needs the same reasoning
+  // quality as the conversation model, but kept as its own role — swapping
+  // one must never silently change the other.
+  planner: () => anthropic('claude-sonnet-5'),
 };
 
 export function getModel(role: ModelRole): LanguageModel {
