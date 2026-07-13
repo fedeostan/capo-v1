@@ -418,8 +418,10 @@ export type Database = {
           created_at: string
           description: string | null
           due_date: string | null
+          duration_days: number | null
           id: string
           job_id: string | null
+          materials: string[] | null
           source: string
           start_date: string | null
           status: string
@@ -432,8 +434,10 @@ export type Database = {
           created_at?: string
           description?: string | null
           due_date?: string | null
+          duration_days?: number | null
           id?: string
           job_id?: string | null
+          materials?: string[] | null
           source: string
           start_date?: string | null
           status?: string
@@ -446,8 +450,10 @@ export type Database = {
           created_at?: string
           description?: string | null
           due_date?: string | null
+          duration_days?: number | null
           id?: string
           job_id?: string | null
+          materials?: string[] | null
           source?: string
           start_date?: string | null
           status?: string

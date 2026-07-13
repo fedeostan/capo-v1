@@ -35,6 +35,7 @@ if (!process.env.ANTHROPIC_API_KEY) {
 
 const { getDb } = await import('@capo/db/client');
 const { handleInbound } = await import('@capo/core/agent');
+const { resolveProposal } = await import('@capo/core/capabilities/propose');
 
 const db = getDb();
 const run = randomBytes(4).toString('hex');
@@ -201,6 +202,48 @@ try {
   const mentionsObra = /obra/i.test(firstRunReply);
   const asksQuestion = firstRunReply.includes('?');
   check('first-run: mentions obra and asks a question', mentionsObra && asksQuestion, `reply: "${firstRunReply.slice(0, 160)}"`);
+
+  // (5) Quote → plan → approve → tasks + dependencies exist, with sane dates.
+  const planReply = await sendTurn(
+    base.companyId,
+    'Aqui está o orçamento aprovado para a Obra Smoke Base: demolição da casa de banho, canalização nova, azulejo e loiças. Começa na próxima segunda. Faz-me o plano.',
+  );
+  const proposalsAfterPlan = await pendingProposals(base.companyId);
+  const planProposal = proposalsAfterPlan.find(p => p.action_name === 'apply_plan');
+  const numberedLineCount = planProposal ? (planProposal.rendered_text.match(/^\d+\./gm) ?? []).length : 0;
+  const hasDateFormat = planProposal ? /\d{2}\/\d{2}\/\d{4}/.test(planProposal.rendered_text) : false;
+  check(
+    'plan: pending apply_plan proposal with ≥3 numbered lines with dates',
+    Boolean(planProposal) && numberedLineCount >= 3 && hasDateFormat,
+    `planReply: "${planReply.slice(0, 80)}"; numberedLines=${numberedLineCount}`,
+  );
+
+  if (planProposal) {
+    const resolution = await resolveProposal(db, planProposal.id, 'approve');
+    const jobId = (planProposal.action_args as { job_id: string }).job_id;
+    const { data: planTasks } = await db.from('tasks').select('id, start_date, due_date').eq('company_id', base.companyId).eq('job_id', jobId);
+    let depCount = 0;
+    if ((planTasks ?? []).length > 0) {
+      const { data: deps } = await db
+        .from('task_dependencies')
+        .select('task_id')
+        .in('task_id', (planTasks ?? []).map(t => t.id));
+      depCount = (deps ?? []).length;
+    }
+    const allDatesSane = (planTasks ?? []).every(t => t.start_date && t.due_date && t.start_date <= t.due_date);
+    const noWeekendStarts = (planTasks ?? []).every(t => {
+      if (!t.start_date) return false;
+      const day = new Date(`${t.start_date}T00:00:00Z`).getUTCDay();
+      return day !== 0 && day !== 6;
+    });
+    check(
+      'plan approved: tasks + dependencies exist with sane dates',
+      resolution.outcome === 'approved' && (planTasks ?? []).length > 0 && allDatesSane && noWeekendStarts,
+      `outcome=${resolution.outcome} tasks=${(planTasks ?? []).length} deps=${depCount} allDatesSane=${allDatesSane} noWeekendStarts=${noWeekendStarts}`,
+    );
+  } else {
+    check('plan approved: tasks + dependencies exist with sane dates', false, 'no apply_plan proposal to approve');
+  }
 
   console.log('');
   for (const r of results) {

@@ -16,6 +16,7 @@ const TOOL_LABELS: Record<string, string> = {
   list_workers: 'Equipa consultada',
   remember: 'Memorizado',
   propose: 'Proposta criada',
+  generate_plan: 'Plano gerado',
 };
 
 export interface PendingProposal {
