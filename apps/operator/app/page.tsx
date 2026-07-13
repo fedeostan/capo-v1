@@ -12,6 +12,19 @@ function formatWhen(iso: string | null): string {
   return new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Lisbon' });
 }
 
+const STATUS_STYLE: Record<string, string> = {
+  active: 'text-emerald-500',
+  trialing: 'text-amber-500',
+  past_due: 'text-orange-500',
+  canceled: 'text-red-500',
+};
+
+function formatSubscription(status: string, trialEndsAt: string): string {
+  if (status !== 'trialing') return status;
+  const daysLeft = Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  return daysLeft >= 0 ? `trialing (${daysLeft}d left)` : 'trialing (expired)';
+}
+
 export default async function OverviewPage() {
   const overview = await loadOverview();
 
@@ -24,7 +37,12 @@ export default async function OverviewPage() {
           <section key={company.id} className="rounded-lg border border-zinc-500/20 p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 className="font-semibold">{company.name}</h2>
-              <span className="text-xs text-zinc-500">last activity {formatWhen(lastMessageAt)}</span>
+              <span className="flex items-center gap-3 text-xs text-zinc-500">
+                <span className={STATUS_STYLE[company.subscription_status] ?? 'text-zinc-400'}>
+                  {formatSubscription(company.subscription_status, company.trial_ends_at)}
+                </span>
+                <span>last activity {formatWhen(lastMessageAt)}</span>
+              </span>
             </div>
             <p className="mt-1 text-sm text-zinc-500">
               {managers.length > 0

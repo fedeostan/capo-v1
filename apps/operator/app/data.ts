@@ -113,6 +113,49 @@ export interface DispatchRow extends Tables<'dispatch_log'> {
   workers: { name: string; company_id: string } | null;
 }
 
+export interface SignupRow {
+  profileId: string;
+  fullName: string;
+  phone: string;
+  createdAt: string;
+  companyId: string;
+  companyName: string;
+  subscriptionStatus: string;
+  trialEndsAt: string | null;
+}
+
+// Most recent signups (profiles, newest first) with their company's billing
+// state — the "who's arriving" view, separate from the per-company Overview.
+export async function loadSignups(): Promise<SignupRow[]> {
+  const db = getDb();
+  const { data: profiles } = await db
+    .from('profiles')
+    .select('id, full_name, phone, created_at, company_id')
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  const companyIds = [...new Set((profiles ?? []).map(p => p.company_id))];
+  const { data: companies } =
+    companyIds.length > 0
+      ? await db.from('companies').select('id, name, subscription_status, trial_ends_at').in('id', companyIds)
+      : { data: [] };
+  const companyById = new Map((companies ?? []).map(c => [c.id, c]));
+
+  return (profiles ?? []).map(p => {
+    const company = companyById.get(p.company_id);
+    return {
+      profileId: p.id,
+      fullName: p.full_name,
+      phone: p.phone,
+      createdAt: p.created_at,
+      companyId: p.company_id,
+      companyName: company?.name ?? '—',
+      subscriptionStatus: company?.subscription_status ?? '—',
+      trialEndsAt: company?.trial_ends_at ?? null,
+    };
+  });
+}
+
 export async function loadDispatchLog(): Promise<{ rows: DispatchRow[]; companyNames: Map<string, string> }> {
   const db = getDb();
   const [rows, companies] = await Promise.all([

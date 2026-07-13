@@ -197,7 +197,9 @@ grant update (name) on table companies to authenticated;  -- tenants may rename,
 - Create: `apps/operator/app/signups/page.tsx`
 
 **Tasks:**
-- [ ] Implement; keep read-only service-role posture. Verify: build gates. Commit.
+- [x] Implement; keep read-only service-role posture. Verify: build gates. Commit.
+
+  Notes: `loadOverview()`'s `company` object already carried `subscription_status`/`trial_ends_at` with zero query changes — those columns landed in `Tables<'companies'>` automatically once migration 0011's types were regenerated in Phase 5 (the loader does `select('*')`). Only `page.tsx` needed a rendering change. `loadSignups()` follows the existing pilot-scale pattern in this file (plain selects + JS join, not a SQL view — noted in the file's own header comment as the deliberate choice at this scale).
 
 ## Phase 8 — Final hardening, deploy live, human TODO
 
