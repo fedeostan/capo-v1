@@ -11,7 +11,20 @@ import { NextResponse, type NextRequest } from 'next/server';
 // to /login would poison that cache.
 // /auth/signout is deliberately NOT public: sign-out only makes sense with an
 // existing session, and any signed-out request there just redirects to /login.
-const PUBLIC_PATHS = ['/login', '/offline', '/manifest.webmanifest', '/sw.js'];
+// /auth/confirm and /auth/callback are the routes that ESTABLISH a session
+// (email confirmation, password recovery, Google OAuth exchange) — they must
+// be reachable before one exists.
+const PUBLIC_PATHS = [
+  '/login',
+  '/offline',
+  '/manifest.webmanifest',
+  '/sw.js',
+  '/registar',
+  '/recuperar',
+  '/nova-password',
+  '/auth/confirm',
+  '/auth/callback',
+];
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(`${p}/`));
@@ -64,7 +77,7 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     return NextResponse.redirect(url);
   }
 
-  if (user && pathname === '/login') {
+  if (user && (pathname === '/login' || pathname === '/registar')) {
     const url = request.nextUrl.clone();
     url.pathname = '/';
     url.search = '';

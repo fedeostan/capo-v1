@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { createUserClient } from '@capo/db/user-client';
+import { siteUrl } from '@/lib/site-url';
 
 // Password sign-in. Invite-only is structural: signInWithPassword can never
 // create an account, so unknown emails simply fail. The error message is
@@ -27,4 +28,21 @@ export async function signIn(formData: FormData): Promise<void> {
 
   // Session cookie is already set by createUserClient's SSR cookie adapter.
   redirect('/');
+}
+
+// Google OAuth — the button that calls this only renders when
+// NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=1, but this action is harmless if invoked
+// without a configured provider: signInWithOAuth just errors and we bounce
+// back to /login.
+export async function signInWithGoogle(): Promise<void> {
+  const supabase = await createUserClient();
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: `${siteUrl()}/auth/callback` },
+  });
+  if (error || !data.url) {
+    console.error('signInWithOAuth failed:', error?.message);
+    redirect('/login?erro=credenciais');
+  }
+  redirect(data.url);
 }
