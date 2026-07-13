@@ -3,6 +3,7 @@ import { after, NextResponse, type NextRequest } from 'next/server';
 import { getDb } from '@capo/db/client';
 import { handleInbound } from '@capo/core/agent';
 import { whatsappSink } from '@capo/core/channels/whatsapp';
+import { logEvent } from '../../../lib/log';
 
 // WhatsApp manager channel — Meta Cloud API webhook (see
 // docs/whatsapp-cloud-api-runbook.md for the one-time Meta setup).
@@ -112,11 +113,13 @@ export async function POST(request: NextRequest) {
     if (!profile) {
       // Safe no-op: don't reveal whether a number is known, don't reply.
       console.warn(`whatsapp: inbound from unknown number (wa_id ending …${message.from.slice(-4)}), ignoring`);
+      logEvent('whatsapp.unknown_sender', { waIdSuffix: message.from.slice(-4) });
       continue;
     }
 
     const text = message.text!.body;
     const companyId = profile.company_id;
+    logEvent('whatsapp.inbound_handled', { companyId, messageId: message.id });
 
     // Ack Meta fast (retries + duplicate delivery kick in otherwise); the
     // agent loop runs after the response, within the function's maxDuration.
@@ -131,6 +134,7 @@ export async function POST(request: NextRequest) {
         await delivery;
       } catch (err) {
         console.error(`whatsapp: failed handling message ${message.id}:`, err);
+        logEvent('whatsapp.send_failure', { companyId, messageId: message.id, error: err instanceof Error ? err.message : String(err) });
       }
     });
   }

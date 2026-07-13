@@ -2,6 +2,7 @@ import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } 
 import { handleInbound } from '@capo/core/agent';
 import { webSink } from '@capo/core/channels/web';
 import { getApiAuth } from '@capo/db/session';
+import { logEvent } from '../../../lib/log';
 
 export const maxDuration = 120;
 
@@ -24,6 +25,8 @@ export async function POST(req: Request) {
   const { messages } = (await req.json()) as { messages?: UIMessage[] };
   const text = lastUserText(messages ?? []).trim();
   if (!text) return new Response('Empty message', { status: 400 });
+
+  logEvent('chat.inbound_handled', { companyId: auth.companyId });
 
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
 import SwRegister from "./sw-register";
 
@@ -43,6 +44,7 @@ export default function RootLayout({
       <body className="flex h-dvh flex-col pt-[env(safe-area-inset-top)]">
         {children}
         <SwRegister />
+        <Analytics />
       </body>
     </html>
   );
