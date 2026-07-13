@@ -171,8 +171,9 @@ async function pendingProposals(companyId: string) {
 
 // ── checks ──────────────────────────────────────────────────────────────────
 let base: Tenant | undefined;
+let empty: Tenant | undefined;
 try {
-  console.log(`Seeding agent-smoke tenant (run ${run})…`);
+  console.log(`Seeding agent-smoke tenants (run ${run})…`);
   base = await seedTenant('base');
 
   // (1) Greeting → non-empty pt-PT reply.
@@ -193,6 +194,14 @@ try {
   const suggestionProposal = proposalsAfterSuggestion.find(p => (p.rendered_text ?? '').length > 0);
   check('suggestion: proposal with rendered_text', Boolean(suggestionProposal), `pending proposals: ${proposalsAfterSuggestion.length}`);
 
+  // (4) Empty tenant (no obras/workers/tasks) → first-run guidance: mentions
+  // "obra" and asks a question rather than dumping a form.
+  empty = await seedTenant('empty', { withJobAndWorker: false });
+  const firstRunReply = await sendTurn(empty.companyId, 'Olá');
+  const mentionsObra = /obra/i.test(firstRunReply);
+  const asksQuestion = firstRunReply.includes('?');
+  check('first-run: mentions obra and asks a question', mentionsObra && asksQuestion, `reply: "${firstRunReply.slice(0, 160)}"`);
+
   console.log('');
   for (const r of results) {
     console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.detail ? ` — ${r.detail}` : ''}`);
@@ -203,11 +212,16 @@ try {
   console.error(`\nFATAL: ${err instanceof Error ? err.message : String(err)}`);
   failures += 1;
 } finally {
-  console.log('\nCleaning up seeded tenant…');
+  console.log('\nCleaning up seeded tenants…');
   try {
     await cleanupTenant(base);
   } catch (e) {
-    console.error(`cleanup: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`cleanup(base): ${e instanceof Error ? e.message : String(e)}`);
+  }
+  try {
+    await cleanupTenant(empty);
+  } catch (e) {
+    console.error(`cleanup(empty): ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
