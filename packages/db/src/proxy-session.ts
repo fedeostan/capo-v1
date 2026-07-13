@@ -24,6 +24,7 @@ const PUBLIC_PATHS = [
   '/nova-password',
   '/auth/confirm',
   '/auth/callback',
+  '/landing',
 ];
 
 function isPublic(pathname: string): boolean {
@@ -66,6 +67,13 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
   const user = data?.claims;
 
   const { pathname } = request.nextUrl;
+
+  // Anonymous '/' shows the marketing landing page instead of the chat —
+  // rewrite (URL stays '/'), not redirect, so PWA start_url and any shared
+  // '/' link keep working. Authenticated '/' is untouched below.
+  if (!user && pathname === '/') {
+    return NextResponse.rewrite(new URL('/landing', request.url));
+  }
 
   if (!user && !isPublic(pathname)) {
     if (pathname.startsWith('/api/')) {
