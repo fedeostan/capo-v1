@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { generateObject } from 'ai';
 import { getModel } from '../agent/models';
+import { embedQuery } from '../agent/embeddings';
 import plannerPrompt from '../agent/prompts/planner';
 import { createProposal } from './propose';
 import type { CapoTool } from './types';
@@ -150,6 +151,26 @@ export const generatePlan: CapoTool<z.infer<typeof generatePlanInput>> = {
       (workers ?? []).map(w => `- ${w.id}: ${w.name}${w.trade ? ` (${w.trade})` : ''}`).join('\n') ||
       '(sem trabalhadores registados)';
 
+    // Ground the planner in the shared knowledge base (techniques, sequencing,
+    // materials). Best-effort: an empty corpus or a retrieval hiccup must
+    // never block plan generation — the planner worked without it before.
+    let knowledgeBlock: string | null = null;
+    try {
+      const queryEmbedding = await embedQuery(input.source_text.slice(0, 2000));
+      const { data: chunks } = await ctx.db.rpc('search_knowledge', {
+        query_embedding: JSON.stringify(queryEmbedding),
+        query_text: input.source_text.slice(0, 500),
+        match_count: 4,
+      });
+      if (chunks && chunks.length > 0) {
+        knowledgeBlock = chunks
+          .map(c => `### ${c.document_title}${c.heading_path ? ` — ${c.heading_path}` : ''}\n${c.content}`)
+          .join('\n\n');
+      }
+    } catch {
+      // planner proceeds without knowledge
+    }
+
     let relativePlan: z.infer<typeof relativePlanSchema>;
     try {
       const result = await generateObject({
@@ -160,6 +181,7 @@ export const generatePlan: CapoTool<z.infer<typeof generatePlanInput>> = {
           `## Texto do orçamento/âmbito (verbatim do gerente)\n${input.source_text}`,
           `## Trabalhadores disponíveis (id: nome (ofício))\n${workerList}`,
           input.notes ? `## Notas adicionais\n${input.notes}` : null,
+          knowledgeBlock ? `## Conhecimento técnico relevante (da base de conhecimento)\n${knowledgeBlock}` : null,
           'Gera o plano.',
         ]
           .filter(Boolean)

@@ -41,6 +41,32 @@ async function loadCompanySnapshot(db: Db, companyId: string): Promise<CompanySn
   }
 }
 
+// Knowledge index: just the titles by category, not the content — enough for
+// the model to know what search_knowledge CAN answer (the main lever for it
+// actually calling the tool) without spending context on the corpus itself.
+// Same failure posture as the snapshot: any error collapses to "no block".
+async function loadKnowledgeIndex(db: Db): Promise<string | null> {
+  try {
+    const { data, error } = await db
+      .from('knowledge_documents')
+      .select('title, category')
+      .order('category')
+      .order('title')
+      .limit(100);
+    if (error || !data || data.length === 0) return null;
+    const byCategory = new Map<string, string[]>();
+    for (const doc of data) {
+      const list = byCategory.get(doc.category) ?? [];
+      list.push(doc.title);
+      byCategory.set(doc.category, list);
+    }
+    const lines = [...byCategory.entries()].map(([category, titles]) => `- ${category}: ${titles.join('; ')}`);
+    return `# Base de conhecimento disponível (via search_knowledge)\nDocumentos que podes consultar para fundamentar respostas legais/técnicas:\n${lines.join('\n')}`;
+  } catch {
+    return null;
+  }
+}
+
 function buildOnboardingBlock(snapshot: CompanySnapshot): string | null {
   const empty = snapshot.activeObras === 0 && snapshot.activeWorkers === 0 && snapshot.openTasks === 0;
   if (empty) {
@@ -79,7 +105,7 @@ export async function buildSystemPrompt(db: Db, companyId: string, summary: stri
       ? memories.map(m => `- [${m.kind}] (${m.created_at.slice(0, 10)}) ${m.content}`).join('\n')
       : '(sem memórias guardadas ainda)';
 
-  const snapshot = await loadCompanySnapshot(db, companyId);
+  const [snapshot, knowledgeBlock] = await Promise.all([loadCompanySnapshot(db, companyId), loadKnowledgeIndex(db)]);
   const snapshotBlock = snapshot
     ? `# Estado atual da empresa
 Empresa: ${snapshot.companyName}
@@ -96,6 +122,7 @@ Propostas pendentes: ${snapshot.pendingProposals}`
     `# Today's date\n${today}`,
     snapshotBlock,
     onboardingBlock,
+    knowledgeBlock,
     `# Durable memory (facts stored across conversations)\n${memoryBlock}`,
     summary ? `# Summary of the conversation so far\n${summary}` : null,
   ]

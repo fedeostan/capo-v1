@@ -200,6 +200,77 @@ export type Database = {
           },
         ]
       }
+      knowledge_chunks: {
+        Row: {
+          chunk_index: number
+          content: string
+          document_id: string
+          embedding: string
+          heading_path: string
+          id: string
+          metadata: Json
+          tsv: unknown
+        }
+        Insert: {
+          chunk_index: number
+          content: string
+          document_id: string
+          embedding: string
+          heading_path?: string
+          id?: string
+          metadata?: Json
+          tsv?: unknown
+        }
+        Update: {
+          chunk_index?: number
+          content?: string
+          document_id?: string
+          embedding?: string
+          heading_path?: string
+          id?: string
+          metadata?: Json
+          tsv?: unknown
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_chunks_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      knowledge_documents: {
+        Row: {
+          category: string
+          created_at: string
+          id: string
+          published_at: string | null
+          source_ref: string
+          source_type: string
+          title: string
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          id?: string
+          published_at?: string | null
+          source_ref: string
+          source_type: string
+          title: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          id?: string
+          published_at?: string | null
+          source_ref?: string
+          source_type?: string
+          title?: string
+        }
+        Relationships: []
+      }
       memories: {
         Row: {
           active: boolean
@@ -674,6 +745,23 @@ export type Database = {
         Returns: undefined
       }
       lisbon_today: { Args: never; Returns: string }
+      search_knowledge: {
+        Args: {
+          filter_category?: string
+          match_count?: number
+          query_embedding: string
+          query_text: string
+        }
+        Returns: {
+          category: string
+          chunk_id: string
+          content: string
+          document_title: string
+          heading_path: string
+          score: number
+          source_ref: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

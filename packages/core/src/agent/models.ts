@@ -6,6 +6,8 @@ import type { LanguageModel } from 'ai';
 // Swapping or adding a model is an edit here, nowhere else. The transcription
 // role is the XPRIZE Gemini qualifying call, wired via @ai-sdk/google
 // (direct, not a gateway, to unambiguously go "through the Gemini API").
+// The embedding model lives in ./embeddings.ts (its type is EmbeddingModel,
+// not LanguageModel, and swapping it forces a corpus re-ingest — see there).
 export type ModelRole = 'conversation' | 'summarizer' | 'transcription' | 'extraction' | 'planner';
 
 const registry: Record<ModelRole, () => LanguageModel> = {
