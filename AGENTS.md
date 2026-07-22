@@ -31,6 +31,27 @@ Structural invariants (do not regress):
 - Worker SMS dispatch (Twilio/n8n) is external; nothing in this repo may
   break `dispatch_tasks_today` / `dispatch_log` semantics.
 
+## Local tooling
+
+- **Stripe CLI** (`stripe`, installed via `brew install stripe/stripe-cli/stripe`,
+  logged in with `stripe login`) — use for local billing work instead of
+  editing webhook destinations in the Stripe Dashboard:
+  - `stripe listen --forward-to localhost:3000/api/stripe/webhook` — forwards
+    live test-mode events to the local dev server and prints a `whsec_...`
+    signing secret; put that in `.env.local` as `STRIPE_WEBHOOK_SECRET` for
+    local testing (separate from the production destination's secret in
+    Vercel).
+  - `stripe trigger checkout.session.completed` (or
+    `customer.subscription.updated` / `.deleted`) — fires a synthetic test
+    event at whatever `stripe listen` is forwarding to, without needing a
+    real Checkout session.
+  - `stripe logs tail` — tails live API request/event logs, useful when a
+    webhook delivery from the Dashboard shows as failed and the response
+    body isn't enough to diagnose.
+  - Always confirm test mode (`stripe config --list` shows the active key)
+    before running `trigger`/`listen` against anything — these hit real
+    Stripe API state, just in the test-mode ledger.
+
 <!-- BEGIN:codex-review-guidelines -->
 ## Codex Review Guidelines
 

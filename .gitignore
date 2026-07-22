@@ -42,3 +42,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# claude code — personal/runtime state only; skills, agents, and commands
+# under .claude/ are shared via git on purpose
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

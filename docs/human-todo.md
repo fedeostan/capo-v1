@@ -6,25 +6,21 @@ nothing here can be done by an agent. The capo-upgrade code is merged to
 deployments are READY); everything below is what's left to fully activate
 each feature.
 
-## 1. Stripe billing
+## 1. Stripe billing — ✅ DONE (2026-07-17)
 
-1. Create a Stripe account (or use an existing one) → create Product "Capo"
-   with a recurring Price of €45/mo EUR → copy the Price id
-   (`STRIPE_PRICE_ID`) and the account's secret key (`STRIPE_SECRET_KEY`) →
-   set both in Vercel (production env, project `capo-v1`).
-2. Stripe → Webhooks: add an endpoint `https://<prod>/api/stripe/webhook`
+1. ✅ Stripe account created, Product "Capo" with recurring Price €45/mo EUR.
+   `STRIPE_PRICE_ID` and `STRIPE_SECRET_KEY` set in Vercel (production env,
+   project `capo-v1`).
+2. ✅ Webhook destination added at `https://capo-v1.vercel.app/api/stripe/webhook`
    subscribed to `checkout.session.completed`, `customer.subscription.updated`,
-   `customer.subscription.deleted` → copy the signing secret
-   (`STRIPE_WEBHOOK_SECRET`) into Vercel → redeploy.
-3. Run one Stripe test-mode checkout end to end (Assinar on `/subscricao` →
-   Stripe Checkout → back to the app) and confirm the company's
-   `subscription_status` flips to `active` in Supabase.
-   Until steps 1–2 are done, billing is fully disabled app-wide (no
-   `STRIPE_SECRET_KEY` → `/subscricao` shows "faturação ainda não
-   disponível", the webhook 503s, and no write path is ever gated) — the app
-   ships and works correctly before any of this exists. Confirmed live: the
-   `capo-v1` production env currently has no `STRIPE_*` vars set (checked via
-   `vercel env ls`), exactly as intended at this stage.
+   `customer.subscription.deleted`. `STRIPE_WEBHOOK_SECRET` set in Vercel,
+   redeployed.
+3. ✅ Ran a Stripe test-mode checkout end to end (Assinar on `/subscricao` →
+   Stripe Checkout → back to the app) using a disposable test account. Confirmed
+   in Supabase: `subscription_status` flipped `trialing` → `active`, and
+   `stripe_customer_id`/`stripe_subscription_id` were populated with real
+   `cus_.../sub_...` ids — proof the webhook fired and the signature verified.
+   Test account and its Stripe test-mode subscription were cleaned up afterward.
 
 ## 2. Supabase auth (self-serve signup, password reset, Google OAuth)
 
