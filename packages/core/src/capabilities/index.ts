@@ -4,6 +4,7 @@ import { taskTools } from './tasks';
 import { jobTools } from './jobs';
 import { workerTools } from './workers';
 import { memoryTools } from './memory';
+import { knowledgeTools } from './knowledge';
 import { propose } from './propose';
 import { generatePlan } from './plan';
 import { managerInstructionField, runGuarded } from './guard';
@@ -14,7 +15,7 @@ import type { CapoTool, ToolContext } from './types';
 // reports via the sink) — same interface, no core changes. generate_plan is
 // unguarded (like propose) — it never mutates domain state directly, it only
 // ever produces a proposal (apply_plan) for the manager to approve.
-export const roster: CapoTool[] = [...taskTools, ...jobTools, ...workerTools, ...memoryTools, propose, generatePlan];
+export const roster: CapoTool[] = [...taskTools, ...jobTools, ...workerTools, ...memoryTools, ...knowledgeTools, propose, generatePlan];
 
 // Mechanical mapping from the roster to AI SDK tools. Guarded writes get the
 // manager_instruction evidence field and run through the guard.

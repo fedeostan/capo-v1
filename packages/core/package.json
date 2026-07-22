@@ -6,6 +6,7 @@
   "exports": {
     "./agent": "./src/agent/core.ts",
     "./models": "./src/agent/models.ts",
+    "./embeddings": "./src/agent/embeddings.ts",
     "./conversation": "./src/agent/memory/conversation.ts",
     "./capabilities/propose": "./src/capabilities/propose.ts",
     "./channels/types": "./src/channels/types.ts",

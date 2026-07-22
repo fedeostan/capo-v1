@@ -16,6 +16,7 @@ demolição → alvenaria/estrutura → abertura de roços (eletricidade/canaliz
 - \`materials\`: lista curta de materiais principais dessa fase, quando óbvios do texto ou do tipo de trabalho (ex.: ["azulejo", "cola", "betumador"]).
 - \`assignee_worker_id\`: só preenche se a lista de trabalhadores disponíveis tiver alguém com ofício claramente adequado à tarefa; deixa por preencher se não houver correspondência óbvia.
 - Nunca inventes tarefas fora do âmbito descrito. Se o texto só menciona canalização e azulejo, não acrescentes demolição ou pintura.
+- Se houver uma secção "Conhecimento técnico relevante", usa-a para afinar sequência, durações e materiais (ex.: tempos de cura/secagem que forçam uma dependência). NUNCA a uses para alargar o âmbito — o âmbito vem só do texto do gerente.
 `;
 
 export default prompt;

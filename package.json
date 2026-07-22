@@ -9,9 +9,11 @@
     "typecheck": "turbo run typecheck",
     "build": "turbo run build",
     "rls-matrix": "node scripts/rls-isolation-matrix.mjs",
-    "agent-smoke": "tsx scripts/agent-smoke.mts"
+    "agent-smoke": "tsx scripts/agent-smoke.mts",
+    "knowledge-ingest": "tsx scripts/knowledge-ingest.mts"
   },
   "devDependencies": {
+    "@ai-sdk/google": "^4.0.8",
     "@capo/core": "workspace:*",
     "@capo/db": "workspace:*",
     "@supabase/supabase-js": "^2.110.0",
