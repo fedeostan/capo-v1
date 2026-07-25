@@ -156,6 +156,265 @@ export async function loadSignups(): Promise<SignupRow[]> {
   });
 }
 
+// ── Health & activation ─────────────────────────────────────────────────────
+// Federico runs this company alone. The question he needs answered before
+// anything else is not "what are the numbers" but "does anything need me
+// today, and is anyone stuck?" Everything below serves those two questions.
+
+export type AlertLevel = 'critical' | 'warning';
+
+export interface Alert {
+  level: AlertLevel;
+  title: string;
+  detail: string;
+  href?: string;
+}
+
+/** Where a company has got to in the loop the product promises. */
+export type ActivationStage = 'signed_up' | 'has_obra' | 'has_plan' | 'has_crew' | 'dispatching';
+
+export const ACTIVATION_STAGES: { key: ActivationStage; label: string }[] = [
+  { key: 'signed_up', label: 'Signed up' },
+  { key: 'has_obra', label: 'Created an obra' },
+  { key: 'has_plan', label: 'Tasks scheduled' },
+  { key: 'has_crew', label: 'Crew reachable' },
+  { key: 'dispatching', label: 'SMS going out' },
+];
+
+export interface ActivationRow {
+  companyId: string;
+  companyName: string;
+  createdAt: string;
+  stage: ActivationStage;
+  obras: number;
+  tasks: number;
+  aiTasks: number;
+  reachableWorkers: number;
+  lastDispatchAt: string | null;
+  lastMessageAt: string | null;
+  daysSinceSignup: number;
+}
+
+export interface HealthReport {
+  alerts: Alert[];
+  activation: ActivationRow[];
+  today: {
+    dispatchesToday: number;
+    messagesToday: number;
+    tasksCompletedToday: number;
+    proposalsPending: number;
+  };
+  knowledge: { documents: number; chunks: number };
+}
+
+// KNOWN LIMIT (pilot-scale, same stance as loadOverview above): the unbounded
+// selects below are silently capped by PostgREST's default 1000-row ceiling.
+// With a handful of companies that is never reached. Once `tasks` alone passes
+// ~1000 rows the activation tallies start undercounting — at that point move
+// these aggregations into SQL views rather than raising the limit.
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function lisbonDateKey(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Europe/Lisbon' });
+}
+
+function daysAgo(iso: string | null): number | null {
+  return iso == null ? null : Math.floor((Date.now() - new Date(iso).getTime()) / DAY_MS);
+}
+
+export async function loadHealth(): Promise<HealthReport> {
+  const db = getDb();
+  const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Lisbon' });
+
+  const [companies, jobs, tasks, workers, proposals, conversations, messages, dispatches, kbDocs, kbChunks] =
+    await Promise.all([
+      db.from('companies').select('id, name, created_at, subscription_status, trial_ends_at').then(r => r.data ?? []),
+      db.from('jobs').select('id, company_id, status').then(r => r.data ?? []),
+      db.from('tasks').select('id, company_id, status, source, assignee_worker_id, updated_at').then(r => r.data ?? []),
+      db.from('workers').select('id, company_id, active, phone').then(r => r.data ?? []),
+      db.from('proposals').select('id, company_id, status, action_name, created_at').then(r => r.data ?? []),
+      db.from('conversations').select('id, company_id').then(r => r.data ?? []),
+      db
+        .from('messages')
+        .select('conversation_id, created_at')
+        .order('created_at', { ascending: false })
+        .limit(1000)
+        .then(r => r.data ?? []),
+      db
+        .from('dispatch_log')
+        .select('worker_id, sent_at, dispatch_date')
+        .order('sent_at', { ascending: false })
+        .limit(500)
+        .then(r => r.data ?? []),
+      db.from('knowledge_documents').select('id', { count: 'exact', head: true }).then(r => r.count ?? 0),
+      db.from('knowledge_chunks').select('id', { count: 'exact', head: true }).then(r => r.count ?? 0),
+    ]);
+
+  const companyOfConversation = new Map(conversations.map(c => [c.id, c.company_id]));
+  const companyOfWorker = new Map(workers.map(w => [w.id, w.company_id]));
+
+  const lastMessageByCompany = new Map<string, string>();
+  for (const m of messages) {
+    const companyId = companyOfConversation.get(m.conversation_id);
+    if (companyId && !lastMessageByCompany.has(companyId)) lastMessageByCompany.set(companyId, m.created_at);
+  }
+
+  const lastDispatchByCompany = new Map<string, string>();
+  for (const d of dispatches) {
+    const companyId = d.worker_id ? companyOfWorker.get(d.worker_id) : undefined;
+    if (companyId && !lastDispatchByCompany.has(companyId)) lastDispatchByCompany.set(companyId, d.sent_at);
+  }
+
+  const activation: ActivationRow[] = companies.map(company => {
+    const companyJobs = jobs.filter(j => j.company_id === company.id);
+    const companyTasks = tasks.filter(t => t.company_id === company.id);
+    // 'capo' is the actor recorded when an approved proposal executes — i.e.
+    // the manager actually accepted a generated plan rather than only chatting.
+    const aiTasks = companyTasks.filter(t => t.source === 'capo').length;
+    const reachableWorkers = workers.filter(w => w.company_id === company.id && w.active && w.phone).length;
+    const lastDispatchAt = lastDispatchByCompany.get(company.id) ?? null;
+
+    const stage: ActivationStage = lastDispatchAt
+      ? 'dispatching'
+      : reachableWorkers > 0 && companyTasks.length > 0
+        ? 'has_crew'
+        : companyTasks.length > 0
+          ? 'has_plan'
+          : companyJobs.length > 0
+            ? 'has_obra'
+            : 'signed_up';
+
+    return {
+      companyId: company.id,
+      companyName: company.name,
+      createdAt: company.created_at,
+      stage,
+      obras: companyJobs.filter(j => j.status === 'active').length,
+      tasks: companyTasks.filter(t => !['done', 'cancelled'].includes(t.status)).length,
+      aiTasks,
+      reachableWorkers,
+      lastDispatchAt,
+      lastMessageAt: lastMessageByCompany.get(company.id) ?? null,
+      daysSinceSignup: daysAgo(company.created_at) ?? 0,
+    };
+  });
+
+  // ── Alerts ────────────────────────────────────────────────────────────────
+  const alerts: Alert[] = [];
+
+  for (const company of companies) {
+    const trialDaysLeft = Math.ceil((new Date(company.trial_ends_at).getTime() - Date.now()) / DAY_MS);
+    if (company.subscription_status === 'past_due' || company.subscription_status === 'canceled') {
+      alerts.push({
+        level: 'critical',
+        title: `${company.name} — subscription ${company.subscription_status}`,
+        detail: 'The manager is locked out of the chat and every write path. WhatsApp still works.',
+        href: '/signups',
+      });
+    } else if (company.subscription_status === 'trialing' && trialDaysLeft <= 3) {
+      alerts.push({
+        level: trialDaysLeft < 0 ? 'critical' : 'warning',
+        title: `${company.name} — trial ${trialDaysLeft < 0 ? 'expired' : `ends in ${trialDaysLeft}d`}`,
+        detail: 'Worth a call before it lapses rather than after.',
+        href: '/signups',
+      });
+    }
+  }
+
+  // A proposal that has sat pending for over a day means Capo asked for a
+  // decision and the manager never came back — the clearest friction signal
+  // the product emits, and invisible everywhere else.
+  const stalePending = proposals.filter(p => p.status === 'pending' && (daysAgo(p.created_at) ?? 0) >= 1);
+  if (stalePending.length > 0) {
+    const names = new Map(companies.map(c => [c.id, c.name]));
+    const byCompany = [...new Set(stalePending.map(p => names.get(p.company_id) ?? '—'))];
+    alerts.push({
+      level: 'warning',
+      title: `${stalePending.length} proposal${stalePending.length === 1 ? '' : 's'} pending over 24h`,
+      detail: `Capo asked and nobody decided — ${byCompany.join(', ')}. Either the card is unclear or the manager never saw it.`,
+    });
+  }
+
+  const failedProposals = proposals.filter(p => p.status === 'failed');
+  if (failedProposals.length > 0) {
+    alerts.push({
+      level: 'critical',
+      title: `${failedProposals.length} proposal${failedProposals.length === 1 ? '' : 's'} approved but failed to execute`,
+      detail: `The manager said yes and nothing happened: ${[...new Set(failedProposals.map(p => p.action_name))].join(', ')}.`,
+    });
+  }
+
+  // Proposals stuck in 'executing' mean a crash mid-execution — by design they
+  // are never retried, so they need a human to look.
+  const stuckExecuting = proposals.filter(p => p.status === 'executing');
+  if (stuckExecuting.length > 0) {
+    alerts.push({
+      level: 'critical',
+      title: `${stuckExecuting.length} proposal${stuckExecuting.length === 1 ? '' : 's'} stuck mid-execution`,
+      detail: 'A crash between claim and finalize. These are never retried automatically — inspect them.',
+    });
+  }
+
+  for (const row of activation) {
+    const quiet = daysAgo(row.lastMessageAt);
+    if (row.daysSinceSignup >= 2 && row.stage === 'signed_up') {
+      alerts.push({
+        level: 'warning',
+        title: `${row.companyName} — signed up ${row.daysSinceSignup}d ago, never created an obra`,
+        detail: 'Stuck at the very first step. Onboarding, not product.',
+      });
+    } else if (row.tasks > 0 && row.reachableWorkers === 0) {
+      alerts.push({
+        level: 'warning',
+        title: `${row.companyName} — ${row.tasks} open tasks, nobody reachable by SMS`,
+        detail: 'No active worker has a phone number, so the 07:00 dispatch reaches nobody. The daily loop is dead here.',
+      });
+    } else if (quiet != null && quiet >= 7) {
+      alerts.push({
+        level: 'warning',
+        title: `${row.companyName} — quiet for ${quiet} days`,
+        detail: 'No message in either channel. Churn risk.',
+        href: `/conversations/${row.companyId}`,
+      });
+    }
+  }
+
+  const dispatchingCompanies = activation.filter(r => r.stage === 'dispatching').length;
+  const dispatchesToday = dispatches.filter(d => d.dispatch_date === todayKey).length;
+  if (dispatchingCompanies > 0 && dispatchesToday === 0) {
+    alerts.push({
+      level: 'critical',
+      title: 'No SMS dispatched today',
+      detail:
+        'At least one company has dispatched before but nothing went out today — check the external n8n 07:00 cron and Twilio.',
+      href: '/dispatch',
+    });
+  }
+
+  if (kbDocs === 0) {
+    alerts.push({
+      level: 'warning',
+      title: 'Knowledge base is empty',
+      detail: 'search_knowledge returns nothing, so Capo answers legal/technical questions without a source.',
+    });
+  }
+
+  const order: Record<AlertLevel, number> = { critical: 0, warning: 1 };
+  alerts.sort((a, b) => order[a.level] - order[b.level]);
+
+  return {
+    alerts,
+    activation: activation.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    today: {
+      dispatchesToday,
+      messagesToday: messages.filter(m => lisbonDateKey(m.created_at) === todayKey).length,
+      tasksCompletedToday: tasks.filter(t => t.status === 'done' && lisbonDateKey(t.updated_at) === todayKey).length,
+      proposalsPending: proposals.filter(p => p.status === 'pending').length,
+    },
+    knowledge: { documents: kbDocs, chunks: kbChunks },
+  };
+}
+
 export async function loadDispatchLog(): Promise<{ rows: DispatchRow[]; companyNames: Map<string, string> }> {
   const db = getDb();
   const [rows, companies] = await Promise.all([
