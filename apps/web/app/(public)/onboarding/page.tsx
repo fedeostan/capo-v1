@@ -72,8 +72,15 @@ export default async function OnboardingPage({
             placeholder="912 345 678"
             className="w-full rounded-lg border border-zinc-500/30 bg-background px-3 py-2.5 text-base outline-none focus:border-orange-600"
           />
+          {/* This number is the manager's own channel: api/whatsapp/route.ts
+              resolves the tenant by matching the sender against profiles.phone.
+              It is NOT where the daily briefing goes — that is the workers'
+              07:00 SMS, sent to workers.phone. The previous copy ("é para aqui
+              que o Capo envia as mensagens do dia") promised a message that
+              never arrives, at the exact moment the manager is deciding
+              whether to trust the product. */}
           <span className="block text-xs text-zinc-500">
-            É para aqui que o Capo envia as mensagens do dia.
+            É por aqui que podes falar com o Capo no WhatsApp, sem abrir a app.
           </span>
         </label>
         <button
