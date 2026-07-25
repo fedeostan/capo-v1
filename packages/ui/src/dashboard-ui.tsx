@@ -8,6 +8,31 @@ import type { Tables } from '@capo/db/types';
 export type DashboardTask = Tables<'dashboard_tasks'>;
 export type DashboardObra = Tables<'dashboard_obras'>;
 
+export interface AgendaCounts {
+  hoje: number;
+  amanha: number;
+  atrasadas: number;
+}
+
+export interface MaterialsGroup {
+  obraId: string | null;
+  obraName: string;
+  items: { material: string; forTasks: string[] }[];
+}
+
+export interface TeamMember {
+  id: string;
+  name: string;
+  trade: string | null;
+  phone: string | null;
+  recebeSms: boolean;
+  today: number;
+  tomorrow: number;
+  overdue: number;
+  open: number;
+  todayTitles: string[];
+}
+
 // TODO(Federico): microcopy dial — this map is the manager-facing voice of the
 // dashboard (same category as the SMS trim policy and card templates). Tune
 // the status labels, the per-screen empty states passed from each page, and
@@ -89,7 +114,20 @@ export function EmptyState({ text, cta }: { text: string; cta?: { href: string; 
 // read-mostly, so "nothing here yet" always means "go ask Capo".
 const TALK_TO_CAPO = { href: '/', label: 'Falar com o Capo' };
 
-function TaskCard({ task, showOverdue }: { task: DashboardTask; showOverdue?: boolean }) {
+// Optional per-row slot (the Concluir/Reabrir toggle). A render prop, not an
+// import, so this package stays pure presentation with no server-action or
+// core dependency.
+type RenderTaskExtra = (task: DashboardTask) => React.ReactNode;
+
+function TaskCard({
+  task,
+  showOverdue,
+  renderExtra,
+}: {
+  task: DashboardTask;
+  showOverdue?: boolean;
+  renderExtra?: RenderTaskExtra;
+}) {
   return (
     <div className="flex items-start justify-between gap-3 rounded-xl border border-zinc-500/20 p-3">
       <div className="min-w-0">
@@ -109,14 +147,34 @@ function TaskCard({ task, showOverdue }: { task: DashboardTask; showOverdue?: bo
             )}
           </p>
         )}
+        {task.materials && task.materials.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {task.materials.map(m => (
+              <span key={m} className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[11px] text-zinc-500">
+                {m}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
-      <StatusBadge status={task.status} />
+      <div className="flex shrink-0 items-center gap-2">
+        <StatusBadge status={task.status} />
+        {renderExtra?.(task)}
+      </div>
     </div>
   );
 }
 
 // Hoje/Amanhã: tasks grouped under their obra.
-export function TasksByObra({ tasks, empty }: { tasks: DashboardTask[]; empty: string }) {
+export function TasksByObra({
+  tasks,
+  empty,
+  renderExtra,
+}: {
+  tasks: DashboardTask[];
+  empty: string;
+  renderExtra?: RenderTaskExtra;
+}) {
   if (tasks.length === 0) return <EmptyState text={empty} cta={TALK_TO_CAPO} />;
   const groups = new Map<string, DashboardTask[]>();
   for (const task of tasks) {
@@ -129,10 +187,113 @@ export function TasksByObra({ tasks, empty }: { tasks: DashboardTask[]; empty: s
         <section key={obra} className="space-y-2">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{obra}</h2>
           {obraTasks.map(task => (
-            <TaskCard key={task.id} task={task} />
+            <TaskCard key={task.id} task={task} renderExtra={renderExtra} />
           ))}
         </section>
       ))}
+    </>
+  );
+}
+
+// NB: the Hoje/Amanhã/Atrasadas switcher deliberately does NOT live here. It
+// is navigation between three web-app routes that the operator app will never
+// render, and it wants next/link for a soft transition — which this package
+// cannot have, since it stays framework-free on purpose. It lives at
+// apps/web/app/(app)/agenda-tabs.tsx instead.
+
+// Materiais — the anticipation screen. `00_VISION/02-solution-mvp.md` calls
+// this the killer feature: "check tomorrow's materials today" is what stops
+// the manager being the one who drives to the supplier at 08:00.
+export function MaterialsList({ groups, empty }: { groups: MaterialsGroup[]; empty: string }) {
+  if (groups.length === 0) return <EmptyState text={empty} cta={TALK_TO_CAPO} />;
+  return (
+    <>
+      {groups.map(group => (
+        <section key={group.obraName} className="space-y-2">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            {group.obraId ? <a href={`/obras/${group.obraId}`}>{group.obraName}</a> : group.obraName}
+          </h2>
+          <ul className="divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
+            {group.items.map(item => (
+              <li key={item.material} className="flex items-start gap-3 p-3">
+                <span aria-hidden className="mt-0.5 text-zinc-500">
+                  ▢
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{item.material}</p>
+                  <p className="text-xs text-zinc-500">para: {item.forTasks.join(', ')}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </>
+  );
+}
+
+// Equipa — the crew, their load, and whether the 07:00 SMS can reach them.
+export function TeamList({
+  members,
+  unassignedToday,
+  empty,
+}: {
+  members: TeamMember[];
+  unassignedToday: DashboardTask[];
+  empty: string;
+}) {
+  if (members.length === 0 && unassignedToday.length === 0) return <EmptyState text={empty} cta={TALK_TO_CAPO} />;
+  return (
+    <>
+      {unassignedToday.length > 0 && (
+        <section className="rounded-xl border border-amber-500/50 bg-amber-500/10 p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+            Sem responsável hoje
+          </p>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            Ninguém recebe SMS sobre {unassignedToday.length === 1 ? 'esta tarefa' : 'estas tarefas'}.
+          </p>
+          <ul className="mt-2 space-y-1">
+            {unassignedToday.map(task => (
+              <li key={task.id} className="text-sm">
+                {task.title}
+                {task.job_name && <span className="text-zinc-500"> · {task.job_name}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section className="space-y-2">
+        {members.map(member => (
+          <div key={member.id} className="rounded-xl border border-zinc-500/20 p-3">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-sm font-medium">
+                {member.name}
+                {member.trade && <span className="font-normal text-zinc-500"> · {member.trade}</span>}
+              </p>
+              {member.overdue > 0 && (
+                <span className="shrink-0 text-xs font-medium text-red-600">
+                  {member.overdue} {member.overdue === 1 ? 'atrasada' : 'atrasadas'}
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">
+              Hoje {member.today} · Amanhã {member.tomorrow} · {member.open} em aberto
+            </p>
+            {member.todayTitles.length > 0 && (
+              <p className="mt-1 text-xs text-zinc-500">{member.todayTitles.join(' · ')}</p>
+            )}
+            {member.recebeSms ? (
+              <p className="mt-1.5 text-[11px] text-zinc-500">📱 {member.phone} — recebe o SMS das 07:00</p>
+            ) : (
+              <p className="mt-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                Sem telemóvel registado — não recebe o SMS das 07:00. Pede ao Capo para adicionar o número.
+              </p>
+            )}
+          </div>
+        ))}
+      </section>
     </>
   );
 }
@@ -270,7 +431,15 @@ export function TimelineList({
 }
 
 // Atrasadas: flat list, most overdue first (ordering comes from the query).
-export function OverdueList({ tasks, empty }: { tasks: DashboardTask[]; empty: string }) {
+export function OverdueList({
+  tasks,
+  empty,
+  renderExtra,
+}: {
+  tasks: DashboardTask[];
+  empty: string;
+  renderExtra?: RenderTaskExtra;
+}) {
   if (tasks.length === 0) return <EmptyState text={empty} />;
   return (
     <section className="space-y-2">
@@ -281,7 +450,7 @@ export function OverdueList({ tasks, empty }: { tasks: DashboardTask[]; empty: s
               {task.job_name}
             </p>
           )}
-          <TaskCard task={task} showOverdue />
+          <TaskCard task={task} showOverdue renderExtra={renderExtra} />
         </div>
       ))}
     </section>

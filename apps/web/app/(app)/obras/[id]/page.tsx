@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { requireAuth } from '@capo/db/session';
 import { loadObraDetail } from '@/app/dashboard-data';
 import { ScreenShell, TimelineList } from '@capo/ui/dashboard-ui';
-import TaskActions from './task-actions';
+import TaskToggle from '../../task-toggle';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +34,7 @@ export default async function ObraDetailPage({ params }: { params: Promise<{ id:
       <TimelineList
         tasks={detail.tasks}
         empty="Sem tarefas nesta obra ainda — pede ao Capo para criar o plano."
-        renderExtra={task => <TaskActions taskId={task.id} status={task.status} />}
+        renderExtra={task => <TaskToggle taskId={task.id} status={task.status} />}
       />
     </ScreenShell>
   );

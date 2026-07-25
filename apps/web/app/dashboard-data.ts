@@ -8,11 +8,11 @@
 // kept on top as belt-and-braces.
 import type { AuthContext } from '@capo/db/session';
 import type { Tables } from '@capo/db/types';
-import type { DashboardObra, DashboardTask } from '@capo/ui/dashboard-ui';
+import type { AgendaCounts, DashboardObra, DashboardTask, MaterialsGroup, TeamMember } from '@capo/ui/dashboard-ui';
 
-export type { DashboardObra, DashboardTask };
+export type { AgendaCounts, DashboardObra, DashboardTask, MaterialsGroup, TeamMember };
 
-type Bucket = 'active_today' | 'active_tomorrow' | 'overdue';
+type Bucket = 'active_today' | 'active_tomorrow' | 'overdue' | 'active_this_week';
 
 export async function loadTasks({ db, companyId }: AuthContext, bucket: Bucket): Promise<DashboardTask[]> {
   const query = db.from('dashboard_tasks').select('*').eq('company_id', companyId).eq(bucket, true);
@@ -37,6 +37,97 @@ export async function loadDayLabel({ db }: AuthContext, offsetDays: 0 | 1): Prom
     day: 'numeric',
     month: 'long',
   }).format(day);
+}
+
+// Counts for the Hoje/Amanhã/Atrasadas segmented header. One pass over the
+// same view the lists themselves read, so a badge can never contradict the
+// list it links to.
+export async function loadAgendaCounts({ db, companyId }: AuthContext): Promise<AgendaCounts> {
+  const { data } = await db
+    .from('dashboard_tasks')
+    .select('active_today, active_tomorrow, overdue')
+    .eq('company_id', companyId);
+  const counts: AgendaCounts = { hoje: 0, amanha: 0, atrasadas: 0 };
+  for (const row of data ?? []) {
+    if (row.active_today) counts.hoje += 1;
+    if (row.active_tomorrow) counts.amanha += 1;
+    if (row.overdue) counts.atrasadas += 1;
+  }
+  return counts;
+}
+
+// "Tonight's actions" (03_PRODUCT/02-flows.md §Flow 3): everything the manager
+// has to buy or arrange before the crew arrives. Grouped by obra because that
+// is how a builder shops — one trip per site — and each material carries the
+// tasks that need it so the list stays challengeable rather than magic.
+export async function loadMaterials(ctx: AuthContext, bucket: Bucket): Promise<MaterialsGroup[]> {
+  const tasks = await loadTasks(ctx, bucket);
+  const byObra = new Map<string, { obraId: string | null; items: Map<string, Set<string>> }>();
+
+  for (const task of tasks) {
+    // `?? []` and not `!` on purpose: if 0013 has not been applied yet the
+    // column is simply absent, and the screen shows "nothing to buy" instead
+    // of throwing.
+    const materials = task.materials ?? [];
+    if (materials.length === 0) continue;
+    const key = task.job_name ?? 'Sem obra';
+    const group = byObra.get(key) ?? { obraId: task.job_id, items: new Map<string, Set<string>>() };
+    for (const material of materials) {
+      const forTasks = group.items.get(material) ?? new Set<string>();
+      if (task.title) forTasks.add(task.title);
+      group.items.set(material, forTasks);
+    }
+    byObra.set(key, group);
+  }
+
+  return [...byObra.entries()].map(([obraName, { obraId, items }]) => ({
+    obraId,
+    obraName,
+    items: [...items.entries()]
+      .map(([material, forTasks]) => ({ material, forTasks: [...forTasks] }))
+      .sort((a, b) => a.material.localeCompare(b.material, 'pt')),
+  }));
+}
+
+// The team screen: who is on the crew, whether the 07:00 SMS can actually
+// reach them, and what each of them is carrying. `recebeSms` mirrors the
+// dispatch_tasks_today predicate (active worker with a phone) — a worker
+// without a number silently gets nothing, which is worth showing loudly.
+export async function loadTeam(ctx: AuthContext): Promise<TeamMember[]> {
+  const { db, companyId } = ctx;
+  const [{ data: workers }, { data: tasks }] = await Promise.all([
+    db.from('workers').select('id, name, trade, phone').eq('company_id', companyId).eq('active', true).order('name'),
+    db.from('dashboard_tasks').select('*').eq('company_id', companyId),
+  ]);
+
+  return (workers ?? []).map(worker => {
+    const mine = (tasks ?? []).filter(t => t.assignee_worker_id === worker.id);
+    return {
+      id: worker.id,
+      name: worker.name,
+      trade: worker.trade,
+      phone: worker.phone,
+      recebeSms: Boolean(worker.phone),
+      today: mine.filter(t => t.active_today).length,
+      tomorrow: mine.filter(t => t.active_tomorrow).length,
+      overdue: mine.filter(t => t.overdue).length,
+      open: mine.length,
+      todayTitles: mine.filter(t => t.active_today).map(t => t.title ?? '').filter(Boolean),
+    };
+  });
+}
+
+// Tasks with nobody assigned are invisible to the SMS dispatch entirely — they
+// will never reach a worker. Surfaced on the team screen so the gap is
+// impossible to miss.
+//
+// `assignee_worker_id` arrives with migration 0013. Before it lands the column
+// is absent from every row, which would make EVERY task look unassigned and
+// raise a false alarm — so the check is "the column exists and is empty",
+// not "the field is falsy".
+export async function loadUnassignedToday(ctx: AuthContext): Promise<DashboardTask[]> {
+  const tasks = await loadTasks(ctx, 'active_today');
+  return tasks.filter(t => 'assignee_worker_id' in t && !t.assignee_worker_id);
 }
 
 export async function loadObras({ db, companyId }: AuthContext): Promise<DashboardObra[]> {

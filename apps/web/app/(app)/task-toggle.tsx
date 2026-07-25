@@ -1,13 +1,17 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { completeTask, reopenTask } from './actions';
+import { completeTask, reopenTask } from './task-actions';
 
-export default function TaskActions({ taskId, status }: { taskId: string; status: string }) {
+// Shared by the obra timeline and every agenda list. `taskId`/`status` are
+// typed loosely because the dashboard views expose every column as nullable;
+// a row without an id is not actionable and renders nothing.
+export default function TaskToggle({ taskId, status }: { taskId: string | null; status: string | null }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   function run(action: (id: string) => Promise<void>) {
+    if (!taskId) return;
     setError(null);
     startTransition(async () => {
       try {
@@ -18,7 +22,7 @@ export default function TaskActions({ taskId, status }: { taskId: string; status
     });
   }
 
-  if (status === 'cancelled') return null;
+  if (!taskId || status === 'cancelled') return null;
 
   if (status === 'done') {
     return (
@@ -39,6 +43,7 @@ export default function TaskActions({ taskId, status }: { taskId: string; status
         type="button"
         disabled={pending}
         onClick={() => run(completeTask)}
+        aria-label="Marcar como concluída"
         className="shrink-0 rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
       >
         Concluir
