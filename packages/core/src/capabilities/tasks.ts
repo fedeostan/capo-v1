@@ -98,22 +98,35 @@ export const listTasksInput = z.object({
   job_id: z.string().uuid().optional(),
   assignee_worker_id: z.string().uuid().optional(),
   status: taskStatus.optional(),
+  due_from: isoDate.optional().describe('Only tasks with due_date on or after this date.'),
+  due_until: isoDate.optional().describe('Only tasks with due_date on or before this date.'),
+  include_done: z
+    .boolean()
+    .optional()
+    .describe('Include done/cancelled tasks. Defaults to false — normally the manager is asking about open work.'),
 });
 
 export const listTasks: CapoTool<z.infer<typeof listTasksInput>> = {
   name: 'list_tasks',
-  description: 'List tasks (including duration_days, materials, and dependencies), optionally filtered by job, worker, or status. Read-only.',
+  description:
+    'List tasks (including duration_days, materials, and dependencies), optionally filtered by job, worker, status, or due-date range. Read-only. For "what is on today/tomorrow/overdue" use the `agenda` tool instead — it matches the screens the manager is looking at.',
   inputSchema: listTasksInput,
   async execute(input, ctx) {
     let query = ctx.db
       .from('tasks')
       .select('*, job:jobs(name), assignee:workers(name)')
       .eq('company_id', ctx.companyId)
+      .order('due_date', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(100);
     if (input.job_id) query = query.eq('job_id', input.job_id);
     if (input.assignee_worker_id) query = query.eq('assignee_worker_id', input.assignee_worker_id);
     if (input.status) query = query.eq('status', input.status);
+    if (input.due_from) query = query.gte('due_date', input.due_from);
+    if (input.due_until) query = query.lte('due_date', input.due_until);
+    // Closed work is noise unless asked for; an explicit `status` filter always
+    // wins, so "list the done ones" still works without include_done.
+    if (!input.include_done && !input.status) query = query.not('status', 'in', '("done","cancelled")');
     const { data, error } = await query;
     if (error) throw new Error(`list_tasks failed: ${error.message}`);
 

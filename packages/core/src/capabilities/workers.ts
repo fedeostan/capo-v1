@@ -68,7 +68,8 @@ export const updateWorker: CapoTool<z.infer<typeof updateWorkerInput>> = {
 
 export const listWorkers: CapoTool<Record<string, never>> = {
   name: 'list_workers',
-  description: 'List the team workers with their trades. Read-only.',
+  description:
+    "List the team: trade, whether they are reachable by the 07:00 SMS briefing, and how loaded they are today/tomorrow. Use it to answer 'quem está livre?' and before assigning work. Read-only.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     const { data, error } = await ctx.db
@@ -78,7 +79,33 @@ export const listWorkers: CapoTool<Record<string, never>> = {
       .eq('active', true)
       .order('name');
     if (error) throw new Error(`list_workers failed: ${error.message}`);
-    return { workers: data };
+
+    // Load comes from dashboard_tasks so "hoje"/"amanhã" mean exactly what
+    // they mean on the Hoje/Amanhã screens and in the `agenda` tool.
+    // Best-effort: a worker roster is still useful without the tallies.
+    const load = new Map<string, { hoje: number; amanha: number; abertas: number }>();
+    const { data: rows } = await ctx.db
+      .from('dashboard_tasks')
+      .select('assignee_worker_id, active_today, active_tomorrow')
+      .eq('company_id', ctx.companyId);
+    for (const row of rows ?? []) {
+      if (!row.assignee_worker_id) continue;
+      const entry = load.get(row.assignee_worker_id) ?? { hoje: 0, amanha: 0, abertas: 0 };
+      entry.abertas += 1;
+      if (row.active_today) entry.hoje += 1;
+      if (row.active_tomorrow) entry.amanha += 1;
+      load.set(row.assignee_worker_id, entry);
+    }
+
+    return {
+      workers: (data ?? []).map(w => ({
+        ...w,
+        // The dispatch view requires an active worker WITH a phone; without
+        // one the manager has to relay the day's tasks by hand.
+        recebe_sms: Boolean(w.phone),
+        tarefas: load.get(w.id) ?? { hoje: 0, amanha: 0, abertas: 0 },
+      })),
+    };
   },
 };
 
