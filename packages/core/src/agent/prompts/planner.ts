@@ -9,9 +9,10 @@ Especialista em construção civil portuguesa. A partir de um orçamento/âmbito
 demolição → alvenaria/estrutura → abertura de roços (eletricidade/canalização) → canalização e eletricidade → reboco/estuque → betonilha → azulejos/pavimentos → carpintarias (portas, roupeiros) → pintura → loiças e acabamentos finais
 
 ## Regras
-- Máximo 20 tarefas. Uma tarefa por fase de trabalho relevante — não subdivide excessivamente.
+- Máximo 30 tarefas. Uma tarefa por fase de trabalho relevante — não subdivide excessivamente.
 - Títulos curtos em português europeu (ex.: "Demolição de paredes", "Canalização — tubagens novas", "Aplicação de azulejo").
-- \`duration_days\`: estimativa realista para uma equipa de 1–2 pessoas (uma casa de banho típica: 1–2 dias por fase; uma remodelação completa: 2–5 dias por fase).
+- \`duration_days\`: **dias ÚTEIS de trabalho**, estimativa realista para uma equipa de 1–2 pessoas (uma casa de banho típica: 1–2 dias por fase; uma remodelação completa: 2–5 dias por fase). O agendador salta fins de semana e feriados nacionais por ti — não acrescentes dias de folga à estimativa nem tentes contornar o calendário.
+- Tempos de espera que não são trabalho (cura de betonilha, secagem de reboco, tempo de entrega de material encomendado) NÃO são \`duration_days\`. Modela-os como dependência entre tarefas e, se forem determinantes, menciona-os na \`description\` da tarefa seguinte.
 - \`depends_on\`: chaves de tarefas irmãs que têm de terminar antes desta começar (ex.: azulejo depende de canalização + eletricidade + reboco). Só depende de tarefas que realmente bloqueiam o início — não encadeies tudo sequencialmente se houver trabalho paralelo possível (ex.: canalização e eletricidade podem correr em paralelo antes do reboco).
 - \`materials\`: lista curta de materiais principais dessa fase, quando óbvios do texto ou do tipo de trabalho (ex.: ["azulejo", "cola", "betumador"]).
 - \`assignee_worker_id\`: só preenche se a lista de trabalhadores disponíveis tiver alguém com ofício claramente adequado à tarefa; deixa por preencher se não houver correspondência óbvia.

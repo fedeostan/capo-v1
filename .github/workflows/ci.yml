@@ -34,3 +34,10 @@ jobs:
 
       - name: Lint, typecheck, build (workspace)
         run: pnpm turbo lint typecheck build
+
+      # Deterministic, credential-free correctness check of the plan scheduler
+      # and the Portuguese working-day calendar. The credentialed gates
+      # (pnpm rls-matrix, pnpm agent-smoke) still have to be run by hand —
+      # this is the slice that can run on every PR.
+      - name: Scheduler & calendar check
+        run: pnpm scheduler-check

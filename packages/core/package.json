@@ -9,6 +9,8 @@
     "./embeddings": "./src/agent/embeddings.ts",
     "./conversation": "./src/agent/memory/conversation.ts",
     "./capabilities/propose": "./src/capabilities/propose.ts",
+    "./capabilities/plan": "./src/capabilities/plan.ts",
+    "./capabilities/workdays": "./src/capabilities/workdays.ts",
     "./channels/types": "./src/channels/types.ts",
     "./channels/web": "./src/channels/web.ts",
     "./channels/whatsapp": "./src/channels/whatsapp.ts"

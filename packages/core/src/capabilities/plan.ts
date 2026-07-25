@@ -4,6 +4,7 @@ import { getModel } from '../agent/models';
 import { embedQuery } from '../agent/embeddings';
 import plannerPrompt from '../agent/prompts/planner';
 import { createProposal } from './propose';
+import { addWorkdays, nextWorkday, workdayAfter } from './workdays';
 import type { CapoTool } from './types';
 
 const isoDate = z
@@ -32,7 +33,7 @@ const relativePlanTaskSchema = z.object({
 });
 
 const relativePlanSchema = z
-  .object({ tasks: z.array(relativePlanTaskSchema).min(1).max(20) })
+  .object({ tasks: z.array(relativePlanTaskSchema).min(1).max(30) })
   .superRefine((plan, ctx) => {
     const keys = new Set(plan.tasks.map(t => t.key));
     if (keys.size !== plan.tasks.length) {
@@ -72,27 +73,20 @@ const relativePlanSchema = z
 
 type RelativePlanTask = z.infer<typeof relativePlanTaskSchema>;
 
-function isWeekend(iso: string): boolean {
-  const day = new Date(`${iso}T00:00:00Z`).getUTCDay();
-  return day === 0 || day === 6;
-}
-
-function addDays(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function nextWorkday(iso: string): string {
-  let d = iso;
-  while (isWeekend(d)) d = addDays(d, 1);
-  return d;
-}
-
 // Deterministic day-by-day scheduler: topological order over the dependency
 // graph, then each task starts the workday after its latest dependency ends
-// (or the plan start date for a root task), skipping Sat/Sun for start_date.
-function scheduleTasks(tasks: RelativePlanTask[], startDate: string): (RelativePlanTask & { start_date: string; due_date: string })[] {
+// (or the plan start date for a root task).
+//
+// Durations are counted in WORKING days, not calendar days (see ./workdays):
+// a 5-day task starting Thursday runs Thu–Wed, not Thu–Mon. Weekends and
+// Portuguese national holidays are skipped for both the start and the span.
+// Exported (not because anything else calls it, but) so scripts/scheduler-check.mts
+// can assert on it directly: it is pure, it is the piece most likely to break
+// silently, and it is the only part of the planner verifiable without an API key.
+export function scheduleTasks(
+  tasks: RelativePlanTask[],
+  startDate: string,
+): (RelativePlanTask & { start_date: string; due_date: string })[] {
   const byKey = new Map(tasks.map(t => [t.key, t]));
   const scheduled = new Map<string, RelativePlanTask & { start_date: string; due_date: string }>();
   const order: string[] = [];
@@ -114,12 +108,12 @@ function scheduleTasks(tasks: RelativePlanTask[], startDate: string): (RelativeP
     for (const dep of t.depends_on ?? []) {
       const depTask = scheduled.get(dep);
       if (depTask) {
-        const dayAfter = addDays(depTask.due_date, 1);
+        const dayAfter = workdayAfter(depTask.due_date);
         if (dayAfter > earliestStart) earliestStart = dayAfter;
       }
     }
     const start = nextWorkday(earliestStart);
-    const due = addDays(start, t.duration_days - 1);
+    const due = addWorkdays(start, t.duration_days);
     scheduled.set(key, { ...t, start_date: start, due_date: due });
   }
 
