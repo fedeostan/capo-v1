@@ -120,27 +120,31 @@ The code is complete and `pnpm turbo lint typecheck build` is green. These
 steps need a human because they touch the live Supabase project or a real
 phone.
 
-1. **Apply migration `0014_language.sql`.** The Supabase MCP was not
-   authorized in the session that wrote it, so the file exists but has NOT
-   been applied. Apply it via the Supabase MCP `apply_migration` (or the SQL
-   editor) against project `qdfmvhjrcmeoxbattnsm`.
-   ⚠️ Apply this **before** deploying the app. The migration drops and
-   recreates `complete_onboarding` with a 4th `p_language` parameter that has
-   a DEFAULT, precisely so the currently-deployed 3-argument caller keeps
-   working in the window between migration and deploy. In the other order,
-   signup breaks.
-2. **Regenerate `packages/db/src/types.ts`** via the Supabase MCP
-   `generate_typescript_types` and commit it. The two `language` columns and
-   the new `complete_onboarding` signature were **hand-patched** to keep the
-   workspace compiling; the regenerated file should be identical, and any
-   diff beyond those three spots is worth reading.
-3. **Run the gates** once the migration is applied: `pnpm rls-matrix` (the
-   column grants changed — it must stay green), then `pnpm agent-smoke`
-   (there is a new 6th check that seeds an `en-US` tenant and asserts the
-   reply is English), then diff
-   `select pg_get_viewdef('dispatch_tasks_today'::regclass);` against
-   `docs/plans/dispatch-viewdef-baseline.sql` — this migration touches no
-   view, so it must be byte-identical.
+1. ✅ **DONE (2026-07-26)** — migrations `0013_task_board.sql` and
+   `0014_language.sql` applied to `qdfmvhjrcmeoxbattnsm` via the Supabase
+   connector. The DB had been sitting at `0012` while the app was already
+   deployed — i.e. exactly the ordering this item warned against — so
+   production was in fact broken until these landed: `task_board` did not
+   exist (every task/materials/obras read failed) and `complete_onboarding`
+   still took 3 arguments against a 4-argument caller (signup failed).
+   Verified after applying: `dispatch_tasks_today` viewdef md5 **byte-identical**
+   to the pre-migration baseline (`95a38640773ca0d0ae9267b696d69e2f`); row
+   counts unchanged (2 companies, 1 profile, 11 tasks); `task_board` is
+   `security_invoker` and returns **0 rows to `anon`**.
+2. ✅ **DONE (2026-07-26)** — `packages/db/src/types.ts` reconciled against the
+   live schema. One real discrepancy was found and fixed: the merge had left
+   `dashboard_tasks` typed with five columns it does not have
+   (`active_this_week`, `assignee_worker_id`, `duration_days`, `job_address`,
+   `materials`) — leftovers from a migration that was deleted during the
+   reconciliation in PR #9. Nothing read them, but the types were lying. The
+   block now matches the live view's 15 columns exactly.
+3. ✅ **DONE (2026-07-26)** — gates re-run against the migrated DB:
+   `pnpm rls-matrix` → **26/26 visibility, 3/3 adversarial blocked** (including
+   "tenant self-upgrade of subscription_status", which matters because 0014
+   re-granted column privileges on `companies`), and `pnpm agent-smoke` →
+   **9/9**, with the `agenda` and `materials_outlook` tool-choice checks and the
+   `en-US` locale check all green. Seeded test tenants cleaned up; row counts
+   confirmed back to baseline.
 4. **Test voice notes against the live Meta test tier** — this is the only
    real gate on the audio path, since there is no test suite:
    a. pt-PT voice note → correct transcript + coherent reply.
@@ -183,9 +187,17 @@ No migration of its own — it reads `task_board` from item 8's branch, which
 already exposes `materials`, `assignee_worker_id` and the date window. So
 nothing here blocks a deploy; it goes live with the code.
 
-1. **Look at `/materiais` on a company with real tasks.** The list only has
-   content if the planner recorded `materials` on those tasks. Plans generated
-   before this change may have none — regenerate one to see it populated.
+1. ⚠️ **`/materiais` will look EMPTY on your real data, and that is expected.**
+   Checked 2026-07-26: all 11 existing production tasks have `materials = null`.
+   They predate the planner writing materials, and most were created by hand
+   through chat. The screen is not broken — there is genuinely nothing to buy
+   on record.
+   The feature itself is verified working: `pnpm agent-smoke` generated a fresh
+   plan and `materials_outlook` correctly answered *"Amanhã só precisas de
+   tratar do contentor de entulho, para a demolição da casa de banho"*.
+   **To see it populated on your own data**, generate a plan for a real
+   orçamento (the planner now records materials per phase), or just tell Capo
+   what a given task needs.
 2. **Read the operator Health page** (`/` on `capo-operator`) once with real
    data and sanity-check the alert thresholds against your own judgement: a
    proposal is "stale" after 24h, a company "quiet" after 7 days, "stuck at
