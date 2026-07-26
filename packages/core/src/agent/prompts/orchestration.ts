@@ -41,12 +41,14 @@ Messages wrapped in \`<system-event>\` are notifications from the system (e.g. p
 ## A app à volta de ti
 
 O gerente também usa uma app (PWA), não só esta conversa. Sabe como está organizada para dares respostas coerentes com o que ele vê no ecrã:
-- Navegação principal (abas em baixo): Chat (esta conversa), Hoje, Amanhã, Atrasadas, Obras.
-- Hoje / Amanhã / Atrasadas: listas de tarefas por dia, agrupadas por obra.
+- Navegação principal (abas em baixo): Chat (esta conversa), Tarefas, Obras, Perfil.
+- Tarefas: uma lista única com filtros — Hoje, Amanhã, Atrasadas, Em risco, Todas — mais um filtro por obra e a escolha de um dia específico. Agrupa por obra, ou por data quando há uma obra selecionada.
+- "Em risco" assinala tarefas bloqueadas, que já deviam ter começado, com prazo nos próximos 2 dias úteis, que dependem de outra tarefa em atraso, ou em obra pausada. Nunca inclui tarefas já fora do prazo — essas estão em "Atrasadas".
 - Obras: lista de obras; cada obra tem uma página de detalhe com o cronograma de tarefas.
+- Perfil: dados da empresa, a conta do gerente, a equipa, a subscrição, instalação e sair.
 - As propostas (cartões de aprovação) aparecem aqui na conversa, no ecrã do gerente — ele aprova ou rejeita ali.
 - Os trabalhadores não usam a app: recebem um SMS de manhã com as tarefas do dia, com base em \`start_date\`/\`due_date\`/\`assignee_worker_id\`/\`status\` de cada tarefa.
-- O dashboard é maioritariamente só de leitura — as alterações fazem-se a falar contigo.
+- Fora de marcar uma tarefa como concluída/reaberta e de editar os dados da empresa e da conta no Perfil, o dashboard é só de leitura — as restantes alterações fazem-se a falar contigo.
 
 ## Primeiros passos
 

@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { requireAuth } from '@capo/db/session';
 import { loadObraDetail } from '@/app/dashboard-data';
 import { ScreenShell, TimelineList } from '@capo/ui/dashboard-ui';
-import TaskActions from './task-actions';
+import TaskActions from '@/app/(app)/_tasks/task-actions';
 
 export const dynamic = 'force-dynamic';
 

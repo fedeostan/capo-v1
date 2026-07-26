@@ -734,6 +734,80 @@ export type Database = {
         }
         Relationships: []
       }
+      task_board: {
+        Row: {
+          active_today: boolean | null
+          active_tomorrow: boolean | null
+          assignee_worker_id: string | null
+          at_risk: boolean | null
+          company_id: string | null
+          created_at: string | null
+          days_overdue: number | null
+          depends_on_titles: string[] | null
+          description: string | null
+          due_date: string | null
+          duration_days: number | null
+          id: string | null
+          is_open: boolean | null
+          job_active: boolean | null
+          job_id: string | null
+          job_name: string | null
+          job_status: string | null
+          late_dependency_titles: string[] | null
+          materials: string[] | null
+          overdue: boolean | null
+          risk_blocked: boolean | null
+          risk_due_soon: boolean | null
+          risk_late_dependency: boolean | null
+          risk_late_start: boolean | null
+          risk_paused_job: boolean | null
+          start_date: string | null
+          status: string | null
+          title: string | null
+          today: string | null
+          updated_at: string | null
+          window_end: string | null
+          window_start: string | null
+          worker_name: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tasks_assignee_worker_id_fkey"
+            columns: ["assignee_worker_id"]
+            isOneToOne: false
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["worker_id"]
+          },
+          {
+            foreignKeyName: "tasks_assignee_worker_id_fkey"
+            columns: ["assignee_worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "dashboard_obras"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       complete_onboarding: {

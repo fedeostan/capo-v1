@@ -75,7 +75,7 @@ Esta empresa ainda não tem obras, equipa nem tarefas registadas — é a primei
 1. Primeira obra (nome, morada, cliente)
 2. Equipa (nomes, funções, telemóveis em formato E.164)
 3. Primeiras tarefas
-Menciona, quando fizer sentido, que os resultados aparecem nas abas Hoje/Amanhã/Obras.`;
+Menciona, quando fizer sentido, que os resultados aparecem nas abas Tarefas/Obras.`;
   }
   if (snapshot.activeObras === 0 || snapshot.activeWorkers === 0) {
     const gaps = [

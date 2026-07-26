@@ -5,10 +5,14 @@ import { requireAuth } from '@capo/db/session';
 import { assertNotBlocked } from '@/lib/billing';
 import { logEvent } from '@/lib/log';
 
-// A manager tapping "Concluir"/"Reabrir" on the obra detail page IS an
-// explicit manager command — a sanctioned non-chat write path (every other
-// domain write only happens through Capo). Direct status update on the
-// RLS-scoped client; company_id filter is belt-and-braces on top of RLS.
+// Shared by /tarefas and /obras/[id] — hence the private `_tasks` folder
+// (the underscore keeps App Router from treating it as a route) rather than
+// one page reaching into the other's directory.
+//
+// A manager tapping "Concluir"/"Reabrir" IS an explicit manager command — a
+// sanctioned non-chat write path (every other domain write only happens
+// through Capo). Direct status update on the RLS-scoped client; company_id
+// filter is belt-and-braces on top of RLS.
 async function setTaskStatus(taskId: string, status: 'done' | 'pending', event: string): Promise<void> {
   const ctx = await requireAuth();
   await assertNotBlocked(ctx);
@@ -24,10 +28,11 @@ async function setTaskStatus(taskId: string, status: 'done' | 'pending', event: 
 
   logEvent(event, { companyId, taskId });
 
+  // /tarefas covers every date/risk filter now, so this list shrank from five
+  // paths to three: /hoje, /amanha and /atrasadas are next.config redirects,
+  // not routes, and there is nothing there to revalidate.
   if (data.job_id) revalidatePath(`/obras/${data.job_id}`);
-  revalidatePath('/hoje');
-  revalidatePath('/amanha');
-  revalidatePath('/atrasadas');
+  revalidatePath('/tarefas');
   revalidatePath('/obras');
 }
 
