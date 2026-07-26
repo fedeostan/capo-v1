@@ -10,6 +10,8 @@ export const cards: CardStrings = {
   },
   jobStatus: { active: 'activa', paused: 'en pausa', done: 'terminada' },
 
+  languageName: { 'pt-PT': 'portugués', 'es-ES': 'español', 'en-US': 'inglés' },
+
   formatDate: iso => {
     const [y, m, d] = iso.split('-');
     return `${d}/${m}/${y}`;
@@ -22,6 +24,10 @@ export const cards: CardStrings = {
     emptyChange: 'Cambio vacío',
     emptyPlan: 'Plan vacío',
     noTemplate: action => `No hay plantilla para la acción "${action}"`,
+    companyNotFound: 'Empresa no encontrada',
+    sameLanguage: 'Los datos ya están en ese idioma',
+    languageMoved: 'El idioma de los datos de la empresa ha cambiado mientras tanto',
+    nothingToTranslate: 'No hay nada que traducir',
   },
 
   createTask: p => {
@@ -71,6 +77,23 @@ export const cards: CardStrings = {
     name: v => `nombre → ${v}`,
     trade: v => `oficio → ${v}`,
     phone: v => `móvil → ${v}`,
+  },
+
+  translateCompany: p => {
+    const parts: string[] = [];
+    if (p.tasks) parts.push(`${p.tasks} tarea${p.tasks === 1 ? '' : 's'}`);
+    if (p.jobs) parts.push(`${p.jobs} obra${p.jobs === 1 ? '' : 's'}`);
+    if (p.workers) parts.push(`${p.workers} oficio${p.workers === 1 ? '' : 's'}`);
+    if (p.memories) parts.push(`${p.memories} nota${p.memories === 1 ? '' : 's'}`);
+    return [
+      `Traducir todos los datos de la empresa de ${p.fromLanguage} a ${p.toLanguage}:`,
+      `se reescribirán ${parts.join(' · ')}.`,
+      // Not decoration: the 07:00 SMS to the crew reads task titles and job
+      // names straight out of these rows. It is the one consequence the manager
+      // cannot foresee from the dashboard he is looking at.
+      `Los SMS del equipo también pasarán a estar en ${p.toLanguage}.`,
+      `Reversible durante ${p.undoDays} días.`,
+    ].join(' ');
   },
 
   plan: {

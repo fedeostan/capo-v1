@@ -37,6 +37,7 @@ const { getDb } = await import('@capo/db/client');
 const { handleInbound } = await import('@capo/core/agent');
 const { resolveProposal } = await import('@capo/core/capabilities/propose');
 const { isWorkday } = await import('@capo/core/capabilities/workdays');
+const { runTranslationBatch, revertTranslationBatch } = await import('@capo/core/translation');
 
 const db = getDb();
 const run = randomBytes(4).toString('hex');
@@ -125,6 +126,8 @@ async function cleanupTenant(t: Tenant | undefined) {
     await db.from('conversation_summaries').delete().in('conversation_id', conversationIds);
     await db.from('messages').delete().in('conversation_id', conversationIds);
   }
+  await db.from('translation_items').delete().eq('company_id', t.companyId);
+  await db.from('translation_batches').delete().eq('company_id', t.companyId);
   await db.from('proposals').delete().eq('company_id', t.companyId);
   const { data: tasks } = await db.from('tasks').select('id').eq('company_id', t.companyId);
   const taskIds = (tasks ?? []).map(x => x.id);
@@ -218,6 +221,7 @@ async function lastTurnToolNames(companyId: string): Promise<string[]> {
 let base: Tenant | undefined;
 let empty: Tenant | undefined;
 let english: Tenant | undefined;
+let translate: Tenant | undefined;
 try {
   console.log(`Seeding agent-smoke tenants (run ${run})…`);
   base = await seedTenant('base');
@@ -330,6 +334,133 @@ try {
     `reply: "${englishReply.slice(0, 160)}"`,
   );
 
+  // (9) Tenant-wide translation, end to end: chat → approval card → batch →
+  // undo. This is the only place the whole feature is exercised together, and
+  // the last assertion is the important one — a byte-identical restore proves
+  // the snapshot, the jsonb round-trip, the text[] reconstruction and the
+  // security-definer RPC all work, in one line.
+  translate = await seedTenant('translate', { withJobAndWorker: true });
+  const translateTenant = translate;
+  const paintTask = await must(
+    db
+      .from('tasks')
+      .insert({
+        company_id: translateTenant.companyId,
+        job_id: translateTenant.jobId,
+        title: 'Pintar a fachada do primeiro andar',
+        description: 'Duas demãos, começar pelo lado norte.',
+        materials: ['tinta branca', 'rolo', 'fita de pintor'],
+        source: 'manager',
+      })
+      .select()
+      .single(),
+    'translate: seed paint task',
+  );
+  await must(
+    db
+      .from('tasks')
+      .insert({ company_id: translateTenant.companyId, title: 'Ligar ao fornecedor de cimento', source: 'manager' })
+      .select()
+      .single(),
+    'translate: seed call task',
+  );
+  await must(
+    db
+      .from('memories')
+      .insert({ company_id: translateTenant.companyId, kind: 'fact', content: 'O cliente prefere trabalhos de manhã.' })
+      .select()
+      .single(),
+    'translate: seed memory',
+  );
+
+  // Snapshot every string BEFORE anything touches it.
+  const snapshot = async () => {
+    const { data: ts } = await db
+      .from('tasks')
+      .select('id, title, description, materials')
+      .eq('company_id', translateTenant.companyId)
+      .order('id');
+    const { data: js } = await db.from('jobs').select('id, name').eq('company_id', translateTenant.companyId).order('id');
+    const { data: ms } = await db
+      .from('memories')
+      .select('id, content')
+      .eq('company_id', translateTenant.companyId)
+      .order('id');
+    return JSON.stringify({ ts, js, ms });
+  };
+  const before = await snapshot();
+
+  await sendTurn(translateTenant, 'Quero tudo em inglês a partir de agora, também as tarefas e as obras.');
+  const translationProposals = (await pendingProposals(translateTenant.companyId)).filter(
+    p => p.action_name === 'apply_company_translation',
+  );
+  check(
+    'translation: "quero tudo em inglês" raises an apply_company_translation card',
+    translationProposals.length === 1,
+    `pending=[${(await pendingProposals(translateTenant.companyId)).map(p => p.action_name).join(', ')}]`,
+  );
+
+  if (translationProposals.length === 1) {
+    const card = translationProposals[0];
+    check(
+      'translation: the card states counts and that it is reversible',
+      /\b3\b/.test(card.rendered_text) && /revers/i.test(card.rendered_text),
+      `card="${card.rendered_text}"`,
+    );
+
+    const resolution = await resolveProposal(db, card.id, 'approve', { user: 'en-US', company: 'pt-PT' });
+    const batchId =
+      resolution.outcome === 'approved' ? (resolution.result as { batchId?: string })?.batchId : undefined;
+    const { data: afterApprove } = await db
+      .from('companies')
+      .select('language')
+      .eq('id', translateTenant.companyId)
+      .maybeSingle();
+    check(
+      'translation: approving flips the company dial and queues a batch',
+      afterApprove?.language === 'en-US' && typeof batchId === 'string',
+      `language=${afterApprove?.language} batchId=${batchId}`,
+    );
+
+    if (batchId) {
+      const status = await runTranslationBatch(db, batchId, { budgetMs: 120_000 });
+      const { data: items } = await db.from('translation_items').select('status').eq('batch_id', batchId);
+      const { data: translatedTasks } = await db
+        .from('tasks')
+        .select('id, title, materials')
+        .eq('company_id', translateTenant.companyId)
+        .order('id');
+      const painted = translatedTasks?.find(t => t.id === paintTask.id);
+
+      check(
+        'translation: the batch completes with every item applied',
+        status.status === 'completed' && (items ?? []).every(i => i.status === 'applied'),
+        `status=${status.status} items=[${(items ?? []).map(i => i.status).join(', ')}]`,
+      );
+      check(
+        'translation: titles changed and materials kept their array shape',
+        painted?.title !== 'Pintar a fachada do primeiro andar' && painted?.materials?.length === 3,
+        `title="${painted?.title}" materials=${JSON.stringify(painted?.materials)}`,
+      );
+
+      // The load-bearing assertion. Not "looks Portuguese again" — byte-identical.
+      const result = await revertTranslationBatch(db, batchId);
+      const after = await snapshot();
+      const { data: afterRevert } = await db
+        .from('companies')
+        .select('language')
+        .eq('id', translateTenant.companyId)
+        .maybeSingle();
+      check(
+        'translation: undo restores every string byte-for-byte and the dial with it',
+        after === before && afterRevert?.language === 'pt-PT',
+        after === before
+          ? `language=${afterRevert?.language} reverted=${result.reverted} skipped=${result.skipped}`
+          : 'stored text differs from the pre-translation snapshot',
+      );
+    }
+  }
+
   console.log('');
   for (const r of results) {
     console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.detail ? ` — ${r.detail}` : ''}`);
@@ -355,6 +486,11 @@ try {
     await cleanupTenant(english);
   } catch (e) {
     console.error(`cleanup(english): ${e instanceof Error ? e.message : String(e)}`);
+  }
+  try {
+    await cleanupTenant(translate);
+  } catch (e) {
+    console.error(`cleanup(translate): ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

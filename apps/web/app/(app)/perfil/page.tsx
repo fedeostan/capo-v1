@@ -6,8 +6,10 @@ import { EmptyState, ScreenShell } from '@capo/ui/dashboard-ui';
 import { loadTeam, loadTeamLoad } from '@/app/dashboard-data';
 import { getBillingState } from '@/lib/billing';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
-import { setCompanyLanguage, setUserLanguage } from './actions';
+import { countTranslatable } from '@capo/core/translation';
+import { revertTranslation, saveLanguage, setCompanyLanguage, setUserLanguage } from './actions';
 import { AccountForm, CompanyForm } from './profile-forms';
+import { TranslationProgress } from './translation-progress';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,8 +26,40 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
   );
 }
 
-// Plain radio pills + a submit button: no client JS, same posture as sign-out
-// below. Three options is not worth a client component.
+// Plain radio pills: no client JS, same posture as sign-out below. Three
+// options is not worth a client component.
+function Pills({ current }: { current: Locale }) {
+  return (
+    <div className="flex gap-2">
+      {LOCALES.map(option => (
+        <label key={option} className="flex-1">
+          <input
+            type="radio"
+            name="idioma"
+            value={option}
+            defaultChecked={option === current}
+            className="peer sr-only"
+          />
+          <span className="block cursor-pointer rounded-lg border border-zinc-500/30 py-2 text-center text-sm peer-checked:border-orange-600 peer-checked:bg-orange-600/10 peer-checked:font-semibold">
+            {getCatalog(option).meta.languageName}
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function SubmitButton({ label }: { label: string }) {
+  return (
+    <button
+      type="submit"
+      className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-semibold hover:bg-zinc-500/10"
+    >
+      {label}
+    </button>
+  );
+}
+
 function LanguagePills({
   current,
   action,
@@ -37,28 +71,8 @@ function LanguagePills({
 }) {
   return (
     <form action={action} className="space-y-2">
-      <div className="flex gap-2">
-        {LOCALES.map(option => (
-          <label key={option} className="flex-1">
-            <input
-              type="radio"
-              name="idioma"
-              value={option}
-              defaultChecked={option === current}
-              className="peer sr-only"
-            />
-            <span className="block cursor-pointer rounded-lg border border-zinc-500/30 py-2 text-center text-sm peer-checked:border-orange-600 peer-checked:bg-orange-600/10 peer-checked:font-semibold">
-              {getCatalog(option).meta.languageName}
-            </span>
-          </label>
-        ))}
-      </div>
-      <button
-        type="submit"
-        className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-semibold hover:bg-zinc-500/10"
-      >
-        {save}
-      </button>
+      <Pills current={current} />
+      <SubmitButton label={save} />
     </form>
   );
 }
@@ -68,33 +82,47 @@ function LanguagePills({
 export default async function PerfilPage({
   searchParams,
 }: {
-  searchParams: Promise<{ guardado?: string; erro?: string }>;
+  searchParams: Promise<{ guardado?: string; erro?: string; traducao?: string }>;
 }) {
   const { ctx, locale, t } = await requireAuthT();
   const { db, userId, companyId } = ctx;
   const { guardado, erro } = await searchParams;
 
-  const [{ data: company }, { data: profile }, { data: claims }, team, billing] = await Promise.all([
-    db.from('companies').select('name').eq('id', companyId).maybeSingle(),
-    db.from('profiles').select('full_name, phone').eq('id', userId).maybeSingle(),
-    db.auth.getClaims(),
-    loadTeam(ctx),
-    getBillingState(ctx),
-  ]);
+  const [{ data: company }, { data: profile }, { data: claims }, team, billing, counts, { data: batch }] =
+    await Promise.all([
+      db.from('companies').select('name').eq('id', companyId).maybeSingle(),
+      db.from('profiles').select('full_name, phone').eq('id', userId).maybeSingle(),
+      db.auth.getClaims(),
+      loadTeam(ctx),
+      getBillingState(ctx),
+      countTranslatable(db, companyId),
+      // Only the most recent batch matters: the partial unique index in 0015
+      // means at most one can be live, and undo is offered for the last one.
+      db
+        .from('translation_batches')
+        .select('id, status, done_count, item_count, expires_at')
+        .eq('company_id', companyId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
   const teamLoad = await loadTeamLoad(ctx);
 
   const email = typeof claims?.claims?.email === 'string' ? claims.claims.email : null;
+
+  const batchInFlight = batch?.status === 'pending' || batch?.status === 'running' || batch?.status === 'failed';
+  const canRevert = batch?.status === 'completed' && new Date(batch.expires_at) > new Date();
 
   return (
     <ScreenShell title={t.profile.title} subtitle={company?.name ?? undefined}>
       {guardado && (
         <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-center text-sm text-emerald-700 dark:text-emerald-400">
-          {t.settings.saved}
+          {guardado === 'reversao' ? t.settings.reverted : t.settings.saved}
         </p>
       )}
       {erro && (
         <p className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-400">
-          {t.settings.failed}
+          {erro === 'reversao' ? t.settings.revertFailed : t.settings.failed}
         </p>
       )}
 
@@ -109,19 +137,91 @@ export default async function PerfilPage({
         <AccountForm fullName={profile?.full_name ?? ''} phone={profile?.phone ?? ''} locale={locale} />
       </Card>
 
-      <Card title={t.settings.yourLanguage}>
-        <p className="text-xs text-zinc-500">{t.settings.yourLanguageHint}</p>
-        <LanguagePills current={ctx.locale} action={setUserLanguage} save={t.common.save} />
-      </Card>
+      {/* One control, because "the language" is one thing to the manager. The
+          two-dial split underneath is real and load-bearing, but it is an edge
+          case (a foreman who speaks a different language from the crew), so it
+          lives in the disclosure rather than on the surface. */}
+      <Card title={t.settings.language}>
+        <p className="text-xs text-zinc-500">{t.settings.languageHint}</p>
 
-      <Card title={t.settings.companyLanguage}>
-        <p className="text-xs text-zinc-500">{t.settings.companyLanguageHint}</p>
-        {/* The warning is the whole reason this dial is unreachable from chat:
-            switching it does not retranslate anything already stored. */}
-        <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-          {t.settings.companyLanguageWarning}
-        </p>
-        <LanguagePills current={ctx.companyLocale} action={setCompanyLanguage} save={t.common.save} />
+        <form action={saveLanguage} className="space-y-3">
+          {/* Both dials move together here, so the pills show the one the
+              manager thinks of as "the language" — what he reads. */}
+          <Pills current={ctx.locale} />
+
+          {counts.total > 0 ? (
+            <>
+              <label className="flex items-start gap-2 text-sm">
+                {/* Checked by default: carrying the data across is what he
+                    means by changing the language. Unchecking is the escape
+                    hatch, not the norm. */}
+                <input
+                  type="checkbox"
+                  name="traduzir"
+                  defaultChecked
+                  className="mt-0.5 size-4 shrink-0 accent-orange-600"
+                />
+                <span>{t.settings.translateExisting(counts)}</span>
+              </label>
+              <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                {t.settings.translateWarning}
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-zinc-500">{t.settings.translateNothing}</p>
+          )}
+
+          <SubmitButton label={t.common.save} />
+        </form>
+
+        {/* Rendered from the batch row, not from the redirect param: a reload,
+            a second tab, or a batch started from chat all show the same thing. */}
+        {batch && batchInFlight && (
+          <TranslationProgress
+            batchId={batch.id}
+            initialDone={batch.done_count}
+            initialTotal={batch.item_count}
+            initialStatus={batch.status as 'pending' | 'running' | 'failed'}
+            locale={locale}
+          />
+        )}
+
+        {batch && canRevert && (
+          <form action={revertTranslation} className="space-y-2 border-t border-zinc-500/20 pt-3">
+            <input type="hidden" name="lote" value={batch.id} />
+            <p className="text-xs text-zinc-500">{t.settings.revertHint(30)}</p>
+            <button
+              type="submit"
+              className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-medium text-red-600 hover:bg-red-600/5"
+            >
+              {t.settings.revert}
+            </button>
+          </form>
+        )}
+
+        <details className="border-t border-zinc-500/20 pt-3">
+          <summary className="cursor-pointer text-xs font-medium text-zinc-500">{t.settings.advanced}</summary>
+          <div className="space-y-4 pt-3">
+            <p className="text-xs text-zinc-500">{t.settings.advancedHint}</p>
+
+            <div className="space-y-2">
+              <h3 className="text-xs font-semibold">{t.settings.yourLanguage}</h3>
+              <p className="text-xs text-zinc-500">{t.settings.yourLanguageHint}</p>
+              <LanguagePills current={ctx.locale} action={setUserLanguage} save={t.common.save} />
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="text-xs font-semibold">{t.settings.companyLanguage}</h3>
+              <p className="text-xs text-zinc-500">{t.settings.companyLanguageHint}</p>
+              {/* Still the honest warning for THIS form: setting the dial on
+                  its own is the one path that does not retranslate anything. */}
+              <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                {t.settings.companyLanguageWarning}
+              </p>
+              <LanguagePills current={ctx.companyLocale} action={setCompanyLanguage} save={t.common.save} />
+            </div>
+          </div>
+        </details>
       </Card>
 
       <Card title={t.profile.team}>

@@ -38,8 +38,40 @@ Two language dials (do not collapse them into one):
   approval cards, the transcription instruction, the rolling summary, the web
   UI. Changeable from chat via the `set_language` tool.
 - `companies.language` — **per tenant**. What Capo *stores*: task titles, job
-  names, memories, generated plan titles. Changeable only in `/definicoes`,
-  behind a warning, because nothing retranslates existing rows.
+  names, memories, generated plan titles.
+
+Both dials live on **`/perfil`** (there is no `/definicoes` route). The primary
+control there moves them together and offers to translate the existing rows;
+the bare per-dial forms are demoted into an "advanced" disclosure for the case
+that actually needs them — a manager who does not share the crew's language.
+
+Moving `companies.language` **alone** still retranslates nothing, and that is
+why no path offers it casually. The paths that move it together with the data:
+
+- `/perfil` → the Language card with "also translate what already exists".
+- chat → `translate_company_data`, which only ever *proposes*. Its applier,
+  `apply_company_translation`, is deliberately **absent from the roster** and
+  reachable solely through an approved card — same shape as
+  `generate_plan`/`apply_plan`, and for the same reason: a *guarded* tool in the
+  roster would be executed directly whenever the model can quote the manager,
+  which for "traduz tudo para inglês" is always.
+
+Translation invariants (`packages/core/src/translation`, migration `0015`):
+
+- **Collect from base tables, never `task_board`.** The view filters by
+  `lisbon_today()`, so collecting through it would silently skip rows and couple
+  translation to the calendar. Translate every status, `done` included.
+- **Undo marks, it never deletes** — uniform with the schema's no-DELETE-policy
+  posture. `old_value` is immutable at the *grant* layer, so the bytes the undo
+  replays cannot be forged even by the tenant that owns them.
+- **Write the domain row before recording the item.** Dying in between
+  re-translates one value on resume; the reverse order loses a write silently.
+- **Never zip a translator response by position** — match on the returned ids.
+  A dropped item would otherwise land every later translation on the wrong row,
+  with no error and a snapshot that faithfully records the mistake.
+- Translating `tasks.title` / `jobs.name` changes what the 07:00 crew SMS says.
+  `dispatch_tasks_today` is untouched structurally, but its *content* switches
+  language — which is why the approval card says so out loud.
 
 The single highest-risk regression in this area: the guard
 (`packages/core/src/capabilities/guard.ts`) authorizes a direct write by
@@ -48,6 +80,13 @@ manager actually typed. If the model ever translates that quote, **every direct
 write silently degrades into an approval card** — no error, just friction.
 `buildLanguageDirective` carries an emphatic carve-out; keep it there, and watch
 `proposals` with `status='pending'` after any prompt change.
+
+Edit that carve-out by **appending only**, never by rewording it, and keep it
+the last bullet about translating — the `translate_company_data` line was
+deliberately placed before it. The risk is highest in exactly the conversation
+where the manager is asking for a translation, which is why the carve-out now
+ends by saying so. `translate_company_data` being unguarded is the structural
+backstop: `toAiTools` never gives it a `manager_instruction` field at all.
 
 Structural invariants (do not regress):
 

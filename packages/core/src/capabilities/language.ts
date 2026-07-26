@@ -17,14 +17,16 @@ export const setLanguageInput = z.object({
 // in front of "talk to me in English" would be absurd.
 //
 // It writes ONLY the caller's own profiles.language. The COMPANY dial — which
-// governs stored task and job text — is deliberately unreachable from chat:
-// flipping it does not retranslate existing rows, so a casual "let's switch to
-// English" would leave the shared dashboard permanently half-translated with no
-// way back. That change lives in Settings, behind an explicit warning.
+// governs stored task and job text — is still not writable from here, but it is
+// no longer unreachable from chat: `translate_company_data` reaches it through a
+// proposal. The distinction is the point. Flipping that dial alone would leave
+// the shared dashboard half-translated, so the only path that moves it is one
+// that also rewrites the existing rows and records an undo (see
+// translation/run.ts and migration 0015).
 export const setLanguage: CapoTool<z.infer<typeof setLanguageInput>> = {
   name: 'set_language',
   description:
-    'Change the language you speak to this manager in, when he asks for it ("from now on talk to me in English", "podes falar comigo em espanhol?"). Takes effect immediately, including in the reply you are writing right now. Does NOT change the language of stored tasks and jobs — if he wants that, tell him it is in Settings.',
+    'Change the language you speak to this manager in, when he asks for it ("from now on talk to me in English", "podes falar comigo em espanhol?"). Takes effect immediately, including in the reply you are writing right now. Does NOT change the language of stored tasks, jobs and notes — if he wants the shared dashboard itself translated, use `translate_company_data`.',
   inputSchema: setLanguageInput,
   async execute(input, ctx) {
     // Null on the proposal-execution path. There is no live user to have a

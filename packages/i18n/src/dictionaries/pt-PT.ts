@@ -63,6 +63,9 @@ const dict: Catalog = {
       remember: 'Memorizado',
       search_knowledge: 'Base de conhecimento consultada',
       set_language: 'Idioma alterado',
+      // No label for apply_company_translation: it never renders as a tool
+      // part, only as the approval card. Same as apply_plan.
+      translate_company_data: 'Tradução proposta',
       propose: 'Proposta criada',
       generate_plan: 'Plano gerado',
     },
@@ -255,11 +258,43 @@ const dict: Catalog = {
   },
 
   settings: {
+    language: 'Idioma',
+    languageHint:
+      'A língua em que o Capo fala contigo, em que vês a app, e em que ficam escritas as tarefas, obras e notas de toda a empresa.',
+    translateExisting: p => {
+      const parts: string[] = [];
+      if (p.tasks) parts.push(`${p.tasks} tarefa${p.tasks === 1 ? '' : 's'}`);
+      if (p.jobs) parts.push(`${p.jobs} obra${p.jobs === 1 ? '' : 's'}`);
+      if (p.workers) parts.push(`${p.workers} ofício${p.workers === 1 ? '' : 's'}`);
+      if (p.memories) parts.push(`${p.memories} nota${p.memories === 1 ? '' : 's'}`);
+      const last = parts.pop();
+      if (!last) return 'Traduzir também o que já existe';
+      const list = parts.length > 0 ? `${parts.join(', ')} e ${last}` : last;
+      return `Traduzir também o que já existe (${list})`;
+    },
+    translateNothing: 'Ainda não há nada guardado para traduzir.',
+    translateWarning:
+      'As mensagens SMS da equipa passam a ir na nova língua, e os materiais passam a ser agrupados pelos nomes traduzidos. Podes reverter durante 30 dias.',
+
+    advanced: 'Definições avançadas',
+    advancedHint:
+      'Usa línguas diferentes para ti e para os dados da empresa — útil se falares uma língua diferente do resto da equipa.',
     yourLanguage: 'A tua língua',
     yourLanguageHint: 'A língua em que o Capo fala contigo e em que vês a app. Só afeta a ti.',
     companyLanguage: 'Língua dos dados da empresa',
     companyLanguageHint: 'A língua em que o Capo escreve tarefas, obras e notas — o que toda a equipa vê no painel.',
-    companyLanguageWarning: 'Atenção: as tarefas e obras já criadas não são traduzidas.',
+    companyLanguageWarning: 'Atenção: aqui as tarefas e obras já criadas não são traduzidas.',
+
+    translationRunning: p => `A traduzir… ${p.done} de ${p.total}`,
+    translationDone: n => `${n} campo${n === 1 ? '' : 's'} traduzido${n === 1 ? '' : 's'}.`,
+    translationFailed: 'A tradução parou a meio. Nada se perdeu — podes retomar.',
+    translationResume: 'Retomar tradução',
+    revert: 'Reverter tradução',
+    revertHint: days =>
+      `Repõe o texto original exatamente como estava, palavra por palavra. Disponível durante ${days} dias.`,
+    reverted: 'Tradução revertida.',
+    revertFailed: 'Não foi possível reverter. Tenta de novo.',
+
     saved: 'Guardado.',
     failed: 'Não foi possível guardar. Tenta de novo.',
   },

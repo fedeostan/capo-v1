@@ -11,6 +11,7 @@
     "./capabilities/propose": "./src/capabilities/propose.ts",
     "./capabilities/plan": "./src/capabilities/plan.ts",
     "./capabilities/workdays": "./src/capabilities/workdays.ts",
+    "./translation": "./src/translation/index.ts",
     "./channels/types": "./src/channels/types.ts",
     "./channels/web": "./src/channels/web.ts",
     "./channels/whatsapp": "./src/channels/whatsapp.ts",

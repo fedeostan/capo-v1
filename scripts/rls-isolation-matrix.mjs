@@ -1,13 +1,19 @@
 // RLS isolation matrix — the recurring tenant-boundary QA gate.
 //
 // Seeds TWO throwaway tenants (auth user + company + one row in every tenant
-// table), then, authenticated as each user in turn, verifies the 24-check
-// matrix: for each of the 12 RLS-covered tables × 2 tenants, the caller sees
-// its own seeded row and nothing from the other tenant. Then runs the two
-// adversarial cross-tenant attacks from migration 0009 (own-company task
-// pointing at the other company's job/worker; own-company proposal pointing
-// at the other company's conversation) and expects both to be rejected with
-// check_violation (23514). Everything seeded is deleted afterwards.
+// table), then, authenticated as each user in turn, verifies the visibility
+// matrix: for each RLS-covered relation × 2 tenants, the caller sees its own
+// seeded row and nothing from the other tenant. Then runs the adversarial
+// cross-tenant attacks and expects every one to be rejected. Everything seeded
+// is deleted afterwards. The totals are printed at the end rather than asserted
+// against a hardcoded count, because both grow as tables are added.
+//
+// The adversarial set covers, in order: the two migration-0009 FK triggers
+// (own-company task pointing at the other company's job/worker; own-company
+// proposal pointing at the other company's conversation), the 0011 billing
+// column revoke, and the 0015 revert_translation_batch RPC. That last one
+// matters more than it looks: the RPC is SECURITY DEFINER, so RLS does NOT
+// cover it and its internal auth.uid() check is the entire tenant boundary.
 //
 // Runs against the live Supabase project using apps/web/.env.local:
 //   pnpm rls-matrix        (root: node scripts/rls-isolation-matrix.mjs)
@@ -132,6 +138,27 @@ async function seedTenant(label) {
     `transcription_vocab(${label})`,
   );
 
+  // A COMPLETED batch whose single item is APPLIED — i.e. one that
+  // revert_translation_batch would genuinely act on. Seeding it 'pending'
+  // instead would make the adversarial check below pass for the wrong reason
+  // (refused as un-revertible rather than as another tenant's).
+  const originalTitle = `ORIGINAL ${label} ${run}`;
+  const batch = await must(
+    admin.from('translation_batches').insert({
+      company_id: companyId, from_locale: 'pt-PT', to_locale: 'en-US',
+      status: 'completed', origin: 'web', item_count: 1, done_count: 1,
+    }).select().single(),
+    `translation_batch(${label})`,
+  );
+  await must(
+    admin.from('translation_items').insert({
+      batch_id: batch.id, company_id: companyId,
+      table_name: 'tasks', column_name: 'title', row_id: task1.id,
+      old_value: originalTitle, new_value: `Task 1 ${label}`, status: 'applied',
+    }).select(),
+    `translation_item(${label})`,
+  );
+
   const client = createClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: false },
   });
@@ -141,7 +168,7 @@ async function seedTenant(label) {
   return {
     label, userId, companyId, client,
     workerId: worker.id, jobId: job.id, taskIds: [task1.id, task2.id],
-    conversationId: conversation.id,
+    conversationId: conversation.id, batchId: batch.id, originalTitle,
   };
 }
 
@@ -149,6 +176,8 @@ async function cleanupTenant(t) {
   if (!t) return;
   // Reverse dependency order; every delete is scoped to this run's rows only.
   const companyEq = (q) => q.eq('company_id', t.companyId);
+  await companyEq(admin.from('translation_items').delete());
+  await companyEq(admin.from('translation_batches').delete());
   await companyEq(admin.from('proposals').delete());
   await admin.from('conversation_summaries').delete().eq('conversation_id', t.conversationId);
   await admin.from('messages').delete().eq('conversation_id', t.conversationId);
@@ -175,7 +204,7 @@ async function runMatrix(self, other) {
   // screen reads the whole board through it. If it were ever recreated
   // without security_invoker it would leak every company's tasks, and nothing
   // else in this repo would notice.
-  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board']) {
+  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items']) {
     const { data, error } = await db.from(table).select('*');
     const rows = data ?? [];
     const ownKey = table === 'companies' ? 'id' : 'company_id';
@@ -262,6 +291,28 @@ async function runAdversarial(attacker, victim) {
     const { error } = await db.from('companies').update({ subscription_status: 'active' }).eq('id', attacker.companyId);
     check('adversarial: tenant self-upgrade of subscription_status blocked', error != null,
       error ? `code=${error.code}` : 'UPDATE SUCCEEDED (billing bypass!)');
+  }
+
+  // Attack 4 (translation undo, 0015): revert_translation_batch is SECURITY
+  // DEFINER, so RLS does not protect it — its own auth.uid() clause is the
+  // whole boundary. A leak here would let any tenant rewrite another tenant's
+  // task titles back to arbitrary stored values, so assert BOTH that the call
+  // errors and that the victim's row is untouched.
+  {
+    const { error } = await db.rpc('revert_translation_batch', { p_batch: victim.batchId });
+    const { data: victimTask } = await admin.from('tasks').select('title').eq('id', victim.taskIds[0]).maybeSingle();
+    const untouched = victimTask?.title !== victim.originalTitle;
+    check('adversarial: revert of foreign translation batch blocked', error != null && untouched,
+      error == null ? 'RPC SUCCEEDED (cross-tenant write!)' : !untouched ? 'victim row was reverted (leak!)' : `code=${error.code}`);
+  }
+
+  // Attack 5 (0015 grants): the snapshot undo replays must be immutable. A
+  // tenant that could rewrite its own old_value could make "undo" restore
+  // anything it liked — the column grant, not a policy, is what stops it.
+  {
+    const { error } = await db.from('translation_items').update({ old_value: 'tampered' }).eq('batch_id', attacker.batchId);
+    check('adversarial: tenant rewrite of own translation snapshot blocked', error != null,
+      error ? `code=${error.code}` : 'UPDATE SUCCEEDED (undo is forgeable!)');
   }
 }
 
