@@ -20,6 +20,8 @@ const dict: Catalog = {
     notAuthenticated: 'Não autenticado',
   },
 
+  pullToRefresh: { refreshing: 'A atualizar…' },
+
   chat: {
     title: 'Capo 👷',
     tagline: 'O teu capataz virtual',

@@ -49,15 +49,21 @@ export function ScreenShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col">
+    // No <main> here any more: the scroller moved to apps/web's PullToRefresh,
+    // because scrolling became a BEHAVIOUR (non-passive touch listeners,
+    // useTransition) and this package is presentational and 'use client'-free
+    // by contract. Callers pass their content wrapped in it. One that forgets
+    // still type-checks — overflow-hidden is what turns that mistake into
+    // visibly clipped content rather than a tab bar sliding off screen.
+    <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col overflow-hidden">
       {/* Sign-out used to live here, in a file whose own contract forbids
           forms. It now lives on /perfil, the tab that owns everything about
           the company and the account. */}
-      <header className="border-b border-zinc-500/20 px-4 py-3">
+      <header className="shrink-0 border-b border-zinc-500/20 px-4 py-3">
         <h1 className="text-lg font-semibold">{title}</h1>
         {subtitle && <p className="text-xs text-zinc-500">{subtitle}</p>}
       </header>
-      <main className="flex-1 space-y-5 overflow-y-auto px-4 py-4">{children}</main>
+      {children}
     </div>
   );
 }

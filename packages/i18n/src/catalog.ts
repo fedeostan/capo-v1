@@ -37,6 +37,11 @@ export interface Catalog {
     notAuthenticated: string;
   };
 
+  /** The pull-to-refresh gesture, on every screen inside the app shell. The
+      affordance itself is a wordless spinner (iOS convention); this is the
+      aria-live announcement, the only copy a sighted user never sees. */
+  pullToRefresh: { refreshing: string };
+
   chat: {
     title: string;
     tagline: string;

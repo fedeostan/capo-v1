@@ -3,6 +3,7 @@ import { requireAuth } from '@capo/db/session';
 import { getCatalog } from '@capo/i18n/catalog';
 import { loadDayLabel, loadMaterials, loadToday } from '@/app/dashboard-data';
 import { MaterialsList, ScreenShell } from '@capo/ui/dashboard-ui';
+import PullToRefresh from '@/app/pull-to-refresh';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,33 +44,37 @@ export default async function MateriaisPage() {
 
   return (
     <ScreenShell title={t.screens.materials.title} subtitle={t.screens.materials.subtitle}>
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-sm font-semibold">{t.screens.materials.tomorrow}</h2>
-          <p className="text-xs text-zinc-500">{label ?? ''}</p>
-        </div>
-        <MaterialsList
-          groups={tomorrow}
-          empty={t.screens.materials.emptyTomorrow}
-          noJobLabel={t.dashboard.noJob}
-          forLabel={t.screens.materials.forTasks}
-        />
-      </section>
-
-      {laterOnly.length > 0 && (
-        <section className="space-y-3 border-t border-zinc-500/20 pt-5">
+      {/* ctx.locale, not `locale`: this page uses requireAuth(), not
+          requireAuthT(), so there is no destructured locale to hand over. */}
+      <PullToRefresh locale={ctx.locale}>
+        <section className="space-y-3">
           <div>
-            <h2 className="text-sm font-semibold">{t.screens.materials.week}</h2>
-            <p className="text-xs text-zinc-500">{t.screens.materials.weekHint}</p>
+            <h2 className="text-sm font-semibold">{t.screens.materials.tomorrow}</h2>
+            <p className="text-xs text-zinc-500">{label ?? ''}</p>
           </div>
           <MaterialsList
-            groups={laterOnly}
-            empty=""
+            groups={tomorrow}
+            empty={t.screens.materials.emptyTomorrow}
             noJobLabel={t.dashboard.noJob}
             forLabel={t.screens.materials.forTasks}
           />
         </section>
-      )}
+
+        {laterOnly.length > 0 && (
+          <section className="space-y-3 border-t border-zinc-500/20 pt-5">
+            <div>
+              <h2 className="text-sm font-semibold">{t.screens.materials.week}</h2>
+              <p className="text-xs text-zinc-500">{t.screens.materials.weekHint}</p>
+            </div>
+            <MaterialsList
+              groups={laterOnly}
+              empty=""
+              noJobLabel={t.dashboard.noJob}
+              forLabel={t.screens.materials.forTasks}
+            />
+          </section>
+        )}
+      </PullToRefresh>
     </ScreenShell>
   );
 }
