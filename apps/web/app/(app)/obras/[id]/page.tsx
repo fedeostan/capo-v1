@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { loadObraDetail } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { ScreenShell, TimelineList } from '@capo/ui/dashboard-ui';
-import TaskActions from './task-actions';
+import TaskActions from '@/app/(app)/_tasks/task-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,8 +30,6 @@ export default async function ObraDetailPage({ params }: { params: Promise<{ id:
     <ScreenShell
       title={detail.job.name}
       subtitle={[detail.job.address, detail.job.client_name].filter(Boolean).join(' · ') || undefined}
-      locale={locale}
-      settingsHref="/definicoes"
     >
       <p className="text-xs text-zinc-500">
         {total > 0 ? t.dashboard.tasksDone(done, total) : t.dashboard.noTasksRegistered}

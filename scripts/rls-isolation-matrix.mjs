@@ -169,8 +169,13 @@ async function runMatrix(self, other) {
   const db = self.client;
   const L = self.label;
 
-  // Tables carrying company_id directly: own rows visible, zero foreign rows.
-  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab']) {
+  // Relations carrying company_id directly: own rows visible, zero foreign
+  // rows. task_board is a view, not a table — it is here because a
+  // security_invoker view is a real tenant read surface, and the /tarefas
+  // screen reads the whole board through it. If it were ever recreated
+  // without security_invoker it would leak every company's tasks, and nothing
+  // else in this repo would notice.
+  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board']) {
     const { data, error } = await db.from(table).select('*');
     const rows = data ?? [];
     const ownKey = table === 'companies' ? 'id' : 'company_id';

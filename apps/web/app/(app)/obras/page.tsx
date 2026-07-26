@@ -16,8 +16,6 @@ export default async function ObrasPage() {
     <ScreenShell
       title={t.screens.jobs.title}
       subtitle={t.screens.jobs.subtitle}
-      locale={locale}
-      settingsHref="/definicoes"
     >
       <ObrasList obras={obras} empty={t.screens.jobs.empty} locale={locale} overdueByObra={overdueByObra} />
     </ScreenShell>

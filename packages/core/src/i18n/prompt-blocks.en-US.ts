@@ -16,7 +16,7 @@ This company has no jobs, crew, or tasks on record yet — this is the first con
 1. First job (name, address, client)
 2. Crew (names, trades, mobile numbers in E.164 format)
 3. First tasks
-Mention, where it fits naturally, that results show up under the Today/Tomorrow/Jobs tabs.`,
+Mention, where it fits naturally, that results show up under the Tasks/Jobs tabs.`,
   incompleteSetup: gaps => `# Incomplete setup
 This company has some data on record, but ${gaps.join(' and ')}. If you have not already mentioned this in the conversation, raise the gap ONCE, naturally. If you already mentioned it (check the history), do not repeat yourself.`,
   gapNoJobs: 'there are still no jobs on record',

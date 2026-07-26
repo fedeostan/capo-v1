@@ -5,37 +5,18 @@ import { usePathname } from 'next/navigation';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 
-// Labels are resolved per render from `locale` rather than baked into TABS:
-// the icons are static, the words are not.
+// Four destinations, not five. Hoje/Amanhã/Atrasadas were never separate
+// places — they were one list with a different date filter, so they live
+// behind the chips on /tarefas now.
 const TABS = [
   { href: '/', key: 'chat', icon: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /> },
   {
-    href: '/hoje',
-    key: 'today',
+    href: '/tarefas',
+    key: 'tasks',
     icon: (
       <>
-        <circle cx="12" cy="12" r="4" />
-        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-      </>
-    ),
-  },
-  {
-    href: '/amanha',
-    key: 'tomorrow',
-    icon: (
-      <>
-        <rect x="3" y="4" width="18" height="17" rx="2" />
-        <path d="M16 2v4M8 2v4M3 10h18" />
-      </>
-    ),
-  },
-  {
-    href: '/atrasadas',
-    key: 'overdue',
-    icon: (
-      <>
-        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-        <path d="M12 9v4M12 17h.01" />
+        <path d="M9 11l3 3L22 4" />
+        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
       </>
     ),
   },
@@ -44,16 +25,30 @@ const TABS = [
     key: 'jobs',
     icon: <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4" />,
   },
+  {
+    href: '/perfil',
+    key: 'profile',
+    icon: (
+      <>
+        <circle cx="12" cy="8" r="4" />
+        <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" />
+      </>
+    ),
+  },
 ];
 
+// Icons are static; the words are not, so labels resolve per render from
+// `locale` rather than being baked into TABS.
 export default function BottomNav({ locale }: { locale: Locale }) {
   const pathname = usePathname();
   const nav = getCatalog(locale).nav;
   return (
-    <nav className="grid shrink-0 grid-cols-5 border-t border-zinc-500/20 bg-background pb-[env(safe-area-inset-bottom)]">
+    <nav className="grid shrink-0 grid-cols-4 border-t border-zinc-500/20 bg-background pb-[env(safe-area-inset-bottom)]">
       {TABS.map(({ href, key, icon }) => {
-        const active = pathname === href;
         const label = nav[key as keyof typeof nav];
+        // Prefix match so /obras/[id] keeps its tab lit. '/' has to stay an
+        // exact match or it would claim every route.
+        const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
         return (
           <Link
             key={href}

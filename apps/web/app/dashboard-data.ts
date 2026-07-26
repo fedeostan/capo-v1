@@ -1,7 +1,7 @@
-// Read-only queries for the dashboard screens. The dashboard reads; the chat
-// writes — nothing in this file may mutate. Date-bucket logic lives in SQL
-// (dashboard_tasks view, driven by lisbon_today()) so the dashboard and the
-// SMS dispatch can never disagree about what day it is.
+// Read-only queries for the dashboard screens. Nothing in this file may
+// mutate. Date-bucket and schedule-risk logic lives in SQL (the task_board
+// view, driven by lisbon_today()) so the dashboard and the SMS dispatch can
+// never disagree about what day it is.
 //
 // Every function takes the caller's AuthContext: queries run on the
 // user-scoped client (RLS-enforced) and the explicit company_id filter is
@@ -9,18 +9,115 @@
 import type { AuthContext } from '@capo/db/session';
 import type { Tables } from '@capo/db/types';
 import { getCatalog } from '@capo/i18n/catalog';
-import type { DashboardObra, DashboardTask } from '@capo/ui/dashboard-ui';
+import type { BoardTask, DashboardObra } from '@capo/ui/dashboard-ui';
+import type { TarefasFilters } from '@/app/(app)/tarefas/filters';
 
-export type { DashboardObra, DashboardTask };
+export type { BoardTask, DashboardObra };
 
-type Bucket = 'active_today' | 'active_tomorrow' | 'overdue';
+export type GroupBy = 'date' | 'obra';
 
-export async function loadTasks({ db, companyId }: AuthContext, bucket: Bucket): Promise<DashboardTask[]> {
-  const query = db.from('dashboard_tasks').select('*').eq('company_id', companyId).eq(bucket, true);
-  const { data } =
-    bucket === 'overdue'
-      ? await query.order('days_overdue', { ascending: false })
-      : await query.order('job_name', { ascending: true });
+export interface ObraOption {
+  id: string;
+  name: string;
+  status: string;
+}
+
+// The Tarefas board. Every filter is a single boolean column on task_board
+// except the specific-date case, which uses the window_start/window_end pair
+// the view exposes for exactly this reason — `active_today`/`active_tomorrow`
+// are pinned to lisbon_today() and cannot answer "next Tuesday".
+export async function loadBoardTasks(
+  { db, companyId }: AuthContext,
+  filters: TarefasFilters,
+  groupBy: GroupBy,
+): Promise<BoardTask[]> {
+  let query = db.from('task_board').select('*').eq('company_id', companyId);
+
+  if (filters.quando.kind === 'date') {
+    const day = filters.quando.iso;
+    query = query
+      .eq('is_open', true)
+      .eq('job_active', true)
+      .lte('window_start', day)
+      .gte('window_end', day);
+  } else {
+    switch (filters.quando.value) {
+      case 'hoje':
+        query = query.eq('active_today', true);
+        break;
+      case 'amanha':
+        query = query.eq('active_tomorrow', true);
+        break;
+      case 'atrasadas':
+        query = query.eq('overdue', true);
+        break;
+      case 'risco':
+        query = query.eq('at_risk', true);
+        break;
+      case 'todas':
+        query = query.eq('is_open', true);
+        break;
+    }
+  }
+
+  if (filters.obraId) query = query.eq('job_id', filters.obraId);
+
+  // Ordering is query-owned; TaskBoardList only groups, never re-sorts.
+  const ordered =
+    filters.quando.kind === 'keyword' && filters.quando.value === 'atrasadas'
+      ? query.order('days_overdue', { ascending: false })
+      : groupBy === 'date'
+        ? query.order('due_date', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
+        : query.order('job_name', { ascending: true }).order('due_date', { ascending: true, nullsFirst: false });
+
+  const { data } = await ordered;
+  return (data ?? []).map(toBoardTask);
+}
+
+// Supabase types every view column as nullable. Collapse that once, here, so
+// the presentational layer gets a shape it can key and branch on.
+function toBoardTask(row: Tables<'task_board'>): BoardTask {
+  return {
+    id: row.id ?? '',
+    title: row.title ?? '',
+    status: row.status ?? 'pending',
+    job_id: row.job_id,
+    job_name: row.job_name,
+    worker_name: row.worker_name,
+    start_date: row.start_date,
+    due_date: row.due_date,
+    overdue: row.overdue ?? false,
+    days_overdue: row.days_overdue ?? 0,
+    at_risk: row.at_risk ?? false,
+    risk_blocked: row.risk_blocked ?? false,
+    risk_late_start: row.risk_late_start ?? false,
+    risk_due_soon: row.risk_due_soon ?? false,
+    risk_late_dependency: row.risk_late_dependency ?? false,
+    risk_paused_job: row.risk_paused_job ?? false,
+    late_dependency_titles: row.late_dependency_titles ?? [],
+  };
+}
+
+// Options for the obra filter. Reads `jobs`, NOT dashboard_obras: that view is
+// `where status = 'active'`, so a paused obra — precisely the one whose tasks
+// show up under "Em risco" via risk_paused_job — could never be selected.
+export async function loadObraOptions({ db, companyId }: AuthContext): Promise<ObraOption[]> {
+  const { data } = await db
+    .from('jobs')
+    .select('id, name, status')
+    .eq('company_id', companyId)
+    .order('name', { ascending: true });
+  return data ?? [];
+}
+
+// The Equipa card on /perfil.
+export async function loadTeam({ db, companyId }: AuthContext): Promise<Tables<'workers'>[]> {
+  const { data } = await db
+    .from('workers')
+    .select('*')
+    .eq('company_id', companyId)
+    .order('active', { ascending: false })
+    .order('name', { ascending: true });
   return data ?? [];
 }
 
@@ -52,13 +149,13 @@ export async function loadObras({ db, companyId }: AuthContext): Promise<Dashboa
   return data ?? [];
 }
 
-// Overdue tallies per obra for the progress view. Reuses the dashboard_tasks
-// bucket (same lisbon_today() clock as everything else) — no new SQL surface.
-// Tasks without an obra land under the empty-string key.
-export async function loadOverdueByObra(ctx: AuthContext): Promise<Record<string, number>> {
-  const overdue = await loadTasks(ctx, 'overdue');
+// Overdue tallies per obra for the progress view. Reuses the task_board
+// overdue flag (same lisbon_today() clock as everything else) — no new SQL
+// surface. Tasks without an obra land under the empty-string key.
+export async function loadOverdueByObra({ db, companyId }: AuthContext): Promise<Record<string, number>> {
+  const { data } = await db.from('task_board').select('job_id').eq('company_id', companyId).eq('overdue', true);
   const counts: Record<string, number> = {};
-  for (const task of overdue) {
+  for (const task of data ?? []) {
     const key = task.job_id ?? '';
     counts[key] = (counts[key] ?? 0) + 1;
   }

@@ -16,7 +16,7 @@ Esta empresa todavía no tiene obras, equipo ni tareas registradas — es la pri
 1. Primera obra (nombre, dirección, cliente)
 2. Equipo (nombres, oficios, móviles en formato E.164)
 3. Primeras tareas
-Menciona, cuando venga a cuento, que los resultados aparecen en las pestañas Hoy/Mañana/Obras.`,
+Menciona, cuando venga a cuento, que los resultados aparecen en las pestañas Tareas/Obras.`,
   incompleteSetup: gaps => `# Configuración incompleta
 Esta empresa ya tiene algo registrado, pero ${gaps.join(' y ')}. Si aún no lo has mencionado en esta conversación, señala la carencia UNA vez, de forma natural. Si ya la mencionaste antes (mira el historial), no repitas.`,
   gapNoJobs: 'todavía no hay obras registradas',

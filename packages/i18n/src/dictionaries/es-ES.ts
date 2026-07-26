@@ -12,11 +12,10 @@ const dict: Catalog = {
     titleSuffix: 'Capo',
   },
 
-  nav: { chat: 'Chat', today: 'Hoy', tomorrow: 'Mañana', overdue: 'Atrasadas', jobs: 'Obras' },
+  nav: { chat: 'Chat', tasks: 'Tareas', jobs: 'Obras', profile: 'Perfil' },
 
   common: {
     signOut: 'Salir',
-    settings: 'Ajustes',
     save: 'Guardar',
     backToLogin: 'Volver a entrar',
     notAuthenticated: 'No autenticado',
@@ -78,8 +77,15 @@ const dict: Catalog = {
     noAssignee: 'Sin responsable',
     noJob: 'Sin obra',
     noDate: 'Sin fecha',
-    jobPaused: 'obra en pausa',
     talkToCapo: 'Hablar con el Capo',
+    dueBy: shortDate => `hasta ${shortDate}`,
+    risk: {
+      blocked: 'bloqueada',
+      lateStart: 'ya debería haber empezado',
+      dueSoon: 'plazo en 2 días laborables',
+      lateDependency: titles => `espera a: ${titles.join(', ')}`,
+      pausedJob: 'obra en pausa',
+    },
     progress: (done, total, pct) => `${done} de ${total} terminadas (${pct}%)`,
     tasksDone: (done, total) => `${done} de ${total} tareas terminadas`,
     noTasksRegistered: 'sin tareas registradas',
@@ -89,12 +95,30 @@ const dict: Catalog = {
   },
 
   screens: {
-    today: { title: 'Hoy', empty: 'Nada programado para hoy.' },
-    tomorrow: { title: 'Mañana', empty: 'Nada programado para mañana.' },
-    overdue: {
-      title: 'Atrasadas',
-      empty: 'Sin tareas atrasadas.',
-      subtitle: n => `${n} ${n === 1 ? 'tarea' : 'tareas'} con el plazo vencido`,
+    tasks: {
+      title: 'Tareas',
+      quando: {
+        hoje: 'Hoy',
+        amanha: 'Mañana',
+        atrasadas: 'Atrasadas',
+        risco: 'En riesgo',
+        todas: 'Todas',
+      },
+      empty: {
+        hoje: 'Nada programado para hoy.',
+        amanha: 'Nada programado para mañana.',
+        atrasadas: 'Ninguna tarea fuera de plazo. Buena señal.',
+        risco: 'Nada en riesgo por ahora.',
+        todas: 'Sin tareas abiertas.',
+      },
+      emptyForDate: 'Nada programado para ese día.',
+      emptyFallback: 'Sin tareas.',
+      emptyInJob: base => `${base.replace(/\.$/, '')} en esta obra.`,
+      count: n => `${n} ${n === 1 ? 'tarea' : 'tareas'}`,
+      filterByJob: 'Filtrar por obra',
+      filterByDay: 'Filtrar por día',
+      allJobs: 'Todas las obras',
+      jobStatusSuffix: { paused: ' (en pausa)', done: ' (terminada)' },
     },
     jobs: { title: 'Obras', subtitle: 'Obras activas — progreso y atrasos', empty: 'Sin obras activas.' },
     jobDetail: {
@@ -172,8 +196,34 @@ const dict: Catalog = {
     },
   },
 
+  profile: {
+    title: 'Perfil',
+    company: 'Empresa',
+    yourAccount: 'Tu cuenta',
+    team: 'Equipo',
+    teamEmpty: 'Todavía no hay nadie en el equipo.',
+    teamEmptyCta: 'Pídele al Capo que añada a alguien',
+    noContact: 'Sin contacto',
+    inactive: 'inactivo',
+    teamHint: 'Para añadir o cambiar a alguien,',
+    teamHintLink: 'habla con el Capo',
+    subscription: 'Suscripción',
+    manageSubscription: 'Gestionar suscripción',
+    app: 'App',
+    install: 'Instalar en el móvil',
+    companyNameLabel: 'Nombre de la empresa',
+    fullNameLabel: 'Tu nombre',
+    phoneLabel: 'Tu móvil',
+    errors: {
+      companyName: 'El nombre de la empresa tiene que tener entre 1 y 120 caracteres.',
+      fullName: 'El nombre tiene que tener entre 1 y 120 caracteres.',
+      phone: 'Número no válido. Usa el formato +34612345678.',
+      phoneTaken: 'Ese número ya está asociado a otra cuenta.',
+      save: 'No se ha podido guardar. Inténtalo otra vez.',
+    },
+  },
+
   settings: {
-    title: 'Ajustes',
     yourLanguage: 'Tu idioma',
     yourLanguageHint: 'El idioma en el que el Capo habla contigo y en el que ves la app. Solo te afecta a ti.',
     companyLanguage: 'Idioma de los datos de la empresa',
@@ -182,7 +232,6 @@ const dict: Catalog = {
     companyLanguageWarning: 'Ojo: las tareas y obras ya creadas no se traducen.',
     saved: 'Guardado.',
     failed: 'No se ha podido guardar. Inténtalo de nuevo.',
-    billingLink: 'Suscripción',
   },
 
   billing: {

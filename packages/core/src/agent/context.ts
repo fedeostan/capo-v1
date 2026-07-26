@@ -88,6 +88,7 @@ function buildOnboardingBlock(snapshot: CompanySnapshot, locale: Locale): string
   const empty = snapshot.activeObras === 0 && snapshot.activeWorkers === 0 && snapshot.openTasks === 0;
   if (empty) return t.firstUse;
 
+
   if (snapshot.activeObras === 0 || snapshot.activeWorkers === 0) {
     const gaps = [
       snapshot.activeObras === 0 ? t.gapNoJobs : null,

@@ -28,11 +28,10 @@ export interface Catalog {
     titleSuffix: string;
   };
 
-  nav: { chat: string; today: string; tomorrow: string; overdue: string; jobs: string };
+  nav: { chat: string; tasks: string; jobs: string; profile: string };
 
   common: {
     signOut: string;
-    settings: string;
     save: string;
     backToLogin: string;
     notAuthenticated: string;
@@ -69,8 +68,17 @@ export interface Catalog {
     noAssignee: string;
     noJob: string;
     noDate: string;
-    jobPaused: string;
     talkToCapo: string;
+    /** Secondary line on a board row grouped by obra, e.g. "até 12/03". */
+    dueBy(shortDate: string): string;
+    /** Why a task is flagged. A risk badge with no reason is just a colour. */
+    risk: {
+      blocked: string;
+      lateStart: string;
+      dueSoon: string;
+      lateDependency(titles: string[]): string;
+      pausedJob: string;
+    };
     /** e.g. "4 de 9 concluídas (44%)" */
     progress(done: number, total: number, pct: number): string;
     /** e.g. "4 de 9 tarefas concluídas" */
@@ -82,12 +90,52 @@ export interface Catalog {
   };
 
   screens: {
-    today: { title: string; empty: string };
-    tomorrow: { title: string; empty: string };
-    overdue: { title: string; empty: string; subtitle(n: number): string };
+    tasks: {
+      title: string;
+      /** Chip labels. Keyed by the URL param value, which stays Portuguese —
+       *  it's a link contract, not copy. */
+      quando: Record<'hoje' | 'amanha' | 'atrasadas' | 'risco' | 'todas', string>;
+      empty: Record<'hoje' | 'amanha' | 'atrasadas' | 'risco' | 'todas', string>;
+      emptyForDate: string;
+      emptyFallback: string;
+      /** Narrows an empty-state line to the selected obra. */
+      emptyInJob(base: string): string;
+      count(n: number): string;
+      filterByJob: string;
+      filterByDay: string;
+      allJobs: string;
+      jobStatusSuffix: Record<'paused' | 'done', string>;
+    };
     jobs: { title: string; subtitle: string; empty: string };
     jobDetail: { fallbackTitle: string; empty: string };
     taskActions: { complete: string; reopen: string; failed: string };
+  };
+
+  profile: {
+    title: string;
+    company: string;
+    yourAccount: string;
+    team: string;
+    teamEmpty: string;
+    teamEmptyCta: string;
+    noContact: string;
+    inactive: string;
+    teamHint: string;
+    teamHintLink: string;
+    subscription: string;
+    manageSubscription: string;
+    app: string;
+    install: string;
+    companyNameLabel: string;
+    fullNameLabel: string;
+    phoneLabel: string;
+    errors: {
+      companyName: string;
+      fullName: string;
+      phone: string;
+      phoneTaken: string;
+      save: string;
+    };
   };
 
   auth: {
@@ -144,8 +192,8 @@ export interface Catalog {
     errors: Record<'dados' | 'telemovel' | 'telemovel-usado' | 'guardar', string>;
   };
 
+  // The two language dials, rendered as cards on /perfil.
   settings: {
-    title: string;
     yourLanguage: string;
     yourLanguageHint: string;
     companyLanguage: string;
@@ -153,7 +201,6 @@ export interface Catalog {
     companyLanguageWarning: string;
     saved: string;
     failed: string;
-    billingLink: string;
   };
 
   billing: {

@@ -212,16 +212,8 @@ export default function Chat({
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
       <header className="border-b border-zinc-500/20 px-4 py-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-lg font-semibold">{t.chat.title}</h1>
-            <p className="text-xs text-zinc-500">{t.chat.tagline}</p>
-          </div>
-          {/* The chat has no ScreenShell, so it needs its own way into settings. */}
-          <a href="/definicoes" aria-label={t.common.settings} className="pt-1 text-xs text-zinc-500 underline">
-            {t.common.settings}
-          </a>
-        </div>
+        <h1 className="text-lg font-semibold">{t.chat.title}</h1>
+        <p className="text-xs text-zinc-500">{t.chat.tagline}</p>
       </header>
 
       <main className="flex-1 space-y-3 overflow-y-auto px-4 py-4">

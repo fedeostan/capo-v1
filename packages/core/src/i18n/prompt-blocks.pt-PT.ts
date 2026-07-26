@@ -20,7 +20,7 @@ Esta empresa ainda não tem obras, equipa nem tarefas registadas — é a primei
 1. Primeira obra (nome, morada, cliente)
 2. Equipa (nomes, funções, telemóveis em formato E.164)
 3. Primeiras tarefas
-Menciona, quando fizer sentido, que os resultados aparecem nas abas Hoje/Amanhã/Obras.`,
+Menciona, quando fizer sentido, que os resultados aparecem nas abas Tarefas/Obras.`,
   incompleteSetup: gaps => `# Configuração incompleta
 Esta empresa já tem alguma coisa registada, mas ${gaps.join(' e ')}. Se ainda não mencionaste isto nesta conversa, refere a lacuna UMA vez, de forma natural. Se já a mencionaste antes (ver histórico), não repitas.`,
   gapNoJobs: 'ainda não há obras registadas',

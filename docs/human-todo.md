@@ -107,7 +107,7 @@ The code is complete and `pnpm turbo lint typecheck build` is green. These
 steps need a human because they touch the live Supabase project or a real
 phone.
 
-1. **Apply migration `0013_language.sql`.** The Supabase MCP was not
+1. **Apply migration `0014_language.sql`.** The Supabase MCP was not
    authorized in the session that wrote it, so the file exists but has NOT
    been applied. Apply it via the Supabase MCP `apply_migration` (or the SQL
    editor) against project `qdfmvhjrcmeoxbattnsm`.
@@ -157,6 +157,12 @@ Known, accepted: making `<html lang>` locale-aware turned `/landing`,
 `/offline`, `/instalar` and the manifest from static into dynamic routes. The
 service worker still precaches `/offline` (it fetches it at install, which a
 dynamic route answers fine), and this is a PWA rather than an SEO property.
+
+Merged with the task-board branch (PR #7): the two language dials live as cards
+on `/perfil`, which that branch established as the only tab owning settings —
+there is no separate settings page. `/tarefas` filter VALUES stay Portuguese
+(`?quando=hoje`) because they are a shareable-URL contract; only their labels
+are translated.
 
 ## 9. Backlog (deliberately cut from this upgrade)
 

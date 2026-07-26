@@ -12,11 +12,10 @@ const dict: Catalog = {
     titleSuffix: 'Capo',
   },
 
-  nav: { chat: 'Chat', today: 'Today', tomorrow: 'Tomorrow', overdue: 'Overdue', jobs: 'Jobs' },
+  nav: { chat: 'Chat', tasks: 'Tasks', jobs: 'Jobs', profile: 'Profile' },
 
   common: {
     signOut: 'Sign out',
-    settings: 'Settings',
     save: 'Save',
     backToLogin: 'Back to sign in',
     notAuthenticated: 'Not authenticated',
@@ -78,8 +77,15 @@ const dict: Catalog = {
     noAssignee: 'Unassigned',
     noJob: 'No job',
     noDate: 'No date',
-    jobPaused: 'job paused',
     talkToCapo: 'Talk to Capo',
+    dueBy: shortDate => `due ${shortDate}`,
+    risk: {
+      blocked: 'blocked',
+      lateStart: 'should have started already',
+      dueSoon: 'due within 2 working days',
+      lateDependency: titles => `waiting on: ${titles.join(', ')}`,
+      pausedJob: 'job paused',
+    },
     progress: (done, total, pct) => `${done} of ${total} done (${pct}%)`,
     tasksDone: (done, total) => `${done} of ${total} tasks done`,
     noTasksRegistered: 'no tasks yet',
@@ -89,12 +95,30 @@ const dict: Catalog = {
   },
 
   screens: {
-    today: { title: 'Today', empty: 'Nothing scheduled for today.' },
-    tomorrow: { title: 'Tomorrow', empty: 'Nothing scheduled for tomorrow.' },
-    overdue: {
-      title: 'Overdue',
-      empty: 'No overdue tasks.',
-      subtitle: n => `${n} ${n === 1 ? 'task' : 'tasks'} past due`,
+    tasks: {
+      title: 'Tasks',
+      quando: {
+        hoje: 'Today',
+        amanha: 'Tomorrow',
+        atrasadas: 'Overdue',
+        risco: 'At risk',
+        todas: 'All',
+      },
+      empty: {
+        hoje: 'Nothing scheduled for today.',
+        amanha: 'Nothing scheduled for tomorrow.',
+        atrasadas: 'Nothing past due. Good sign.',
+        risco: 'Nothing at risk right now.',
+        todas: 'No open tasks.',
+      },
+      emptyForDate: 'Nothing scheduled for that day.',
+      emptyFallback: 'No tasks.',
+      emptyInJob: base => `${base.replace(/\.$/, '')} on this job.`,
+      count: n => `${n} ${n === 1 ? 'task' : 'tasks'}`,
+      filterByJob: 'Filter by job',
+      filterByDay: 'Filter by day',
+      allJobs: 'All jobs',
+      jobStatusSuffix: { paused: ' (paused)', done: ' (done)' },
     },
     jobs: { title: 'Jobs', subtitle: 'Active jobs — progress and delays', empty: 'No active jobs.' },
     jobDetail: {
@@ -172,8 +196,34 @@ const dict: Catalog = {
     },
   },
 
+  profile: {
+    title: 'Profile',
+    company: 'Company',
+    yourAccount: 'Your account',
+    team: 'Crew',
+    teamEmpty: 'Nobody on the crew yet.',
+    teamEmptyCta: 'Ask Capo to add someone',
+    noContact: 'No contact',
+    inactive: 'inactive',
+    teamHint: 'To add or change someone,',
+    teamHintLink: 'talk to Capo',
+    subscription: 'Subscription',
+    manageSubscription: 'Manage subscription',
+    app: 'App',
+    install: 'Install on your phone',
+    companyNameLabel: 'Company name',
+    fullNameLabel: 'Your name',
+    phoneLabel: 'Your mobile',
+    errors: {
+      companyName: 'The company name must be between 1 and 120 characters.',
+      fullName: 'Your name must be between 1 and 120 characters.',
+      phone: 'Invalid number. Use the full international format, e.g. +15551234567.',
+      phoneTaken: 'That number is already linked to another account.',
+      save: "Couldn't save that. Try again.",
+    },
+  },
+
   settings: {
-    title: 'Settings',
     yourLanguage: 'Your language',
     yourLanguageHint: 'The language Capo speaks to you in, and the language of this app. Affects only you.',
     companyLanguage: 'Company data language',
@@ -182,7 +232,6 @@ const dict: Catalog = {
     companyLanguageWarning: 'Heads up: tasks and jobs that already exist are not translated.',
     saved: 'Saved.',
     failed: "Couldn't save that. Try again.",
-    billingLink: 'Subscription',
   },
 
   billing: {
