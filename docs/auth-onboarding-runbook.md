@@ -93,8 +93,9 @@ rollout: the view returned rows for two distinct companies as `postgres`.
   longer on any request path.
 - **Verified** (2026-07-07): 24-check two-tenant isolation matrix + both
   adversarial cross-tenant attacks blocked at the query layer; logged-out `/`,
-  `/hoje`, `POST /api/chat` gated (307/401); dashboards company-scoped in the
-  running app.
+  `/hoje` (that route is now a redirect to `/tarefas` — re-run the check
+  against `/tarefas`), `POST /api/chat` gated (307/401); dashboards
+  company-scoped in the running app.
 
 ## Known follow-ups (not blocking)
 

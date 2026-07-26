@@ -1,11 +1,12 @@
-// Presentational components for the read-only dashboard. No buttons, no
-// forms, no mutations — every change to a task goes through the chat.
+// Presentational components for the dashboard. No buttons, no forms, no
+// mutations in this file — the few interactive controls the manager has
+// (Concluir/Reabrir, Sair) are injected by apps/web through render props or
+// live on their own page, so this package never imports a server action.
 import type { Tables } from '@capo/db/types';
 
-// Row shapes for the dashboard views — defined here (the shared UI package)
-// so web and operator render from the same contract; data loaders import
-// these types rather than redeclaring them.
-export type DashboardTask = Tables<'dashboard_tasks'>;
+// Row shape for the obras view — defined here (the shared UI package) so web
+// and operator render from the same contract; data loaders import this type
+// rather than redeclaring it.
 export type DashboardObra = Tables<'dashboard_obras'>;
 
 // TODO(Federico): microcopy dial — this map is the manager-facing voice of the
@@ -55,17 +56,12 @@ export function ScreenShell({
 }) {
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col">
-      <header className="flex items-start justify-between gap-3 border-b border-zinc-500/20 px-4 py-3">
-        <div>
-          <h1 className="text-lg font-semibold">{title}</h1>
-          {subtitle && <p className="text-xs text-zinc-500">{subtitle}</p>}
-        </div>
-        {/* plain form POST: sign-out works even before client JS hydrates */}
-        <form method="post" action="/auth/signout">
-          <button type="submit" className="pt-1 text-xs text-zinc-500 underline">
-            Sair
-          </button>
-        </form>
+      {/* Sign-out used to live here, in a file whose own contract forbids
+          forms. It now lives on /perfil, the tab that owns everything about
+          the company and the account. */}
+      <header className="border-b border-zinc-500/20 px-4 py-3">
+        <h1 className="text-lg font-semibold">{title}</h1>
+        {subtitle && <p className="text-xs text-zinc-500">{subtitle}</p>}
       </header>
       <main className="flex-1 space-y-5 overflow-y-auto px-4 py-4">{children}</main>
     </div>
@@ -89,48 +85,115 @@ export function EmptyState({ text, cta }: { text: string; cta?: { href: string; 
 // read-mostly, so "nothing here yet" always means "go ask Capo".
 const TALK_TO_CAPO = { href: '/', label: 'Falar com o Capo' };
 
-function TaskCard({ task, showOverdue }: { task: DashboardTask; showOverdue?: boolean }) {
-  return (
-    <div className="flex items-start justify-between gap-3 rounded-xl border border-zinc-500/20 p-3">
-      <div className="min-w-0">
-        <p className="text-sm font-medium">{task.title}</p>
-        <p className="text-xs text-zinc-500">{task.worker_name ?? 'Sem responsável'}</p>
-        {showOverdue && (
-          <p className="mt-1 flex flex-wrap gap-2 text-xs">
-            {task.days_overdue != null && task.days_overdue > 0 && (
-              <span className="font-medium text-red-600">
-                Prazo passou {formatOverdue(task.days_overdue)}
-              </span>
-            )}
-            {task.job_status === 'paused' && (
-              <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-zinc-500">
-                obra pausada
-              </span>
-            )}
-          </p>
-        )}
-      </div>
-      <StatusBadge status={task.status} />
-    </div>
+// The /tarefas board row. Explicit non-null shape rather than
+// Tables<'task_board'>: Supabase types every view column as nullable, so
+// task.id would be string|null and key={task.id} would not typecheck. The
+// mapping to non-null happens once, in apps/web's dashboard-data.ts.
+export interface BoardTask {
+  id: string;
+  title: string;
+  status: string;
+  job_id: string | null;
+  job_name: string | null;
+  worker_name: string | null;
+  start_date: string | null;
+  due_date: string | null;
+  overdue: boolean;
+  days_overdue: number;
+  at_risk: boolean;
+  risk_blocked: boolean;
+  risk_late_start: boolean;
+  risk_due_soon: boolean;
+  risk_late_dependency: boolean;
+  risk_paused_job: boolean;
+  late_dependency_titles: string[];
+}
+
+// Why a task is flagged, in the manager's words. A risk badge with no reason
+// is just a colour — the whole point of the "Em risco" filter is that it says
+// what is about to go wrong.
+// TODO(Federico): microcopy dial — same category as STATUS_LABELS above.
+export function riskReasons(task: BoardTask): string[] {
+  const reasons: string[] = [];
+  if (task.overdue && task.days_overdue > 0) reasons.push(`Prazo passou ${formatOverdue(task.days_overdue)}`);
+  if (task.risk_blocked) reasons.push('bloqueada');
+  if (task.risk_late_start) reasons.push('já devia ter começado');
+  if (task.risk_due_soon) reasons.push('prazo em 2 dias úteis');
+  if (task.risk_late_dependency) reasons.push(`espera por: ${task.late_dependency_titles.join(', ')}`);
+  if (task.risk_paused_job) reasons.push('obra pausada');
+  return reasons;
+}
+
+function formatShortDate(iso: string): string {
+  return new Intl.DateTimeFormat('pt-PT', { timeZone: 'UTC', day: '2-digit', month: '2-digit' }).format(
+    new Date(`${iso}T00:00:00Z`),
   );
 }
 
-// Hoje/Amanhã: tasks grouped under their obra.
-export function TasksByObra({ tasks, empty }: { tasks: DashboardTask[]; empty: string }) {
+// The filtered task list behind the Tarefas tab. Grouping is a prop rather
+// than a separate component because the only difference between "todas as
+// obras, por obra" and "uma obra, por data" is the heading key. Ordering is
+// owned by the query, never re-sorted here.
+export function TaskBoardList({
+  tasks,
+  empty,
+  groupBy,
+  renderExtra,
+}: {
+  tasks: BoardTask[];
+  empty: string;
+  groupBy: 'date' | 'obra';
+  // Optional per-row slot (the Concluir/Reabrir buttons), kept as a plain
+  // render prop so this package never has to import a mutation.
+  renderExtra?: (task: BoardTask) => React.ReactNode;
+}) {
   if (tasks.length === 0) return <EmptyState text={empty} cta={TALK_TO_CAPO} />;
-  const groups = new Map<string, DashboardTask[]>();
+  const groups = new Map<string, BoardTask[]>();
   for (const task of tasks) {
-    const key = task.job_name ?? 'Sem obra';
+    const key =
+      groupBy === 'obra' ? (task.job_name ?? 'Sem obra') : (task.due_date ?? task.start_date ?? 'sem-data');
     groups.set(key, [...(groups.get(key) ?? []), task]);
   }
   return (
     <>
-      {[...groups.entries()].map(([obra, obraTasks]) => (
-        <section key={obra} className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{obra}</h2>
-          {obraTasks.map(task => (
-            <TaskCard key={task.id} task={task} />
-          ))}
+      {[...groups.entries()].map(([key, groupTasks]) => (
+        <section key={key} className="space-y-2">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            {groupBy === 'obra' ? key : key === 'sem-data' ? 'Sem data' : formatDayHeading(key)}
+          </h2>
+          {groupTasks.map(task => {
+            const reasons = riskReasons(task);
+            // The secondary line carries whatever the heading is NOT already
+            // saying: the obra when grouped by date, the deadline otherwise.
+            const context =
+              groupBy === 'obra'
+                ? task.due_date && `até ${formatShortDate(task.due_date)}`
+                : (task.job_name ?? 'Sem obra');
+            return (
+              <div key={task.id} className="rounded-xl border border-zinc-500/20 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{task.title}</p>
+                    <p className="text-xs text-zinc-500">
+                      {task.worker_name ?? 'Sem responsável'}
+                      {context ? ` · ${context}` : ''}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <StatusBadge status={task.status} />
+                    {renderExtra?.(task)}
+                  </div>
+                </div>
+                {reasons.length > 0 && (
+                  <p
+                    className={`mt-1 text-xs ${task.overdue ? 'font-medium text-red-600' : 'text-amber-600'}`}
+                  >
+                    {reasons.join(' · ')}
+                  </p>
+                )}
+              </div>
+            );
+          })}
         </section>
       ))}
     </>
@@ -266,24 +329,5 @@ export function TimelineList({
         </section>
       ))}
     </>
-  );
-}
-
-// Atrasadas: flat list, most overdue first (ordering comes from the query).
-export function OverdueList({ tasks, empty }: { tasks: DashboardTask[]; empty: string }) {
-  if (tasks.length === 0) return <EmptyState text={empty} />;
-  return (
-    <section className="space-y-2">
-      {tasks.map(task => (
-        <div key={task.id}>
-          {task.job_name && (
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              {task.job_name}
-            </p>
-          )}
-          <TaskCard task={task} showOverdue />
-        </div>
-      ))}
-    </section>
   );
 }
