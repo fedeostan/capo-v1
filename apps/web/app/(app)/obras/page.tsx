@@ -1,17 +1,25 @@
 import type { Metadata } from 'next';
-import { requireAuth } from '@capo/db/session';
 import { loadObras, loadOverdueByObra } from '@/app/dashboard-data';
+import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { ObrasList, ScreenShell } from '@capo/ui/dashboard-ui';
 
 export const dynamic = 'force-dynamic';
-export const metadata: Metadata = { title: 'Obras — Capo' };
+
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: await metadataTitle(t => t.screens.jobs.title) };
+}
 
 export default async function ObrasPage() {
-  const ctx = await requireAuth();
+  const { ctx, locale, t } = await requireAuthT();
   const [obras, overdueByObra] = await Promise.all([loadObras(ctx), loadOverdueByObra(ctx)]);
   return (
-    <ScreenShell title="Obras" subtitle="Obras ativas — progresso e atrasos">
-      <ObrasList obras={obras} empty="Sem obras ativas." overdueByObra={overdueByObra} />
+    <ScreenShell
+      title={t.screens.jobs.title}
+      subtitle={t.screens.jobs.subtitle}
+      locale={locale}
+      settingsHref="/definicoes"
+    >
+      <ObrasList obras={obras} empty={t.screens.jobs.empty} locale={locale} overdueByObra={overdueByObra} />
     </ScreenShell>
   );
 }

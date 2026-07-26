@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import { createUserClient } from './user-client';
 import type { Db } from './client';
 
@@ -10,6 +11,10 @@ export interface AuthContext {
   db: Db; // user-scoped, RLS-enforced
   userId: string;
   companyId: string;
+  /** profiles.language — what Capo SPEAKS to this person, and what the UI renders in. */
+  locale: Locale;
+  /** companies.language — what Capo STORES (task titles, job names, memories). */
+  companyLocale: Locale;
 }
 
 export type AuthState =
@@ -24,11 +29,28 @@ export async function getAuthState(): Promise<AuthState> {
   if (!userId) return { status: 'unauthenticated' };
 
   // RLS restricts profiles to the own row; maybeSingle → null means the user
-  // is authenticated but not onboarded yet.
-  const { data: profile } = await db.from('profiles').select('company_id').eq('id', userId).maybeSingle();
+  // is authenticated but not onboarded yet. The companies embed rides along on
+  // the same request — companies_select_own already scopes it to this tenant,
+  // so both language dials cost zero extra round-trips.
+  const { data: profile } = await db
+    .from('profiles')
+    .select('company_id, language, company:companies(language)')
+    .eq('id', userId)
+    .maybeSingle();
   if (!profile) return { status: 'no_profile', db, userId };
 
-  return { status: 'ok', ctx: { db, userId, companyId: profile.company_id } };
+  return {
+    status: 'ok',
+    ctx: {
+      db,
+      userId,
+      companyId: profile.company_id,
+      // coerce, never trust: a row written under a locale we later retire must
+      // degrade to the default rather than crash every render for that user.
+      locale: coerceLocale(profile.language),
+      companyLocale: coerceLocale(profile.company?.language),
+    },
+  };
 }
 
 // For pages: resolves or redirects. Never wrap this in try/catch — redirect()

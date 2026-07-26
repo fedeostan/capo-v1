@@ -87,6 +87,9 @@ importers:
       '@capo/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@capo/i18n':
+        specifier: workspace:*
+        version: link:../../packages/i18n
       '@capo/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -163,6 +166,9 @@ importers:
       '@capo/db':
         specifier: workspace:*
         version: link:../db
+      '@capo/i18n':
+        specifier: workspace:*
+        version: link:../i18n
       ai:
         specifier: ^7.0.15
         version: 7.0.15(zod@4.4.3)
@@ -188,6 +194,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@capo/i18n':
+        specifier: workspace:*
+        version: link:../i18n
       '@supabase/ssr':
         specifier: 0.12.0
         version: 0.12.0(@supabase/supabase-js@2.110.0)
@@ -214,11 +223,29 @@ importers:
         specifier: ^5
         version: 5.9.3
 
+  packages/i18n:
+    devDependencies:
+      '@capo/config':
+        specifier: workspace:*
+        version: link:../config
+      eslint:
+        specifier: ^9
+        version: 9.39.4(jiti@2.7.0)
+      eslint-config-next:
+        specifier: 16.2.10
+        version: 16.2.10(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
   packages/ui:
     dependencies:
       '@capo/db':
         specifier: workspace:*
         version: link:../db
+      '@capo/i18n':
+        specifier: workspace:*
+        version: link:../i18n
       react-markdown:
         specifier: ^10.1.0
         version: 10.1.0(@types/react@19.2.17)(react@19.2.4)

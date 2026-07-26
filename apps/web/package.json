@@ -13,6 +13,7 @@
     "@ai-sdk/react": "^4.0.16",
     "@capo/core": "workspace:*",
     "@capo/db": "workspace:*",
+    "@capo/i18n": "workspace:*",
     "@capo/ui": "workspace:*",
     "@supabase/supabase-js": "^2.110.0",
     "@vercel/analytics": "^1.4.1",

@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { getCatalog } from '@capo/i18n/catalog';
+import type { Locale } from '@capo/i18n/locale';
 
 // Voice input for the composer: tap to record, tap to stop, transcription
 // lands in the text input via onTranscript — never auto-sent. The manager
@@ -25,11 +27,14 @@ const isSupported = () => typeof MediaRecorder !== 'undefined' && !!navigator.me
 
 export default function MicButton({
   disabled,
+  locale,
   onTranscript,
 }: {
   disabled: boolean;
+  locale: Locale;
   onTranscript: (text: string) => void;
 }) {
+  const t = getCatalog(locale).mic;
   const supported = useSyncExternalStore(noSubscribe, isSupported, () => false);
   const [state, setState] = useState<MicState>('idle');
   const [hint, setHint] = useState<string | null>(null);
@@ -79,7 +84,7 @@ export default function MicButton({
       timersRef.current.tick = setInterval(() => setElapsed(s => s + 1), 1000);
       timersRef.current.autoStop = setTimeout(stopRecording, MAX_RECORDING_MS);
     } catch {
-      setHint('Sem acesso ao microfone');
+      setHint(t.noAccess);
     } finally {
       startingRef.current = false;
     }
@@ -102,9 +107,9 @@ export default function MicButton({
       const data = (await res.json()) as { text?: string; error?: string };
       if (!res.ok) throw new Error(data.error);
       if (data.text) onTranscript(data.text);
-      else setHint('Não percebi — tenta outra vez');
+      else setHint(t.notUnderstood);
     } catch {
-      setHint('Erro ao transcrever');
+      setHint(t.error);
     } finally {
       setState('idle');
     }
@@ -121,7 +126,7 @@ export default function MicButton({
       )}
       <button
         type="button"
-        aria-label={state === 'recording' ? 'Parar gravação' : 'Gravar mensagem de voz'}
+        aria-label={state === 'recording' ? t.stop : t.record}
         disabled={disabled || state === 'transcribing'}
         onClick={state === 'recording' ? stopRecording : startRecording}
         className={

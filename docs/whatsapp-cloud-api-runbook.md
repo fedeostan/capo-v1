@@ -86,6 +86,39 @@ WHATSAPP_PHONE_NUMBER_ID=<phone number id>
 - **Retries/dedupe**: Meta redelivers on non-200 or timeout. The webhook acks
   fast (agent runs via `after()`), which makes duplicates rare; a
   provider-message-id dedupe store is a follow-up if duplicates are observed.
-- **Non-text messages** (voice notes, images) are acked and ignored for now.
-  Voice notes are the obvious next step (transcription already exists in the
-  web app).
+- **Voice notes are handled** (since the multilingual/audio change). `type:
+  'audio'` — both push-to-talk voice notes (`audio.voice === true`) and
+  uploaded audio files — is downloaded from the Graph media API, transcribed
+  via `@capo/core/transcription`, and fed to the agent as plain text. See
+  "Inbound media" below.
+- **Images, documents, stickers and reactions** are still acked and ignored,
+  but they now emit a `whatsapp.unsupported_message` log line with the message
+  type. Previously they were dropped with no trace at all.
+
+## Inbound media (voice notes)
+
+`packages/core/src/channels/whatsapp-media.ts` — `downloadMedia(mediaId, config)`.
+Four things that fail silently if you get them wrong:
+
+1. **Two hops.** `GET {base}/{media-id}` returns metadata including a `url`;
+   the bytes come from a second `GET` on that url.
+2. **The CDN url also requires `Authorization: Bearer`.** A plain
+   `fetch(url)` returns 401. An explicit `User-Agent` is set too — Meta's CDN
+   400s on some defaults.
+3. **The url is short-lived (~5 min) and effectively single-use.** It is
+   consumed inside the same `after()` block and never persisted.
+4. **MIME parameters must be stripped.** WhatsApp voice notes arrive as
+   `audio/ogg; codecs=opus`; the AI SDK file part needs the bare `audio/ogg`.
+
+`file_size` from hop 1 is checked against `MAX_AUDIO_BYTES` (15 MiB, shared
+with the web mic path) before the download, and the downloaded length is
+re-checked after.
+
+On any failure — download, transcription, or an empty transcript — the manager
+gets a canned apology in his own language (`Catalog.whatsapp.voiceNoteFailed` /
+`voiceNoteEmpty`) sent directly via `sendWhatsAppText`. Silence on a voice note
+reads as "Capo is broken", so this path must never no-op.
+
+`export const maxDuration = 300` on the route: media download + Gemini
+transcription now precede a 12-step agent loop and the outbound send, all
+inside `after()`. The route previously declared none at all.

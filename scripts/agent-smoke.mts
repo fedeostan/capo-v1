@@ -58,12 +58,18 @@ interface Tenant {
   label: string;
   userId: string;
   companyId: string;
+  // Both DB dials are seeded to this one value; the smoke test has no case
+  // where a tenant's user and company languages differ.
+  locale: 'pt-PT' | 'es-ES' | 'en-US';
   jobId?: string;
   workerId?: string;
 }
 
-async function seedTenant(label: string, opts: { withJobAndWorker?: boolean } = {}): Promise<Tenant> {
-  const { withJobAndWorker = true } = opts;
+async function seedTenant(
+  label: string,
+  opts: { withJobAndWorker?: boolean; locale?: Tenant['locale'] } = {},
+): Promise<Tenant> {
+  const { withJobAndWorker = true, locale = 'pt-PT' } = opts;
   const email = `agent-smoke-${label}-${run}@example.com`;
   const password = randomBytes(16).toString('hex');
   const phone = `+35192${randomInt(1000000, 9999999)}`;
@@ -78,13 +84,17 @@ async function seedTenant(label: string, opts: { withJobAndWorker?: boolean } = 
   const userId = userData.user.id;
 
   const company = await must(
-    db.from('companies').insert({ name: `Agent Smoke ${label} ${run}` }).select().single(),
+    db.from('companies').insert({ name: `Agent Smoke ${label} ${run}`, language: locale }).select().single(),
     `company(${label})`,
   );
   const companyId = company.id;
 
   await must(
-    db.from('profiles').insert({ id: userId, company_id: companyId, full_name: `Smoke ${label}`, phone }).select().single(),
+    db
+      .from('profiles')
+      .insert({ id: userId, company_id: companyId, full_name: `Smoke ${label}`, phone, language: locale })
+      .select()
+      .single(),
     `profile(${label})`,
   );
 
@@ -103,7 +113,7 @@ async function seedTenant(label: string, opts: { withJobAndWorker?: boolean } = 
     jobId = job.id;
   }
 
-  return { label, userId, companyId, jobId, workerId };
+  return { label, userId, companyId, locale, jobId, workerId };
 }
 
 async function cleanupTenant(t: Tenant | undefined) {
@@ -159,9 +169,18 @@ function messageText(message: UIMessage | undefined): string {
     .join('\n');
 }
 
-async function sendTurn(companyId: string, text: string): Promise<string> {
+// Takes the whole Tenant rather than a bare companyId: handleInbound now needs
+// the user identity and both language dials, and every caller already has one.
+async function sendTurn(tenant: Tenant, text: string): Promise<string> {
   const { sink, result } = collectingSink();
-  await handleInbound(db, companyId, { channel: 'web', text }, sink);
+  await handleInbound({
+    db,
+    companyId: tenant.companyId,
+    userId: tenant.userId,
+    locales: { user: tenant.locale, company: tenant.locale },
+    inbound: { channel: 'web', text },
+    sink,
+  });
   return messageText(await result);
 }
 
@@ -173,16 +192,17 @@ async function pendingProposals(companyId: string) {
 // ── checks ──────────────────────────────────────────────────────────────────
 let base: Tenant | undefined;
 let empty: Tenant | undefined;
+let english: Tenant | undefined;
 try {
   console.log(`Seeding agent-smoke tenants (run ${run})…`);
   base = await seedTenant('base');
 
   // (1) Greeting → non-empty pt-PT reply.
-  const greeting = await sendTurn(base.companyId, 'Olá');
+  const greeting = await sendTurn(base, 'Olá');
   check('greeting: non-empty reply', greeting.trim().length > 0, `reply: "${greeting.slice(0, 120)}"`);
 
   // (2) Explicit manager command → guarded create_job runs directly or proposes.
-  await sendTurn(base.companyId, 'Cria uma obra chamada Obra Teste Smoke');
+  await sendTurn(base, 'Cria uma obra chamada Obra Teste Smoke');
   const { data: createdJobs } = await db.from('jobs').select('id').eq('company_id', base.companyId).eq('name', 'Obra Teste Smoke');
   const jobCreated = (createdJobs ?? []).length > 0;
   const proposalsAfterCreate = await pendingProposals(base.companyId);
@@ -190,7 +210,7 @@ try {
   check('guarded create: job row or pending proposal', jobCreated || jobProposed, `jobCreated=${jobCreated} jobProposed=${jobProposed}`);
 
   // (3) Suggestion-shaped ask (not a direct command) → proposal with rendered_text.
-  await sendTurn(base.companyId, 'Achas que fazia sentido adicionarmos uma tarefa de limpeza final na Obra Smoke Base?');
+  await sendTurn(base, 'Achas que fazia sentido adicionarmos uma tarefa de limpeza final na Obra Smoke Base?');
   const proposalsAfterSuggestion = await pendingProposals(base.companyId);
   const suggestionProposal = proposalsAfterSuggestion.find(p => (p.rendered_text ?? '').length > 0);
   check('suggestion: proposal with rendered_text', Boolean(suggestionProposal), `pending proposals: ${proposalsAfterSuggestion.length}`);
@@ -198,14 +218,14 @@ try {
   // (4) Empty tenant (no obras/workers/tasks) → first-run guidance: mentions
   // "obra" and asks a question rather than dumping a form.
   empty = await seedTenant('empty', { withJobAndWorker: false });
-  const firstRunReply = await sendTurn(empty.companyId, 'Olá');
+  const firstRunReply = await sendTurn(empty, 'Olá');
   const mentionsObra = /obra/i.test(firstRunReply);
   const asksQuestion = firstRunReply.includes('?');
   check('first-run: mentions obra and asks a question', mentionsObra && asksQuestion, `reply: "${firstRunReply.slice(0, 160)}"`);
 
   // (5) Quote → plan → approve → tasks + dependencies exist, with sane dates.
   const planReply = await sendTurn(
-    base.companyId,
+    base,
     'Aqui está o orçamento aprovado para a Obra Smoke Base: demolição da casa de banho, canalização nova, azulejo e loiças. Começa na próxima segunda. Faz-me o plano.',
   );
   const proposalsAfterPlan = await pendingProposals(base.companyId);
@@ -219,7 +239,7 @@ try {
   );
 
   if (planProposal) {
-    const resolution = await resolveProposal(db, planProposal.id, 'approve');
+    const resolution = await resolveProposal(db, planProposal.id, 'approve', { user: base.locale, company: base.locale });
     const jobId = (planProposal.action_args as { job_id: string }).job_id;
     const { data: planTasks } = await db.from('tasks').select('id, start_date, due_date').eq('company_id', base.companyId).eq('job_id', jobId);
     let depCount = 0;
@@ -245,6 +265,22 @@ try {
     check('plan approved: tasks + dependencies exist with sane dates', false, 'no apply_plan proposal to approve');
   }
 
+  // (6) An en-US tenant is actually answered in English. Cheap but load-bearing:
+  // the persona registry, the language directive, and the prompt blocks all have
+  // to be wired for this to pass, and a regression in any of them silently
+  // reverts Capo to Portuguese for every non-PT user.
+  english = await seedTenant('english', { withJobAndWorker: false, locale: 'en-US' });
+  const englishReply = await sendTurn(english, 'Hi');
+  const looksEnglish = /\b(the|and|you|your|what|need)\b/i.test(englishReply);
+  // Portuguese-only signals: the ção/ções ending and stopwords that have no
+  // English homograph (deliberately not "a"/"o"/"e", which do).
+  const looksPortuguese = /ção|ções|\b(uma|não|você|para|obra|tarefa)\b/i.test(englishReply);
+  check(
+    'en-US tenant: reply is English, not Portuguese',
+    englishReply.trim().length > 0 && looksEnglish && !looksPortuguese,
+    `reply: "${englishReply.slice(0, 160)}"`,
+  );
+
   console.log('');
   for (const r of results) {
     console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.detail ? ` — ${r.detail}` : ''}`);
@@ -265,6 +301,11 @@ try {
     await cleanupTenant(empty);
   } catch (e) {
     console.error(`cleanup(empty): ${e instanceof Error ? e.message : String(e)}`);
+  }
+  try {
+    await cleanupTenant(english);
+  } catch (e) {
+    console.error(`cleanup(english): ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

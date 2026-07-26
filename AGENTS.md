@@ -14,12 +14,34 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `packages/db` (`@capo/db`) — Supabase clients (system + user), generated
   types, session helpers, proxy session.
 - `packages/ui` (`@capo/ui`) — shared presentational components.
+- `packages/i18n` (`@capo/i18n`) — locale primitives (`Locale`, `LocaleContext`,
+  `coerceLocale`) and the user-facing copy catalogs (pt-PT / es-ES / en-US).
+  A zero-dependency leaf: `i18n ← db ← core ← {web, operator}`, `i18n ← ui`.
+  Model-facing prompt copy lives in `packages/core/src/i18n` instead —
+  deliberately separate, so UI strings never enter the agent bundle.
 - `packages/config` (`@capo/config`) — shared tsconfig/eslint presets.
 - `supabase/migrations` — single shared DB; migrations stay at the root.
 - `scripts/rls-isolation-matrix.mjs` — the two-tenant RLS isolation matrix
   (24 visibility checks + 2 adversarial cross-tenant attacks). Run with
   `pnpm rls-matrix` after any change that touches auth, RLS, or the DB
   clients; it must stay green.
+
+Two language dials (do not collapse them into one):
+
+- `profiles.language` — **per user**. What Capo speaks, the deterministic
+  approval cards, the transcription instruction, the rolling summary, the web
+  UI. Changeable from chat via the `set_language` tool.
+- `companies.language` — **per tenant**. What Capo *stores*: task titles, job
+  names, memories, generated plan titles. Changeable only in `/definicoes`,
+  behind a warning, because nothing retranslates existing rows.
+
+The single highest-risk regression in this area: the guard
+(`packages/core/src/capabilities/guard.ts`) authorizes a direct write by
+substring-matching the model's `manager_instruction` quote against what the
+manager actually typed. If the model ever translates that quote, **every direct
+write silently degrades into an approval card** — no error, just friction.
+`buildLanguageDirective` carries an emphatic carve-out; keep it there, and watch
+`proposals` with `status='pending'` after any prompt change.
 
 Structural invariants (do not regress):
 

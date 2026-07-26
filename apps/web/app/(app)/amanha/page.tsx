@@ -1,17 +1,25 @@
 import type { Metadata } from 'next';
-import { requireAuth } from '@capo/db/session';
 import { loadDayLabel, loadTasks } from '@/app/dashboard-data';
+import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { ScreenShell, TasksByObra } from '@capo/ui/dashboard-ui';
 
 export const dynamic = 'force-dynamic';
-export const metadata: Metadata = { title: 'Amanhã — Capo' };
+
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: await metadataTitle(t => t.screens.tomorrow.title) };
+}
 
 export default async function AmanhaPage() {
-  const ctx = await requireAuth();
+  const { ctx, locale, t } = await requireAuthT();
   const [tasks, label] = await Promise.all([loadTasks(ctx, 'active_tomorrow'), loadDayLabel(ctx, 1)]);
   return (
-    <ScreenShell title="Amanhã" subtitle={label ?? undefined}>
-      <TasksByObra tasks={tasks} empty="Nada agendado para amanhã." />
+    <ScreenShell
+      title={t.screens.tomorrow.title}
+      subtitle={label ?? undefined}
+      locale={locale}
+      settingsHref="/definicoes"
+    >
+      <TasksByObra tasks={tasks} empty={t.screens.tomorrow.empty} locale={locale} />
     </ScreenShell>
   );
 }

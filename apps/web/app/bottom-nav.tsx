@@ -2,12 +2,16 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { getCatalog } from '@capo/i18n/catalog';
+import type { Locale } from '@capo/i18n/locale';
 
+// Labels are resolved per render from `locale` rather than baked into TABS:
+// the icons are static, the words are not.
 const TABS = [
-  { href: '/', label: 'Chat', icon: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /> },
+  { href: '/', key: 'chat', icon: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /> },
   {
     href: '/hoje',
-    label: 'Hoje',
+    key: 'today',
     icon: (
       <>
         <circle cx="12" cy="12" r="4" />
@@ -17,7 +21,7 @@ const TABS = [
   },
   {
     href: '/amanha',
-    label: 'Amanhã',
+    key: 'tomorrow',
     icon: (
       <>
         <rect x="3" y="4" width="18" height="17" rx="2" />
@@ -27,7 +31,7 @@ const TABS = [
   },
   {
     href: '/atrasadas',
-    label: 'Atrasadas',
+    key: 'overdue',
     icon: (
       <>
         <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
@@ -37,17 +41,19 @@ const TABS = [
   },
   {
     href: '/obras',
-    label: 'Obras',
+    key: 'jobs',
     icon: <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4" />,
   },
 ];
 
-export default function BottomNav() {
+export default function BottomNav({ locale }: { locale: Locale }) {
   const pathname = usePathname();
+  const nav = getCatalog(locale).nav;
   return (
     <nav className="grid shrink-0 grid-cols-5 border-t border-zinc-500/20 bg-background pb-[env(safe-area-inset-bottom)]">
-      {TABS.map(({ href, label, icon }) => {
+      {TABS.map(({ href, key, icon }) => {
         const active = pathname === href;
+        const label = nav[key as keyof typeof nav];
         return (
           <Link
             key={href}

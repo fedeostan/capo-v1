@@ -1,14 +1,19 @@
 import type { MetadataRoute } from 'next';
+import { getCatalog } from '@capo/i18n/catalog';
+import { publicLocale } from '@/lib/i18n';
 
-export default function manifest(): MetadataRoute.Manifest {
+// Low value, low risk: an already-installed PWA does not refetch its manifest,
+// so this only affects the language of a FRESH install.
+export default async function manifest(): Promise<MetadataRoute.Manifest> {
+  const t = getCatalog(await publicLocale());
   return {
-    name: 'Capo',
-    short_name: 'Capo',
-    description: 'O teu capataz virtual',
+    name: t.meta.appName,
+    short_name: t.meta.appName,
+    description: t.meta.appDescription,
     id: '/',
     start_url: '/',
     display: 'standalone',
-    lang: 'pt-PT',
+    lang: t.meta.htmlLang,
     background_color: '#ffffff',
     theme_color: '#ea580c',
     icons: [
