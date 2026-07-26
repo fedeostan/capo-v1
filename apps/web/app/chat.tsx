@@ -90,7 +90,7 @@ function ProposalCard({
           <button
             disabled={state === 'busy'}
             onClick={() => decide('reject')}
-            className="rounded-lg border border-zinc-400 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10 disabled:opacity-50"
+            className="rounded-lg border border-zinc-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10 disabled:opacity-50"
           >
             {t.chat.reject}
           </button>
@@ -324,7 +324,13 @@ export default function Chat({
         {busy && (
           <div className="flex items-center gap-3 text-xs text-zinc-500">
             <span>{t.chat.typing}</span>
-            <button type="button" onClick={stop} className="underline hover:text-zinc-400">
+            {/* Hover must DARKEN in light and lighten in dark — a single
+                zinc-400 made the link fade out on a white background. */}
+            <button
+              type="button"
+              onClick={stop}
+              className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
+            >
               {t.chat.stop}
             </button>
           </div>
@@ -337,17 +343,19 @@ export default function Chat({
             <p className="font-medium text-red-600 dark:text-red-400">{t.chat.errorTitle}</p>
             <p className="mt-0.5 text-xs text-zinc-500">{errorHint(error, t)}</p>
             <div className="mt-2 flex gap-2">
+              {/* Brand orange, not a grey slab: on a light error card the old
+                  bg-zinc-700 read as disabled next to the outlined Dismiss. */}
               <button
                 type="button"
                 onClick={retry}
-                className="rounded-lg bg-zinc-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-600"
+                className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
               >
                 {t.chat.retry}
               </button>
               <button
                 type="button"
                 onClick={clearError}
-                className="rounded-lg border border-zinc-400 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10"
+                className="rounded-lg border border-zinc-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10"
               >
                 {t.chat.dismiss}
               </button>

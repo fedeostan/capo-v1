@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/react";
 import { getCatalog } from "@capo/i18n/catalog";
 import { publicLocale } from "@/lib/i18n";
+import { resolveTheme } from "@/lib/theme";
 import "./globals.css";
 import SwRegister from "./sw-register";
 
@@ -27,6 +28,11 @@ export async function generateMetadata(): Promise<Metadata> {
 // maximumScale/userScalable stop iOS from auto-zooming on input focus (pinch
 // zoom still works — iOS ignores the cap for user gestures); viewportFit lets
 // the bottom nav's safe-area padding take effect on notched phones.
+//
+// themeColor stays a single brand value rather than the [{media, color}] form:
+// that form keys off prefers-color-scheme, the exact signal the appearance
+// cookie exists to override, so a dark-OS user who picked Light would get dark
+// browser chrome around a light app.
 export const viewport: Viewport = {
   themeColor: "#ea580c",
   width: "device-width",
@@ -46,11 +52,14 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const locale = await publicLocale();
+  // Both are cookie reads, and this layout is already dynamic, so the theme
+  // class costs nothing extra — and stamping it server-side is what makes the
+  // toggle flash-free without a blocking inline script.
+  const [locale, theme] = await Promise.all([publicLocale(), resolveTheme()]);
   return (
     <html
       lang={locale}
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${theme} ${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex h-dvh flex-col pt-[env(safe-area-inset-top)]">
         {children}

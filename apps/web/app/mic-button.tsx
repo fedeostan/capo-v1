@@ -120,7 +120,9 @@ export default function MicButton({
   return (
     <div className="relative flex items-center">
       {hint && (
-        <span className="absolute -top-8 right-0 whitespace-nowrap rounded-lg bg-zinc-800 px-2 py-1 text-xs text-white">
+        // A dark tooltip on a light page is the intended convention; the dark:
+        // variant only restores separation from the #0a0a0a background.
+        <span className="absolute -top-8 right-0 whitespace-nowrap rounded-lg bg-zinc-800 px-2 py-1 text-xs text-white dark:bg-zinc-700">
           {hint}
         </span>
       )}
@@ -143,7 +145,7 @@ export default function MicButton({
           </>
         )}
         {state === 'transcribing' && (
-          <span className="block h-4 w-4 animate-spin rounded-full border-2 border-zinc-400 border-t-transparent" />
+          <span className="block h-4 w-4 animate-spin rounded-full border-2 border-zinc-500 border-t-transparent" />
         )}
       </button>
     </div>

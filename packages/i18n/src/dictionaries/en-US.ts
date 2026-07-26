@@ -257,6 +257,9 @@ const dict: Catalog = {
     companyLanguageHint:
       'The language Capo writes tasks, jobs, and notes in — what the whole crew sees on the dashboard.',
     companyLanguageWarning: 'Heads up: tasks and jobs that already exist are not translated.',
+    appearance: 'Appearance',
+    appearanceHint: "Light, dark, or whatever your phone's set to. Saved on this device only.",
+    themeOption: { light: 'Light', dark: 'Dark', system: 'System' },
     saved: 'Saved.',
     failed: "Couldn't save that. Try again.",
   },

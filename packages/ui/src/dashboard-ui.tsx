@@ -24,7 +24,9 @@ const STATUS_STYLES: Record<string, string> = {
   in_progress: 'bg-orange-600/10 text-orange-600',
   blocked: 'bg-red-600/10 text-red-600',
   done: 'bg-emerald-700/10 text-emerald-700',
-  cancelled: 'bg-zinc-500/10 text-zinc-400 line-through',
+  // zinc-500 rather than 400: 400 is 2.3:1 on white and this file now renders
+  // on a light background by default in both apps.
+  cancelled: 'bg-zinc-500/10 text-zinc-500 line-through',
 };
 
 function StatusBadge({ status, locale }: { status: string | null; locale: Locale }) {

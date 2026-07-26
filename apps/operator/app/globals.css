@@ -4,16 +4,21 @@
    must be declared or their classes vanish from the built CSS. */
 @source "../../../packages/ui/src";
 
+/* Operator is pinned to LIGHT — an internal tool with no preference to store,
+   so it gets no cookie, no toggle, and no dynamic rendering.
+
+   This redefinition is not cosmetic. Tailwind v4's built-in `dark:` is a media
+   query, and packages/ui is compiled into this app, so without it any `dark:`
+   utility in the shared components would fire on an OS-dark machine while the
+   background below stayed white. The class is never applied, so the variant
+   never matches. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* Inherited, so scrollbars and native controls stay light too. */
+  color-scheme: light;
 }
 
 body {

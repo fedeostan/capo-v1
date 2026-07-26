@@ -220,13 +220,21 @@ export interface Catalog {
     errors: Record<'dados' | 'telemovel' | 'telemovel-usado' | 'guardar', string>;
   };
 
-  // The two language dials, rendered as cards on /perfil.
+  // The two language dials plus the appearance dial, rendered as cards on
+  // /perfil. Appearance is per DEVICE (a cookie), unlike the language pair.
   settings: {
     yourLanguage: string;
     yourLanguageHint: string;
     companyLanguage: string;
     companyLanguageHint: string;
     companyLanguageWarning: string;
+    appearance: string;
+    appearanceHint: string;
+    // Keys must match Theme in apps/web/lib/theme.ts — tsc catches drift at
+    // the call site, where the index is typed as Theme. Duplicated rather than
+    // imported: @capo/i18n is a zero-dependency leaf and must never reach into
+    // an app. Same pattern as billing.statusLabel below.
+    themeOption: Record<'light' | 'dark' | 'system', string>;
     saved: string;
     failed: string;
   };
