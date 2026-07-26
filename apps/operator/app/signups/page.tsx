@@ -27,7 +27,7 @@ export default async function SignupsPage() {
                 {s.fullName} <span className="text-zinc-500">({s.phone})</span>
               </p>
               <p className="text-xs text-zinc-500">
-                <Link href={`/conversations/${s.companyId}`} className="underline hover:text-zinc-300">
+                <Link href={`/conversations/${s.companyId}`} className="underline hover:text-zinc-800">
                   {s.companyName}
                 </Link>
                 {' · '}
