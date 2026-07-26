@@ -8,6 +8,7 @@
 // kept on top as belt-and-braces.
 import type { AuthContext } from '@capo/db/session';
 import type { Tables } from '@capo/db/types';
+import { getCatalog } from '@capo/i18n/catalog';
 import type { BoardTask, DashboardObra } from '@capo/ui/dashboard-ui';
 import type { TarefasFilters } from '@/app/(app)/tarefas/filters';
 
@@ -123,12 +124,15 @@ export async function loadTeam({ db, companyId }: AuthContext): Promise<Tables<'
 // Display label for the Hoje/Amanhã headers. The date comes from the same
 // lisbon_today() SQL function that drives the buckets — never from local time —
 // so the header can't contradict the list under it. Read-only RPC.
-export async function loadDayLabel({ db }: AuthContext, offsetDays: 0 | 1): Promise<string | null> {
-  const { data } = await db.rpc('lisbon_today');
+export async function loadDayLabel(ctx: AuthContext, offsetDays: 0 | 1): Promise<string | null> {
+  const { data } = await ctx.db.rpc('lisbon_today');
   if (!data) return null;
   const day = new Date(`${data}T00:00:00Z`);
   day.setUTCDate(day.getUTCDate() + offsetDays);
-  return new Intl.DateTimeFormat('pt-PT', {
+  // The DATE still comes from lisbon_today() — only its FORMATTING follows the
+  // reader's locale. An English-speaking manager on a Portuguese company sees
+  // the same day, spelled his way.
+  return new Intl.DateTimeFormat(getCatalog(ctx.locale).meta.dateLocale, {
     timeZone: 'UTC',
     weekday: 'long',
     day: 'numeric',

@@ -5,15 +5,12 @@
 // Pure module: no React, no 'use server', no DB. Imported by the page, by the
 // chip row, by the client control strip, and by dashboard-data.ts.
 
-export const QUANDO_CHIPS = [
-  { value: 'hoje', label: 'Hoje' },
-  { value: 'amanha', label: 'Amanhã' },
-  { value: 'atrasadas', label: 'Atrasadas' },
-  { value: 'risco', label: 'Em risco' },
-  { value: 'todas', label: 'Todas' },
-] as const;
+// Values only — the labels live in @capo/i18n, keyed by these same strings.
+// The VALUES stay Portuguese on purpose: they are the URL contract (?quando=hoje),
+// shareable and bookmarkable, so translating them would break existing links.
+export const QUANDO_CHIPS = ['hoje', 'amanha', 'atrasadas', 'risco', 'todas'] as const;
 
-export type QuandoKeyword = (typeof QUANDO_CHIPS)[number]['value'];
+export type QuandoKeyword = (typeof QUANDO_CHIPS)[number];
 
 // `quando` is either one of the keywords above or a literal YYYY-MM-DD, so a
 // specific day is just another value of the same param rather than a second
@@ -29,7 +26,7 @@ export type RawSearchParams = Record<string, string | string[] | undefined>;
 
 export const DEFAULT_QUANDO: Quando = { kind: 'keyword', value: 'hoje' };
 
-const KEYWORDS: readonly string[] = QUANDO_CHIPS.map(c => c.value);
+const KEYWORDS: readonly string[] = QUANDO_CHIPS;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function first(value: string | string[] | undefined): string | undefined {

@@ -7,7 +7,12 @@ const isoDate = z
   .describe('ISO date, YYYY-MM-DD');
 
 export const createJobInput = z.object({
-  name: z.string().min(1).describe('Job (obra) name, e.g. "Remodelação Rua das Flores 12"'),
+  name: z
+    .string()
+    .min(1)
+    .describe(
+      "Job name — usually the site, e.g. a street address. Written in the company's domain language (see the Language policy in your instructions).",
+    ),
   address: z.string().optional(),
   client_name: z.string().optional(),
   starts_on: isoDate.optional(),

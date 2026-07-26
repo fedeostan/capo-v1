@@ -20,6 +20,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          language: string
           name: string
           stripe_customer_id: string | null
           stripe_subscription_id: string | null
@@ -29,6 +30,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          language?: string
           name: string
           stripe_customer_id?: string | null
           stripe_subscription_id?: string | null
@@ -38,6 +40,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          language?: string
           name?: string
           stripe_customer_id?: string | null
           stripe_subscription_id?: string | null
@@ -359,6 +362,7 @@ export type Database = {
           created_at: string
           full_name: string
           id: string
+          language: string
           phone: string
         }
         Insert: {
@@ -366,6 +370,7 @@ export type Database = {
           created_at?: string
           full_name: string
           id: string
+          language?: string
           phone: string
         }
         Update: {
@@ -373,6 +378,7 @@ export type Database = {
           created_at?: string
           full_name?: string
           id?: string
+          language?: string
           phone?: string
         }
         Relationships: [
@@ -811,7 +817,12 @@ export type Database = {
     }
     Functions: {
       complete_onboarding: {
-        Args: { p_company_name: string; p_full_name: string; p_phone: string }
+        Args: {
+          p_company_name: string
+          p_full_name: string
+          p_language?: string
+          p_phone: string
+        }
         Returns: string
       }
       finalize_proposal: {

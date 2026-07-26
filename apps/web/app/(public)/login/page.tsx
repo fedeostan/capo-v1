@@ -1,21 +1,11 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { metadataTitle, publicCatalog } from '@/lib/i18n';
 import { signIn, signInWithGoogle } from './actions';
 
-export const metadata: Metadata = { title: 'Entrar — Capo' };
-
-// TODO(Federico): EU-PT microcopy dial — headline, helper text and the notice
-// below are placeholders in your voice's direction; tune them.
-const NOTICES: Record<string, { tone: 'ok' | 'err'; text: string }> = {
-  'erro-credenciais': {
-    tone: 'err',
-    text: 'Email ou palavra-passe incorretos. Confirma e tenta de novo.',
-  },
-  'erro-link-invalido': {
-    tone: 'err',
-    text: 'O link expirou ou já foi usado. Pede um novo.',
-  },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: await metadataTitle(t => t.auth.login.submit) };
+}
 
 export default async function LoginPage({
   searchParams,
@@ -23,32 +13,36 @@ export default async function LoginPage({
   searchParams: Promise<{ erro?: string }>;
 }) {
   const params = await searchParams;
-  const notice = params.erro ? NOTICES[`erro-${params.erro}`] : undefined;
+  const { t } = await publicCatalog();
+  const errors = t.auth.login.errors;
+  // The query keys stay Portuguese — they are part of the redirect contract in
+  // ./actions and are never shown to anyone.
+  const noticeText = params.erro ? errors[params.erro as keyof typeof errors] : undefined;
   const googleEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === '1';
 
   return (
     <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 px-6 pb-16">
       <div className="space-y-2 text-center">
         <p className="text-4xl">👷</p>
-        <h1 className="text-2xl font-semibold">Capo</h1>
-        <p className="text-sm text-zinc-500">O teu capataz virtual</p>
+        <h1 className="text-2xl font-semibold">{t.auth.login.title}</h1>
+        <p className="text-sm text-zinc-500">{t.meta.appDescription}</p>
       </div>
 
       <form action={signIn} className="space-y-3">
         <label className="block space-y-1">
-          <span className="text-sm font-medium">Email</span>
+          <span className="text-sm font-medium">{t.auth.login.email}</span>
           <input
             type="email"
             name="email"
             required
             autoComplete="email"
             inputMode="email"
-            placeholder="o.teu.email@empresa.pt"
+            placeholder={t.auth.login.emailPlaceholder}
             className="w-full rounded-lg border border-zinc-500/30 bg-background px-3 py-2.5 text-base outline-none focus:border-orange-600"
           />
         </label>
         <label className="block space-y-1">
-          <span className="text-sm font-medium">Palavra-passe</span>
+          <span className="text-sm font-medium">{t.auth.login.password}</span>
           <input
             type="password"
             name="password"
@@ -61,7 +55,7 @@ export default async function LoginPage({
           type="submit"
           className="w-full rounded-lg bg-orange-600 py-2.5 font-semibold text-white active:bg-orange-700"
         >
-          Entrar
+          {t.auth.login.submit}
         </button>
       </form>
 
@@ -71,29 +65,23 @@ export default async function LoginPage({
             type="submit"
             className="w-full rounded-lg border border-zinc-500/30 py-2.5 text-sm font-semibold hover:bg-zinc-500/10"
           >
-            Entrar com Google
+            {t.auth.login.google}
           </button>
         </form>
       )}
 
       <div className="flex justify-between text-sm text-zinc-500">
         <Link href="/recuperar" className="underline">
-          Esqueceste-te da password?
+          {t.auth.login.forgot}
         </Link>
         <Link href="/registar" className="underline">
-          Criar conta
+          {t.auth.login.createAccount}
         </Link>
       </div>
 
-      {notice && (
-        <p
-          className={`rounded-lg px-3 py-2 text-center text-sm ${
-            notice.tone === 'ok'
-              ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
-              : 'bg-red-500/10 text-red-700 dark:text-red-400'
-          }`}
-        >
-          {notice.text}
+      {noticeText && (
+        <p className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-400">
+          {noticeText}
         </p>
       )}
     </div>

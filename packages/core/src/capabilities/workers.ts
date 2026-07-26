@@ -13,7 +13,12 @@ const e164Phone = z
 
 export const addWorkerInput = z.object({
   name: z.string().min(1),
-  trade: z.string().optional().describe('Trade/ofício, e.g. "pedreiro", "eletricista"'),
+  trade: z
+    .string()
+    .optional()
+    .describe(
+      "The worker's trade (bricklayer, electrician, plumber…), written in the company's domain language (see the Language policy in your instructions).",
+    ),
   phone: e164Phone.optional(),
 });
 

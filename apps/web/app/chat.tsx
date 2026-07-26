@@ -2,22 +2,17 @@
 
 import { useChat } from '@ai-sdk/react';
 import { getToolName, isToolUIPart, type UIMessage } from 'ai';
+import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { getCatalog, type Catalog } from '@capo/i18n/catalog';
+import type { Locale } from '@capo/i18n/locale';
 import Markdown from '@capo/ui/markdown';
 import MicButton from './mic-button';
 
-const TOOL_LABELS: Record<string, string> = {
-  create_task: 'Tarefa criada',
-  update_task: 'Tarefa atualizada',
-  list_tasks: 'Tarefas consultadas',
-  create_job: 'Obra criada',
-  list_jobs: 'Obras consultadas',
-  add_worker: 'Trabalhador adicionado',
-  list_workers: 'Equipa consultada',
-  remember: 'Memorizado',
-  propose: 'Proposta criada',
-  generate_plan: 'Plano gerado',
-};
+// This is a client component, so it receives `locale` (a plain string) and
+// resolves the catalog itself — the catalog holds functions, which cannot be
+// serialized across the RSC boundary. Nested components take the resolved
+// catalog directly, since they are all on the client side of that line.
 
 export interface PendingProposal {
   proposalId: string;
@@ -47,10 +42,12 @@ function dbStatusToCardState(status: string | undefined): CardState {
 function ProposalCard({
   proposalId,
   renderedText,
+  t,
   initialState = 'pending',
 }: {
   proposalId: string;
   renderedText: string;
+  t: Catalog;
   initialState?: CardState;
 }) {
   const [state, setState] = useState<CardState>(initialState);
@@ -73,7 +70,7 @@ function ProposalCard({
   return (
     <div className="my-2 rounded-xl border border-amber-500/60 bg-amber-500/10 p-3 text-sm">
       <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-        Proposta do Capo
+        {t.chat.proposalTitle}
       </div>
       <p className="whitespace-pre-wrap">{renderedText}</p>
       {state === 'pending' || state === 'busy' ? (
@@ -83,24 +80,18 @@ function ProposalCard({
             onClick={() => decide('approve')}
             className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
           >
-            Aprovar
+            {t.chat.approve}
           </button>
           <button
             disabled={state === 'busy'}
             onClick={() => decide('reject')}
             className="rounded-lg border border-zinc-400 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10 disabled:opacity-50"
           >
-            Rejeitar
+            {t.chat.reject}
           </button>
         </div>
       ) : (
-        <div className="mt-2 text-xs font-medium">
-          {state === 'approved' && '✅ Aprovada — executada'}
-          {state === 'rejected' && '❌ Rejeitada'}
-          {state === 'failed' && '⚠️ Aprovada, mas a execução falhou'}
-          {state === 'not_pending' && 'Esta proposta já foi resolvida'}
-          {state === 'error' && '⚠️ Erro ao resolver a proposta'}
-        </div>
+        <div className="mt-2 text-xs font-medium">{t.chat.cardState[state]}</div>
       )}
     </div>
   );
@@ -117,10 +108,12 @@ function Chip({ children }: { children: React.ReactNode }) {
 function Part({
   part,
   proposalStatuses,
+  t,
   markdown,
 }: {
   part: UIMessage['parts'][number];
   proposalStatuses: Record<string, string>;
+  t: Catalog;
   markdown?: boolean;
 }) {
   if (part.type === 'text') {
@@ -130,7 +123,7 @@ function Part({
   }
   if (isToolUIPart(part)) {
     const name = getToolName(part);
-    const label = TOOL_LABELS[name] ?? name;
+    const label = t.chat.toolLabels[name] ?? name;
     if (part.state === 'output-available') {
       const out = part.output as
         | { status?: string; proposalId?: string; renderedText?: string; reason?: string }
@@ -140,6 +133,7 @@ function Part({
           <ProposalCard
             proposalId={out.proposalId}
             renderedText={out.renderedText}
+            t={t}
             initialState={dbStatusToCardState(proposalStatuses[out.proposalId])}
           />
         );
@@ -155,23 +149,45 @@ function Part({
 
 export default function Chat({
   initialMessages,
+  locale,
   proposalStatuses = {},
   orphanedPending = [],
 }: {
   initialMessages: UIMessage[];
+  locale: Locale;
   proposalStatuses?: Record<string, string>;
   orphanedPending?: PendingProposal[];
 }) {
+  const t = getCatalog(locale);
   const [input, setInput] = useState('');
   const { messages, sendMessage, status } = useChat({ messages: initialMessages });
   const bottomRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
   // What the mic inserted this composer round; compared against the sent text
   // so vocab learning only sees genuine transcription corrections.
   const transcriptRef = useRef('');
+  // Tool-call ids already acted on, so a re-render never re-refreshes.
+  const handledLanguageCalls = useRef(new Set<string>());
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // set_language writes profiles.language, but everything around this chat —
+  // the nav, the dashboard, <html lang> — was server-rendered in the OLD
+  // language and has no idea. Refreshing the server components is what makes
+  // the whole app flip mid-conversation instead of at the next navigation.
+  useEffect(() => {
+    for (const message of messages) {
+      for (const part of message.parts) {
+        if (!isToolUIPart(part) || getToolName(part) !== 'set_language') continue;
+        if (part.state !== 'output-available') continue;
+        if (handledLanguageCalls.current.has(part.toolCallId)) continue;
+        handledLanguageCalls.current.add(part.toolCallId);
+        router.refresh();
+      }
+    }
+  }, [messages, router]);
 
   const busy = status === 'submitted' || status === 'streaming';
 
@@ -196,25 +212,23 @@ export default function Chat({
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
       <header className="border-b border-zinc-500/20 px-4 py-3">
-        <h1 className="text-lg font-semibold">Capo 👷</h1>
-        <p className="text-xs text-zinc-500">O teu capataz virtual</p>
+        <h1 className="text-lg font-semibold">{t.chat.title}</h1>
+        <p className="text-xs text-zinc-500">{t.chat.tagline}</p>
       </header>
 
       <main className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
         {orphanedPending.length > 0 && (
           <section className="rounded-xl border border-zinc-500/20 p-3">
             <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              Propostas por decidir
+              {t.chat.pendingProposals}
             </div>
             {orphanedPending.map(p => (
-              <ProposalCard key={p.proposalId} proposalId={p.proposalId} renderedText={p.renderedText} />
+              <ProposalCard key={p.proposalId} proposalId={p.proposalId} renderedText={p.renderedText} t={t} />
             ))}
           </section>
         )}
         {messages.length === 0 && (
-          <p className="pt-10 text-center text-sm text-zinc-500">
-            Fala com o Capo — ele trata das obras, das tarefas e da equipa.
-          </p>
+          <p className="pt-10 text-center text-sm text-zinc-500">{t.chat.emptyThread}</p>
         )}
         {messages.map(message =>
           message.role === 'system' ? (
@@ -235,6 +249,7 @@ export default function Chat({
                     key={`${message.id}-${i}`}
                     part={part}
                     proposalStatuses={proposalStatuses}
+                    t={t}
                     markdown={message.role === 'assistant'}
                   />
                 ))}
@@ -242,7 +257,7 @@ export default function Chat({
             </div>
           ),
         )}
-        {busy && <div className="text-xs text-zinc-500">O Capo está a escrever…</div>}
+        {busy && <div className="text-xs text-zinc-500">{t.chat.typing}</div>}
         <div ref={bottomRef} />
       </main>
 
@@ -250,12 +265,13 @@ export default function Chat({
         <input
           value={input}
           onChange={e => setInput(e.target.value)}
-          placeholder="Escreve uma mensagem…"
+          placeholder={t.chat.placeholder}
           className="flex-1 rounded-xl border border-zinc-500/30 bg-transparent px-3 py-2 text-base outline-none focus:border-emerald-600"
         />
         {/* Transcription only fills the input — the manager reviews and sends. */}
         <MicButton
           disabled={busy}
+          locale={locale}
           onTranscript={text => {
             transcriptRef.current = transcriptRef.current ? `${transcriptRef.current} ${text}` : text;
             setInput(prev => (prev.trim() ? `${prev.trimEnd()} ${text}` : text));
@@ -266,7 +282,7 @@ export default function Chat({
           disabled={busy || input.trim().length === 0}
           className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
         >
-          Enviar
+          {t.chat.send}
         </button>
       </form>
     </div>

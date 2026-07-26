@@ -1,0 +1,327 @@
+import type { Catalog } from '../catalog';
+
+// American English. Register mirrors the pt-PT original: jobsite, direct,
+// contractions throughout — never project-management SaaS.
+const dict: Catalog = {
+  meta: {
+    htmlLang: 'en-US',
+    dateLocale: 'en-US',
+    appName: 'Capo',
+    appDescription: 'Your virtual foreman',
+    languageName: 'English',
+    titleSuffix: 'Capo',
+  },
+
+  nav: { chat: 'Chat', tasks: 'Tasks', jobs: 'Jobs', profile: 'Profile' },
+
+  common: {
+    signOut: 'Sign out',
+    save: 'Save',
+    backToLogin: 'Back to sign in',
+    notAuthenticated: 'Not authenticated',
+  },
+
+  chat: {
+    title: 'Capo 👷',
+    tagline: 'Your virtual foreman',
+    placeholder: 'Type a message…',
+    send: 'Send',
+    typing: 'Capo is typing…',
+    emptyThread: 'Talk to Capo — he handles the jobs, the tasks, and the crew.',
+    proposalTitle: 'Capo proposes',
+    pendingProposals: 'Waiting on you',
+    approve: 'Approve',
+    reject: 'Reject',
+    cardState: {
+      approved: '✅ Approved — done',
+      rejected: '❌ Rejected',
+      failed: '⚠️ Approved, but it failed to run',
+      not_pending: 'This proposal was already resolved',
+      error: '⚠️ Error resolving the proposal',
+    },
+    toolLabels: {
+      create_task: 'Task created',
+      update_task: 'Task updated',
+      list_tasks: 'Tasks looked up',
+      create_job: 'Job created',
+      update_job: 'Job updated',
+      list_jobs: 'Jobs looked up',
+      add_worker: 'Worker added',
+      update_worker: 'Worker updated',
+      list_workers: 'Crew looked up',
+      remember: 'Noted',
+      search_knowledge: 'Knowledge base searched',
+      set_language: 'Language changed',
+      propose: 'Proposal created',
+      generate_plan: 'Plan generated',
+    },
+  },
+
+  mic: {
+    record: 'Record a voice message',
+    stop: 'Stop recording',
+    noAccess: 'No microphone access',
+    notUnderstood: "Didn't catch that — try again",
+    error: 'Transcription failed',
+  },
+
+  dashboard: {
+    taskStatus: {
+      pending: 'Pending',
+      in_progress: 'In progress',
+      blocked: 'Blocked',
+      done: 'Done',
+      cancelled: 'Cancelled',
+    },
+    overdueBy: days => (days === 1 ? '1 day past due' : `${days} days past due`),
+    noAssignee: 'Unassigned',
+    noJob: 'No job',
+    noDate: 'No date',
+    talkToCapo: 'Talk to Capo',
+    dueBy: shortDate => `due ${shortDate}`,
+    risk: {
+      blocked: 'blocked',
+      lateStart: 'should have started already',
+      dueSoon: 'due within 2 working days',
+      lateDependency: titles => `waiting on: ${titles.join(', ')}`,
+      pausedJob: 'job paused',
+    },
+    progress: (done, total, pct) => `${done} of ${total} done (${pct}%)`,
+    tasksDone: (done, total) => `${done} of ${total} tasks done`,
+    noTasksRegistered: 'no tasks yet',
+    overdueCount: n => `${n} overdue`,
+    pendingCount: n => `${n} pending`,
+    dependsOn: titles => `⤷ after: ${titles.join(', ')}`,
+  },
+
+  screens: {
+    tasks: {
+      title: 'Tasks',
+      quando: {
+        hoje: 'Today',
+        amanha: 'Tomorrow',
+        atrasadas: 'Overdue',
+        risco: 'At risk',
+        todas: 'All',
+      },
+      empty: {
+        hoje: 'Nothing scheduled for today.',
+        amanha: 'Nothing scheduled for tomorrow.',
+        atrasadas: 'Nothing past due. Good sign.',
+        risco: 'Nothing at risk right now.',
+        todas: 'No open tasks.',
+      },
+      emptyForDate: 'Nothing scheduled for that day.',
+      emptyFallback: 'No tasks.',
+      emptyInJob: base => `${base.replace(/\.$/, '')} on this job.`,
+      count: n => `${n} ${n === 1 ? 'task' : 'tasks'}`,
+      filterByJob: 'Filter by job',
+      filterByDay: 'Filter by day',
+      allJobs: 'All jobs',
+      jobStatusSuffix: { paused: ' (paused)', done: ' (done)' },
+    },
+    jobs: { title: 'Jobs', subtitle: 'Active jobs — progress and delays', empty: 'No active jobs.' },
+    jobDetail: {
+      fallbackTitle: 'Job',
+      empty: 'No tasks on this job yet — ask Capo to build the plan.',
+    },
+    taskActions: { complete: 'Complete', reopen: 'Reopen', failed: "That didn't work, try again." },
+  },
+
+  auth: {
+    login: {
+      title: 'Capo',
+      email: 'Email',
+      emailPlaceholder: 'you@company.com',
+      password: 'Password',
+      submit: 'Sign in',
+      google: 'Sign in with Google',
+      forgot: 'Forgot your password?',
+      createAccount: 'Create account',
+      errors: {
+        credenciais: 'Wrong email or password. Check them and try again.',
+        'link-invalido': 'That link expired or was already used. Request a new one.',
+      },
+    },
+    signup: {
+      title: 'Create account',
+      subtitle: '14 days free. No credit card.',
+      submit: 'Create account',
+      checkEmailTitle: 'Confirm your email',
+      checkEmailText: "We sent you a confirmation link — open it to get started.",
+      alreadyConfirmed: 'Already confirmed? Sign in here',
+      haveAccount: 'Already have an account?',
+      signIn: 'Sign in here',
+      errors: {
+        dados: 'Enter a valid email and a password of at least 8 characters.',
+        fechado: 'Sign-ups open soon — ask for an invite.',
+      },
+    },
+    recover: {
+      title: 'Reset password',
+      subtitle: "Give us your email and we'll send you a link.",
+      submit: 'Send link',
+      sentTitle: 'Check your email',
+      sentText: "If an account exists for that email, we've sent a link to reset the password.",
+      errors: { dados: 'Enter a valid email.' },
+    },
+    newPassword: {
+      title: 'New password',
+      label: 'New password',
+      errors: {
+        curta: 'The password must be at least 8 characters.',
+        guardar: "Couldn't save that. Request a new reset link.",
+      },
+    },
+  },
+
+  onboarding: {
+    title: 'Welcome to Capo',
+    subtitle: 'Just a few details to get started: your company, your phone, and your language.',
+    companyName: 'Company name',
+    companyPlaceholder: 'Smith Construction LLC',
+    yourName: 'Your name',
+    yourNamePlaceholder: 'John Smith',
+    phone: 'Your mobile',
+    phonePlaceholder: '+1 555 123 4567',
+    phoneHint: "This is where Capo sends the day's messages.",
+    language: 'Language',
+    languageHint: 'You can change this later — just tell Capo.',
+    submit: 'Get started',
+    errors: {
+      dados: 'Fill in the company name and your name.',
+      telemovel: 'Invalid number. Use the full international format, e.g. +1 555 123 4567.',
+      'telemovel-usado': "That number is already linked to another account.",
+      guardar: "Couldn't save that. Try again.",
+    },
+  },
+
+  profile: {
+    title: 'Profile',
+    company: 'Company',
+    yourAccount: 'Your account',
+    team: 'Crew',
+    teamEmpty: 'Nobody on the crew yet.',
+    teamEmptyCta: 'Ask Capo to add someone',
+    noContact: 'No contact',
+    inactive: 'inactive',
+    teamHint: 'To add or change someone,',
+    teamHintLink: 'talk to Capo',
+    subscription: 'Subscription',
+    manageSubscription: 'Manage subscription',
+    app: 'App',
+    install: 'Install on your phone',
+    companyNameLabel: 'Company name',
+    fullNameLabel: 'Your name',
+    phoneLabel: 'Your mobile',
+    errors: {
+      companyName: 'The company name must be between 1 and 120 characters.',
+      fullName: 'Your name must be between 1 and 120 characters.',
+      phone: 'Invalid number. Use the full international format, e.g. +15551234567.',
+      phoneTaken: 'That number is already linked to another account.',
+      save: "Couldn't save that. Try again.",
+    },
+  },
+
+  settings: {
+    yourLanguage: 'Your language',
+    yourLanguageHint: 'The language Capo speaks to you in, and the language of this app. Affects only you.',
+    companyLanguage: 'Company data language',
+    companyLanguageHint:
+      'The language Capo writes tasks, jobs, and notes in — what the whole crew sees on the dashboard.',
+    companyLanguageWarning: 'Heads up: tasks and jobs that already exist are not translated.',
+    saved: 'Saved.',
+    failed: "Couldn't save that. Try again.",
+  },
+
+  billing: {
+    title: 'Subscription',
+    activated: 'Subscription active. Thanks!',
+    unavailable: 'Billing is not available yet.',
+    trialDaysLeft: days => `${days} days left in your free trial`,
+    trialEnded: 'Trial period ended',
+    statusLabel: {
+      active: 'Subscription active',
+      past_due: 'Payment overdue',
+      canceled: 'Subscription cancelled',
+    },
+    price: '€45/month · no card to start · no per-worker cost',
+    manage: 'Manage subscription',
+    subscribe: 'Subscribe — €45/month',
+    bannerBlocked:
+      'Your subscription expired — WhatsApp still works, but the chat here and any actions are blocked. Tap to reactivate.',
+    bannerTrial: days => `${days} days left in your free trial — tap to subscribe.`,
+    bannerTrialEnded: 'Your trial ended — tap to subscribe.',
+    blockedError: 'Your subscription expired. Go to Subscription to reactivate — WhatsApp keeps working.',
+    checkoutFailed: "Couldn't start checkout.",
+    noSubscription: "You don't have a subscription linked yet.",
+  },
+
+  install: {
+    title: 'Install Capo',
+    subtitle: 'With Capo on your home screen, you open the app in one tap — just like WhatsApp.',
+    alreadyInstalled: 'Capo is already installed on this device. 💪',
+    open: 'Open Capo',
+    installButton: 'Install app',
+    skip: 'Continue without installing',
+    iosStep1Before: 'Tap',
+    iosStep1Share: 'Share',
+    iosStep1After: "in Safari's toolbar.",
+    iosStep2Before: 'Choose',
+    iosStep2Action: 'Add to Home Screen',
+    iosStep3Before: 'Tap',
+    iosStep3Action: 'Add',
+    iosStep3After: 'Capo lands on your home screen like an app.',
+    genericStep1Before: "Open the browser menu",
+    genericStep2Before: 'Choose',
+    genericStep2Action: 'Install app',
+    genericStep2After: '(or “Add to Home screen”).',
+  },
+
+  landing: {
+    metaTitle: 'Capo — The assistant that runs your WhatsApp',
+    metaDescription:
+      "The AI assistant that runs your WhatsApp and handles the jobsite paperwork. Send the quote, Capo builds the day-by-day plan, the crew gets its briefing every morning.",
+    ogDescription:
+      'Send the quote, Capo builds the day-by-day plan and briefs the crew every morning. €45/month, 14 days free.',
+    headline: 'The assistant that runs your WhatsApp and handles the jobsite paperwork',
+    subhead:
+      "It's not construction management software. It's the virtual foreman who talks to you on WhatsApp, organizes the crew, and never forgets what's left.",
+    ctaPrimary: 'Start free — 14 days',
+    ctaSecondary: 'I have an account — Sign in',
+    stepLabel: n => `Step ${n}`,
+    steps: [
+      {
+        title: 'Send the quote',
+        text: "Paste the quote or describe the job in a message — the way you'd tell a foreman.",
+      },
+      {
+        title: 'Capo builds the day-by-day plan',
+        text: 'Task sequence, dates, and materials, ready for you to approve on a card.',
+      },
+      {
+        title: 'The crew gets its morning briefing',
+        text: "Every worker gets the day's tasks by SMS — no apps, no accounts.",
+      },
+    ],
+    materialsTitle: 'Materials ahead of time',
+    materialsText:
+      "Capo tells the crew in advance what materials they'll need tomorrow — no more finding out on the day that something's missing.",
+    priceSuffix: '/month',
+    priceNote: '14 days free · no card · no per-worker cost',
+    ctaFooter: 'Start free',
+    signIn: 'Sign in',
+  },
+
+  offline: {
+    title: 'No connection',
+    text: 'Capo needs internet to show current data. Check your connection and try again.',
+  },
+
+  whatsapp: {
+    voiceNoteFailed: "Couldn't play that voice note, boss. Can you resend it or type it out?",
+    voiceNoteEmpty: "Got the voice note but couldn't make anything out. Can you say that again?",
+  },
+};
+
+export default dict;

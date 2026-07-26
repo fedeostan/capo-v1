@@ -16,20 +16,27 @@ const bodySchema = z.object({
 
 // TODO(Federico): the learning dial. This decides what counts as vocabulary
 // worth remembering — tune it to your crews (only names? materials? slang?).
+//
+// Model-facing scaffolding, so English: what it extracts are proper nouns and
+// domain terms in whatever language the manager actually spoke, and naming a
+// language here would bias it against the other two.
 function buildExtractionPrompt(transcript: string, final: string): string {
   return [
-    'Um encarregado de construção ditou uma mensagem; a transcrição automática foi depois corrigida à mão antes de enviar.',
-    'Compara as duas versões e devolve APENAS os nomes próprios e termos de domínio (obras, pessoas, materiais, locais) que a versão enviada corrige em relação ao que foi ouvido.',
-    'Ignora reformulações, correções gramaticais e mudanças de pontuação. Na dúvida, devolve uma lista vazia.',
+    'A construction foreman dictated a message; the automatic transcript was then corrected by hand before sending.',
+    'Compare the two versions and return ONLY the proper nouns and domain terms (jobs, people, materials, places) that the sent version corrects relative to what was heard.',
+    'Keep each term in the language the foreman used — never translate it.',
+    'Ignore rephrasings, grammatical fixes, and punctuation changes. When in doubt, return an empty list.',
     '',
-    `Ouvido: ${transcript}`,
-    `Enviado: ${final}`,
+    `Heard: ${transcript}`,
+    `Sent: ${final}`,
   ].join('\n');
 }
 
 export async function POST(req: Request) {
   const auth = await getApiAuth();
-  if (!auth) return Response.json({ error: 'Não autenticado' }, { status: 401 });
+  // No session means no profile means no locale — a 401 body cannot be
+  // localized from the user, and no client renders it. English.
+  if (!auth) return Response.json({ error: 'Not authenticated' }, { status: 401 });
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: 'Invalid body' }, { status: 400 });

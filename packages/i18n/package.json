@@ -1,0 +1,21 @@
+{
+  "name": "@capo/i18n",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./locale": "./src/locale.ts",
+    "./catalog": "./src/catalogs.ts",
+    "./negotiate": "./src/negotiate.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@capo/config": "workspace:*",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10",
+    "typescript": "^5"
+  }
+}

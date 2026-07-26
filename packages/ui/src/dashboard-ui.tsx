@@ -2,29 +2,22 @@
 // mutations in this file — the few interactive controls the manager has
 // (Concluir/Reabrir, Sair) are injected by apps/web through render props or
 // live on their own page, so this package never imports a server action.
+//
+// Every exported component takes `locale` and resolves its own catalog. It does
+// NOT take a catalog as a prop: the catalog holds interpolation FUNCTIONS
+// (progress, overdueBy, …), and functions cannot be serialized across the RSC
+// server→client boundary. Passing a plain string keeps one rule for both sides.
 import type { Tables } from '@capo/db/types';
+import { getCatalog } from '@capo/i18n/catalog';
+import type { Locale } from '@capo/i18n/locale';
 
 // Row shape for the obras view — defined here (the shared UI package) so web
 // and operator render from the same contract; data loaders import this type
 // rather than redeclaring it.
 export type DashboardObra = Tables<'dashboard_obras'>;
 
-// TODO(Federico): microcopy dial — this map is the manager-facing voice of the
-// dashboard (same category as the SMS trim policy and card templates). Tune
-// the status labels, the per-screen empty states passed from each page, and
-// formatOverdue below ("há 3 dias" vs "3 dias de atraso") to taste.
-const STATUS_LABELS: Record<string, string> = {
-  pending: 'Pendente',
-  in_progress: 'Em curso',
-  blocked: 'Bloqueada',
-  done: 'Concluída',
-  cancelled: 'Cancelada',
-};
-
-// TODO(Federico): part of the microcopy dial above.
-function formatOverdue(days: number): string {
-  return days === 1 ? 'há 1 dia' : `há ${days} dias`;
-}
+// The microcopy dial that used to live here (status labels, overdue phrasing,
+// risk reasons) moved to @capo/i18n — one place, three languages, checked by tsc.
 
 const STATUS_STYLES: Record<string, string> = {
   pending: 'bg-zinc-500/10 text-zinc-500',
@@ -34,13 +27,14 @@ const STATUS_STYLES: Record<string, string> = {
   cancelled: 'bg-zinc-500/10 text-zinc-400 line-through',
 };
 
-function StatusBadge({ status }: { status: string | null }) {
+function StatusBadge({ status, locale }: { status: string | null; locale: Locale }) {
   if (!status) return null;
+  const labels = getCatalog(locale).dashboard.taskStatus;
   return (
     <span
       className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[status] ?? STATUS_STYLES.pending}`}
     >
-      {STATUS_LABELS[status] ?? status}
+      {labels[status as keyof typeof labels] ?? status}
     </span>
   );
 }
@@ -83,7 +77,9 @@ export function EmptyState({ text, cta }: { text: string; cta?: { href: string; 
 
 // Every dashboard empty state funnels back to the chat — the dashboard is
 // read-mostly, so "nothing here yet" always means "go ask Capo".
-const TALK_TO_CAPO = { href: '/', label: 'Falar com o Capo' };
+function talkToCapo(locale: Locale) {
+  return { href: '/', label: getCatalog(locale).dashboard.talkToCapo };
+}
 
 // The /tarefas board row. Explicit non-null shape rather than
 // Tables<'task_board'>: Supabase types every view column as nullable, so
@@ -112,22 +108,24 @@ export interface BoardTask {
 // Why a task is flagged, in the manager's words. A risk badge with no reason
 // is just a colour — the whole point of the "Em risco" filter is that it says
 // what is about to go wrong.
-// TODO(Federico): microcopy dial — same category as STATUS_LABELS above.
-export function riskReasons(task: BoardTask): string[] {
+export function riskReasons(task: BoardTask, locale: Locale): string[] {
+  const t = getCatalog(locale).dashboard;
   const reasons: string[] = [];
-  if (task.overdue && task.days_overdue > 0) reasons.push(`Prazo passou ${formatOverdue(task.days_overdue)}`);
-  if (task.risk_blocked) reasons.push('bloqueada');
-  if (task.risk_late_start) reasons.push('já devia ter começado');
-  if (task.risk_due_soon) reasons.push('prazo em 2 dias úteis');
-  if (task.risk_late_dependency) reasons.push(`espera por: ${task.late_dependency_titles.join(', ')}`);
-  if (task.risk_paused_job) reasons.push('obra pausada');
+  if (task.overdue && task.days_overdue > 0) reasons.push(t.overdueBy(task.days_overdue));
+  if (task.risk_blocked) reasons.push(t.risk.blocked);
+  if (task.risk_late_start) reasons.push(t.risk.lateStart);
+  if (task.risk_due_soon) reasons.push(t.risk.dueSoon);
+  if (task.risk_late_dependency) reasons.push(t.risk.lateDependency(task.late_dependency_titles));
+  if (task.risk_paused_job) reasons.push(t.risk.pausedJob);
   return reasons;
 }
 
-function formatShortDate(iso: string): string {
-  return new Intl.DateTimeFormat('pt-PT', { timeZone: 'UTC', day: '2-digit', month: '2-digit' }).format(
-    new Date(`${iso}T00:00:00Z`),
-  );
+function formatShortDate(iso: string, locale: Locale): string {
+  return new Intl.DateTimeFormat(getCatalog(locale).meta.dateLocale, {
+    timeZone: 'UTC',
+    day: '2-digit',
+    month: '2-digit',
+  }).format(new Date(`${iso}T00:00:00Z`));
 }
 
 // The filtered task list behind the Tarefas tab. Grouping is a prop rather
@@ -138,20 +136,23 @@ export function TaskBoardList({
   tasks,
   empty,
   groupBy,
+  locale,
   renderExtra,
 }: {
   tasks: BoardTask[];
   empty: string;
   groupBy: 'date' | 'obra';
+  locale: Locale;
   // Optional per-row slot (the Concluir/Reabrir buttons), kept as a plain
   // render prop so this package never has to import a mutation.
   renderExtra?: (task: BoardTask) => React.ReactNode;
 }) {
-  if (tasks.length === 0) return <EmptyState text={empty} cta={TALK_TO_CAPO} />;
+  if (tasks.length === 0) return <EmptyState text={empty} cta={talkToCapo(locale)} />;
+  const t = getCatalog(locale).dashboard;
   const groups = new Map<string, BoardTask[]>();
   for (const task of tasks) {
     const key =
-      groupBy === 'obra' ? (task.job_name ?? 'Sem obra') : (task.due_date ?? task.start_date ?? 'sem-data');
+      groupBy === 'obra' ? (task.job_name ?? t.noJob) : (task.due_date ?? task.start_date ?? 'sem-data');
     groups.set(key, [...(groups.get(key) ?? []), task]);
   }
   return (
@@ -159,28 +160,28 @@ export function TaskBoardList({
       {[...groups.entries()].map(([key, groupTasks]) => (
         <section key={key} className="space-y-2">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            {groupBy === 'obra' ? key : key === 'sem-data' ? 'Sem data' : formatDayHeading(key)}
+            {groupBy === 'obra' ? key : key === 'sem-data' ? t.noDate : formatDayHeading(key, locale)}
           </h2>
           {groupTasks.map(task => {
-            const reasons = riskReasons(task);
+            const reasons = riskReasons(task, locale);
             // The secondary line carries whatever the heading is NOT already
             // saying: the obra when grouped by date, the deadline otherwise.
             const context =
               groupBy === 'obra'
-                ? task.due_date && `até ${formatShortDate(task.due_date)}`
-                : (task.job_name ?? 'Sem obra');
+                ? task.due_date && t.dueBy(formatShortDate(task.due_date, locale))
+                : (task.job_name ?? t.noJob);
             return (
               <div key={task.id} className="rounded-xl border border-zinc-500/20 p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{task.title}</p>
                     <p className="text-xs text-zinc-500">
-                      {task.worker_name ?? 'Sem responsável'}
+                      {task.worker_name ?? t.noAssignee}
                       {context ? ` · ${context}` : ''}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    <StatusBadge status={task.status} />
+                    <StatusBadge status={task.status} locale={locale} />
                     {renderExtra?.(task)}
                   </div>
                 </div>
@@ -206,14 +207,16 @@ export function TaskBoardList({
 export function ObrasList({
   obras,
   empty,
+  locale,
   overdueByObra,
 }: {
   obras: DashboardObra[];
   empty: string;
+  locale: Locale;
   overdueByObra?: Record<string, number>;
 }) {
-  if (obras.length === 0) return <EmptyState text={empty} cta={TALK_TO_CAPO} />;
-  const plural = (n: number | null, one: string, many: string) => `${n ?? 0} ${n === 1 ? one : many}`;
+  if (obras.length === 0) return <EmptyState text={empty} cta={talkToCapo(locale)} />;
+  const t = getCatalog(locale).dashboard;
   return (
     <section className="space-y-2">
       {obras.map(obra => {
@@ -230,9 +233,7 @@ export function ObrasList({
             <div className="flex items-baseline justify-between gap-2">
               <p className="text-sm font-medium">{obra.name}</p>
               {overdue > 0 && (
-                <span className="shrink-0 text-xs font-medium text-red-600">
-                  {plural(overdue, 'atrasada', 'atrasadas')}
-                </span>
+                <span className="shrink-0 text-xs font-medium text-red-600">{t.overdueCount(overdue)}</span>
               )}
             </div>
             {obra.address && <p className="text-xs text-zinc-500">{obra.address}</p>}
@@ -243,11 +244,9 @@ export function ObrasList({
               </div>
             )}
             <p className="mt-1 text-xs text-zinc-500">
-              {total > 0
-                ? `${done} de ${total} concluídas (${pct}%)`
-                : 'sem tarefas registadas'}
+              {total > 0 ? t.progress(done, total, pct) : t.noTasksRegistered}
               {' · '}
-              {plural(obra.pendentes, 'pendente', 'pendentes')}
+              {t.pendingCount(obra.pendentes ?? 0)}
             </p>
           </a>
         );
@@ -271,23 +270,31 @@ export interface TimelineTask {
   depends_on_titles: string[];
 }
 
-function formatDayHeading(iso: string): string {
+function formatDayHeading(iso: string, locale: Locale): string {
   const date = new Date(`${iso}T00:00:00Z`);
-  return new Intl.DateTimeFormat('pt-PT', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' }).format(date);
+  return new Intl.DateTimeFormat(getCatalog(locale).meta.dateLocale, {
+    timeZone: 'UTC',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(date);
 }
 
 export function TimelineList({
   tasks,
   empty,
+  locale,
   renderExtra,
 }: {
   tasks: TimelineTask[];
   empty: string;
+  locale: Locale;
   // Optional per-row slot (e.g. Concluir/Reabrir buttons) — kept as a plain
   // render prop so this package never has to import a mutation/action.
   renderExtra?: (task: TimelineTask) => React.ReactNode;
 }) {
-  if (tasks.length === 0) return <EmptyState text={empty} cta={TALK_TO_CAPO} />;
+  if (tasks.length === 0) return <EmptyState text={empty} cta={talkToCapo(locale)} />;
+  const t = getCatalog(locale).dashboard;
   const groups = new Map<string, TimelineTask[]>();
   for (const task of tasks) {
     const key = task.start_date ?? 'sem-data';
@@ -298,22 +305,22 @@ export function TimelineList({
       {[...groups.entries()].map(([key, groupTasks]) => (
         <section key={key} className="space-y-2">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            {key === 'sem-data' ? 'Sem data' : formatDayHeading(key)}
+            {key === 'sem-data' ? t.noDate : formatDayHeading(key, locale)}
           </h2>
           {groupTasks.map(task => (
             <div key={task.id} className="rounded-xl border border-zinc-500/20 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-medium">{task.title}</p>
-                  <p className="text-xs text-zinc-500">{task.assignee_name ?? 'Sem responsável'}</p>
+                  <p className="text-xs text-zinc-500">{task.assignee_name ?? t.noAssignee}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <StatusBadge status={task.status} />
+                  <StatusBadge status={task.status} locale={locale} />
                   {renderExtra?.(task)}
                 </div>
               </div>
               {task.depends_on_titles.length > 0 && (
-                <p className="mt-1 text-xs text-zinc-500">⤷ depois de: {task.depends_on_titles.join(', ')}</p>
+                <p className="mt-1 text-xs text-zinc-500">{t.dependsOn(task.depends_on_titles)}</p>
               )}
               {task.materials && task.materials.length > 0 && (
                 <div className="mt-1 flex flex-wrap gap-1">

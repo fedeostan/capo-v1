@@ -2,15 +2,17 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { getCatalog } from '@capo/i18n/catalog';
+import type { Locale } from '@capo/i18n/locale';
 
 // Four destinations, not five. Hoje/Amanhã/Atrasadas were never separate
 // places — they were one list with a different date filter, so they live
 // behind the chips on /tarefas now.
 const TABS = [
-  { href: '/', label: 'Chat', icon: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /> },
+  { href: '/', key: 'chat', icon: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /> },
   {
     href: '/tarefas',
-    label: 'Tarefas',
+    key: 'tasks',
     icon: (
       <>
         <path d="M9 11l3 3L22 4" />
@@ -20,12 +22,12 @@ const TABS = [
   },
   {
     href: '/obras',
-    label: 'Obras',
+    key: 'jobs',
     icon: <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4" />,
   },
   {
     href: '/perfil',
-    label: 'Perfil',
+    key: 'profile',
     icon: (
       <>
         <circle cx="12" cy="8" r="4" />
@@ -35,11 +37,15 @@ const TABS = [
   },
 ];
 
-export default function BottomNav() {
+// Icons are static; the words are not, so labels resolve per render from
+// `locale` rather than being baked into TABS.
+export default function BottomNav({ locale }: { locale: Locale }) {
   const pathname = usePathname();
+  const nav = getCatalog(locale).nav;
   return (
     <nav className="grid shrink-0 grid-cols-4 border-t border-zinc-500/20 bg-background pb-[env(safe-area-inset-bottom)]">
-      {TABS.map(({ href, label, icon }) => {
+      {TABS.map(({ href, key, icon }) => {
+        const label = nav[key as keyof typeof nav];
         // Prefix match so /obras/[id] keeps its tab lit. '/' has to stay an
         // exact match or it would claim every route.
         const active = href === '/' ? pathname === '/' : pathname.startsWith(href);

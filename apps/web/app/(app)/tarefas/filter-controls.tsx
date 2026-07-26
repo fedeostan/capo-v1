@@ -9,6 +9,8 @@
 // platform renders them as its own picker sheet, which is the bottom sheet we
 // wanted, for free and accessible.
 import { useRouter } from 'next/navigation';
+import { getCatalog } from '@capo/i18n/catalog';
+import type { Locale } from '@capo/i18n/locale';
 import { buildHref, isIsoDate, type TarefasFilters } from './filters';
 import type { ObraOption } from '@/app/dashboard-data';
 
@@ -17,32 +19,39 @@ const CONTROL = 'min-w-0 flex-1 rounded-lg border border-zinc-500/30 bg-transpar
 export default function FilterControls({
   filters,
   obras,
+  locale,
 }: {
   filters: TarefasFilters;
   obras: ObraOption[];
+  locale: Locale;
 }) {
+  const t = getCatalog(locale).screens.tasks;
   const router = useRouter();
 
   return (
     <div className="flex gap-2">
       <label className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="sr-only">Filtrar por obra</span>
+        <span className="sr-only">{t.filterByJob}</span>
         <select
           className={CONTROL}
           value={filters.obraId ?? ''}
           onChange={e => router.push(buildHref({ ...filters, obraId: e.target.value || null }))}
         >
-          <option value="">Todas as obras</option>
+          <option value="">{t.allJobs}</option>
           {obras.map(obra => (
             <option key={obra.id} value={obra.id}>
               {obra.name}
-              {obra.status === 'paused' ? ' (pausada)' : obra.status === 'done' ? ' (terminada)' : ''}
+              {obra.status === 'paused'
+                ? t.jobStatusSuffix.paused
+                : obra.status === 'done'
+                  ? t.jobStatusSuffix.done
+                  : ''}
             </option>
           ))}
         </select>
       </label>
       <label className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="sr-only">Filtrar por dia</span>
+        <span className="sr-only">{t.filterByDay}</span>
         <input
           type="date"
           className={CONTROL}

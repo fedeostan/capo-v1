@@ -9,7 +9,9 @@ import { assertNotBlocked, BillingBlockedError } from '@/lib/billing';
 // resolves to "not found", and finalize_proposal re-checks company in SQL.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await getApiAuth();
-  if (!auth) return Response.json({ error: 'Não autenticado' }, { status: 401 });
+  // No session means no profile means no locale — a 401 body cannot be
+  // localized from the user, and no client renders it. English.
+  if (!auth) return Response.json({ error: 'Not authenticated' }, { status: 401 });
 
   const { id } = await params;
   const { decision } = (await req.json()) as { decision?: string };
@@ -26,7 +28,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   try {
-    const resolution = await resolveProposal(auth.db, id, decision);
+    const resolution = await resolveProposal(auth.db, id, decision, {
+      user: auth.locale,
+      company: auth.companyLocale,
+    });
     return Response.json(resolution);
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : 'unknown error' }, { status: 404 });

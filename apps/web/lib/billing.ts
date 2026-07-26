@@ -1,5 +1,6 @@
 import Stripe from 'stripe';
 import type { AuthContext } from '@capo/db/session';
+import { getCatalog } from '@capo/i18n/catalog';
 
 // Env-gated: no STRIPE_SECRET_KEY → billing is entirely disabled and every
 // write path stays open (the pilot company, and any deploy before Stripe
@@ -36,12 +37,15 @@ export class BillingBlockedError extends Error {}
 
 // Gate for write paths (chat, proposal resolution, task actions). No-op when
 // billing is disabled or the company isn't blocked; otherwise throws so the
-// caller can surface a friendly PT message (402 JSON for API routes, a plain
-// thrown error for server actions — task-actions.tsx already catches and
-// displays it).
-export async function assertNotBlocked(ctx: Pick<AuthContext, 'db' | 'companyId'>): Promise<void> {
+// caller can surface a friendly message in the manager's own language (402 JSON
+// for API routes, a plain thrown error for server actions — task-actions.tsx
+// already catches and displays it).
+//
+// Takes `locale` too (unlike getBillingState, which the WhatsApp route calls
+// with no user identity) precisely because this one produces text a human reads.
+export async function assertNotBlocked(ctx: Pick<AuthContext, 'db' | 'companyId' | 'locale'>): Promise<void> {
   const state = await getBillingState(ctx);
   if (state.enabled && state.blocked) {
-    throw new BillingBlockedError('A tua subscrição expirou. Vai a Subscrição para reativar — o WhatsApp continua a funcionar.');
+    throw new BillingBlockedError(getCatalog(ctx.locale).billing.blockedError);
   }
 }

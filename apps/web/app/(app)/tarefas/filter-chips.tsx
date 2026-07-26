@@ -2,6 +2,8 @@
 // whole screen filters correctly before any client JS has loaded, and each
 // chip is a real, shareable URL.
 import Link from 'next/link';
+import { getCatalog } from '@capo/i18n/catalog';
+import type { Locale } from '@capo/i18n/locale';
 import { buildHref, QUANDO_CHIPS, type TarefasFilters } from './filters';
 
 function chipClass(active: boolean): string {
@@ -12,10 +14,12 @@ function chipClass(active: boolean): string {
   }`;
 }
 
-export default function FilterChips({ filters }: { filters: TarefasFilters }) {
+export default function FilterChips({ filters, locale }: { filters: TarefasFilters; locale: Locale }) {
+  const t = getCatalog(locale);
   return (
     <nav className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
-      {QUANDO_CHIPS.map(({ value, label }) => {
+      {QUANDO_CHIPS.map(value => {
+        const label = t.screens.tasks.quando[value];
         const active = filters.quando.kind === 'keyword' && filters.quando.value === value;
         return (
           <Link
@@ -31,7 +35,7 @@ export default function FilterChips({ filters }: { filters: TarefasFilters }) {
           active filter instead of hiding inside the date input. */}
       {filters.quando.kind === 'date' && (
         <span className={chipClass(true)}>
-          {new Intl.DateTimeFormat('pt-PT', { timeZone: 'UTC', day: '2-digit', month: '2-digit' }).format(
+          {new Intl.DateTimeFormat(t.meta.dateLocale, { timeZone: 'UTC', day: '2-digit', month: '2-digit' }).format(
             new Date(`${filters.quando.iso}T00:00:00Z`),
           )}
         </span>
