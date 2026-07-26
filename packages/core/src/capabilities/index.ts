@@ -1,6 +1,7 @@
 import { tool, type ToolSet } from 'ai';
 import type { z } from 'zod';
 import { taskTools } from './tasks';
+import { agendaTools } from './agenda';
 import { jobTools } from './jobs';
 import { workerTools } from './workers';
 import { memoryTools } from './memory';
@@ -18,6 +19,7 @@ import type { CapoTool, ToolContext } from './types';
 // ever produces a proposal (apply_plan) for the manager to approve.
 export const roster: CapoTool[] = [
   ...taskTools,
+  ...agendaTools,
   ...jobTools,
   ...workerTools,
   ...memoryTools,

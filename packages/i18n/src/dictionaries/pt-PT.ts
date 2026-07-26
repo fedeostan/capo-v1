@@ -11,7 +11,7 @@ const dict: Catalog = {
     titleSuffix: 'Capo',
   },
 
-  nav: { chat: 'Chat', tasks: 'Tarefas', jobs: 'Obras', profile: 'Perfil' },
+  nav: { chat: 'Chat', tasks: 'Tarefas', jobs: 'Obras', materials: 'Materiais', profile: 'Perfil' },
 
   common: {
     signOut: 'Sair',
@@ -23,9 +23,19 @@ const dict: Catalog = {
   chat: {
     title: 'Capo 👷',
     tagline: 'O teu capataz virtual',
-    placeholder: 'Escreve uma mensagem…',
+    placeholder: 'Escreve, fala, ou cola o orçamento…',
     send: 'Enviar',
     typing: 'O Capo está a escrever…',
+    stop: 'Parar',
+    errorTitle: 'O Capo não conseguiu responder.',
+    errorHints: {
+      billing: 'A subscrição expirou. Vai a Subscrição para reativar.',
+      auth: 'A sessão terminou. Volta a entrar.',
+      network: 'Sem ligação. Verifica a rede e tenta outra vez.',
+      generic: 'Pode ter sido a rede ou uma falha momentânea. A tua mensagem não se perdeu.',
+    },
+    retry: 'Tentar outra vez',
+    dismiss: 'Dispensar',
     emptyThread: 'Fala com o Capo — ele trata das obras, das tarefas e da equipa.',
     proposalTitle: 'Proposta do Capo',
     pendingProposals: 'Propostas por decidir',
@@ -42,6 +52,8 @@ const dict: Catalog = {
       create_task: 'Tarefa criada',
       update_task: 'Tarefa atualizada',
       list_tasks: 'Tarefas consultadas',
+      agenda: 'Agenda consultada',
+      materials_outlook: 'Materiais consultados',
       create_job: 'Obra criada',
       update_job: 'Obra atualizada',
       list_jobs: 'Obras consultadas',
@@ -125,6 +137,18 @@ const dict: Catalog = {
       empty: 'Sem tarefas nesta obra ainda — pede ao Capo para criar o plano.',
     },
     taskActions: { complete: 'Concluir', reopen: 'Reabrir', failed: 'Falhou, tenta outra vez.' },
+    materials: {
+      title: 'Materiais',
+      subtitle: 'O que tem de estar em obra',
+      tomorrow: 'Para amanhã',
+      week: 'Resto da semana',
+      weekHint: 'Para encomendar já — o que tem prazo de entrega não espera.',
+      emptyTomorrow:
+        'Nada por confirmar para amanhã. Se houver trabalho agendado sem materiais registados, pergunta ao Capo o que falta.',
+      forTasks: tasks => `para: ${tasks.join(', ')}`,
+      pending: n => `${n} ${n === 1 ? 'material' : 'materiais'} para amanhã`,
+      pendingHint: 'Confirma que está em obra antes de fechares o dia.',
+    },
   },
 
   auth: {
@@ -183,7 +207,12 @@ const dict: Catalog = {
     yourNamePlaceholder: 'João Silva',
     phone: 'O teu telemóvel',
     phonePlaceholder: '912 345 678',
-    phoneHint: 'É para aqui que o Capo envia as mensagens do dia.',
+    // NOT "where Capo sends the daily messages": this is profiles.phone, which
+    // the WhatsApp webhook uses to resolve the tenant from an inbound sender —
+    // the manager's own channel. The 07:00 briefing goes to workers.phone, a
+    // different column and a different person. The old copy promised a message
+    // that never arrives, on the very first screen.
+    phoneHint: 'É por aqui que podes falar com o Capo no WhatsApp, sem abrir a app.',
     language: 'Língua',
     languageHint: 'Podes mudar depois — basta dizeres ao Capo.',
     submit: 'Começar',
@@ -204,6 +233,9 @@ const dict: Catalog = {
     teamEmptyCta: 'Pede ao Capo para adicionar',
     noContact: 'Sem contacto',
     inactive: 'inativo',
+    workerLoad: (today, tomorrow, open) => `Hoje ${today} · Amanhã ${tomorrow} · ${open} em aberto`,
+    noSmsWarning: 'Sem telemóvel — não recebe o SMS das 07:00.',
+    receivesSms: 'recebe o SMS das 07:00',
     teamHint: 'Para adicionar ou alterar alguém,',
     teamHintLink: 'fala com o Capo',
     subscription: 'Subscrição',

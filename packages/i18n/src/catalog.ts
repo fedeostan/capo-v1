@@ -28,7 +28,7 @@ export interface Catalog {
     titleSuffix: string;
   };
 
-  nav: { chat: string; tasks: string; jobs: string; profile: string };
+  nav: { chat: string; tasks: string; jobs: string; materials: string; profile: string };
 
   common: {
     signOut: string;
@@ -43,6 +43,14 @@ export interface Catalog {
     placeholder: string;
     send: string;
     typing: string;
+    /** Cancels an in-flight response. */
+    stop: string;
+    /** Heading of the failure card. A chat that fails silently is unusable. */
+    errorTitle: string;
+    /** Why it failed, in terms the manager can act on. */
+    errorHints: Record<'billing' | 'auth' | 'network' | 'generic', string>;
+    retry: string;
+    dismiss: string;
     emptyThread: string;
     proposalTitle: string;
     pendingProposals: string;
@@ -109,6 +117,21 @@ export interface Catalog {
     jobs: { title: string; subtitle: string; empty: string };
     jobDetail: { fallbackTitle: string; empty: string };
     taskActions: { complete: string; reopen: string; failed: string };
+    materials: {
+      title: string;
+      subtitle: string;
+      /** Heading for what must be on site tomorrow — the buy-tonight list. */
+      tomorrow: string;
+      /** Heading for the rest of the week — the order-tonight list. */
+      week: string;
+      weekHint: string;
+      emptyTomorrow: string;
+      /** e.g. "for: Tiling, Grouting". */
+      forTasks(tasks: string[]): string;
+      /** Prompt on the Tasks board when tomorrow needs materials. */
+      pending(n: number): string;
+      pendingHint: string;
+    };
   };
 
   profile: {
@@ -120,6 +143,11 @@ export interface Catalog {
     teamEmptyCta: string;
     noContact: string;
     inactive: string;
+    /** e.g. "Today 2 · Tomorrow 1 · 5 open". */
+    workerLoad(today: number, tomorrow: number, open: number): string;
+    /** An active worker with no phone silently receives nothing at 07:00. */
+    noSmsWarning: string;
+    receivesSms: string;
     teamHint: string;
     teamHintLink: string;
     subscription: string;

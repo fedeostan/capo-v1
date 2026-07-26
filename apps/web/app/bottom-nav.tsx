@@ -5,9 +5,12 @@ import { usePathname } from 'next/navigation';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 
-// Four destinations, not five. Hoje/Amanhã/Atrasadas were never separate
-// places — they were one list with a different date filter, so they live
-// behind the chips on /tarefas now.
+// Hoje/Amanhã/Atrasadas were never separate places — they were one list with a
+// different date filter, so they live behind the chips on /tarefas now. That
+// freed the slots for the surfaces that were actually missing: Perfil, and
+// Materiais, which is the anticipation list 00_VISION calls the killer feature
+// and which nothing in the product surfaced until now. Materiais sits before
+// Perfil because it is a daily-use screen and Perfil is a settings screen.
 const TABS = [
   { href: '/', key: 'chat', icon: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /> },
   {
@@ -24,6 +27,17 @@ const TABS = [
     href: '/obras',
     key: 'jobs',
     icon: <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4" />,
+  },
+  {
+    href: '/materiais',
+    key: 'materials',
+    icon: (
+      <>
+        <path d="M21 8v13H3V8" />
+        <rect x="1" y="3" width="22" height="5" rx="1" />
+        <path d="M10 12h4" />
+      </>
+    ),
   },
   {
     href: '/perfil',
@@ -43,7 +57,7 @@ export default function BottomNav({ locale }: { locale: Locale }) {
   const pathname = usePathname();
   const nav = getCatalog(locale).nav;
   return (
-    <nav className="grid shrink-0 grid-cols-4 border-t border-zinc-500/20 bg-background pb-[env(safe-area-inset-bottom)]">
+    <nav className="grid shrink-0 grid-cols-5 border-t border-zinc-500/20 bg-background pb-[env(safe-area-inset-bottom)]">
       {TABS.map(({ href, key, icon }) => {
         const label = nav[key as keyof typeof nav];
         // Prefix match so /obras/[id] keeps its tab lit. '/' has to stay an

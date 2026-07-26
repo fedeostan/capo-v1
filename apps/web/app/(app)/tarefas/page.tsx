@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import type { Catalog } from '@capo/i18n/catalog';
 import { ScreenShell, TaskBoardList } from '@capo/ui/dashboard-ui';
-import { loadBoardTasks, loadDayLabel, loadObraOptions, type GroupBy } from '@/app/dashboard-data';
+import { loadBoardTasks, loadDayLabel, loadMaterials, loadObraOptions, type GroupBy } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import TaskActions from '@/app/(app)/_tasks/task-actions';
 import FilterChips from './filter-chips';
@@ -36,11 +37,16 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
   const dayOffset: 0 | 1 | null =
     filters.quando.kind !== 'keyword' ? null : filters.quando.value === 'hoje' ? 0 : filters.quando.value === 'amanha' ? 1 : null;
 
-  const [tasks, obras, dayLabel] = await Promise.all([
+  const [tasks, obras, dayLabel, tomorrowMaterials] = await Promise.all([
     loadBoardTasks(ctx, filters, groupBy),
     loadObraOptions(ctx),
     dayOffset === null ? Promise.resolve(null) : loadDayLabel(ctx, dayOffset),
+    // Only on the Amanhã chip: looking at tomorrow is exactly the moment the
+    // manager can still act on what has to be bought tonight. Anywhere else it
+    // would be a nag.
+    dayOffset === 1 ? loadMaterials(ctx, 'amanha', null) : Promise.resolve([]),
   ]);
+  const materialCount = tomorrowMaterials.reduce((n, group) => n + group.items.length, 0);
 
   const subtitle =
     dayLabel ??
@@ -59,6 +65,20 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
         <FilterChips filters={filters} locale={locale} />
         <FilterControls filters={filters} obras={obras} locale={locale} />
       </div>
+      {materialCount > 0 && (
+        <Link
+          href="/materiais"
+          className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/50 bg-amber-500/10 p-3"
+        >
+          <span className="text-sm">
+            <span className="font-medium">{t.screens.materials.pending(materialCount)}</span>
+            <span className="block text-xs text-zinc-500">{t.screens.materials.pendingHint}</span>
+          </span>
+          <span aria-hidden className="shrink-0 text-zinc-500">
+            →
+          </span>
+        </Link>
+      )}
       <TaskBoardList
         tasks={tasks}
         groupBy={groupBy}

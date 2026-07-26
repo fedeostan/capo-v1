@@ -9,6 +9,7 @@
     "typecheck": "turbo run typecheck",
     "build": "turbo run build",
     "rls-matrix": "node scripts/rls-isolation-matrix.mjs",
+    "scheduler-check": "tsx scripts/scheduler-check.mts",
     "agent-smoke": "tsx scripts/agent-smoke.mts",
     "knowledge-ingest": "tsx scripts/knowledge-ingest.mts"
   },

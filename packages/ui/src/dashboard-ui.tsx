@@ -62,6 +62,59 @@ export function ScreenShell({
   );
 }
 
+export interface MaterialsGroup {
+  obraId: string | null;
+  obraName: string;
+  items: { material: string; forTasks: string[] }[];
+}
+
+// Materiais — the anticipation screen. 00_VISION/02-solution-mvp.md calls this
+// the killer feature: "check tomorrow's materials today" is what stops the
+// manager being the one who drives to the supplier at 08:00. `tasks.materials`
+// has existed since migration 0010 and nothing ever read it.
+export function MaterialsList({
+  groups,
+  empty,
+  noJobLabel,
+  forLabel,
+}: {
+  groups: MaterialsGroup[];
+  empty: string;
+  noJobLabel: string;
+  /** e.g. "for: Tiling, Grouting" — says WHY each item is on the list. */
+  forLabel: (tasks: string[]) => string;
+}) {
+  if (groups.length === 0) return <EmptyState text={empty} />;
+  return (
+    <>
+      {groups.map(group => (
+        <section key={group.obraName || noJobLabel} className="space-y-2">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            {group.obraId ? (
+              <a href={`/obras/${group.obraId}`}>{group.obraName || noJobLabel}</a>
+            ) : (
+              group.obraName || noJobLabel
+            )}
+          </h2>
+          <ul className="divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
+            {group.items.map(item => (
+              <li key={item.material} className="flex items-start gap-3 p-3">
+                <span aria-hidden className="mt-0.5 text-zinc-500">
+                  ▢
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{item.material}</p>
+                  <p className="text-xs text-zinc-500">{forLabel(item.forTasks)}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </>
+  );
+}
+
 export function EmptyState({ text, cta }: { text: string; cta?: { href: string; label: string } }) {
   return (
     <div className="py-10 text-center text-sm text-zinc-500">

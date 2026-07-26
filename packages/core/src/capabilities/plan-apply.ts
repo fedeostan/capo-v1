@@ -25,7 +25,10 @@ const planTaskInput = z.object({
 
 export const applyPlanInput = z.object({
   job_id: z.string().uuid().describe('Job (obra) this plan belongs to.'),
-  tasks: z.array(planTaskInput).min(1).max(25),
+  // Ceiling raised 25 → 30 alongside the planner's own cap. Raising a max is
+  // backward compatible: proposals stored under the old cap still re-validate
+  // when the manager approves them.
+  tasks: z.array(planTaskInput).min(1).max(30),
 });
 
 // Deterministic execution of an approved plan: what the manager approved

@@ -9,10 +9,10 @@
 import type { AuthContext } from '@capo/db/session';
 import type { Tables } from '@capo/db/types';
 import { getCatalog } from '@capo/i18n/catalog';
-import type { BoardTask, DashboardObra } from '@capo/ui/dashboard-ui';
+import type { BoardTask, DashboardObra, MaterialsGroup } from '@capo/ui/dashboard-ui';
 import type { TarefasFilters } from '@/app/(app)/tarefas/filters';
 
-export type { BoardTask, DashboardObra };
+export type { BoardTask, DashboardObra, MaterialsGroup };
 
 export type GroupBy = 'date' | 'obra';
 
@@ -119,6 +119,92 @@ export async function loadTeam({ db, companyId }: AuthContext): Promise<Tables<'
     .order('active', { ascending: false })
     .order('name', { ascending: true });
   return data ?? [];
+}
+
+/** Per-worker open-task tallies, keyed by worker id. */
+export type TeamLoad = Record<string, { today: number; tomorrow: number; open: number; overdue: number }>;
+
+// How loaded each worker is, read from task_board so "today"/"tomorrow" mean
+// exactly what they mean on the Tarefas board. Turns the crew list from a
+// phone book into something that answers "who is free?" — and, with
+// `recebeSms` on the card, exposes the silent failure where an active worker
+// has no number and therefore receives nothing from the 07:00 dispatch.
+export async function loadTeamLoad({ db, companyId }: AuthContext): Promise<TeamLoad> {
+  const { data } = await db
+    .from('task_board')
+    .select('assignee_worker_id, active_today, active_tomorrow, overdue, is_open')
+    .eq('company_id', companyId)
+    .eq('is_open', true);
+  const load: TeamLoad = {};
+  for (const row of data ?? []) {
+    if (!row.assignee_worker_id) continue;
+    const entry = (load[row.assignee_worker_id] ??= { today: 0, tomorrow: 0, open: 0, overdue: 0 });
+    entry.open += 1;
+    if (row.active_today) entry.today += 1;
+    if (row.active_tomorrow) entry.tomorrow += 1;
+    if (row.overdue) entry.overdue += 1;
+  }
+  return load;
+}
+
+// "Tonight's actions" (03_PRODUCT/02-flows.md §Flow 3): everything the manager
+// has to buy or arrange before the crew arrives. Grouped by obra because that
+// is how a builder shops — one trip per site — and each material carries the
+// tasks that need it so the list stays challengeable rather than magic.
+//
+// Two horizons: `amanha` is what you buy tonight; `semana` is what you ORDER
+// tonight, because anything with a lead time is already late by the time it
+// shows up on the tomorrow list.
+export async function loadMaterials(
+  { db, companyId }: AuthContext,
+  horizon: 'amanha' | 'semana',
+  today: string | null,
+): Promise<MaterialsGroup[]> {
+  let query = db.from('task_board').select('job_id, job_name, title, materials').eq('company_id', companyId);
+
+  if (horizon === 'amanha') {
+    query = query.eq('active_tomorrow', true);
+  } else {
+    // Window intersection with [today, today+6], the same shape the board's
+    // specific-day filter uses. lisbon_today() stays the only clock.
+    if (!today) return [];
+    const end = new Date(`${today}T00:00:00Z`);
+    end.setUTCDate(end.getUTCDate() + 6);
+    query = query
+      .eq('is_open', true)
+      .eq('job_active', true)
+      .lte('window_start', end.toISOString().slice(0, 10))
+      .gte('window_end', today);
+  }
+
+  const { data } = await query.order('job_name', { ascending: true });
+
+  const byJob = new Map<string, { obraId: string | null; items: Map<string, Set<string>> }>();
+  for (const task of data ?? []) {
+    if (!task.materials?.length) continue;
+    const key = task.job_name ?? '';
+    const group = byJob.get(key) ?? { obraId: task.job_id, items: new Map<string, Set<string>>() };
+    for (const material of task.materials) {
+      const forTasks = group.items.get(material) ?? new Set<string>();
+      if (task.title) forTasks.add(task.title);
+      group.items.set(material, forTasks);
+    }
+    byJob.set(key, group);
+  }
+
+  return [...byJob.entries()].map(([obraName, { obraId, items }]) => ({
+    obraId,
+    obraName,
+    items: [...items.entries()]
+      .map(([material, forTasks]) => ({ material, forTasks: [...forTasks] }))
+      .sort((a, b) => a.material.localeCompare(b.material)),
+  }));
+}
+
+/** Today in Europe/Lisbon, straight from the SQL clock. */
+export async function loadToday({ db }: AuthContext): Promise<string | null> {
+  const { data } = await db.rpc('lisbon_today');
+  return data ?? null;
 }
 
 // Display label for the Hoje/Amanhã headers. The date comes from the same

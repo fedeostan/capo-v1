@@ -3,7 +3,7 @@
 import { useChat } from '@ai-sdk/react';
 import { getToolName, isToolUIPart, type UIMessage } from 'ai';
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 import Markdown from '@capo/ui/markdown';
@@ -51,6 +51,7 @@ function ProposalCard({
   initialState?: CardState;
 }) {
   const [state, setState] = useState<CardState>(initialState);
+  const router = useRouter();
 
   async function decide(decision: 'approve' | 'reject') {
     setState('busy');
@@ -62,6 +63,10 @@ function ProposalCard({
       });
       const data = await res.json();
       setState(data.outcome ?? 'error');
+      // An approved proposal writes real tasks. Without this the manager taps
+      // Approve, switches to Tasks, and sees the pre-approval board from the
+      // router cache — which reads as "it didn't work".
+      if (data.outcome === 'approved') router.refresh();
     } catch {
       setState('error');
     }
@@ -95,6 +100,18 @@ function ProposalCard({
       )}
     </div>
   );
+}
+
+// The transport surfaces a non-2xx as an Error whose message carries the
+// response body, so the causes we already answer deliberately (401 session
+// gone, 402 billing) become something the manager can act on instead of a raw
+// status code.
+function errorHint(error: Error, t: Catalog): string {
+  const message = error.message ?? '';
+  if (/402|subscri|suscrip/i.test(message)) return t.chat.errorHints.billing;
+  if (/401|autenticad|authenticat|autentic/i.test(message)) return t.chat.errorHints.auth;
+  if (/fetch|network|NetworkError/i.test(message)) return t.chat.errorHints.network;
+  return t.chat.errorHints.generic;
 }
 
 function Chip({ children }: { children: React.ReactNode }) {
@@ -160,18 +177,41 @@ export default function Chat({
 }) {
   const t = getCatalog(locale);
   const [input, setInput] = useState('');
-  const { messages, sendMessage, status } = useChat({ messages: initialMessages });
-  const bottomRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const { messages, sendMessage, status, error, stop, clearError, regenerate } = useChat({
+    messages: initialMessages,
+    // A turn can create tasks, jobs or workers. Every dashboard screen is a
+    // server component behind the router cache, so without an explicit refresh
+    // they keep serving the pre-turn snapshot until a hard reload.
+    onFinish: () => router.refresh(),
+  });
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   // What the mic inserted this composer round; compared against the sent text
   // so vocab learning only sees genuine transcription corrections.
   const transcriptRef = useRef('');
+  // Kept so retry can resend a message the server never accepted (402 billing,
+  // 500, dropped connection). Otherwise the manager has to retype it — and a
+  // pasted quote is not something anyone retypes.
+  const lastSentRef = useRef('');
   // Tool-call ids already acted on, so a re-render never re-refreshes.
   const handledLanguageCalls = useRef(new Set<string>());
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // The front door of the product is "paste the quote". Grow the composer with
+  // the text (to a third of the viewport) instead of hiding it in a one-line
+  // box that flattens every newline.
+  const autoGrow = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight / 3))}px`;
+  }, []);
+
+  useEffect(autoGrow, [input, autoGrow]);
 
   // set_language writes profiles.language, but everything around this chat —
   // the nav, the dashboard, <html lang> — was server-rendered in the OLD
@@ -191,6 +231,12 @@ export default function Chat({
 
   const busy = status === 'submitted' || status === 'streaming';
 
+  function send(text: string) {
+    lastSentRef.current = text;
+    clearError();
+    sendMessage({ text });
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const text = input.trim();
@@ -205,8 +251,26 @@ export default function Chat({
         body: JSON.stringify({ transcript, final: text }),
       }).catch(() => {});
     }
-    sendMessage({ text });
+    send(text);
     setInput('');
+  }
+
+  // Enter sends; Shift+Enter inserts a newline. isComposing guards IME input,
+  // where Enter commits a candidate rather than ending the message.
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      handleSubmit(e);
+    }
+  }
+
+  function retry() {
+    const text = lastSentRef.current;
+    clearError();
+    // If the failed turn never made it into `messages`, resend it. If it did,
+    // the user message is already there and only the response failed.
+    if (text && messages[messages.length - 1]?.role !== 'user') send(text);
+    else void regenerate();
   }
 
   return (
@@ -257,16 +321,51 @@ export default function Chat({
             </div>
           ),
         )}
-        {busy && <div className="text-xs text-zinc-500">{t.chat.typing}</div>}
+        {busy && (
+          <div className="flex items-center gap-3 text-xs text-zinc-500">
+            <span>{t.chat.typing}</span>
+            <button type="button" onClick={stop} className="underline hover:text-zinc-400">
+              {t.chat.stop}
+            </button>
+          </div>
+        )}
+        {/* Before this, a 402 (subscription expired) or a 500 left the manager
+            staring at a message that never got an answer, with nothing to act
+            on. Silence is the worst failure mode a chat product has. */}
+        {error && (
+          <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-3 text-sm">
+            <p className="font-medium text-red-600 dark:text-red-400">{t.chat.errorTitle}</p>
+            <p className="mt-0.5 text-xs text-zinc-500">{errorHint(error, t)}</p>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={retry}
+                className="rounded-lg bg-zinc-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-600"
+              >
+                {t.chat.retry}
+              </button>
+              <button
+                type="button"
+                onClick={clearError}
+                className="rounded-lg border border-zinc-400 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10"
+              >
+                {t.chat.dismiss}
+              </button>
+            </div>
+          </div>
+        )}
         <div ref={bottomRef} />
       </main>
 
-      <form onSubmit={handleSubmit} className="flex gap-2 border-t border-zinc-500/20 p-3">
-        <input
+      <form onSubmit={handleSubmit} className="flex items-end gap-2 border-t border-zinc-500/20 p-3">
+        <textarea
+          ref={textareaRef}
+          rows={1}
           value={input}
           onChange={e => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder={t.chat.placeholder}
-          className="flex-1 rounded-xl border border-zinc-500/30 bg-transparent px-3 py-2 text-base outline-none focus:border-emerald-600"
+          className="max-h-[33vh] flex-1 resize-none rounded-xl border border-zinc-500/30 bg-transparent px-3 py-2 text-base outline-none focus:border-emerald-600"
         />
         {/* Transcription only fills the input — the manager reviews and sends. */}
         <MicButton
@@ -280,7 +379,7 @@ export default function Chat({
         <button
           type="submit"
           disabled={busy || input.trim().length === 0}
-          className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+          className="shrink-0 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
         >
           {t.chat.send}
         </button>

@@ -12,7 +12,7 @@ const dict: Catalog = {
     titleSuffix: 'Capo',
   },
 
-  nav: { chat: 'Chat', tasks: 'Tasks', jobs: 'Jobs', profile: 'Profile' },
+  nav: { chat: 'Chat', tasks: 'Tasks', jobs: 'Jobs', materials: 'Materials', profile: 'Profile' },
 
   common: {
     signOut: 'Sign out',
@@ -24,9 +24,19 @@ const dict: Catalog = {
   chat: {
     title: 'Capo 👷',
     tagline: 'Your virtual foreman',
-    placeholder: 'Type a message…',
+    placeholder: 'Type, talk, or paste the quote…',
     send: 'Send',
     typing: 'Capo is typing…',
+    stop: 'Stop',
+    errorTitle: "Capo couldn't reply.",
+    errorHints: {
+      billing: 'Your subscription has expired. Go to Subscription to reactivate it.',
+      auth: 'Your session ended. Sign in again.',
+      network: 'No connection. Check the network and try again.',
+      generic: "Could have been the network or a momentary glitch. Your message wasn't lost.",
+    },
+    retry: 'Try again',
+    dismiss: 'Dismiss',
     emptyThread: 'Talk to Capo — he handles the jobs, the tasks, and the crew.',
     proposalTitle: 'Capo proposes',
     pendingProposals: 'Waiting on you',
@@ -43,6 +53,8 @@ const dict: Catalog = {
       create_task: 'Task created',
       update_task: 'Task updated',
       list_tasks: 'Tasks looked up',
+      agenda: 'Schedule checked',
+      materials_outlook: 'Materials checked',
       create_job: 'Job created',
       update_job: 'Job updated',
       list_jobs: 'Jobs looked up',
@@ -126,6 +138,18 @@ const dict: Catalog = {
       empty: 'No tasks on this job yet — ask Capo to build the plan.',
     },
     taskActions: { complete: 'Complete', reopen: 'Reopen', failed: "That didn't work, try again." },
+    materials: {
+      title: 'Materials',
+      subtitle: 'What has to be on site',
+      tomorrow: 'For tomorrow',
+      week: 'Rest of the week',
+      weekHint: 'Order these now — anything with a lead time will not wait.',
+      emptyTomorrow:
+        'Nothing to confirm for tomorrow. If there is work scheduled with no materials recorded, ask Capo what is missing.',
+      forTasks: tasks => `for: ${tasks.join(', ')}`,
+      pending: n => `${n} ${n === 1 ? 'material' : 'materials'} for tomorrow`,
+      pendingHint: 'Check it is on site before you finish for the day.',
+    },
   },
 
   auth: {
@@ -184,7 +208,7 @@ const dict: Catalog = {
     yourNamePlaceholder: 'John Smith',
     phone: 'Your mobile',
     phonePlaceholder: '+1 555 123 4567',
-    phoneHint: "This is where Capo sends the day's messages.",
+    phoneHint: 'This is how you can talk to Capo on WhatsApp, without opening the app.',
     language: 'Language',
     languageHint: 'You can change this later — just tell Capo.',
     submit: 'Get started',
@@ -205,6 +229,9 @@ const dict: Catalog = {
     teamEmptyCta: 'Ask Capo to add someone',
     noContact: 'No contact',
     inactive: 'inactive',
+    workerLoad: (today, tomorrow, open) => `Today ${today} · Tomorrow ${tomorrow} · ${open} open`,
+    noSmsWarning: 'No phone number — gets nothing from the 07:00 SMS.',
+    receivesSms: 'gets the 07:00 SMS',
     teamHint: 'To add or change someone,',
     teamHintLink: 'talk to Capo',
     subscription: 'Subscription',

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { getCatalog } from '@capo/i18n/catalog';
 import { LOCALES, type Locale } from '@capo/i18n/locale';
 import { EmptyState, ScreenShell } from '@capo/ui/dashboard-ui';
-import { loadTeam } from '@/app/dashboard-data';
+import { loadTeam, loadTeamLoad } from '@/app/dashboard-data';
 import { getBillingState } from '@/lib/billing';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { setCompanyLanguage, setUserLanguage } from './actions';
@@ -81,6 +81,7 @@ export default async function PerfilPage({
     loadTeam(ctx),
     getBillingState(ctx),
   ]);
+  const teamLoad = await loadTeamLoad(ctx);
 
   const email = typeof claims?.claims?.email === 'string' ? claims.claims.email : null;
 
@@ -130,22 +131,51 @@ export default async function PerfilPage({
           <EmptyState text={t.profile.teamEmpty} cta={{ href: '/', label: t.profile.teamEmptyCta }} />
         ) : (
           <>
-            <ul className="space-y-2">
-              {team.map(worker => (
-                <li key={worker.id} className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{worker.name}</p>
-                    <p className="text-xs text-zinc-500">
-                      {[worker.trade, worker.phone].filter(Boolean).join(' · ') || t.profile.noContact}
-                    </p>
-                  </div>
-                  {!worker.active && (
-                    <span className="shrink-0 rounded-full bg-zinc-500/10 px-2 py-0.5 text-[11px] text-zinc-500">
-                      {t.profile.inactive}
-                    </span>
-                  )}
-                </li>
-              ))}
+            <ul className="space-y-3">
+              {team.map(worker => {
+                const load = teamLoad[worker.id];
+                return (
+                  <li key={worker.id} className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{worker.name}</p>
+                      <p className="text-xs text-zinc-500">
+                        {[worker.trade, worker.phone].filter(Boolean).join(' · ') || t.profile.noContact}
+                      </p>
+                      {/* Load turns the crew list from a phone book into an
+                          answer to "who is free?" — the question actually
+                          asked before assigning work. */}
+                      {load && load.open > 0 && (
+                        <p className="text-xs text-zinc-500">
+                          {t.profile.workerLoad(load.today, load.tomorrow, load.open)}
+                        </p>
+                      )}
+                      {/* An ACTIVE worker with no number is the silent failure
+                          worth shouting about: dispatch_tasks_today requires a
+                          phone, so the 07:00 SMS reaches them never, and
+                          nothing else in the product says so. */}
+                      {worker.active && !worker.phone ? (
+                        <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                          {t.profile.noSmsWarning}
+                        </p>
+                      ) : (
+                        worker.active && <p className="mt-0.5 text-[11px] text-zinc-500">{t.profile.receivesSms}</p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      {!worker.active && (
+                        <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[11px] text-zinc-500">
+                          {t.profile.inactive}
+                        </span>
+                      )}
+                      {load && load.overdue > 0 && (
+                        <span className="text-[11px] font-medium text-red-600">
+                          {t.dashboard.overdueCount(load.overdue)}
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
             <p className="text-xs text-zinc-500">
               {t.profile.teamHint}{' '}

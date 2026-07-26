@@ -81,6 +81,19 @@ onboarding, chat first-run guidance (empty company), generate a plan on a
 real orçamento and approve it, obra detail timeline (Concluir/Reabrir),
 `/subscricao` checkout (once Stripe is live).
 
+Added 2026-07-26 — check these too (I verified the components render
+correctly against mock data, but not on a real device with real data):
+
+- Bottom nav is **Chat · Tarefas · Obras · Materiais · Perfil**.
+- Paste a real multi-line orçamento into the chat composer — it is a
+  growing textarea now, not a one-line input. Enter sends, Shift+Enter adds
+  a newline.
+- Force a chat failure (airplane mode mid-send) and confirm the error card
+  with **Tentar outra vez** appears instead of silence.
+- Ask Capo "o que temos hoje?" and check the answer matches the Tarefas
+  board under the Hoje chip, exactly.
+- Long-press the installed PWA icon → shortcuts to Tarefas and Materiais.
+
 ## 7. Vercel Deployment Protection (found during Phase 8 verification)
 
 Both `capo-v1` and `capo-operator` currently have Vercel's Deployment
@@ -164,9 +177,46 @@ there is no separate settings page. `/tarefas` filter VALUES stay Portuguese
 (`?quando=hoje`) because they are a shareable-URL contract; only their labels
 are translated.
 
-## 9. Backlog (deliberately cut from this upgrade)
+## 9. Materials anticipation + operator health (2026-07-26)
 
-18:00 materials-anticipation send (n8n reads `tasks.materials`, which now
-exists — enabling the send is n8n work, not app code), two-way worker SMS
-replies, multilingual worker briefings, Moloni/Vendus integration, client
-progress PDF, per-seat billing, test framework adoption, Gantt charts.
+No migration of its own — it reads `task_board` from item 8's branch, which
+already exposes `materials`, `assignee_worker_id` and the date window. So
+nothing here blocks a deploy; it goes live with the code.
+
+1. **Look at `/materiais` on a company with real tasks.** The list only has
+   content if the planner recorded `materials` on those tasks. Plans generated
+   before this change may have none — regenerate one to see it populated.
+2. **Read the operator Health page** (`/` on `capo-operator`) once with real
+   data and sanity-check the alert thresholds against your own judgement: a
+   proposal is "stale" after 24h, a company "quiet" after 7 days, "stuck at
+   signup" after 2 days. Those numbers are guesses; they are all in one place
+   at the top of `apps/operator/app/data.ts`.
+3. **Decide the Spanish register.** `CONTEXT.md` says Rioplatense, but
+   `packages/i18n/src/dictionaries/es-ES.ts` is written in Peninsular Spanish
+   (`tú`, "inténtalo"). I matched the existing file rather than mixing two
+   registers in one dictionary — but the docs and the product now disagree,
+   and only you can settle which is right for the first Spanish customer.
+
+## 10. Backlog (deliberately cut from this upgrade)
+
+Two-way worker SMS replies, multilingual worker briefings, Moloni/Vendus
+integration, client progress PDF (Flow 4's read-only share link is still
+unbuilt), per-seat billing, a real test framework, Gantt charts.
+
+**Now unblocked and worth doing next — the 18:00 anticipation send.** As of
+2026-07-26 the app surfaces tomorrow's materials on `/materiais` and the
+agent has a `materials_outlook` tool, so the manager-side half of the killer
+feature is live. The remaining half is the evening push to workers, which is
+n8n work, not app code: read `task_board` where `active_tomorrow` is true and
+`materials` is non-empty, grouped by `assignee_worker_id` — every column it
+needs already exists. Per `03_PRODUCT/02-flows.md` §Flow 2, the worker's
+evening reply is also what keeps the 24h WhatsApp window open, so this send is
+both the feature and the cost mechanism.
+
+**Municipal holidays and Carnaval.** The plan scheduler now skips the
+thirteen Portuguese *national* holidays. Municipal holidays (Lisboa 13 Jun,
+Porto 24 Jun…) need the company's município, which Capo does not collect;
+Carnaval is a year-by-year tolerância de ponto, not statutory. Both were
+left out deliberately — see the comment at the top of
+`packages/core/src/capabilities/workdays.ts`. If you want them, they belong
+as a per-company setting, not a guess in the scheduler.

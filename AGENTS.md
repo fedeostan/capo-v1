@@ -25,6 +25,12 @@ This version has breaking changes — APIs, conventions, and file structure may 
   (24 visibility checks + 2 adversarial cross-tenant attacks). Run with
   `pnpm rls-matrix` after any change that touches auth, RLS, or the DB
   clients; it must stay green.
+- `scripts/scheduler-check.mts` — deterministic checks over the plan
+  scheduler and the Portuguese working-day calendar. Needs **no credentials
+  and no network**, so it runs in CI on every PR (`pnpm scheduler-check`).
+- `scripts/agent-smoke.mts` — drives `handleInbound()` against a throwaway
+  seeded tenant. Needs real API keys, so it is a manual gate
+  (`pnpm agent-smoke`).
 
 Two language dials (do not collapse them into one):
 
@@ -52,6 +58,28 @@ Structural invariants (do not regress):
   tenant isolation.
 - Worker SMS dispatch (Twilio/n8n) is external; nothing in this repo may
   break `dispatch_tasks_today` / `dispatch_log` semantics.
+- **One clock, one definition of "today".** The active-window rule
+  (`lisbon_today() BETWEEN coalesce(start_date, created_at) AND
+  coalesce(due_date, 'infinity')`) and every schedule-risk signal live in SQL,
+  in the `task_board` view. Anything that answers "what is on today /
+  tomorrow / overdue / at risk" — a screen, a loader, or an agent tool —
+  reads that view. Never re-derive those buckets in TypeScript: the failure
+  mode is Capo telling the manager one thing while the Tarefas board shows
+  another, and the manager having no way to tell which is right. The `agenda`
+  tool (`packages/core/src/capabilities/agenda.ts`) exists solely to hold this
+  line on the agent side, and its horizon names are deliberately the board's
+  own chip names so the two cannot drift.
+  (`dashboard_tasks` is the superseded predecessor, kept only so an old bundle
+  served mid-deploy keeps working; do not write new readers against it.)
+- **Plan durations are working days, not calendar days.** The scheduler
+  advances through `packages/core/src/capabilities/workdays.ts`, which skips
+  weekends and the thirteen Portuguese national holidays. Anything that
+  computes a due date from a duration goes through `addWorkdays`.
+- Views may only be extended with `create or replace view` **appending**
+  columns (Postgres forbids reorder/retype). Code reading a view that a
+  pending migration extends should `select('*')` and treat the new fields as
+  optional, so a deploy landing before its migration degrades instead of
+  erroring — see `0013` and the comment in `agenda.ts`.
 
 ## Local tooling
 
@@ -77,18 +105,22 @@ Structural invariants (do not regress):
 <!-- BEGIN:codex-review-guidelines -->
 ## Codex Review Guidelines
 
-This repository has no automated test suite yet. Do not assume incorrect
-logic will be caught by tests — there are none. Treat this as reason to be
-more conservative and explicit in review comments about correctness risk,
-not less.
+This repository has no general test suite. The only automated correctness
+check is `pnpm scheduler-check`, which covers the plan scheduler and the
+working-day calendar and nothing else. Do not assume incorrect logic
+elsewhere will be caught — it will not. Treat this as reason to be more
+conservative and explicit in review comments about correctness risk, not
+less.
 
 The merge gate in CI is `pnpm turbo lint typecheck build` across the whole
-workspace:
+workspace, plus `pnpm scheduler-check`:
 
 - `lint` (ESLint flat configs per package, all based on `eslint-config-next`)
 - `typecheck` (`tsc --noEmit` per package; every tsconfig extends
   `@capo/config/typescript/*` with `"strict": true`)
 - `build` (`next build` — a full production build of every app must succeed)
+- `scheduler-check` (deterministic assertions over the plan scheduler and the
+  PT working-day calendar; the only correctness check that runs per PR)
 
 When reviewing a PR, prioritize feedback in this order:
 1. Correctness bugs and logic errors (most important, since nothing else

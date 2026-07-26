@@ -684,16 +684,21 @@ export type Database = {
       }
       dashboard_tasks: {
         Row: {
+          active_this_week: boolean | null
           active_today: boolean | null
           active_tomorrow: boolean | null
+          assignee_worker_id: string | null
           company_id: string | null
           days_overdue: number | null
           description: string | null
           due_date: string | null
+          duration_days: number | null
           id: string | null
+          job_address: string | null
           job_id: string | null
           job_name: string | null
           job_status: string | null
+          materials: string[] | null
           overdue: boolean | null
           start_date: string | null
           status: string | null
@@ -701,6 +706,13 @@ export type Database = {
           worker_name: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "tasks_assignee_worker_id_fkey"
+            columns: ["assignee_worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "tasks_company_id_fkey"
             columns: ["company_id"]

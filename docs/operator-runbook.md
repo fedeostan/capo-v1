@@ -6,6 +6,44 @@ service-role client (`getDb()` from `@capo/db`) — it never ships the
 publishable/RLS client and has no tenant login surface. Isolation from the
 tenant app is physical: separate Next app, separate deploy, separate domain.
 
+## The screens
+
+| Route | What it answers |
+|---|---|
+| `/` **Health** | *Does anything need me today, and is anyone stuck?* Alerts first, then today's counters, then the activation funnel. |
+| `/companies` | Per-company detail: managers, worker count, task tallies, billing state. |
+| `/conversations` | Read any tenant's thread with Capo. |
+| `/tasks` | Every task, grouped by company. |
+| `/dispatch` | The n8n/Twilio SMS ledger. |
+| `/signups` | Newest profiles with their company's billing state. |
+
+### Reading the Health page
+
+**Alerts** are ordered `critical` before `warning`. What each one means:
+
+- *subscription past_due / canceled* — the manager is locked out of the chat
+  and every write path; WhatsApp deliberately keeps working.
+- *proposals pending over 24h* — Capo asked for a decision and nobody
+  answered. This is the product's clearest friction signal: either the card
+  was unclear or the manager never saw it. Read the thread before assuming
+  disinterest.
+- *approved but failed to execute* — the manager said yes and nothing
+  happened. Always worth a look; `proposals.action_name` says which tool.
+- *stuck mid-execution* — a crash between the compare-and-set claim and
+  `finalize_proposal`. By design these are **never retried automatically**
+  (that guarantee is what stops double-writes), so they need a human.
+- *N open tasks, nobody reachable by SMS* — no active worker has a phone
+  number, so the 07:00 dispatch reaches nobody. The daily loop is dead for
+  that company even though the app looks healthy.
+- *No SMS dispatched today* — some company has dispatched before but nothing
+  went out today. Check the external n8n 07:00 cron and Twilio first; nothing
+  in this repo can cause it.
+
+**Activation** is a five-step funnel — signed up → created an obra → tasks
+scheduled → crew reachable → SMS going out. The point is not the count but
+*which* step a company died at, because the fix differs at each one:
+onboarding, plan quality, missing phone numbers, or the n8n cron.
+
 ## Access control (structural, two layers)
 
 1. **HTTP Basic Auth in `apps/operator/proxy.ts`** — every request must match

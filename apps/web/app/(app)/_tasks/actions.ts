@@ -34,6 +34,10 @@ async function setTaskStatus(taskId: string, status: 'done' | 'pending', event: 
   if (data.job_id) revalidatePath(`/obras/${data.job_id}`);
   revalidatePath('/tarefas');
   revalidatePath('/obras');
+  // Completing a task drops it out of task_board entirely, so it also leaves
+  // the materials outlook and the crew's load on /perfil.
+  revalidatePath('/materiais');
+  revalidatePath('/perfil');
 }
 
 export async function completeTask(taskId: string): Promise<void> {

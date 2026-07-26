@@ -36,6 +36,7 @@ if (!process.env.ANTHROPIC_API_KEY) {
 const { getDb } = await import('@capo/db/client');
 const { handleInbound } = await import('@capo/core/agent');
 const { resolveProposal } = await import('@capo/core/capabilities/propose');
+const { isWorkday } = await import('@capo/core/capabilities/workdays');
 
 const db = getDb();
 const run = randomBytes(4).toString('hex');
@@ -189,6 +190,30 @@ async function pendingProposals(companyId: string) {
   return data ?? [];
 }
 
+// Which tools the agent actually reached for on its most recent turn. Asserting
+// on this (not just on the prose) is how we catch the agent quietly going back
+// to hand-rolled date arithmetic instead of the `agenda` view — a regression
+// that reads perfectly fine in the reply while silently disagreeing with the
+// manager's screen.
+async function lastTurnToolNames(companyId: string): Promise<string[]> {
+  const { data: convs } = await db.from('conversations').select('id').eq('company_id', companyId);
+  const conversationIds = (convs ?? []).map(c => c.id);
+  if (conversationIds.length === 0) return [];
+  const { data } = await db
+    .from('messages')
+    .select('content')
+    .in('conversation_id', conversationIds)
+    .eq('role', 'assistant')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const parts = (data?.content as { parts?: { type?: string }[] } | null)?.parts ?? [];
+  return parts
+    .map(p => p.type ?? '')
+    .filter(type => type.startsWith('tool-'))
+    .map(type => type.slice('tool-'.length));
+}
+
 // ── checks ──────────────────────────────────────────────────────────────────
 let base: Tenant | undefined;
 let empty: Tenant | undefined;
@@ -251,21 +276,45 @@ try {
       depCount = (deps ?? []).length;
     }
     const allDatesSane = (planTasks ?? []).every(t => t.start_date && t.due_date && t.start_date <= t.due_date);
-    const noWeekendStarts = (planTasks ?? []).every(t => {
-      if (!t.start_date) return false;
-      const day = new Date(`${t.start_date}T00:00:00Z`).getUTCDay();
-      return day !== 0 && day !== 6;
-    });
+    // Both ends now, not just the start: the scheduler advances durations in
+    // working days, so a due date landing on a Saturday or on 25 de Abril
+    // means the calendar logic has regressed. (The exhaustive version of this
+    // runs credential-free in `pnpm scheduler-check`.)
+    const onlyWorkdays = (planTasks ?? []).every(
+      t => t.start_date && t.due_date && isWorkday(t.start_date) && isWorkday(t.due_date),
+    );
     check(
-      'plan approved: tasks + dependencies exist with sane dates',
-      resolution.outcome === 'approved' && (planTasks ?? []).length > 0 && allDatesSane && noWeekendStarts,
-      `outcome=${resolution.outcome} tasks=${(planTasks ?? []).length} deps=${depCount} allDatesSane=${allDatesSane} noWeekendStarts=${noWeekendStarts}`,
+      'plan approved: tasks + dependencies exist, dates land on working days',
+      resolution.outcome === 'approved' && (planTasks ?? []).length > 0 && allDatesSane && onlyWorkdays,
+      `outcome=${resolution.outcome} tasks=${(planTasks ?? []).length} deps=${depCount} allDatesSane=${allDatesSane} onlyWorkdays=${onlyWorkdays}`,
     );
   } else {
-    check('plan approved: tasks + dependencies exist with sane dates', false, 'no apply_plan proposal to approve');
+    check('plan approved: tasks + dependencies exist, dates land on working days', false, 'no apply_plan proposal to approve');
   }
 
-  // (6) An en-US tenant is actually answered in English. Cheap but load-bearing:
+  // (6) Day questions must go through `agenda` (the board's own view), not
+  // through list_tasks plus the model's own date arithmetic. Asserting on the
+  // TOOL rather than the prose is the point: a hand-computed answer reads
+  // perfectly while quietly disagreeing with the manager's screen.
+  const todayReply = await sendTurn(base, 'O que temos para hoje?');
+  const todayTools = await lastTurnToolNames(base.companyId);
+  check(
+    'agenda: "o que temos para hoje?" calls the agenda tool',
+    todayTools.includes('agenda'),
+    `tools=[${todayTools.join(', ')}] reply="${todayReply.slice(0, 90)}"`,
+  );
+
+  // (7) The anticipation habit: asking what to buy must reach for the
+  // materials outlook rather than being answered from memory.
+  const buyReply = await sendTurn(base, 'O que é que eu preciso de comprar para amanhã?');
+  const buyTools = await lastTurnToolNames(base.companyId);
+  check(
+    'materials: "o que preciso de comprar?" calls materials_outlook',
+    buyTools.includes('materials_outlook'),
+    `tools=[${buyTools.join(', ')}] reply="${buyReply.slice(0, 90)}"`,
+  );
+
+  // (8) An en-US tenant is actually answered in English. Cheap but load-bearing:
   // the persona registry, the language directive, and the prompt blocks all have
   // to be wired for this to pass, and a regression in any of them silently
   // reverts Capo to Portuguese for every non-PT user.
