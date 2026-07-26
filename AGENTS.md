@@ -14,6 +14,11 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `packages/db` (`@capo/db`) — Supabase clients (system + user), generated
   types, session helpers, proxy session.
 - `packages/ui` (`@capo/ui`) — shared presentational components.
+- `packages/i18n` (`@capo/i18n`) — locale primitives (`Locale`, `LocaleContext`,
+  `coerceLocale`) and the user-facing copy catalogs (pt-PT / es-ES / en-US).
+  A zero-dependency leaf: `i18n ← db ← core ← {web, operator}`, `i18n ← ui`.
+  Model-facing prompt copy lives in `packages/core/src/i18n` instead —
+  deliberately separate, so UI strings never enter the agent bundle.
 - `packages/config` (`@capo/config`) — shared tsconfig/eslint presets.
 - `supabase/migrations` — single shared DB; migrations stay at the root.
 - `scripts/rls-isolation-matrix.mjs` — the two-tenant RLS isolation matrix
@@ -27,6 +32,23 @@ This version has breaking changes — APIs, conventions, and file structure may 
   seeded tenant. Needs real API keys, so it is a manual gate
   (`pnpm agent-smoke`).
 
+Two language dials (do not collapse them into one):
+
+- `profiles.language` — **per user**. What Capo speaks, the deterministic
+  approval cards, the transcription instruction, the rolling summary, the web
+  UI. Changeable from chat via the `set_language` tool.
+- `companies.language` — **per tenant**. What Capo *stores*: task titles, job
+  names, memories, generated plan titles. Changeable only in `/definicoes`,
+  behind a warning, because nothing retranslates existing rows.
+
+The single highest-risk regression in this area: the guard
+(`packages/core/src/capabilities/guard.ts`) authorizes a direct write by
+substring-matching the model's `manager_instruction` quote against what the
+manager actually typed. If the model ever translates that quote, **every direct
+write silently degrades into an approval card** — no error, just friction.
+`buildLanguageDirective` carries an emphatic carve-out; keep it there, and watch
+`proposals` with `status='pending'` after any prompt change.
+
 Structural invariants (do not regress):
 
 - **System-vs-user client split**: `getDb()` (service role) is system-only;
@@ -38,14 +60,17 @@ Structural invariants (do not regress):
   break `dispatch_tasks_today` / `dispatch_log` semantics.
 - **One clock, one definition of "today".** The active-window rule
   (`lisbon_today() BETWEEN coalesce(start_date, created_at) AND
-  coalesce(due_date, 'infinity')`) lives in SQL, in the `dashboard_tasks`
-  view. Anything that answers "what is on today / tomorrow / overdue" —
-  a screen, a loader, or an agent tool — reads that view. Never re-derive
-  those buckets in TypeScript: the failure mode is Capo telling the manager
-  one thing while the Hoje screen shows another, and the manager having no
-  way to tell which is right. The `agenda` tool
-  (`packages/core/src/capabilities/agenda.ts`) exists solely to hold this
-  line on the agent side.
+  coalesce(due_date, 'infinity')`) and every schedule-risk signal live in SQL,
+  in the `task_board` view. Anything that answers "what is on today /
+  tomorrow / overdue / at risk" — a screen, a loader, or an agent tool —
+  reads that view. Never re-derive those buckets in TypeScript: the failure
+  mode is Capo telling the manager one thing while the Tarefas board shows
+  another, and the manager having no way to tell which is right. The `agenda`
+  tool (`packages/core/src/capabilities/agenda.ts`) exists solely to hold this
+  line on the agent side, and its horizon names are deliberately the board's
+  own chip names so the two cannot drift.
+  (`dashboard_tasks` is the superseded predecessor, kept only so an old bundle
+  served mid-deploy keeps working; do not write new readers against it.)
 - **Plan durations are working days, not calendar days.** The scheduler
   advances through `packages/core/src/capabilities/workdays.ts`, which skips
   weekends and the thirteen Portuguese national holidays. Anything that

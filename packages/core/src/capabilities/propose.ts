@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { Db } from '@capo/db/client';
+import type { LocaleContext } from '@capo/i18n/locale';
+import { events } from './cards';
 import { renderProposal, RenderError } from './render';
 import { taskTools } from './tasks';
 import { jobTools } from './jobs';
@@ -32,7 +34,9 @@ export async function createProposal(
     throw new Error(`Invalid args for ${actionName}: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
   }
 
-  const renderedText = await renderProposal(ctx.db, ctx.companyId, actionName, parsed.data);
+  // ctx.locales.user, read at call time: set_language may have changed it
+  // earlier in this same tool loop, and the card must follow.
+  const renderedText = await renderProposal(ctx.db, ctx.companyId, actionName, parsed.data, ctx.locales.user);
 
   const { data, error } = await ctx.db
     .from('proposals')
@@ -89,7 +93,23 @@ export type ProposalResolution =
 //   (finalize_proposal in Postgres), so 'approved' always comes with its event.
 // - A crash mid-execution leaves 'executing': never a duplicate execution, and
 //   retries are refused as not_pending.
-export async function resolveProposal(db: Db, proposalId: string, decision: 'approve' | 'reject'): Promise<ProposalResolution> {
+//
+// `locales.user` governs the resolution event written into the thread and any
+// RenderError surfaced as a failure reason. It does NOT retranslate
+// row.rendered_text — that card was frozen in whatever language it was created
+// in, which is why a card can outlive a language switch.
+//
+// Both dials are taken (rather than just the user one) because the executed
+// tool receives a ToolContext: no proposal-executable tool reads the company
+// dial today, but handing one a fabricated value is how that stops being true
+// silently. The caller has both for free from AuthContext.
+export async function resolveProposal(
+  db: Db,
+  proposalId: string,
+  decision: 'approve' | 'reject',
+  locales: LocaleContext,
+): Promise<ProposalResolution> {
+  const e = events[locales.user];
   const { data: row } = await db
     .from('proposals')
     .update({ status: 'executing' })
@@ -114,33 +134,38 @@ export async function resolveProposal(db: Db, proposalId: string, decision: 'app
   };
 
   if (decision === 'reject') {
-    await finalize('rejected', `O gerente rejeitou a proposta: "${row.rendered_text}"`);
+    await finalize('rejected', e.rejected(row.rendered_text));
     return { outcome: 'rejected', renderedText: row.rendered_text };
   }
 
   const fail = async (reason: string): Promise<ProposalResolution> => {
-    await finalize('failed', `A proposta "${row.rendered_text}" foi aprovada mas falhou: ${reason}`);
+    await finalize('failed', e.failed(row.rendered_text, reason));
     return { outcome: 'failed', renderedText: row.rendered_text, reason };
   };
 
   const target = getProposableTool(row.action_name);
-  if (!target) return fail(`ação desconhecida (${row.action_name})`);
+  if (!target) return fail(e.unknownAction(row.action_name));
 
   const parsed = target.inputSchema.safeParse(row.action_args);
-  if (!parsed.success) return fail('os dados da proposta já não são válidos');
+  if (!parsed.success) return fail(e.staleArgs);
 
   try {
-    // Referential re-check: re-rendering re-resolves every referenced row.
-    await renderProposal(db, row.company_id, row.action_name, parsed.data);
+    // Referential re-check: re-rendering re-resolves every referenced row. The
+    // text is discarded — only the lookups (and their RenderErrors) matter here.
+    await renderProposal(db, row.company_id, row.action_name, parsed.data, locales.user);
     const ctx: ToolContext = {
       companyId: row.company_id,
       conversationId: row.conversation_id ?? '',
       db,
       actor: 'capo',
       recentUserTexts: [],
+      // No live user: this runs from an approval click, not a conversation turn.
+      // Any tool needing a userId must handle null rather than assume one.
+      userId: null,
+      locales,
     };
     const result = await target.execute(parsed.data, ctx);
-    await finalize('approved', `O gerente aprovou a proposta: "${row.rendered_text}". Ação executada com sucesso.`);
+    await finalize('approved', e.approved(row.rendered_text));
     return { outcome: 'approved', renderedText: row.rendered_text, result };
   } catch (e) {
     const reason = e instanceof RenderError ? e.message : e instanceof Error ? e.message : String(e);

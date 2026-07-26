@@ -13,7 +13,9 @@
     "./capabilities/workdays": "./src/capabilities/workdays.ts",
     "./channels/types": "./src/channels/types.ts",
     "./channels/web": "./src/channels/web.ts",
-    "./channels/whatsapp": "./src/channels/whatsapp.ts"
+    "./channels/whatsapp": "./src/channels/whatsapp.ts",
+    "./transcription": "./src/agent/transcription.ts",
+    "./channels/whatsapp-media": "./src/channels/whatsapp-media.ts"
   },
   "scripts": {
     "lint": "eslint .",
@@ -23,6 +25,7 @@
     "@ai-sdk/anthropic": "^4.0.8",
     "@ai-sdk/google": "^4.0.8",
     "@capo/db": "workspace:*",
+    "@capo/i18n": "workspace:*",
     "ai": "^7.0.15",
     "zod": "^4.4.3"
   },

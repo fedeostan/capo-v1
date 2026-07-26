@@ -2,56 +2,35 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { getCatalog } from '@capo/i18n/catalog';
+import type { Locale } from '@capo/i18n/locale';
 
-// Five tabs, chosen to match how a manager actually moves through the day:
-// talk to Capo → see the day → check the sites → check the crew → check what
-// has to be bought.
-//
-// Hoje/Amanhã/Atrasadas used to be three separate tabs. They are one tab now
-// with an in-screen switcher (AgendaTabs), which both freed the two slots the
-// Equipa and Materiais screens needed AND puts the overdue count on screen
-// permanently instead of behind a tab the manager has to think to open.
-// `match` keeps the Hoje tab lit while the manager is on Amanhã/Atrasadas.
+// Hoje/Amanhã/Atrasadas were never separate places — they were one list with a
+// different date filter, so they live behind the chips on /tarefas now. That
+// freed the slots for the surfaces that were actually missing: Perfil, and
+// Materiais, which is the anticipation list 00_VISION calls the killer feature
+// and which nothing in the product surfaced until now. Materiais sits before
+// Perfil because it is a daily-use screen and Perfil is a settings screen.
 const TABS = [
+  { href: '/', key: 'chat', icon: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /> },
   {
-    href: '/',
-    label: 'Chat',
-    match: ['/'],
-    icon: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
-  },
-  {
-    href: '/hoje',
-    label: 'Hoje',
-    match: ['/hoje', '/amanha', '/atrasadas'],
+    href: '/tarefas',
+    key: 'tasks',
     icon: (
       <>
-        <rect x="3" y="4" width="18" height="17" rx="2" />
-        <path d="M16 2v4M8 2v4M3 10h18" />
+        <path d="M9 11l3 3L22 4" />
+        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
       </>
     ),
   },
   {
     href: '/obras',
-    label: 'Obras',
-    match: ['/obras'],
+    key: 'jobs',
     icon: <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4" />,
   },
   {
-    href: '/equipa',
-    label: 'Equipa',
-    match: ['/equipa'],
-    icon: (
-      <>
-        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-        <circle cx="9" cy="7" r="4" />
-        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-      </>
-    ),
-  },
-  {
     href: '/materiais',
-    label: 'Materiais',
-    match: ['/materiais'],
+    key: 'materials',
     icon: (
       <>
         <path d="M21 8v13H3V8" />
@@ -60,20 +39,34 @@ const TABS = [
       </>
     ),
   },
+  {
+    href: '/perfil',
+    key: 'profile',
+    icon: (
+      <>
+        <circle cx="12" cy="8" r="4" />
+        <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" />
+      </>
+    ),
+  },
 ];
 
-export default function BottomNav() {
+// Icons are static; the words are not, so labels resolve per render from
+// `locale` rather than being baked into TABS.
+export default function BottomNav({ locale }: { locale: Locale }) {
   const pathname = usePathname();
+  const nav = getCatalog(locale).nav;
   return (
     <nav className="grid shrink-0 grid-cols-5 border-t border-zinc-500/20 bg-background pb-[env(safe-area-inset-bottom)]">
-      {TABS.map(({ href, label, match, icon }) => {
-        // Sub-routes count as the section (e.g. /obras/<id> keeps Obras lit).
-        const active = match.some(base => (base === '/' ? pathname === '/' : pathname.startsWith(base)));
+      {TABS.map(({ href, key, icon }) => {
+        const label = nav[key as keyof typeof nav];
+        // Prefix match so /obras/[id] keeps its tab lit. '/' has to stay an
+        // exact match or it would claim every route.
+        const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
         return (
           <Link
             key={href}
             href={href}
-            aria-current={active ? 'page' : undefined}
             className={`flex flex-col items-center gap-0.5 py-2 text-[11px] ${
               active ? 'font-semibold text-orange-600' : 'text-zinc-500'
             }`}

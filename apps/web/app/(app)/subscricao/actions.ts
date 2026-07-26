@@ -2,13 +2,15 @@
 
 import { redirect } from 'next/navigation';
 import { requireAuth } from '@capo/db/session';
+import { getCatalog } from '@capo/i18n/catalog';
 import { getStripe } from '@/lib/billing';
 import { siteUrl } from '@/lib/site-url';
 
 export async function startCheckout(): Promise<void> {
-  const { db, companyId } = await requireAuth();
+  const { db, companyId, locale } = await requireAuth();
   const priceId = process.env.STRIPE_PRICE_ID;
-  if (!priceId) throw new Error('Stripe não está configurado.');
+  // Config error, not a user error — stays English, nobody should ever see it.
+  if (!priceId) throw new Error('STRIPE_PRICE_ID not set');
 
   const { data: claims } = await db.auth.getClaims();
   const email = claims?.claims?.email;
@@ -22,14 +24,14 @@ export async function startCheckout(): Promise<void> {
     success_url: `${siteUrl()}/subscricao?sucesso=1`,
     cancel_url: `${siteUrl()}/subscricao`,
   });
-  if (!session.url) throw new Error('Não foi possível iniciar o checkout.');
+  if (!session.url) throw new Error(getCatalog(locale).billing.checkoutFailed);
   redirect(session.url);
 }
 
 export async function openPortal(): Promise<void> {
-  const { db, companyId } = await requireAuth();
+  const { db, companyId, locale } = await requireAuth();
   const { data: company } = await db.from('companies').select('stripe_customer_id').eq('id', companyId).single();
-  if (!company?.stripe_customer_id) throw new Error('Ainda não tens uma subscrição associada.');
+  if (!company?.stripe_customer_id) throw new Error(getCatalog(locale).billing.noSubscription);
 
   const stripe = getStripe();
   const portal = await stripe.billingPortal.sessions.create({

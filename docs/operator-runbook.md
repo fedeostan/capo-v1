@@ -89,3 +89,18 @@ OPERATOR_BASIC_AUTH=dev:dev
 
 Run `pnpm --filter operator dev` → http://localhost:3001 (Basic Auth
 `dev:dev`).
+
+## Note: mixed languages in the conversation viewer
+
+Since the multilingual change, tenants can be pt-PT, es-ES or en-US, and the
+two dials are independent — `profiles.language` for what Capo *speaks*,
+`companies.language` for what it *stores*. The operator console is
+English-only and cross-tenant, so `/conversations/[companyId]` and
+`proposals.rendered_text` will show whatever language each tenant uses, and a
+single company can legitimately mix them (an English-speaking manager on a
+Portuguese company sees English replies over Portuguese task titles).
+
+That is expected, not a bug. `proposals.rendered_text` is also frozen in the
+language it was created in — a card written before a language switch stays in
+the old language forever, because `action_args` are re-rendered only for
+referential validation, never for display.

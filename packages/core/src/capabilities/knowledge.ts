@@ -8,11 +8,17 @@ export const searchKnowledgeInput = z.object({
   query: z
     .string()
     .min(3)
-    .describe('Pergunta ou termos de pesquisa em português (ex.: "licença para demolir parede interior").'),
+    .describe(
+      // The one field whose language is FIXED rather than following a dial: the
+      // corpus is Portuguese and search_knowledge ranks with
+      // websearch_to_tsquery(\'portuguese\', …), so a non-Portuguese query
+      // silently contributes nothing to the full-text half of the hybrid search.
+      'Search question or terms, ALWAYS written in Portuguese regardless of the conversation language — the corpus and its full-text ranking are Portuguese (e.g. "licença para demolir parede interior"). Translate the excerpt when you cite it back.',
+    ),
   category: z
     .enum(knowledgeCategories)
     .optional()
-    .describe('Restringir a uma categoria: lei, regulamento, tecnica, material, fabricante.'),
+    .describe('Restrict to one category: lei, regulamento, tecnica, material, fabricante.'),
 });
 
 // Read-only and unguarded: consulting the shared corpus never mutates state.
@@ -36,7 +42,9 @@ export const searchKnowledge: CapoTool<z.infer<typeof searchKnowledgeInput>> = {
     if (!data || data.length === 0) {
       return {
         results: [],
-        note: 'Nada encontrado na base de conhecimento sobre isto. Diz ao gerente que não tens fonte para confirmar — não inventes artigos nem normas.',
+        // Model-facing instruction, not user copy: the model renders the
+        // outcome to the manager in his own language.
+        note: 'Nothing found in the knowledge base on this. Tell the manager you have no source to confirm it — never invent article numbers or standards.',
       };
     }
     return {

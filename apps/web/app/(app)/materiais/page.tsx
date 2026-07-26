@@ -1,29 +1,38 @@
 import type { Metadata } from 'next';
 import { requireAuth } from '@capo/db/session';
-import { loadDayLabel, loadMaterials } from '@/app/dashboard-data';
+import { getCatalog } from '@capo/i18n/catalog';
+import { loadDayLabel, loadMaterials, loadToday } from '@/app/dashboard-data';
 import { MaterialsList, ScreenShell } from '@capo/ui/dashboard-ui';
 
 export const dynamic = 'force-dynamic';
-export const metadata: Metadata = { title: 'Materiais — Capo' };
+
+export async function generateMetadata(): Promise<Metadata> {
+  const ctx = await requireAuth();
+  const t = getCatalog(ctx.locale);
+  return { title: `${t.screens.materials.title} — ${t.meta.titleSuffix}` };
+}
 
 // The anticipation screen. From 00_VISION/02-solution-mvp.md: "Anticipation is
 // the killer feature. 'Check tomorrow's materials today' directly kills the
 // manager-as-runner pattern." tasks.materials has existed since migration 0010
-// and nothing ever read it — this is that panel.
+// and nothing in the product ever read it — this is that panel.
 //
-// Two horizons, deliberately: tomorrow is what you buy tonight; the week is
+// Two horizons, deliberately: tomorrow is what you BUY tonight; the week is
 // what you ORDER tonight, because anything with a lead time is already late by
 // the time it shows up on the tomorrow list.
 export default async function MateriaisPage() {
   const ctx = await requireAuth();
+  const t = getCatalog(ctx.locale);
+
+  const today = await loadToday(ctx);
   const [tomorrow, week, label] = await Promise.all([
-    loadMaterials(ctx, 'active_tomorrow'),
-    loadMaterials(ctx, 'active_this_week'),
+    loadMaterials(ctx, 'amanha', today),
+    loadMaterials(ctx, 'semana', today),
     loadDayLabel(ctx, 1),
   ]);
 
-  // Anything already covered by the tomorrow list would only be noise in the
-  // week list — the week section is about what is NOT yet urgent.
+  // Anything already on the tomorrow list would only be noise in the week
+  // list — the week section is about what is not yet urgent.
   const tomorrowKeys = new Set(tomorrow.flatMap(g => g.items.map(i => `${g.obraName}::${i.material}`)));
   const laterOnly = week
     .map(group => ({
@@ -33,25 +42,32 @@ export default async function MateriaisPage() {
     .filter(group => group.items.length > 0);
 
   return (
-    <ScreenShell title="Materiais" subtitle="O que tem de estar em obra">
+    <ScreenShell title={t.screens.materials.title} subtitle={t.screens.materials.subtitle}>
       <section className="space-y-3">
         <div>
-          <h2 className="text-sm font-semibold">Para amanhã</h2>
-          <p className="text-xs text-zinc-500">{label ?? 'O trabalho de amanhã'}</p>
+          <h2 className="text-sm font-semibold">{t.screens.materials.tomorrow}</h2>
+          <p className="text-xs text-zinc-500">{label ?? ''}</p>
         </div>
         <MaterialsList
           groups={tomorrow}
-          empty="Nada por confirmar para amanhã. Se houver trabalho agendado sem materiais registados, pergunta ao Capo o que falta."
+          empty={t.screens.materials.emptyTomorrow}
+          noJobLabel={t.dashboard.noJob}
+          forLabel={t.screens.materials.forTasks}
         />
       </section>
 
       {laterOnly.length > 0 && (
         <section className="space-y-3 border-t border-zinc-500/20 pt-5">
           <div>
-            <h2 className="text-sm font-semibold">Resto da semana</h2>
-            <p className="text-xs text-zinc-500">Para encomendar já — o que tem prazo de entrega não espera.</p>
+            <h2 className="text-sm font-semibold">{t.screens.materials.week}</h2>
+            <p className="text-xs text-zinc-500">{t.screens.materials.weekHint}</p>
           </div>
-          <MaterialsList groups={laterOnly} empty="" />
+          <MaterialsList
+            groups={laterOnly}
+            empty=""
+            noJobLabel={t.dashboard.noJob}
+            forLabel={t.screens.materials.forTasks}
+          />
         </section>
       )}
     </ScreenShell>

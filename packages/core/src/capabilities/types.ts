@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 import type { Db } from '@capo/db/client';
+import type { LocaleContext } from '@capo/i18n/locale';
 
 export interface ToolContext {
   companyId: string;
@@ -11,6 +12,19 @@ export interface ToolContext {
   // Verbatim recent user messages (newest last) — the evidence pool the guard
   // checks manager_instruction against.
   recentUserTexts: string[];
+  // profiles.id of the human on the other end. Null when a proposal is executed
+  // after approval — there is no live user in that path.
+  //
+  // Required for any per-user write: on the WhatsApp path the client is the
+  // service role, so auth.uid() is null and RLS cannot scope the row. This id
+  // is the ONLY filter standing between "update my language" and "update
+  // everyone's language".
+  userId: string | null;
+  // MUTABLE BY DESIGN. set_language rewrites `locales.user` in place so that a
+  // renderProposal later in the SAME tool loop produces its card in the new
+  // language. runGuarded's `{ ...ctx, actor: 'manager' }` is a shallow copy, so
+  // the object reference — and therefore the mutation — survives it.
+  locales: LocaleContext;
 }
 
 // The roster contract. Adding a capability = one file exporting CapoTools plus

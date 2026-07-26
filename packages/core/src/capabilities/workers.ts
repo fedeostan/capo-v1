@@ -13,7 +13,12 @@ const e164Phone = z
 
 export const addWorkerInput = z.object({
   name: z.string().min(1),
-  trade: z.string().optional().describe('Trade/ofício, e.g. "pedreiro", "eletricista"'),
+  trade: z
+    .string()
+    .optional()
+    .describe(
+      "The worker's trade (bricklayer, electrician, plumber…), written in the company's domain language (see the Language policy in your instructions).",
+    ),
   phone: e164Phone.optional(),
 });
 
@@ -80,20 +85,24 @@ export const listWorkers: CapoTool<Record<string, never>> = {
       .order('name');
     if (error) throw new Error(`list_workers failed: ${error.message}`);
 
-    // Load comes from dashboard_tasks so "hoje"/"amanhã" mean exactly what
-    // they mean on the Hoje/Amanhã screens and in the `agenda` tool.
+    // Load comes from task_board — the same view the Tasks board, the crew
+    // card on /perfil, and the `agenda` tool all read — so "today"/"tomorrow"
+    // mean one thing everywhere. (Deliberately NOT dashboard_tasks: 0013 marks
+    // that view for removal in a follow-up migration.)
     // Best-effort: a worker roster is still useful without the tallies.
-    const load = new Map<string, { hoje: number; amanha: number; abertas: number }>();
+    const load = new Map<string, { hoje: number; amanha: number; atrasadas: number; abertas: number }>();
     const { data: rows } = await ctx.db
-      .from('dashboard_tasks')
-      .select('assignee_worker_id, active_today, active_tomorrow')
-      .eq('company_id', ctx.companyId);
+      .from('task_board')
+      .select('assignee_worker_id, active_today, active_tomorrow, overdue')
+      .eq('company_id', ctx.companyId)
+      .eq('is_open', true);
     for (const row of rows ?? []) {
       if (!row.assignee_worker_id) continue;
-      const entry = load.get(row.assignee_worker_id) ?? { hoje: 0, amanha: 0, abertas: 0 };
+      const entry = load.get(row.assignee_worker_id) ?? { hoje: 0, amanha: 0, atrasadas: 0, abertas: 0 };
       entry.abertas += 1;
       if (row.active_today) entry.hoje += 1;
       if (row.active_tomorrow) entry.amanha += 1;
+      if (row.overdue) entry.atrasadas += 1;
       load.set(row.assignee_worker_id, entry);
     }
 
@@ -103,7 +112,7 @@ export const listWorkers: CapoTool<Record<string, never>> = {
         // The dispatch view requires an active worker WITH a phone; without
         // one the manager has to relay the day's tasks by hand.
         recebe_sms: Boolean(w.phone),
-        tarefas: load.get(w.id) ?? { hoje: 0, amanha: 0, abertas: 0 },
+        tarefas: load.get(w.id) ?? { hoje: 0, amanha: 0, atrasadas: 0, abertas: 0 },
       })),
     };
   },

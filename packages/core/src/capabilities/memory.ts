@@ -8,7 +8,9 @@ export const rememberInput = z.object({
   content: z
     .string()
     .min(1)
-    .describe('The durable fact, one per call, self-contained, in European Portuguese'),
+    .describe(
+      "The durable fact, one per call, self-contained, written in the company's domain language (see the Language policy in your instructions).",
+    ),
   subject_type: z.enum(['job', 'worker']).optional(),
   subject_id: z.string().uuid().optional().describe('Id of the job/worker this fact is about, if any'),
 });

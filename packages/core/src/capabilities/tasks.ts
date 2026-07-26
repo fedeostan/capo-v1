@@ -15,7 +15,14 @@ const startDate = isoDate
   );
 
 export const createTaskInput = z.object({
-  title: z.string().min(1).describe('Short task title, in European Portuguese'),
+  // Tool schemas are built once per process, not per request, so they cannot
+  // name a concrete language — the Language policy block in the system prompt
+  // carries the company dial. Same reasoning everywhere a stored field is
+  // described.
+  title: z
+    .string()
+    .min(1)
+    .describe("Short task title, written in the company's domain language (see the Language policy in your instructions)."),
   description: z.string().optional(),
   job_id: z
     .string()

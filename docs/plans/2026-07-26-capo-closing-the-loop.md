@@ -49,14 +49,40 @@ Ordered by dependency, each step keeping the gate green.
 
 | # | Area | Change |
 |---|---|---|
-| 1 | DB | `0013` — extend `dashboard_tasks` (materials, assignee, duration, address, `active_this_week`) so SQL stays the single source of date truth |
-| 2 | Core | Working-day scheduler + Portuguese national holidays |
-| 3 | Core | `agenda` + `materials_outlook` tools; `list_tasks` date filters |
-| 4 | Core | Orchestration + planner prompt updates to match |
-| 5 | Web | Chat error surface, stop/retry, refresh-after-write |
-| 6 | Web | **Materiais** screen (tonight's actions), **Equipa** screen, agenda segmented nav with counts, quick-complete everywhere |
-| 7 | Operator | Health home (at-risk companies, stuck proposals, dispatch, KB) + activation funnel |
-| 8 | Docs | Runbooks, human-todo, AGENTS.md |
+| 1 | Core | Working-day scheduler + Portuguese national holidays |
+| 2 | Core | `agenda` + `materials_outlook` tools; `list_tasks` date filters |
+| 3 | Core | Orchestration + planner prompt updates to match |
+| 4 | Web | Chat error surface, stop/retry, refresh-after-write, growing composer |
+| 5 | Web | **Materiais** screen (tonight's actions) + crew load/SMS-reachability on `/perfil` |
+| 6 | Operator | Health home (at-risk companies, stuck proposals, dispatch, KB) + activation funnel |
+| 7 | Docs | Runbooks, human-todo, AGENTS.md |
+
+## Reconciled with main (two branches landed while this was in flight)
+
+PR #7 (`/tarefas` board + `/perfil`) and PR #8 (multilingual + WhatsApp voice
+notes) both merged during this session and overlapped heavily. Rather than
+force my version through, I took main's wherever it solved the same problem
+better:
+
+- **My migration `0013_dashboard_materials_team.sql` was deleted outright.**
+  Main's `task_board` view already exposes `materials`, `assignee_worker_id`,
+  `duration_days` and — via `window_start`/`window_end` — an arbitrary date
+  range. Extending `dashboard_tasks` alongside it would have left two
+  competing read surfaces. **Net result: this work now ships with no
+  migration at all**, so there is no deploy-ordering hazard.
+- **`agenda` was rewritten onto `task_board`**, and its horizons are now the
+  board's own chip names — `hoje / amanha / atrasadas / risco / semana`. It
+  gained the `risco` horizon and per-task risk reasons for free.
+- **My Hoje/Amanhã/Atrasadas screens, the segmented switcher, and my
+  `task-actions`/`task-toggle` were dropped** — main's filter chips on
+  `/tarefas` are a better answer to the same problem, and its `_tasks/`
+  actions already do the job.
+- **My standalone Equipa screen was dropped**; the crew card main put on
+  `/perfil` was enriched in place with load, overdue count, and the
+  who-gets-no-SMS warning.
+- **All new copy went through `@capo/i18n`** in pt-PT, es-ES and en-US, since
+  main made every user-facing string locale-driven.
+- Nav is now **Chat · Tarefas · Obras · Materiais · Perfil**.
 
 ## What shipped
 
@@ -81,10 +107,14 @@ device — `pnpm agent-smoke`, `pnpm rls-matrix`, and the on-phone QA in
 
 ## Known limitations, stated deliberately
 
-- **Migration 0013 is not applied.** It is a production database; running
-  migrations there is Federico's call. The code degrades softly without it
-  (see `docs/human-todo.md` §0), but Materiais and the team load counts stay
-  empty until it lands.
+- **No migration of its own** after the reconciliation above — but it depends
+  on `task_board` from `0013_task_board.sql`, and on `0014_language.sql`,
+  neither of which was applied to production by the sessions that wrote them.
+  See `docs/human-todo.md` §8. Apply those before deploying.
+- **The Spanish register is now inconsistent with the docs.** `CONTEXT.md`
+  says Rioplatense; `packages/i18n/src/dictionaries/es-ES.ts` is Peninsular
+  (`tú`). I matched the existing dictionary rather than mixing two registers
+  in one file, but only Federico can settle which is right.
 - **The worker half of the loop is still one-way.** Materials anticipation is
   now real on the manager's side; the 18:00 push to workers is n8n work and
   remains in the backlog, with the query it needs documented.

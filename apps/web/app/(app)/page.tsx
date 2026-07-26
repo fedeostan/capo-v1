@@ -1,5 +1,5 @@
 import type { UIMessage } from 'ai';
-import { requireAuth } from '@capo/db/session';
+import { requireAuthT } from '@/lib/i18n';
 import { findConversation, loadWindow } from '@capo/core/conversation';
 import Chat, { type PendingProposal } from '@/app/chat';
 
@@ -11,7 +11,10 @@ export const dynamic = 'force-dynamic';
 // client state — and pending proposals whose cards fell behind the summary
 // watermark are surfaced separately so they can always be resolved.
 export default async function Page() {
-  const { db, companyId } = await requireAuth();
+  const {
+    ctx: { db, companyId },
+    locale,
+  } = await requireAuthT();
 
   let initialMessages: UIMessage[] = [];
   const proposalStatuses: Record<string, string> = {};
@@ -53,6 +56,11 @@ export default async function Page() {
   }
 
   return (
-    <Chat initialMessages={initialMessages} proposalStatuses={proposalStatuses} orphanedPending={orphanedPending} />
+    <Chat
+      initialMessages={initialMessages}
+      locale={locale}
+      proposalStatuses={proposalStatuses}
+      orphanedPending={orphanedPending}
+    />
   );
 }

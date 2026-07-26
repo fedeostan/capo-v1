@@ -6,6 +6,7 @@ import { jobTools } from './jobs';
 import { workerTools } from './workers';
 import { memoryTools } from './memory';
 import { knowledgeTools } from './knowledge';
+import { languageTools } from './language';
 import { propose } from './propose';
 import { generatePlan } from './plan';
 import { managerInstructionField, runGuarded } from './guard';
@@ -23,6 +24,7 @@ export const roster: CapoTool[] = [
   ...workerTools,
   ...memoryTools,
   ...knowledgeTools,
+  ...languageTools,
   propose,
   generatePlan,
 ];

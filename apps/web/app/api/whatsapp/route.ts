@@ -2,7 +2,11 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { after, NextResponse, type NextRequest } from 'next/server';
 import { getDb } from '@capo/db/client';
 import { handleInbound } from '@capo/core/agent';
-import { whatsappSink } from '@capo/core/channels/whatsapp';
+import { MAX_AUDIO_BYTES, transcribeAudio } from '@capo/core/transcription';
+import { coerceLocale, type LocaleContext } from '@capo/i18n/locale';
+import { getCatalog } from '@capo/i18n/catalog';
+import { sendWhatsAppText, whatsappSink, type WhatsAppSinkConfig } from '@capo/core/channels/whatsapp';
+import { downloadMedia } from '@capo/core/channels/whatsapp-media';
 import { getBillingState } from '../../../lib/billing';
 import { logEvent } from '../../../lib/log';
 
@@ -34,11 +38,25 @@ export async function GET(request: NextRequest) {
   return new NextResponse('verification failed', { status: 403 });
 }
 
+// Media download + a Gemini transcription now sit IN FRONT OF a 12-step agent
+// loop and the outbound Graph send, all inside after(). This route previously
+// declared no maxDuration at all and inherited the platform default, while
+// /api/chat declares 120 for the agent loop alone and /api/transcribe declares
+// 60 for transcription alone. 300 is the honest sum.
+//
+// If a Vercel plan caps function duration below this, `next build` fails loudly
+// — drop to 120 and accept a tighter tail rather than removing the declaration.
+export const maxDuration = 300;
+
 interface WhatsAppMessage {
   from: string; // wa_id: digits, no '+'
   id: string;
   type: string;
   text?: { body: string };
+  // voice: true is a push-to-talk voice note; absent/false is an uploaded audio
+  // file. Both are accepted — refusing a manager's own m4a of himself talking
+  // would be user-hostile — but `voice` is logged so the split stays visible.
+  audio?: { id: string; mime_type?: string; voice?: boolean };
 }
 
 interface WhatsAppWebhookBody {
@@ -95,19 +113,21 @@ export async function POST(request: NextRequest) {
     return new NextResponse('invalid payload', { status: 400 });
   }
 
-  // Meta batches; anything that isn't an inbound text message (delivery
-  // statuses, reactions, media we don't handle yet) is acked and ignored.
+  // Meta batches. Everything is collected here and triaged per message AFTER
+  // sender resolution, so an unsupported type can be logged against a real
+  // companyId. Previously this was a .filter() that dropped every non-text
+  // message with no log line at all — a manager sending a voice note produced
+  // literally zero observability.
   const inbound = (body.entry ?? [])
     .flatMap(entry => entry.changes ?? [])
-    .flatMap(change => change.value?.messages ?? [])
-    .filter(message => message.type === 'text' && message.text?.body);
+    .flatMap(change => change.value?.messages ?? []);
 
   const db = getDb();
   for (const message of inbound) {
     // wa_id is digits-only; profiles.phone is E.164 with '+'.
     const { data: profile } = await db
       .from('profiles')
-      .select('company_id')
+      .select('id, company_id, language, company:companies(language)')
       .eq('phone', `+${message.from}`)
       .maybeSingle();
 
@@ -118,9 +138,36 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    const text = message.text!.body;
     const companyId = profile.company_id;
-    logEvent('whatsapp.inbound_handled', { companyId, messageId: message.id });
+    const userId = profile.id;
+    // Service role: auth.uid() is null on this path, so the locale cannot come
+    // from RLS — it comes from the profile row matched by phone.
+    const locales: LocaleContext = {
+      user: coerceLocale(profile.language),
+      company: coerceLocale(profile.company?.language),
+    };
+
+    // Triage. Images, documents, stickers, reactions, delivery statuses and
+    // button replies are still acked and ignored — but now they leave a trace.
+    if (message.type !== 'text' && message.type !== 'audio') {
+      logEvent('whatsapp.unsupported_message', { companyId, messageId: message.id, type: message.type });
+      continue;
+    }
+    if (message.type === 'text' && !message.text?.body) {
+      logEvent('whatsapp.empty_text', { companyId, messageId: message.id });
+      continue;
+    }
+    if (message.type === 'audio' && !message.audio?.id) {
+      logEvent('whatsapp.audio_without_id', { companyId, messageId: message.id });
+      continue;
+    }
+
+    logEvent('whatsapp.inbound_handled', {
+      companyId,
+      messageId: message.id,
+      type: message.type,
+      voice: message.audio?.voice,
+    });
 
     // WhatsApp is NEVER gated by billing during the pilot — just log so a
     // blocked company's usage is visible without interrupting the channel.
@@ -130,15 +177,67 @@ export async function POST(request: NextRequest) {
     }
 
     // Ack Meta fast (retries + duplicate delivery kick in otherwise); the
-    // agent loop runs after the response, within the function's maxDuration.
+    // transcription and agent loop run after the response, within maxDuration.
     after(async () => {
+      const sendConfig: WhatsAppSinkConfig = {
+        accessToken,
+        phoneNumberId,
+        to: testTierArSendTarget(message.from),
+      };
+
+      let text: string;
+      let transcribed = false;
+
+      if (message.type === 'text') {
+        text = message.text!.body;
+      } else {
+        transcribed = true;
+        const t = getCatalog(locales.user);
+        try {
+          // The media URL from hop 1 is short-lived (~5 min) and single-use, so
+          // the download must happen here and now — never stored, never retried.
+          const media = await downloadMedia(message.audio!.id, {
+            accessToken,
+            maxBytes: MAX_AUDIO_BYTES,
+          });
+          text = await transcribeAudio({
+            db,
+            companyId,
+            locale: locales.user,
+            audio: media.bytes,
+            mediaType: media.mediaType,
+          });
+        } catch (err) {
+          logEvent('whatsapp.voice_note_failed', {
+            companyId,
+            messageId: message.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          // Silence on a voice note reads as "Capo is broken". Send directly
+          // rather than through the sink: the sink's `delivery` promise only
+          // settles once mergeAssistantStream is called, and the agent never
+          // runs on this path.
+          await sendWhatsAppText(t.whatsapp.voiceNoteFailed, sendConfig).catch(() => {});
+          return;
+        }
+
+        if (!text) {
+          logEvent('whatsapp.voice_note_empty', { companyId, messageId: message.id });
+          await sendWhatsAppText(t.whatsapp.voiceNoteEmpty, sendConfig).catch(() => {});
+          return;
+        }
+      }
+
       try {
-        const { sink, delivery } = whatsappSink({
-          accessToken,
-          phoneNumberId,
-          to: testTierArSendTarget(message.from),
+        const { sink, delivery } = whatsappSink(sendConfig);
+        await handleInbound({
+          db,
+          companyId,
+          userId,
+          locales,
+          inbound: { channel: 'whatsapp', text, transcribed },
+          sink,
         });
-        await handleInbound(db, companyId, { channel: 'whatsapp', text }, sink);
         await delivery;
       } catch (err) {
         console.error(`whatsapp: failed handling message ${message.id}:`, err);

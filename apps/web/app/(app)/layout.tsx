@@ -1,23 +1,24 @@
 import Link from 'next/link';
 import BottomNav from '@/app/bottom-nav';
+import LocaleCookieSync from '@/app/locale-cookie-sync';
 import { getAuthState } from '@capo/db/session';
+import { getCatalog, type Catalog } from '@capo/i18n/catalog';
+import { DEFAULT_LOCALE, type Locale } from '@capo/i18n/locale';
 import { getBillingState, type BillingState } from '@/lib/billing';
 
-function BillingBanner({ billing }: { billing: BillingState }) {
+function BillingBanner({ billing, t }: { billing: BillingState; t: Catalog }) {
   if (!billing.enabled) return null;
   if (billing.blocked) {
     return (
       <Link href="/subscricao" className="block bg-red-600 px-4 py-1.5 text-center text-xs font-medium text-white">
-        A tua subscrição expirou — o WhatsApp continua a funcionar, mas o chat aqui e as ações ficam bloqueados. Toca
-        para reativar.
+        {t.billing.bannerBlocked}
       </Link>
     );
   }
   if (billing.status === 'trialing' && billing.daysLeft <= 7) {
     return (
       <Link href="/subscricao" className="block bg-amber-500 px-4 py-1.5 text-center text-xs font-medium text-white">
-        {billing.daysLeft <= 0 ? 'O período de teste terminou' : `Faltam ${billing.daysLeft} dias de teste grátis`} —
-        toca para assinar.
+        {billing.daysLeft <= 0 ? t.billing.bannerTrialEnded : t.billing.bannerTrial(billing.daysLeft)}
       </Link>
     );
   }
@@ -32,12 +33,17 @@ function BillingBanner({ billing }: { billing: BillingState }) {
 export default async function AppLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const state = await getAuthState();
   const billing = state.status === 'ok' ? await getBillingState(state.ctx) : ({ enabled: false } as const);
+  // No session yet means the page underneath is about to redirect; the default
+  // locale is only ever used for that one throwaway frame.
+  const locale: Locale = state.status === 'ok' ? state.ctx.locale : DEFAULT_LOCALE;
+  const t = getCatalog(locale);
 
   return (
     <>
-      <BillingBanner billing={billing} />
+      <BillingBanner billing={billing} t={t} />
       <div className="flex min-h-0 flex-1 flex-col">{children}</div>
-      <BottomNav />
+      <BottomNav locale={locale} />
+      {state.status === 'ok' && <LocaleCookieSync locale={locale} />}
     </>
   );
 }

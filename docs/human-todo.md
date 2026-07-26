@@ -6,33 +6,6 @@ nothing here can be done by an agent. The capo-upgrade code is merged to
 deployments are READY); everything below is what's left to fully activate
 each feature.
 
-## 0. Apply migration 0013 — REQUIRED, do this first (2026-07-26)
-
-`supabase/migrations/0013_dashboard_materials_team.sql` extends the
-`dashboard_tasks` view with `materials`, `duration_days`,
-`assignee_worker_id`, `job_address` and `active_this_week`. It is a
-`create or replace view` — additive only, no table or data change, and
-reversible by re-running 0005's definition.
-
-Apply it in the Supabase dashboard (SQL editor) or via the CLI **before or
-right after** deploying this branch. I did not run it myself: it is a
-production database and running migrations there is your call, not an
-agent's.
-
-Until it is applied the app degrades on purpose rather than breaking —
-the new columns are simply absent, so:
-- **Materiais** shows nothing (the tomorrow list is empty, the week section
-  is hidden).
-- **Equipa** lists the crew but every load count reads 0, and the
-  "sem responsável" banner correctly stays hidden rather than flagging
-  everyone.
-- The agent's `agenda` tool works for hoje/amanhã/atrasadas and returns an
-  empty `semana`.
-
-Nothing errors, but none of tonight's headline features actually work until
-0013 lands. **Verify after applying:** open `/materiais` and `/equipa` on a
-company that has tasks with materials.
-
 ## 1. Stripe billing — ✅ DONE (2026-07-17)
 
 1. ✅ Stripe account created, Product "Capo" with recurring Price €45/mo EUR.
@@ -111,16 +84,15 @@ real orçamento and approve it, obra detail timeline (Concluir/Reabrir),
 Added 2026-07-26 — check these too (I verified the components render
 correctly against mock data, but not on a real device with real data):
 
-- Bottom nav is now **Chat · Hoje · Obras · Equipa · Materiais**. Amanhã and
-  Atrasadas moved into a switcher at the top of Hoje, with the overdue count
-  as a red badge.
+- Bottom nav is **Chat · Tarefas · Obras · Materiais · Perfil**.
 - Paste a real multi-line orçamento into the chat composer — it is a
   growing textarea now, not a one-line input. Enter sends, Shift+Enter adds
   a newline.
 - Force a chat failure (airplane mode mid-send) and confirm the error card
   with **Tentar outra vez** appears instead of silence.
-- Mark a task done from Hoje and confirm the count on the switcher updates.
-- Long-press the installed PWA icon → shortcuts to Hoje and Materiais.
+- Ask Capo "o que temos hoje?" and check the answer matches the Tarefas
+  board under the Hoje chip, exactly.
+- Long-press the installed PWA icon → shortcuts to Tarefas and Materiais.
 
 ## 7. Vercel Deployment Protection (found during Phase 8 verification)
 
@@ -142,7 +114,90 @@ server-to-server and unaffected by this browser-session-based protection —
 only interactive page loads are blocked. Toggle in Vercel dashboard →
 `capo-v1` → Settings → Deployment Protection.
 
-## 8. Backlog (deliberately cut)
+## 8. Multilingual + WhatsApp voice notes (branch `claude/agent-audio-language-config`)
+
+The code is complete and `pnpm turbo lint typecheck build` is green. These
+steps need a human because they touch the live Supabase project or a real
+phone.
+
+1. **Apply migration `0014_language.sql`.** The Supabase MCP was not
+   authorized in the session that wrote it, so the file exists but has NOT
+   been applied. Apply it via the Supabase MCP `apply_migration` (or the SQL
+   editor) against project `qdfmvhjrcmeoxbattnsm`.
+   ⚠️ Apply this **before** deploying the app. The migration drops and
+   recreates `complete_onboarding` with a 4th `p_language` parameter that has
+   a DEFAULT, precisely so the currently-deployed 3-argument caller keeps
+   working in the window between migration and deploy. In the other order,
+   signup breaks.
+2. **Regenerate `packages/db/src/types.ts`** via the Supabase MCP
+   `generate_typescript_types` and commit it. The two `language` columns and
+   the new `complete_onboarding` signature were **hand-patched** to keep the
+   workspace compiling; the regenerated file should be identical, and any
+   diff beyond those three spots is worth reading.
+3. **Run the gates** once the migration is applied: `pnpm rls-matrix` (the
+   column grants changed — it must stay green), then `pnpm agent-smoke`
+   (there is a new 6th check that seeds an `en-US` tenant and asserts the
+   reply is English), then diff
+   `select pg_get_viewdef('dispatch_tasks_today'::regclass);` against
+   `docs/plans/dispatch-viewdef-baseline.sql` — this migration touches no
+   view, so it must be byte-identical.
+4. **Test voice notes against the live Meta test tier** — this is the only
+   real gate on the audio path, since there is no test suite:
+   a. pt-PT voice note → correct transcript + coherent reply.
+   b. Voice note from a profile switched to `es-ES` → Spanish both ways.
+   c. Send an image → confirm a `whatsapp.unsupported_message` log line and
+      **no** reply.
+   d. Send a corrupt or oversized audio file → confirm the canned localized
+      apology arrives (silence here is the failure mode that matters).
+   e. Check the Vercel function logs for `after()` timeouts. The route now
+      declares `maxDuration = 300`; if the plan caps below that, the build
+      would have failed, but confirm the real tail latency.
+5. **Review the es-ES and en-US personas** —
+   `packages/core/src/agent/persona/capo.{es-ES,en-US}.ts`. These are product
+   voice, translated from your pt-PT original rather than written from
+   scratch, and marked with the usual FEDERICO dial comment. Same for the
+   per-locale transcription glossaries in
+   `packages/core/src/agent/transcription.ts` and the copy in
+   `packages/i18n/src/dictionaries/*`.
+6. **Watch for a spike in pending proposals** after rollout. The guard
+   authorizes direct writes by substring-matching the model's verbatim quote
+   of the manager; if the model ever translates that quote, every direct
+   write silently downgrades to an approval card. The language directive
+   forbids it explicitly, but the failure is silent, so the metric is the
+   detector.
+
+Known, accepted: making `<html lang>` locale-aware turned `/landing`,
+`/offline`, `/instalar` and the manifest from static into dynamic routes. The
+service worker still precaches `/offline` (it fetches it at install, which a
+dynamic route answers fine), and this is a PWA rather than an SEO property.
+
+Merged with the task-board branch (PR #7): the two language dials live as cards
+on `/perfil`, which that branch established as the only tab owning settings —
+there is no separate settings page. `/tarefas` filter VALUES stay Portuguese
+(`?quando=hoje`) because they are a shareable-URL contract; only their labels
+are translated.
+
+## 9. Materials anticipation + operator health (2026-07-26)
+
+No migration of its own — it reads `task_board` from item 8's branch, which
+already exposes `materials`, `assignee_worker_id` and the date window. So
+nothing here blocks a deploy; it goes live with the code.
+
+1. **Look at `/materiais` on a company with real tasks.** The list only has
+   content if the planner recorded `materials` on those tasks. Plans generated
+   before this change may have none — regenerate one to see it populated.
+2. **Read the operator Health page** (`/` on `capo-operator`) once with real
+   data and sanity-check the alert thresholds against your own judgement: a
+   proposal is "stale" after 24h, a company "quiet" after 7 days, "stuck at
+   signup" after 2 days. Those numbers are guesses; they are all in one place
+   at the top of `apps/operator/app/data.ts`.
+3. **Decide the Spanish register.** `CONTEXT.md` says Rioplatense, but
+   `packages/i18n/src/dictionaries/es-ES.ts` is written in Peninsular Spanish
+   (`tú`, "inténtalo"). I matched the existing file rather than mixing two
+   registers in one dictionary — but the docs and the product now disagree,
+   and only you can settle which is right for the first Spanish customer.
+
+## 10. Backlog (deliberately cut from this upgrade)
 
 Two-way worker SMS replies, multilingual worker briefings, Moloni/Vendus
 integration, client progress PDF (Flow 4's read-only share link is still
@@ -152,12 +207,11 @@ unbuilt), per-seat billing, a real test framework, Gantt charts.
 2026-07-26 the app surfaces tomorrow's materials on `/materiais` and the
 agent has a `materials_outlook` tool, so the manager-side half of the killer
 feature is live. The remaining half is the evening push to workers, which is
-n8n work, not app code: read `dashboard_tasks` where `active_tomorrow` is
-true and `materials` is non-empty, grouped by `assignee_worker_id` (all four
-columns exist once migration 0013 is applied). Per
-`03_PRODUCT/02-flows.md` §Flow 2, the worker's evening reply is also what
-keeps the 24h WhatsApp window open, so this send is both the feature and the
-cost mechanism.
+n8n work, not app code: read `task_board` where `active_tomorrow` is true and
+`materials` is non-empty, grouped by `assignee_worker_id` — every column it
+needs already exists. Per `03_PRODUCT/02-flows.md` §Flow 2, the worker's
+evening reply is also what keeps the 24h WhatsApp window open, so this send is
+both the feature and the cost mechanism.
 
 **Municipal holidays and Carnaval.** The plan scheduler now skips the
 thirteen Portuguese *national* holidays. Municipal holidays (Lisboa 13 Jun,

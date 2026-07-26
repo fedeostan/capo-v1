@@ -21,7 +21,9 @@ function lastUserText(messages: UIMessage[]): string {
 
 export async function POST(req: Request) {
   const auth = await getApiAuth();
-  if (!auth) return Response.json({ error: 'Não autenticado' }, { status: 401 });
+  // No session means no profile means no locale — a 401 body cannot be
+  // localized from the user, and no client renders it. English.
+  if (!auth) return Response.json({ error: 'Not authenticated' }, { status: 401 });
 
   try {
     await assertNotBlocked(auth);
@@ -38,7 +40,14 @@ export async function POST(req: Request) {
 
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
-      await handleInbound(auth.db, auth.companyId, { channel: 'web', text }, webSink(writer));
+      await handleInbound({
+        db: auth.db,
+        companyId: auth.companyId,
+        userId: auth.userId,
+        locales: { user: auth.locale, company: auth.companyLocale },
+        inbound: { channel: 'web', text },
+        sink: webSink(writer),
+      });
     },
   });
 

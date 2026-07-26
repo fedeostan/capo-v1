@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { generateObject } from 'ai';
 import { getModel } from '../agent/models';
 import { embedQuery } from '../agent/embeddings';
-import plannerPrompt from '../agent/prompts/planner';
+import { buildPlannerPrompt } from '../agent/prompts/planner';
 import { createProposal } from './propose';
 import { addWorkdays, nextWorkday, workdayAfter } from './workdays';
 import type { CapoTool } from './types';
@@ -132,8 +132,11 @@ export const generatePlan: CapoTool<z.infer<typeof generatePlanInput>> = {
       .eq('id', input.job_id)
       .eq('company_id', ctx.companyId)
       .maybeSingle();
+    // Error strings here are returned TO THE MODEL, which relays them to the
+    // manager in his own language — so they are English, like the rest of the
+    // model-facing surface.
     if (jobError || !job) {
-      return { status: 'error' as const, message: `Obra não encontrada (${input.job_id})` };
+      return { status: 'error' as const, message: `Job not found (${input.job_id})` };
     }
 
     const { data: workers } = await ctx.db
@@ -143,7 +146,7 @@ export const generatePlan: CapoTool<z.infer<typeof generatePlanInput>> = {
       .eq('active', true);
     const workerList =
       (workers ?? []).map(w => `- ${w.id}: ${w.name}${w.trade ? ` (${w.trade})` : ''}`).join('\n') ||
-      '(sem trabalhadores registados)';
+      '(no workers on record)';
 
     // Ground the planner in the shared knowledge base (techniques, sequencing,
     // materials). Best-effort: an empty corpus or a retrieval hiccup must
@@ -170,20 +173,22 @@ export const generatePlan: CapoTool<z.infer<typeof generatePlanInput>> = {
       const result = await generateObject({
         model: getModel('planner'),
         schema: relativePlanSchema,
-        system: plannerPrompt,
+        // The COMPANY dial: plan task titles become stored rows on the shared
+        // dashboard, not speech to this manager.
+        system: buildPlannerPrompt(ctx.locales.company),
         prompt: [
-          `## Texto do orçamento/âmbito (verbatim do gerente)\n${input.source_text}`,
-          `## Trabalhadores disponíveis (id: nome (ofício))\n${workerList}`,
-          input.notes ? `## Notas adicionais\n${input.notes}` : null,
-          knowledgeBlock ? `## Conhecimento técnico relevante (da base de conhecimento)\n${knowledgeBlock}` : null,
-          'Gera o plano.',
+          `## Quote / scope text (verbatim from the manager)\n${input.source_text}`,
+          `## Available workers (id: name (trade))\n${workerList}`,
+          input.notes ? `## Additional notes\n${input.notes}` : null,
+          knowledgeBlock ? `## Relevant technical knowledge (from the knowledge base)\n${knowledgeBlock}` : null,
+          'Generate the plan.',
         ]
           .filter(Boolean)
           .join('\n\n'),
       });
       relativePlan = result.object;
     } catch (e) {
-      return { status: 'error' as const, message: `Falha a gerar o plano: ${e instanceof Error ? e.message : String(e)}` };
+      return { status: 'error' as const, message: `Failed to generate the plan: ${e instanceof Error ? e.message : String(e)}` };
     }
 
     const scheduled = scheduleTasks(relativePlan.tasks, input.start_date);

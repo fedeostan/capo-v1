@@ -1,12 +1,23 @@
 import type { Db } from '@capo/db/client';
-import persona from './persona/capo.pt-PT';
+import type { Locale, LocaleContext } from '@capo/i18n/locale';
+import { promptBlocks } from '../i18n';
+import { personas } from './persona';
 import orchestration from './prompts/orchestration';
+import { buildLanguageDirective } from './prompts/language';
 
-// System prompt assembly: persona (voice) ⊕ orchestration (policy) ⊕ today's
-// date ⊕ company snapshot ⊕ durable memories ⊕ conversation summary. Persona
-// and policy live in separate files on purpose — iterate voice without
-// touching logic. Both are bundled TS modules, so the prompt travels with
-// the package regardless of cwd or deploy layout.
+// System prompt assembly: persona (voice) ⊕ orchestration (policy) ⊕ language
+// directive ⊕ today's date ⊕ company snapshot ⊕ durable memories ⊕ conversation
+// summary. Persona and policy live in separate files on purpose — iterate voice
+// without touching logic. Both are bundled TS modules, so the prompt travels
+// with the package regardless of cwd or deploy layout.
+//
+// Persona and prompt blocks are keyed on the USER locale (this is what Capo
+// speaks); the language directive carries both dials, since it is the block
+// that tells the model what to STORE.
+//
+// NOTE if provider prompt caching is ever enabled: the prefix now varies by
+// locale, so the cache fragments three ways. Order is already
+// most-stable-first, which is the right shape for it.
 
 interface CompanySnapshot {
   companyName: string;
@@ -45,7 +56,11 @@ async function loadCompanySnapshot(db: Db, companyId: string): Promise<CompanySn
 // the model to know what search_knowledge CAN answer (the main lever for it
 // actually calling the tool) without spending context on the corpus itself.
 // Same failure posture as the snapshot: any error collapses to "no block".
-async function loadKnowledgeIndex(db: Db): Promise<string | null> {
+//
+// The document titles themselves stay in Portuguese whatever the locale: the
+// corpus is Portuguese, and a translated index would name documents the manager
+// cannot find and the tool cannot match.
+async function loadKnowledgeIndex(db: Db, locale: Locale): Promise<string | null> {
   try {
     const { data, error } = await db
       .from('knowledge_documents')
@@ -60,36 +75,38 @@ async function loadKnowledgeIndex(db: Db): Promise<string | null> {
       list.push(doc.title);
       byCategory.set(doc.category, list);
     }
+    const t = promptBlocks[locale];
     const lines = [...byCategory.entries()].map(([category, titles]) => `- ${category}: ${titles.join('; ')}`);
-    return `# Base de conhecimento disponível (via search_knowledge)\nDocumentos que podes consultar para fundamentar respostas legais/técnicas:\n${lines.join('\n')}`;
+    return `${t.knowledgeHeading}\n${t.knowledgeIntro}\n${lines.join('\n')}`;
   } catch {
     return null;
   }
 }
 
-function buildOnboardingBlock(snapshot: CompanySnapshot): string | null {
+function buildOnboardingBlock(snapshot: CompanySnapshot, locale: Locale): string | null {
+  const t = promptBlocks[locale];
   const empty = snapshot.activeObras === 0 && snapshot.activeWorkers === 0 && snapshot.openTasks === 0;
-  if (empty) {
-    return `# Primeira utilização
-Esta empresa ainda não tem obras, equipa nem tarefas registadas — é a primeira conversa. Apresenta-te uma vez (quem és, o que fazes) e depois guia o gerente na configuração inicial, UMA pergunta de cada vez, nunca um formulário completo:
-1. Primeira obra (nome, morada, cliente)
-2. Equipa (nomes, funções, telemóveis em formato E.164)
-3. Primeiras tarefas
-Menciona, quando fizer sentido, que os resultados aparecem nas abas Hoje/Amanhã/Obras.`;
-  }
+  if (empty) return t.firstUse;
+
+
   if (snapshot.activeObras === 0 || snapshot.activeWorkers === 0) {
     const gaps = [
-      snapshot.activeObras === 0 ? 'ainda não há obras registadas' : null,
-      snapshot.activeWorkers === 0 ? 'ainda não há trabalhadores registados' : null,
-    ].filter(Boolean);
-    return `# Configuração incompleta
-Esta empresa já tem alguma coisa registada, mas ${gaps.join(' e ')}. Se ainda não mencionaste isto nesta conversa, refere a lacuna UMA vez, de forma natural. Se já a mencionaste antes (ver histórico), não repitas.`;
+      snapshot.activeObras === 0 ? t.gapNoJobs : null,
+      snapshot.activeWorkers === 0 ? t.gapNoWorkers : null,
+    ].filter((g): g is string => g !== null);
+    return t.incompleteSetup(gaps);
   }
   return null;
 }
 
-export async function buildSystemPrompt(db: Db, companyId: string, summary: string | null): Promise<string> {
+export async function buildSystemPrompt(
+  db: Db,
+  companyId: string,
+  summary: string | null,
+  locales: LocaleContext,
+): Promise<string> {
   const today = new Date().toISOString().slice(0, 10);
+  const t = promptBlocks[locales.user];
 
   // Memory tier 2 (durable/semantic), injected wholesale — trivially fits at
   // one-company scale. A recall tool comes when this outgrows context.
@@ -103,28 +120,32 @@ export async function buildSystemPrompt(db: Db, companyId: string, summary: stri
   const memoryBlock =
     memories && memories.length > 0
       ? memories.map(m => `- [${m.kind}] (${m.created_at.slice(0, 10)}) ${m.content}`).join('\n')
-      : '(sem memórias guardadas ainda)';
+      : t.memoryEmpty;
 
-  const [snapshot, knowledgeBlock] = await Promise.all([loadCompanySnapshot(db, companyId), loadKnowledgeIndex(db)]);
+  const [snapshot, knowledgeBlock] = await Promise.all([
+    loadCompanySnapshot(db, companyId),
+    loadKnowledgeIndex(db, locales.user),
+  ]);
   const snapshotBlock = snapshot
-    ? `# Estado atual da empresa
-Empresa: ${snapshot.companyName}
-Obras ativas: ${snapshot.activeObras}
-Trabalhadores ativos: ${snapshot.activeWorkers}
-Tarefas em aberto: ${snapshot.openTasks}
-Propostas pendentes: ${snapshot.pendingProposals}`
+    ? `${t.snapshotHeading}
+${t.snapshotCompany}: ${snapshot.companyName}
+${t.snapshotActiveJobs}: ${snapshot.activeObras}
+${t.snapshotActiveWorkers}: ${snapshot.activeWorkers}
+${t.snapshotOpenTasks}: ${snapshot.openTasks}
+${t.snapshotPendingProposals}: ${snapshot.pendingProposals}`
     : null;
-  const onboardingBlock = snapshot ? buildOnboardingBlock(snapshot) : null;
+  const onboardingBlock = snapshot ? buildOnboardingBlock(snapshot, locales.user) : null;
 
   return [
-    persona,
+    personas[locales.user],
     orchestration,
+    buildLanguageDirective(locales),
     `# Today's date\n${today}`,
     snapshotBlock,
     onboardingBlock,
     knowledgeBlock,
-    `# Durable memory (facts stored across conversations)\n${memoryBlock}`,
-    summary ? `# Summary of the conversation so far\n${summary}` : null,
+    `${t.memoryHeading}\n${memoryBlock}`,
+    summary ? `${t.summaryHeading}\n${summary}` : null,
   ]
     .filter(Boolean)
     .join('\n\n---\n\n');

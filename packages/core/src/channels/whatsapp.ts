@@ -49,6 +49,16 @@ export function splitForWhatsApp(text: string): string[] {
   return chunks;
 }
 
+// Public: the webhook needs a direct send for the voice-note failure path.
+// It cannot reuse the sink there, because `delivery` only settles once
+// mergeAssistantStream has been called — and on that path the agent never runs,
+// so it never would.
+export async function sendWhatsAppText(body: string, config: WhatsAppSinkConfig): Promise<void> {
+  for (const chunk of splitForWhatsApp(body)) {
+    await sendText(chunk, config);
+  }
+}
+
 async function sendText(body: string, config: WhatsAppSinkConfig): Promise<void> {
   const base = config.graphApiBase ?? 'https://graph.facebook.com/v23.0';
   const res = await fetch(`${base}/${config.phoneNumberId}/messages`, {
@@ -80,9 +90,7 @@ async function deliver(stream: ReadableStream<UIMessageChunk>, config: WhatsAppS
     .join('\n\n')
     .trim();
   if (!text) return;
-  for (const chunk of splitForWhatsApp(text)) {
-    await sendText(chunk, config);
-  }
+  await sendWhatsAppText(text, config);
 }
 
 // The sink contract is push-based (mergeAssistantStream returns void), but a

@@ -6,8 +6,15 @@ import type { UIMessageChunk } from 'ai';
 // the webhook immediately and its sink posts via the Meta send API.
 
 export interface InboundMessage {
-  channel: string; // e.g. 'web', later 'whatsapp'
+  channel: string; // 'web' | 'whatsapp'
   text: string;
+  // True when `text` came from a voice note rather than typing. Audio is
+  // transcribed at the EDGE (in the channel adapter) and handed to the core as
+  // plain text, so the core never learns about media — deliberately: widening
+  // this type to carry bytes would push decoding, size limits, and provider
+  // media APIs into the agent loop. The flag is for logging and a possible 🎙
+  // affordance in the web thread, not for behavior.
+  transcribed?: boolean;
 }
 
 export interface OutboundSink {

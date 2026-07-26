@@ -1,23 +1,41 @@
+import type { Locale } from '@capo/i18n/locale';
+import { localeName } from './language';
+
 // Planner prompt — used only by generate_plan's generateObject call, never
 // mixed into the conversation system prompt. Bundled as a TS module for the
 // same reason as the other prompts (no fs/cwd coupling).
-const prompt = `# Planeamento de obra — gerador de plano dia-a-dia
+//
+// The phase sequence below is genuine Portuguese-construction domain knowledge,
+// not copy: it encodes which trades block which, which is what makes the
+// dependency graph correct. It stays regardless of locale — only the language
+// the TITLES come out in changes, and that follows the COMPANY dial, because
+// titles become stored rows on a shared dashboard rather than speech.
 
-Especialista em construção civil portuguesa. A partir de um orçamento/âmbito de obra (texto do gerente, em português europeu), produz um plano de tarefas em grafo de dependências — SEM datas concretas, apenas duração e ordem relativa. Um agendador determinístico aplica as datas depois.
+// Short title examples, per locale. Examples do more work than instructions
+// here — the model matches their register, not just their language.
+const TITLE_EXAMPLES: Record<Locale, string> = {
+  'pt-PT': '"Demolição de paredes", "Canalização — tubagens novas", "Aplicação de azulejo"',
+  'es-ES': '"Demolición de tabiques", "Fontanería — tuberías nuevas", "Alicatado"',
+  'en-US': '"Demo interior walls", "Plumbing — new supply lines", "Tile setting"',
+};
 
-## Sequência típica (usa apenas as fases implícitas no texto — nunca inventes trabalho que não foi pedido)
-demolição → alvenaria/estrutura → abertura de roços (eletricidade/canalização) → canalização e eletricidade → reboco/estuque → betonilha → azulejos/pavimentos → carpintarias (portas, roupeiros) → pintura → loiças e acabamentos finais
+export function buildPlannerPrompt(companyLocale: Locale): string {
+  return `# Job planning — day-by-day plan generator
 
-## Regras
-- Máximo 30 tarefas. Uma tarefa por fase de trabalho relevante — não subdivide excessivamente.
-- Títulos curtos em português europeu (ex.: "Demolição de paredes", "Canalização — tubagens novas", "Aplicação de azulejo").
-- \`duration_days\`: **dias ÚTEIS de trabalho**, estimativa realista para uma equipa de 1–2 pessoas (uma casa de banho típica: 1–2 dias por fase; uma remodelação completa: 2–5 dias por fase). O agendador salta fins de semana e feriados nacionais por ti — não acrescentes dias de folga à estimativa nem tentes contornar o calendário.
-- Tempos de espera que não são trabalho (cura de betonilha, secagem de reboco, tempo de entrega de material encomendado) NÃO são \`duration_days\`. Modela-os como dependência entre tarefas e, se forem determinantes, menciona-os na \`description\` da tarefa seguinte.
-- \`depends_on\`: chaves de tarefas irmãs que têm de terminar antes desta começar (ex.: azulejo depende de canalização + eletricidade + reboco). Só depende de tarefas que realmente bloqueiam o início — não encadeies tudo sequencialmente se houver trabalho paralelo possível (ex.: canalização e eletricidade podem correr em paralelo antes do reboco).
-- \`materials\`: lista curta de materiais principais dessa fase, quando óbvios do texto ou do tipo de trabalho (ex.: ["azulejo", "cola", "betumador"]).
-- \`assignee_worker_id\`: só preenche se a lista de trabalhadores disponíveis tiver alguém com ofício claramente adequado à tarefa; deixa por preencher se não houver correspondência óbvia.
-- Nunca inventes tarefas fora do âmbito descrito. Se o texto só menciona canalização e azulejo, não acrescentes demolição ou pintura.
-- Se houver uma secção "Conhecimento técnico relevante", usa-a para afinar sequência, durações e materiais (ex.: tempos de cura/secagem que forçam uma dependência). NUNCA a uses para alargar o âmbito — o âmbito vem só do texto do gerente.
+You are an expert in Portuguese residential construction. From a quote or scope of work (the manager's own text), produce a task plan as a dependency graph — WITHOUT concrete dates, only durations and relative order. A deterministic scheduler applies the dates afterwards.
+
+## Typical sequence (use only the phases implied by the text — never invent work that was not asked for)
+demolition → masonry/structure → chasing walls (electrical/plumbing) → plumbing and electrical → plaster/render → screed → tiling/flooring → carpentry (doors, wardrobes) → painting → fixtures and final finishes
+
+## Rules
+- Maximum 30 tasks. One task per relevant work phase — do not over-subdivide.
+- Short titles, written in ${localeName(companyLocale)} (e.g. ${TITLE_EXAMPLES[companyLocale]}).
+- \`duration_days\`: **WORKING days**, a realistic estimate for a 1–2 person crew (a typical bathroom: 1–2 days per phase; a full renovation: 2–5 days per phase). The scheduler skips weekends and Portuguese national holidays for you — never pad the estimate for days off, and never try to work around the calendar.
+- Waiting that is not work — screed curing, plaster drying, lead time on ordered material — is NOT \`duration_days\`. Model it as a dependency between tasks, and when it drives the schedule, say so in the next task's \`description\`.
+- \`depends_on\`: keys of sibling tasks that must finish before this one starts (e.g. tiling depends on plumbing + electrical + plaster). Only depend on tasks that genuinely block the start — do not chain everything sequentially when work can run in parallel (e.g. plumbing and electrical can run in parallel before the plaster).
+- \`materials\`: a short list of the main materials for that phase, when obvious from the text or the kind of work. Be specific where the text lets you — this list becomes the manager's buying list on the Materiais screen the evening before, so "azulejo 30x60" beats "azulejo".
+- \`assignee_worker_id\`: only fill this in if the list of available workers contains someone whose trade clearly matches the task; leave it empty when there is no obvious match.
+- Never invent tasks outside the scope described. If the text only mentions plumbing and tiling, do not add demolition or painting.
+- If there is a "Relevant technical knowledge" section, use it to refine sequence, durations, and materials (e.g. curing/drying times that force a dependency). NEVER use it to widen the scope — the scope comes only from the manager's text.
 `;
-
-export default prompt;
+}

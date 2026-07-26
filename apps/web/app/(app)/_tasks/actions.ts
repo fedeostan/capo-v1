@@ -5,15 +5,14 @@ import { requireAuth } from '@capo/db/session';
 import { assertNotBlocked } from '@/lib/billing';
 import { logEvent } from '@/lib/log';
 
+// Shared by /tarefas and /obras/[id] — hence the private `_tasks` folder
+// (the underscore keeps App Router from treating it as a route) rather than
+// one page reaching into the other's directory.
+//
 // A manager tapping "Concluir"/"Reabrir" IS an explicit manager command — a
 // sanctioned non-chat write path (every other domain write only happens
-// through Capo). Direct status update on the RLS-scoped client; the
-// company_id filter is belt-and-braces on top of RLS.
-//
-// Lives at the (app) root rather than under obras/[id] because every task list
-// offers the same toggle: closing out a task from Hoje is the single most
-// frequent thing a manager does, and making them navigate into the obra to do
-// it was the difference between "used daily" and "used when I remember".
+// through Capo). Direct status update on the RLS-scoped client; company_id
+// filter is belt-and-braces on top of RLS.
 async function setTaskStatus(taskId: string, status: 'done' | 'pending', event: string): Promise<void> {
   const ctx = await requireAuth();
   await assertNotBlocked(ctx);
@@ -29,12 +28,16 @@ async function setTaskStatus(taskId: string, status: 'done' | 'pending', event: 
 
   logEvent(event, { companyId, taskId });
 
+  // /tarefas covers every date/risk filter now, so this list shrank from five
+  // paths to three: /hoje, /amanha and /atrasadas are next.config redirects,
+  // not routes, and there is nothing there to revalidate.
   if (data.job_id) revalidatePath(`/obras/${data.job_id}`);
-  // Completing a task removes it from dashboard_tasks entirely, so it also
-  // drops out of the materials outlook and the team load — revalidate both.
-  for (const path of ['/hoje', '/amanha', '/atrasadas', '/obras', '/materiais', '/equipa']) {
-    revalidatePath(path);
-  }
+  revalidatePath('/tarefas');
+  revalidatePath('/obras');
+  // Completing a task drops it out of task_board entirely, so it also leaves
+  // the materials outlook and the crew's load on /perfil.
+  revalidatePath('/materiais');
+  revalidatePath('/perfil');
 }
 
 export async function completeTask(taskId: string): Promise<void> {
