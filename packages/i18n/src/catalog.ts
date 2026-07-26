@@ -56,6 +56,10 @@ export interface Catalog {
     pendingProposals: string;
     approve: string;
     reject: string;
+    /** Shown on the button being pressed while the decision is applied.
+     *  Approving a 15-task plan writes 15 rows and then refetches the RSC
+     *  tree; without a label that window reads as a frozen app. */
+    deciding: string;
     cardState: Record<'approved' | 'rejected' | 'failed' | 'not_pending' | 'error', string>;
     /** Keyed by tool name; unknown tools fall back to the raw name. */
     toolLabels: Record<string, string>;
@@ -296,5 +300,34 @@ export interface Catalog {
     voiceNoteFailed: string;
     /** Sent when transcription succeeded but found no speech. */
     voiceNoteEmpty: string;
+
+    // ── Approval cards ──────────────────────────────────────────────────
+    // Deliberately NOT reusing chat.approve / chat.reject. Both fit today,
+    // but this interface cannot express "max 20 chars, must be distinct":
+    // someone rewording the web button to "Aprovar proposta" or adding an
+    // emoji would keep tsc and ESLint green and start 400-ing every WhatsApp
+    // card at runtime. Separate keys give the constraint somewhere to live.
+    // (The sink also clamps to 20, so a violation truncates rather than
+    // breaking delivery.)
+
+    /** Interactive reply-button label. Max 20 chars; must differ from
+     *  `rejectButton` — Meta requires button titles to be unique. */
+    approveButton: string;
+    /** See `approveButton`. Max 20 chars, must differ from it. */
+    rejectButton: string;
+    /** Body of the interactive message when the card itself exceeded Meta's
+     *  1024-char interactive limit and was sent as plain text just above. */
+    approvalPrompt: string;
+    /** Sent after a button press — one per ProposalResolution outcome. */
+    proposalApproved: string;
+    proposalRejected: string;
+    proposalFailed(reason: string): string;
+    /** Already decided (a duplicate tap, or Meta redelivering the webhook). */
+    proposalNotPending: string;
+    /** resolveProposal threw — the row vanished, or the RPC failed. */
+    proposalError: string;
+    /** The interactive send itself failed: the card was shown with no way to
+     *  act on it, but the proposal is still pending in the web chat. */
+    approvalFallback: string;
   };
 }

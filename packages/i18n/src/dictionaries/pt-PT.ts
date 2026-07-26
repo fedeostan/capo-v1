@@ -41,6 +41,7 @@ const dict: Catalog = {
     pendingProposals: 'Propostas por decidir',
     approve: 'Aprovar',
     reject: 'Rejeitar',
+    deciding: 'A aplicar…',
     cardState: {
       approved: '✅ Aprovada — executada',
       rejected: '❌ Rejeitada',
@@ -351,6 +352,15 @@ const dict: Catalog = {
   whatsapp: {
     voiceNoteFailed: 'Não consegui ouvir essa mensagem de voz, chefe. Podes repetir ou escrever?',
     voiceNoteEmpty: 'Recebi a mensagem de voz mas não percebi nada. Podes repetir?',
+    approveButton: 'Aprovar',
+    rejectButton: 'Rejeitar',
+    approvalPrompt: 'Aprovas esta proposta, chefe?',
+    proposalApproved: '✅ Feito, chefe.',
+    proposalRejected: '❌ Certo, não faço nada.',
+    proposalFailed: reason => `⚠️ Aprovaste, mas não consegui executar: ${reason}`,
+    proposalNotPending: 'Essa proposta já tinha sido decidida.',
+    proposalError: 'Não consegui registar essa decisão. Trata dela na app.',
+    approvalFallback: 'Não consegui mostrar os botões. Aprova ou rejeita na app.',
   },
 };
 

@@ -3,7 +3,7 @@
 import { useChat } from '@ai-sdk/react';
 import { getToolName, isToolUIPart, type UIMessage } from 'ai';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 import Markdown from '@capo/ui/markdown';
@@ -51,9 +51,13 @@ function ProposalCard({
   initialState?: CardState;
 }) {
   const [state, setState] = useState<CardState>(initialState);
+  // Which button was pressed, so only that one turns into a spinner.
+  const [pressed, setPressed] = useState<'approve' | 'reject' | null>(null);
+  const [isRefreshing, startTransition] = useTransition();
   const router = useRouter();
 
   async function decide(decision: 'approve' | 'reject') {
+    setPressed(decision);
     setState('busy');
     try {
       const res = await fetch(`/api/proposals/${proposalId}`, {
@@ -62,15 +66,44 @@ function ProposalCard({
         body: JSON.stringify({ decision }),
       });
       const data = await res.json();
-      setState(data.outcome ?? 'error');
+      // res.ok explicitly: a 401 (session gone) or 402 (billing) answers with
+      // a body that has no `outcome`, and landing on 'error' should be by
+      // intent rather than by the ?? falling through.
+      setState(res.ok ? (data.outcome ?? 'error') : 'error');
       // An approved proposal writes real tasks. Without this the manager taps
       // Approve, switches to Tasks, and sees the pre-approval board from the
       // router cache — which reads as "it didn't work".
-      if (data.outcome === 'approved') router.refresh();
+      //
+      // Wrapped in a transition because router.refresh() is fire-and-forget:
+      // on a 15-task plan the RSC refetch keeps running after this fetch
+      // resolves, and isRefreshing is the only way to make that window
+      // visible instead of silent.
+      if (res.ok && data.outcome === 'approved') startTransition(() => router.refresh());
     } catch {
       setState('error');
+    } finally {
+      setPressed(null);
     }
   }
+
+  // Approving a plan writes a row per task, so this is seconds, not
+  // milliseconds. Disabled-and-faded alone reads as a frozen app.
+  const spinner = (
+    <span
+      className="inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent"
+      aria-hidden
+    />
+  );
+
+  const buttonLabel = (decision: 'approve' | 'reject', label: string) =>
+    state === 'busy' && pressed === decision ? (
+      <span className="flex items-center gap-1.5">
+        {spinner}
+        {t.chat.deciding}
+      </span>
+    ) : (
+      label
+    );
 
   return (
     <div className="my-2 rounded-xl border border-amber-500/60 bg-amber-500/10 p-3 text-sm">
@@ -79,24 +112,33 @@ function ProposalCard({
       </div>
       <p className="whitespace-pre-wrap">{renderedText}</p>
       {state === 'pending' || state === 'busy' ? (
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex gap-2" aria-busy={state === 'busy'}>
           <button
             disabled={state === 'busy'}
             onClick={() => decide('approve')}
             className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
           >
-            {t.chat.approve}
+            {buttonLabel('approve', t.chat.approve)}
           </button>
           <button
             disabled={state === 'busy'}
             onClick={() => decide('reject')}
             className="rounded-lg border border-zinc-400 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10 disabled:opacity-50"
           >
-            {t.chat.reject}
+            {buttonLabel('reject', t.chat.reject)}
           </button>
         </div>
       ) : (
-        <div className="mt-2 text-xs font-medium">{t.chat.cardState[state]}</div>
+        <div className="mt-2 flex items-center gap-1.5 text-xs font-medium">
+          {t.chat.cardState[state]}
+          {/* The board is still refetching — the decision landed, the screens
+              behind it have not caught up yet. */}
+          {isRefreshing ? (
+            <span role="status" aria-label={t.chat.deciding}>
+              {spinner}
+            </span>
+          ) : null}
+        </div>
       )}
     </div>
   );
