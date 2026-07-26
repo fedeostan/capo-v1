@@ -96,7 +96,7 @@ export default async function HealthPage() {
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">Today (Europe/Lisbon)</h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Stat label="SMS dispatches" value={today.dispatchesToday} hint="written by n8n" />
+          <Stat label="Briefings sent" value={today.dispatchesToday} hint="07:00 WhatsApp cron" />
           <Stat label="Messages" value={today.messagesToday} hint="web + WhatsApp" />
           <Stat label="Tasks completed" value={today.tasksCompletedToday} />
           <Stat label="Proposals pending" value={today.proposalsPending} hint="awaiting a manager" />

@@ -74,12 +74,61 @@ WHATSAPP_PHONE_NUMBER_ID=<phone number id>
    (check the operator app), and a `whatsapp: inbound from unknown number`
    line in the Vercel function logs.
 
+## 6. Message template — `capo_daily_briefing`
+
+Needed by the 07:00 reminder cron (`apps/web/app/api/cron/reminders`), which
+messages workers who have never written to Capo and so is always outside the
+24-hour window.
+
+1. WhatsApp Manager → **Message templates** → Create template.
+   - Name: `capo_daily_briefing` (must match `TEMPLATE_NAME` in the route).
+   - Category: **Utility**. Not Marketing — this is transactional, and Utility
+     gets better delivery and a lower per-message price.
+   - Languages: create the SAME template in **Portuguese (PT)**, **Spanish
+     (ES)** and **English (US)**. The route picks one per recipient from
+     `reminders.templateLanguage` in `packages/i18n`, which sends Meta's
+     underscore codes `pt_PT` / `es_ES` / `en_US`.
+2. Body: exactly **two** parameters, in this order — `{{1}}` the recipient's
+   name, `{{2}}` the one-line summary. For example:
+   `Bom dia {{1}}. Hoje: {{2}}. Responde PT, ES ou EN para mudar de idioma.`
+   Meta rejects a body that starts or ends with a parameter, and requires
+   sample values for each.
+3. Approval usually takes minutes; the send fails with **132001** until it
+   lands.
+
+Four things that fail silently or confusingly:
+
+- **A template does NOT open the 24-hour window.** Only the recipient's reply
+  does. Until a worker replies, every briefing is a paid template send — which
+  is why the webhook acknowledges worker replies (`handleWorkerReply`): the ack
+  is what converts them into free session messages.
+- **Parameters may not contain newlines, tabs, or runs of 4+ spaces.** Meta
+  rejects the whole send with **132000**. `toTemplateParam()` in
+  `packages/core/src/channels/whatsapp.ts` flattens whitespace for exactly this
+  reason; never bypass it.
+- **Changing the parameter count means re-submitting the template.** Body
+  params are positional and validated on send.
+- **Task titles inside the message are NOT translated.** They are stored in
+  `companies.language` and nothing retranslates existing rows, so a worker on
+  `es-ES` gets a Spanish sentence around Portuguese titles. Deliberate.
+
+### Worker replies
+
+Inbound senders are matched against `profiles.phone` first (the manager, full
+agent loop) and then `workers.phone` (a worker). A worker's text **never**
+reaches the model and is never persisted to `messages` — it is answered
+deterministically: a lone `PT`/`ES`/`EN` (or `português`/`español`/`english`)
+switches `workers.language`, anything else gets a canned ack. `workers.phone`
+has no unique constraint, so a number on two companies' crews is logged as
+`whatsapp.worker_ambiguous` and answered with silence rather than a guessed
+tenant.
+
 ## Limits & follow-ups (known, deliberate)
 
 - **24-hour window**: the sink only replies to inbound messages, so it is
   always inside the window and free-form text is allowed. Proactive sends
-  (outside 24h) require an approved **template** — implement a template path
-  only when a real need appears.
+  (outside 24h) go through `sendWhatsAppTemplate` and the approved template
+  above.
 - **Test number limits**: 5 recipients, unverified business. Post-pilot:
   Meta **Business Verification** → register a production number → higher
   messaging tier. No code changes needed.

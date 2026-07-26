@@ -11,7 +11,7 @@ const taskStatus = z.enum(['pending', 'in_progress', 'blocked', 'done', 'cancell
 const startDate = isoDate
   .optional()
   .describe(
-    'When work begins. A task is active — and appears in the assigned worker\'s daily SMS briefing — from start_date (or its creation date if unset) through due_date.',
+    "When work begins. A task is active — and appears in the assigned worker's daily WhatsApp briefing — from start_date (or its creation date if unset) through due_date.",
   );
 
 export const createTaskInput = z.object({

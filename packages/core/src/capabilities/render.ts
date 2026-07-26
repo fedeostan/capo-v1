@@ -108,6 +108,7 @@ export async function renderProposal(
       if (args.name) changes.push(t.workerChange.name(args.name));
       if (args.trade) changes.push(t.workerChange.trade(args.trade));
       if (args.phone) changes.push(t.workerChange.phone(args.phone));
+      if (args.language) changes.push(t.workerChange.language(args.language));
       if (changes.length === 0) throw new RenderError(t.errors.emptyChange);
       return t.updateWorker({ name, changes });
     }

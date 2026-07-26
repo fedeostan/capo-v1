@@ -12,7 +12,7 @@ const NAV = [
   { href: '/companies', label: 'Companies' },
   { href: '/conversations', label: 'Conversations' },
   { href: '/tasks', label: 'Tasks' },
-  { href: '/dispatch', label: 'Dispatch log' },
+  { href: '/dispatch', label: 'Briefing log' },
   { href: '/signups', label: 'Signups' },
 ];
 

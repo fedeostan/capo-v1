@@ -56,8 +56,24 @@ Structural invariants (do not regress):
   the tenant request path.
 - **RLS is the tenant boundary** — never rely on prompts or app code for
   tenant isolation.
-- Worker SMS dispatch (Twilio/n8n) is external; nothing in this repo may
-  break `dispatch_tasks_today` / `dispatch_log` semantics.
+- Worker SMS dispatch (Twilio/n8n) is external and currently **PAUSED, not
+  removed** — the n8n workflow is switched off outside this repo. Nothing here
+  may break `dispatch_tasks_today` / `dispatch_log` semantics; they are kept
+  byte-identical (baseline: `docs/plans/dispatch-viewdef-baseline.sql`) so SMS
+  can be switched back on. **Do not write to `dispatch_log`** — the live daily
+  briefing has its own ledger, `notification_log`, precisely because
+  `dispatch_log`'s `unique (worker_id, dispatch_date)` would collide the day
+  both channels run.
+- **The worker briefing goes out over WhatsApp**, from
+  `apps/web/app/api/cron/reminders` at 07:00 Europe/Lisbon (two UTC Vercel Cron
+  entries, gated on `lisbon_hour()`). It reads `task_board` like everything
+  else. Proactive sends need an approved Meta **template** — free-form text is
+  only allowed inside the 24h window a recipient's own reply opens, which is
+  why the webhook acknowledges worker replies.
+- **Three language dials now, not two.** `workers.language` joins
+  `profiles.language` and `companies.language`. It is nullable, and the null
+  means "inherit `companies.language`" — do not give it a default. A worker
+  sets it themselves by replying `PT`/`ES`/`EN` to their briefing.
 - **One clock, one definition of "today".** The active-window rule
   (`lisbon_today() BETWEEN coalesce(start_date, created_at) AND
   coalesce(due_date, 'infinity')`) and every schedule-risk signal live in SQL,

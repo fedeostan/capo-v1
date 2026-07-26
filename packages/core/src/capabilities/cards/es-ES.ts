@@ -71,6 +71,7 @@ export const cards: CardStrings = {
     name: v => `nombre → ${v}`,
     trade: v => `oficio → ${v}`,
     phone: v => `móvil → ${v}`,
+    language: v => `idioma de los mensajes → ${v}`,
   },
 
   plan: {

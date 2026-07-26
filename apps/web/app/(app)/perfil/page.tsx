@@ -150,15 +150,15 @@ export default async function PerfilPage({
                         </p>
                       )}
                       {/* An ACTIVE worker with no number is the silent failure
-                          worth shouting about: dispatch_tasks_today requires a
-                          phone, so the 07:00 SMS reaches them never, and
-                          nothing else in the product says so. */}
+                          worth shouting about: the 07:00 WhatsApp briefing is
+                          addressed to workers.phone, so without one it reaches
+                          them never, and nothing else in the product says so. */}
                       {worker.active && !worker.phone ? (
                         <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                          {t.profile.noSmsWarning}
+                          {t.profile.noWhatsAppWarning}
                         </p>
                       ) : (
-                        worker.active && <p className="mt-0.5 text-[11px] text-zinc-500">{t.profile.receivesSms}</p>
+                        worker.active && <p className="mt-0.5 text-[11px] text-zinc-500">{t.profile.receivesWhatsApp}</p>
                       )}
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
