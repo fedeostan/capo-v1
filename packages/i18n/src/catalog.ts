@@ -74,6 +74,8 @@ export interface Catalog {
     /** Full phrase, e.g. "Prazo passou há 3 dias" / "3 days past due". */
     overdueBy(days: number): string;
     noAssignee: string;
+    /** A bare name reads as a label; "Assigned to João" reads as a fact. */
+    assignedTo(name: string): string;
     noJob: string;
     noDate: string;
     talkToCapo: string;
@@ -117,6 +119,39 @@ export interface Catalog {
     jobs: { title: string; subtitle: string; empty: string };
     jobDetail: { fallbackTitle: string; empty: string };
     taskActions: { complete: string; reopen: string; failed: string };
+    taskDetail: {
+      /** Page title when the task cannot be named (metadata runs before the row loads). */
+      fallbackTitle: string;
+      backToTasks: string;
+      assignee: string;
+      /** An active worker with no phone gets no 07:00 SMS and no reminder. */
+      assigneeNoPhone: string;
+      assigneeInactive: string;
+      dates: string;
+      startDate: string;
+      dueDate: string;
+      /** Plan durations are WORKING days — say so, or "3 days" reads as calendar days. */
+      durationDays(days: number): string;
+      description: string;
+      noDescription: string;
+      materials: string;
+      job: string;
+      help: string;
+      askCapo: string;
+      /** Prefills the chat with the task in context. */
+      askCapoPrompt(title: string): string;
+      knowledge: string;
+      knowledgeHint: string;
+    };
+    taskHelp: {
+      title: string;
+      /** Says where the excerpts come from and that they are not advice. */
+      intro: string;
+      empty: string;
+      failed: string;
+      backToTask: string;
+      category: Record<'lei' | 'regulamento' | 'tecnica' | 'material' | 'fabricante', string>;
+    };
     materials: {
       title: string;
       subtitle: string;
