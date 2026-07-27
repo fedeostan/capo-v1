@@ -39,7 +39,7 @@ export default function TaskActions({
         type="button"
         disabled={pending}
         onClick={() => run(reopenTask)}
-        className="shrink-0 rounded-lg border border-zinc-400 px-2 py-1 text-xs hover:bg-zinc-500/10 disabled:opacity-50"
+        className="shrink-0 rounded-lg border border-zinc-500/30 px-2 py-1 text-xs hover:bg-zinc-500/10 disabled:opacity-50"
       >
         {t.reopen}
       </button>

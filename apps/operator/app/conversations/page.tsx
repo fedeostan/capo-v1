@@ -12,7 +12,7 @@ export default async function ConversationsIndexPage() {
       <ul className="space-y-2 text-sm">
         {companies.map(company => (
           <li key={company.id}>
-            <Link href={`/conversations/${company.id}`} className="text-zinc-400 underline hover:text-zinc-200">
+            <Link href={`/conversations/${company.id}`} className="text-zinc-500 underline hover:text-zinc-800">
               {company.name}
             </Link>
           </li>

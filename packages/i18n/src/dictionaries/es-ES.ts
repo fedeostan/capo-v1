@@ -295,6 +295,9 @@ const dict: Catalog = {
     companyLanguageHint:
       'El idioma en el que el Capo escribe tareas, obras y notas — lo que todo el equipo ve en el panel.',
     companyLanguageWarning: 'Ojo: las tareas y obras ya creadas no se traducen.',
+    appearance: 'Aspecto',
+    appearanceHint: 'Claro, oscuro, o lo que use el móvil. Se guarda solo en este dispositivo.',
+    themeOption: { light: 'Claro', dark: 'Oscuro', system: 'Sistema' },
     saved: 'Guardado.',
     failed: 'No se ha podido guardar. Inténtalo de nuevo.',
   },

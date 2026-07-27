@@ -25,7 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <span className="text-sm font-semibold">Capo · mission control</span>
             <nav className="flex gap-4 text-sm text-zinc-500">
               {NAV.map(item => (
-                <Link key={item.href} href={item.href} className="hover:text-zinc-300 hover:underline">
+                <Link key={item.href} href={item.href} className="hover:underline">
                   {item.label}
                 </Link>
               ))}

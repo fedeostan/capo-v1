@@ -7,6 +7,7 @@ import { requireAuth } from '@capo/db/session';
 import { getCatalog } from '@capo/i18n/catalog';
 import { asLocale } from '@capo/i18n/locale';
 import { localeCookieOptions, LOCALE_COOKIE } from '@/lib/i18n';
+import { asTheme, themeCookieOptions, THEME_COOKIE } from '@/lib/theme';
 import { logEvent } from '@/lib/log';
 
 // Editing your own company name or contact details is a manager command, the
@@ -131,4 +132,28 @@ export async function setCompanyLanguage(formData: FormData): Promise<void> {
   logEvent('profile.company_language_changed', { companyId, language });
   revalidatePath('/', 'layout');
   redirect('/perfil?guardado=idioma');
+}
+
+// ── appearance ──────────────────────────────────────────────────────────────
+// A third dial, and the odd one out: per DEVICE, not per user or per tenant.
+// Cookie only, no DB write, so dark on the van tablet and light on the office
+// laptop are both true at once.
+//
+// Deliberately no requireAuth(): this writes one cookie on the caller's own
+// browser and reads nothing. A session round trip would buy nothing that
+// document.cookie does not already allow.
+//
+// Constants live in lib/theme.ts, not here — a 'use server' module may only
+// export async functions.
+
+export async function setTheme(formData: FormData): Promise<void> {
+  const theme = asTheme(String(formData.get('tema') ?? ''));
+  if (!theme) redirect('/perfil?erro=tema');
+
+  (await cookies()).set(THEME_COOKIE, theme, themeCookieOptions);
+  logEvent('profile.theme_changed', { theme });
+  // 'layout' scope, not the page: the class this sets lives on <html> in the
+  // ROOT layout, above this route. Without it the change needs a hard reload.
+  revalidatePath('/', 'layout');
+  redirect('/perfil?guardado=tema');
 }

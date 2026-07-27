@@ -110,7 +110,7 @@ export default async function HealthPage() {
       <section className="space-y-3">
         <div className="flex items-baseline justify-between gap-3">
           <h2 className="text-sm font-semibold">Activation</h2>
-          <Link href="/companies" className="text-xs text-zinc-500 underline hover:text-zinc-300">
+          <Link href="/companies" className="text-xs text-zinc-500 underline hover:text-zinc-800">
             All companies →
           </Link>
         </div>
@@ -138,7 +138,7 @@ export default async function HealthPage() {
                 {activation.map(row => (
                   <tr key={row.companyId}>
                     <td className="py-2 pr-4">
-                      <Link href={`/conversations/${row.companyId}`} className="underline hover:text-zinc-300">
+                      <Link href={`/conversations/${row.companyId}`} className="underline hover:text-zinc-800">
                         {row.companyName}
                       </Link>
                       <span className="block text-xs text-zinc-500">{row.daysSinceSignup}d old</span>

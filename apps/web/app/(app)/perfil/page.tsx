@@ -1,12 +1,13 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { getCatalog } from '@capo/i18n/catalog';
+import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import { LOCALES, type Locale } from '@capo/i18n/locale';
 import { EmptyState, ScreenShell } from '@capo/ui/dashboard-ui';
 import { loadTeam, loadTeamLoad } from '@/app/dashboard-data';
 import { getBillingState } from '@/lib/billing';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
-import { setCompanyLanguage, setUserLanguage } from './actions';
+import { resolveTheme, THEMES, type Theme } from '@/lib/theme';
+import { setCompanyLanguage, setTheme, setUserLanguage } from './actions';
 import { AccountForm, CompanyForm } from './profile-forms';
 
 export const dynamic = 'force-dynamic';
@@ -63,6 +64,39 @@ function LanguagePills({
   );
 }
 
+// Deliberately the same shape as LanguagePills: three options, no client JS,
+// works before hydration on a cold PWA. Indexing themeOption with a Theme is
+// the tripwire that keeps @capo/i18n and lib/theme.ts from drifting apart —
+// widen one union without the other and tsc fails here.
+function ThemePills({ current, t }: { current: Theme; t: Catalog }) {
+  return (
+    <form action={setTheme} className="space-y-2">
+      <div className="flex gap-2">
+        {THEMES.map(option => (
+          <label key={option} className="flex-1">
+            <input
+              type="radio"
+              name="tema"
+              value={option}
+              defaultChecked={option === current}
+              className="peer sr-only"
+            />
+            <span className="block cursor-pointer rounded-lg border border-zinc-500/30 py-2 text-center text-sm peer-checked:border-orange-600 peer-checked:bg-orange-600/10 peer-checked:font-semibold">
+              {t.settings.themeOption[option]}
+            </span>
+          </label>
+        ))}
+      </div>
+      <button
+        type="submit"
+        className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-semibold hover:bg-zinc-500/10"
+      >
+        {t.common.save}
+      </button>
+    </form>
+  );
+}
+
 // Everything about the company and the account lives here: it is the only tab
 // that owns settings, so nothing else in the app needs a header action.
 export default async function PerfilPage({
@@ -74,12 +108,15 @@ export default async function PerfilPage({
   const { db, userId, companyId } = ctx;
   const { guardado, erro } = await searchParams;
 
-  const [{ data: company }, { data: profile }, { data: claims }, team, billing] = await Promise.all([
+  const [{ data: company }, { data: profile }, { data: claims }, team, billing, theme] = await Promise.all([
     db.from('companies').select('name').eq('id', companyId).maybeSingle(),
     db.from('profiles').select('full_name, phone').eq('id', userId).maybeSingle(),
     db.auth.getClaims(),
     loadTeam(ctx),
     getBillingState(ctx),
+    // A cookie read, not a query — it rides along here only to keep the
+    // awaits in one place.
+    resolveTheme(),
   ]);
   const teamLoad = await loadTeamLoad(ctx);
 
@@ -107,6 +144,13 @@ export default async function PerfilPage({
             confirmation round trip — out of scope here, so it is read-only. */}
         {email && <p className="text-xs text-zinc-500">{email}</p>}
         <AccountForm fullName={profile?.full_name ?? ''} phone={profile?.phone ?? ''} locale={locale} />
+      </Card>
+
+      {/* Above the language dials on purpose: appearance is personal and
+          reversible, while the company language card carries a warning. */}
+      <Card title={t.settings.appearance}>
+        <p className="text-xs text-zinc-500">{t.settings.appearanceHint}</p>
+        <ThemePills current={theme} t={t} />
       </Card>
 
       <Card title={t.settings.yourLanguage}>
