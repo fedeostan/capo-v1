@@ -95,10 +95,11 @@ export const cards: CardStrings = {
     return [
       `Traduzir todos os dados da empresa de ${p.fromLanguage} para ${p.toLanguage}:`,
       `${parts.join(' · ')} serão reescritos.`,
-      // Not decoration: the 07:00 SMS to the crew reads task titles and job
-      // names straight out of these rows. It is the one consequence the manager
-      // cannot foresee from the dashboard he is looking at.
-      `As mensagens SMS da equipa também passam a ser em ${p.toLanguage}.`,
+      // Not decoration: the 07:00 WhatsApp briefing to the crew reads task
+      // titles and job names straight out of these rows. It is the one
+      // consequence the manager cannot foresee from the dashboard he is
+      // looking at.
+      `As mensagens da equipa no WhatsApp também passam a ser em ${p.toLanguage}.`,
       `Reversível durante ${p.undoDays} dias.`,
     ].join(' ');
   },

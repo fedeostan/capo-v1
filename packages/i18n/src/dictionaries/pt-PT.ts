@@ -314,7 +314,7 @@ const dict: Catalog = {
     },
     translateNothing: 'Ainda não há nada guardado para traduzir.',
     translateWarning:
-      'As mensagens SMS da equipa passam a ir na nova língua, e os materiais passam a ser agrupados pelos nomes traduzidos. Podes reverter durante 30 dias.',
+      'As mensagens da equipa no WhatsApp passam a ir na nova língua, e os materiais passam a ser agrupados pelos nomes traduzidos. Podes reverter durante 30 dias.',
 
     advanced: 'Definições avançadas',
     advancedHint:

@@ -28,7 +28,7 @@ export type TranslatableField = {
 // Deliberately absent, and each for its own reason:
 //   workers.name, jobs.client_name, jobs.address, companies.name,
 //     profiles.full_name  — proper nouns. Translating "Rua do Carmo" or "Zé"
-//     produces nonsense, and jobs.address is what the crew's SMS navigates to.
+//     produces nonsense, and jobs.address is what the crew navigates to.
 //   messages, proposals.rendered_text, conversation_summaries — the record of
 //     what was actually said. capabilities/guard.ts authorizes direct writes by
 //     matching the model's quote against recent user messages; rewriting those

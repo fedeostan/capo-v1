@@ -6,6 +6,30 @@ nothing here can be done by an agent. The capo-upgrade code is merged to
 deployments are READY); everything below is what's left to fully activate
 each feature.
 
+## 0. ⚠️ TWO UNAPPLIED MIGRATIONS — read this before deploying
+
+PRs #11–#16 were merged together (2026-07-27). Two of them ship migrations
+that have **not** been applied to the live `capo` project
+(`qdfmvhjrcmeoxbattnsm`, still at `20260726120103 language`):
+
+| Migration | From | Adds | Dormant until applied |
+|---|---|---|---|
+| `0015_translation_batches.sql` | #11 | `translation_batches`, `translation_items`, `revert_translation_batch()` | `/perfil` language card, `translate_company_data` |
+| `0016_worker_notifications.sql` | #12 | `notification_log`, `lisbon_hour()`, `workers.language` | the 07:00 WhatsApp cron, operator Briefing log |
+
+They are independent and can be applied in either order. Both are safe to
+apply before the code deploys; the reverse ordering is the hazard (see §8.1).
+`packages/db/src/types.ts` already carries hand-written types for both — do
+not regenerate it until both are applied, or the missing half is silently
+dropped.
+
+Also worth doing once they are applied, because neither runs in CI:
+`pnpm rls-matrix` (#11 adds two adversarial checks against the new
+`SECURITY DEFINER` `revert_translation_batch`) and a `pnpm agent-smoke` pass
+on *"põe o Miguel a receber em espanhol"* — #12 adds `language` to the
+**guarded** `update_worker` tool, and that write must execute directly rather
+than degrade into an approval card.
+
 ## 1. Stripe billing — ✅ DONE (2026-07-17)
 
 1. ✅ Stripe account created, Product "Capo" with recurring Price €45/mo EUR.

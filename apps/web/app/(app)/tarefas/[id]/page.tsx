@@ -5,6 +5,7 @@ import { TaskDetail } from '@capo/ui/task-detail';
 import { loadTaskDetail } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import TaskActions from '@/app/(app)/_tasks/task-actions';
+import PullToRefresh from '@/app/pull-to-refresh';
 import { isUuid } from '../filters';
 
 export const dynamic = 'force-dynamic';
@@ -36,15 +37,20 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <ScreenShell title={detail.task.title} subtitle={subtitle}>
-      <TaskDetail
-        task={detail.task}
-        job={detail.job}
-        worker={detail.worker}
-        locale={locale}
-        renderActions={() => (
-          <TaskActions taskId={detail.task.id} status={detail.task.status} locale={locale} />
-        )}
-      />
+      {/* ScreenShell is overflow-hidden and no longer carries a scroller — the
+          caller supplies one. Without this the detail body is silently clipped
+          below the fold. */}
+      <PullToRefresh locale={locale}>
+        <TaskDetail
+          task={detail.task}
+          job={detail.job}
+          worker={detail.worker}
+          locale={locale}
+          renderActions={() => (
+            <TaskActions taskId={detail.task.id} status={detail.task.status} locale={locale} />
+          )}
+        />
+      </PullToRefresh>
     </ScreenShell>
   );
 }

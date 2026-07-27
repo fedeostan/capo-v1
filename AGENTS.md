@@ -32,13 +32,17 @@ This version has breaking changes — APIs, conventions, and file structure may 
   seeded tenant. Needs real API keys, so it is a manual gate
   (`pnpm agent-smoke`).
 
-Two language dials (do not collapse them into one):
+Three language dials (do not collapse them into one):
 
 - `profiles.language` — **per user**. What Capo speaks, the deterministic
   approval cards, the transcription instruction, the rolling summary, the web
   UI. Changeable from chat via the `set_language` tool.
 - `companies.language` — **per tenant**. What Capo *stores*: task titles, job
   names, memories, generated plan titles.
+- `workers.language` — **per crew member**, and the only one a worker controls
+  themselves, by replying `PT`/`ES`/`EN` to their 07:00 WhatsApp briefing. It
+  is nullable and the null means "inherit `companies.language`" — do not give
+  it a default. See the structural invariant below.
 
 Both dials live on **`/perfil`** (there is no `/definicoes` route). The primary
 control there moves them together and offers to translate the existing rows;
@@ -69,9 +73,9 @@ Translation invariants (`packages/core/src/translation`, migration `0015`):
 - **Never zip a translator response by position** — match on the returned ids.
   A dropped item would otherwise land every later translation on the wrong row,
   with no error and a snapshot that faithfully records the mistake.
-- Translating `tasks.title` / `jobs.name` changes what the 07:00 crew SMS says.
-  `dispatch_tasks_today` is untouched structurally, but its *content* switches
-  language — which is why the approval card says so out loud.
+- Translating `tasks.title` / `jobs.name` changes what the 07:00 crew WhatsApp
+  briefing says. `dispatch_tasks_today` is untouched structurally, but its
+  *content* switches language — which is why the approval card says so out loud.
 
 The single highest-risk regression in this area: the guard
 (`packages/core/src/capabilities/guard.ts`) authorizes a direct write by
@@ -109,10 +113,10 @@ Structural invariants (do not regress):
   else. Proactive sends need an approved Meta **template** — free-form text is
   only allowed inside the 24h window a recipient's own reply opens, which is
   why the webhook acknowledges worker replies.
-- **Three language dials now, not two.** `workers.language` joins
-  `profiles.language` and `companies.language`. It is nullable, and the null
-  means "inherit `companies.language`" — do not give it a default. A worker
-  sets it themselves by replying `PT`/`ES`/`EN` to their briefing.
+- **`workers.language` is the third dial** (see the top of this file).
+  Nullable, and the null means "inherit `companies.language`" — do not give it
+  a default. A worker sets it themselves by replying `PT`/`ES`/`EN` to their
+  briefing.
 - **One clock, one definition of "today".** The active-window rule
   (`lisbon_today() BETWEEN coalesce(start_date, created_at) AND
   coalesce(due_date, 'infinity')`) and every schedule-risk signal live in SQL,

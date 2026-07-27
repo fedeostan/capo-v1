@@ -89,10 +89,11 @@ export const cards: CardStrings = {
     return [
       `Traducir todos los datos de la empresa de ${p.fromLanguage} a ${p.toLanguage}:`,
       `se reescribirán ${parts.join(' · ')}.`,
-      // Not decoration: the 07:00 SMS to the crew reads task titles and job
-      // names straight out of these rows. It is the one consequence the manager
-      // cannot foresee from the dashboard he is looking at.
-      `Los SMS del equipo también pasarán a estar en ${p.toLanguage}.`,
+      // Not decoration: the 07:00 WhatsApp briefing to the crew reads task
+      // titles and job names straight out of these rows. It is the one
+      // consequence the manager cannot foresee from the dashboard he is
+      // looking at.
+      `Los mensajes del equipo en WhatsApp también pasarán a estar en ${p.toLanguage}.`,
       `Reversible durante ${p.undoDays} días.`,
     ].join(' ');
   },

@@ -90,10 +90,11 @@ export const cards: CardStrings = {
     return [
       `Translate all company data from ${p.fromLanguage} to ${p.toLanguage}:`,
       `${parts.join(' · ')} will be rewritten.`,
-      // Not decoration: the 07:00 SMS to the crew reads task titles and job
-      // names straight out of these rows. It is the one consequence the manager
-      // cannot foresee from the dashboard he is looking at.
-      `The crew's morning SMS will switch to ${p.toLanguage} too.`,
+      // Not decoration: the 07:00 WhatsApp briefing to the crew reads task
+      // titles and job names straight out of these rows. It is the one
+      // consequence the manager cannot foresee from the dashboard he is
+      // looking at.
+      `The crew's morning WhatsApp briefing will switch to ${p.toLanguage} too.`,
       `Reversible for ${p.undoDays} days.`,
     ].join(' ');
   },

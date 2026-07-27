@@ -4,6 +4,7 @@ import { searchKnowledgeChunks, type KnowledgeHit } from '@capo/core/knowledge';
 import { EmptyState, ScreenShell } from '@capo/ui/dashboard-ui';
 import { loadTaskDetail } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
+import PullToRefresh from '@/app/pull-to-refresh';
 import { isUuid } from '../../filters';
 
 export const dynamic = 'force-dynamic';
@@ -57,28 +58,33 @@ export default async function TaskHelpPage({ params }: { params: Promise<{ id: s
 
   return (
     <ScreenShell title={copy.title} subtitle={task.title}>
-      <a href={`/tarefas/${task.id}`} className="text-xs text-zinc-500 underline">
-        {copy.backToTask}
-      </a>
+      {/* ScreenShell is overflow-hidden and no longer carries a scroller — the
+          caller supplies one. A long list of excerpts is exactly the content
+          that would otherwise be clipped below the fold. */}
+      <PullToRefresh locale={locale}>
+        <a href={`/tarefas/${task.id}`} className="text-xs text-zinc-500 underline">
+          {copy.backToTask}
+        </a>
 
-      {hits === null ? (
-        <EmptyState text={copy.failed} />
-      ) : hits.length === 0 ? (
-        <EmptyState text={copy.empty} />
-      ) : (
-        <>
-          <p className="text-xs text-zinc-500">{copy.intro}</p>
-          <ul className="divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
-            {hits.map(hit => (
-              <Hit
-                key={hit.chunkId}
-                hit={hit}
-                categoryLabel={copy.category[hit.category as keyof typeof copy.category] ?? hit.category}
-              />
-            ))}
-          </ul>
-        </>
-      )}
+        {hits === null ? (
+          <EmptyState text={copy.failed} />
+        ) : hits.length === 0 ? (
+          <EmptyState text={copy.empty} />
+        ) : (
+          <>
+            <p className="text-xs text-zinc-500">{copy.intro}</p>
+            <ul className="divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
+              {hits.map(hit => (
+                <Hit
+                  key={hit.chunkId}
+                  hit={hit}
+                  categoryLabel={copy.category[hit.category as keyof typeof copy.category] ?? hit.category}
+                />
+              ))}
+            </ul>
+          </>
+        )}
+      </PullToRefresh>
     </ScreenShell>
   );
 }

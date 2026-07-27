@@ -133,7 +133,7 @@ export interface Catalog {
       fallbackTitle: string;
       backToTasks: string;
       assignee: string;
-      /** An active worker with no phone gets no 07:00 SMS and no reminder. */
+      /** An active worker with no phone gets no 07:00 WhatsApp briefing. */
       assigneeNoPhone: string;
       assigneeInactive: string;
       dates: string;

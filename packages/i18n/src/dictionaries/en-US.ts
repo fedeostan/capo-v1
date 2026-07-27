@@ -308,7 +308,7 @@ const dict: Catalog = {
     },
     translateNothing: "There's nothing stored to translate yet.",
     translateWarning:
-      "The crew's morning SMS will switch to the new language too, and materials will be grouped by their translated names. You can undo this for 30 days.",
+      "The crew's morning WhatsApp briefing will switch to the new language too, and materials will be grouped by their translated names. You can undo this for 30 days.",
 
     advanced: 'Advanced settings',
     advancedHint:

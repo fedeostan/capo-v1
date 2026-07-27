@@ -308,7 +308,7 @@ const dict: Catalog = {
     },
     translateNothing: 'Todavía no hay nada guardado que traducir.',
     translateWarning:
-      'Los SMS del equipo pasarán a enviarse en el nuevo idioma, y los materiales se agruparán por los nombres traducidos. Puedes revertirlo durante 30 días.',
+      'Los mensajes del equipo en WhatsApp pasarán a enviarse en el nuevo idioma, y los materiales se agruparán por los nombres traducidos. Puedes revertirlo durante 30 días.',
 
     advanced: 'Ajustes avanzados',
     advancedHint:
