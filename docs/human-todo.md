@@ -6,24 +6,27 @@ nothing here can be done by an agent. The capo-upgrade code is merged to
 deployments are READY); everything below is what's left to fully activate
 each feature.
 
-## 0. ⚠️ TWO UNAPPLIED MIGRATIONS — read this before deploying
+## 0. Migrations 0015 + 0016 — ✅ APPLIED (2026-07-27)
 
-PRs #11–#16 were merged together (2026-07-27). Two of them ship migrations
-that have **not** been applied to the live `capo` project
-(`qdfmvhjrcmeoxbattnsm`, still at `20260726120103 language`):
+PRs #11–#16 were merged together (2026-07-27). Two of them shipped migrations,
+both now applied to the live `capo` project (`qdfmvhjrcmeoxbattnsm`):
 
-| Migration | From | Adds | Dormant until applied |
+| Migration | From | Adds | Live version |
 |---|---|---|---|
-| `0015_translation_batches.sql` | #11 | `translation_batches`, `translation_items`, `revert_translation_batch()` | `/perfil` language card, `translate_company_data` |
-| `0016_worker_notifications.sql` | #12 | `notification_log`, `lisbon_hour()`, `workers.language` | the 07:00 WhatsApp cron, operator Briefing log |
+| `0015_translation_batches.sql` | #11 | `translation_batches`, `translation_items`, `revert_translation_batch()` | `20260727115633` |
+| `0016_worker_notifications.sql` | #12 | `notification_log`, `lisbon_hour()`, `workers.language` | `20260727115702` |
 
-They are independent and can be applied in either order. Both are safe to
-apply before the code deploys; the reverse ordering is the hazard (see §8.1).
-`packages/db/src/types.ts` already carries hand-written types for both — do
-not regenerate it until both are applied, or the missing half is silently
-dropped.
+Verified after applying: all three tables and both functions exist;
+`lisbon_hour()` returns Lisbon wall-clock; 6 RLS policies across the two
+translation tables; `notification_log` has RLS on with **zero** policies
+(deliberate deny-all, matching `dispatch_log`); and the column grants hold —
+`authenticated` can update only `status/item_count/done_count/error/
+started_at/finished_at` on batches and `new_value/status/applied_at` on items,
+so **`old_value` is not writable by a tenant** and the undo snapshot is
+immutable at the grant layer. Regenerating `packages/db/src/types.ts` was
+confirmed to reproduce the committed file exactly.
 
-Also worth doing once they are applied, because neither runs in CI:
+Still outstanding, because neither runs in CI and both need credentials:
 `pnpm rls-matrix` (#11 adds two adversarial checks against the new
 `SECURITY DEFINER` `revert_translation_batch`) and a `pnpm agent-smoke` pass
 on *"põe o Miguel a receber em espanhol"* — #12 adds `language` to the
@@ -251,11 +254,8 @@ finds no approved template, and writes `failed` rows to `notification_log`.
 1. **Switch off the n8n workflow `LJu5bNaRL9gLpeQ0`.** This is the only thing
    that actually stops the SMS going out. Leave the workflow in place — the DB
    contract it reads is untouched, so re-enabling is a toggle.
-2. **Apply migration `0016_worker_notifications.sql` BEFORE deploying the
-   code.** It adds `workers.language`, `lisbon_hour()` and `notification_log`.
-   Deploying first means every cron run 500s and `/perfil` is unaffected but
-   the operator Briefing log page errors. (This is the same ordering hazard
-   that broke production in §8.1 — the DB sat at 0012 under a 0013 app.)
+2. ✅ **DONE (2026-07-27).** `0016_worker_notifications.sql` is applied —
+   `workers.language`, `lisbon_hour()` and `notification_log` are live. See §0.
 3. **Create the `capo_daily_briefing` template** in WhatsApp Manager, in
    pt_PT + es_ES + en_US, category Utility, two body parameters. Full
    instructions in `docs/whatsapp-cloud-api-runbook.md` §6. Until it is
