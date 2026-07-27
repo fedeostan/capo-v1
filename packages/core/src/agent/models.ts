@@ -8,7 +8,13 @@ import type { LanguageModel } from 'ai';
 // (direct, not a gateway, to unambiguously go "through the Gemini API").
 // The embedding model lives in ./embeddings.ts (its type is EmbeddingModel,
 // not LanguageModel, and swapping it forces a corpus re-ingest — see there).
-export type ModelRole = 'conversation' | 'summarizer' | 'transcription' | 'extraction' | 'planner';
+export type ModelRole =
+  | 'conversation'
+  | 'summarizer'
+  | 'transcription'
+  | 'extraction'
+  | 'planner'
+  | 'translation';
 
 const registry: Record<ModelRole, () => LanguageModel> = {
   conversation: () => anthropic('claude-sonnet-5'),
@@ -22,6 +28,12 @@ const registry: Record<ModelRole, () => LanguageModel> = {
   // quality as the conversation model, but kept as its own role — swapping
   // one must never silently change the other.
   planner: () => anthropic('claude-sonnet-5'),
+  // Tenant-wide data translation (src/translation). Short domain strings with
+  // a supplied glossary, run in bulk under a hard function-duration ceiling —
+  // volume-bound, not reasoning-bound, so the cheap fast model is the right
+  // call. Its own role for the usual reason: swapping one must never silently
+  // change the other.
+  translation: () => anthropic('claude-haiku-4-5-20251001'),
 };
 
 export function getModel(role: ModelRole): LanguageModel {

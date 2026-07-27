@@ -7,6 +7,7 @@ import { workerTools } from './workers';
 import { memoryTools } from './memory';
 import { knowledgeTools } from './knowledge';
 import { languageTools } from './language';
+import { translationTools } from './translate';
 import { propose } from './propose';
 import { generatePlan } from './plan';
 import { managerInstructionField, runGuarded } from './guard';
@@ -17,6 +18,9 @@ import type { CapoTool, ToolContext } from './types';
 // reports via the sink) — same interface, no core changes. generate_plan is
 // unguarded (like propose) — it never mutates domain state directly, it only
 // ever produces a proposal (apply_plan) for the manager to approve.
+// translate_company_data is the same shape for the same reason: its applier
+// (apply_company_translation) is deliberately absent from this roster and lives
+// only in propose.ts, so it is reachable exclusively through an approved card.
 export const roster: CapoTool[] = [
   ...taskTools,
   ...agendaTools,
@@ -25,6 +29,7 @@ export const roster: CapoTool[] = [
   ...memoryTools,
   ...knowledgeTools,
   ...languageTools,
+  ...translationTools,
   propose,
   generatePlan,
 ];

@@ -7,13 +7,20 @@ import { taskTools } from './tasks';
 import { jobTools } from './jobs';
 import { workerTools } from './workers';
 import { planApplyTools } from './plan-apply';
+import { translationApplyTools } from './translate-apply';
 import type { CapoTool, ToolContext } from './types';
 
 // Every guarded write is proposable. propose imports the domain tool arrays
 // directly (not the roster in index.ts) to avoid an import cycle. plan-apply
-// is imported directly too (not plan.ts, which itself imports createProposal
-// from this file) for the same reason.
-const proposable: CapoTool[] = [...taskTools, ...jobTools, ...workerTools, ...planApplyTools].filter(t => t.guarded);
+// and translate-apply are imported directly too (not plan.ts / translate.ts,
+// which themselves import createProposal from this file) for the same reason.
+const proposable: CapoTool[] = [
+  ...taskTools,
+  ...jobTools,
+  ...workerTools,
+  ...planApplyTools,
+  ...translationApplyTools,
+].filter(t => t.guarded);
 
 const actionNames = proposable.map(t => t.name) as [string, ...string[]];
 

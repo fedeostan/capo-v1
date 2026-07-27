@@ -67,6 +67,7 @@ const dict: Catalog = {
       remember: 'Memorizado',
       search_knowledge: 'Base de conocimiento consultada',
       set_language: 'Idioma cambiado',
+      translate_company_data: 'Traducción propuesta',
       propose: 'Propuesta creada',
       generate_plan: 'Plan generado',
     },
@@ -291,15 +292,47 @@ const dict: Catalog = {
   },
 
   settings: {
+    language: 'Idioma',
+    languageHint:
+      'El idioma en el que el Capo habla contigo, en el que ves la app, y en el que se escriben las tareas, obras y notas de toda la empresa.',
+    translateExisting: p => {
+      const parts: string[] = [];
+      if (p.tasks) parts.push(`${p.tasks} tarea${p.tasks === 1 ? '' : 's'}`);
+      if (p.jobs) parts.push(`${p.jobs} obra${p.jobs === 1 ? '' : 's'}`);
+      if (p.workers) parts.push(`${p.workers} oficio${p.workers === 1 ? '' : 's'}`);
+      if (p.memories) parts.push(`${p.memories} nota${p.memories === 1 ? '' : 's'}`);
+      const last = parts.pop();
+      if (!last) return 'Traducir también lo que ya existe';
+      const list = parts.length > 0 ? `${parts.join(', ')} y ${last}` : last;
+      return `Traducir también lo que ya existe (${list})`;
+    },
+    translateNothing: 'Todavía no hay nada guardado que traducir.',
+    translateWarning:
+      'Los SMS del equipo pasarán a enviarse en el nuevo idioma, y los materiales se agruparán por los nombres traducidos. Puedes revertirlo durante 30 días.',
+
+    advanced: 'Ajustes avanzados',
+    advancedHint:
+      'Usa idiomas distintos para ti y para los datos de la empresa — útil si hablas un idioma diferente al del resto del equipo.',
     yourLanguage: 'Tu idioma',
     yourLanguageHint: 'El idioma en el que el Capo habla contigo y en el que ves la app. Solo te afecta a ti.',
     companyLanguage: 'Idioma de los datos de la empresa',
     companyLanguageHint:
       'El idioma en el que el Capo escribe tareas, obras y notas — lo que todo el equipo ve en el panel.',
-    companyLanguageWarning: 'Ojo: las tareas y obras ya creadas no se traducen.',
+    companyLanguageWarning: 'Ojo: aquí las tareas y obras ya creadas no se traducen.',
     appearance: 'Aspecto',
     appearanceHint: 'Claro, oscuro, o lo que use el móvil. Se guarda solo en este dispositivo.',
     themeOption: { light: 'Claro', dark: 'Oscuro', system: 'Sistema' },
+
+    translationRunning: p => `Traduciendo… ${p.done} de ${p.total}`,
+    translationDone: n => `${n} campo${n === 1 ? '' : 's'} traducido${n === 1 ? '' : 's'}.`,
+    translationFailed: 'La traducción se ha parado a medias. No se ha perdido nada — puedes reanudarla.',
+    translationResume: 'Reanudar traducción',
+    revert: 'Revertir traducción',
+    revertHint: days =>
+      `Restaura el texto original exactamente como estaba, palabra por palabra. Disponible durante ${days} días.`,
+    reverted: 'Traducción revertida.',
+    revertFailed: 'No se ha podido revertir. Inténtalo de nuevo.',
+
     saved: 'Guardado.',
     failed: 'No se ha podido guardar. Inténtalo de nuevo.',
   },

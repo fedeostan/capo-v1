@@ -267,6 +267,20 @@ export interface Catalog {
   // The two language dials plus the appearance dial, rendered as cards on
   // /perfil. Appearance is per DEVICE (a cookie), unlike the language pair.
   settings: {
+    /** The primary card: one dial the manager thinks of as "the language". */
+    language: string;
+    languageHint: string;
+    /** Checkbox label carrying the live counts, so the promise on screen is the
+     *  same number the approval card and the batch will use. */
+    translateExisting(p: { tasks: number; jobs: number; workers: number; memories: number }): string;
+    /** Shown instead when there is nothing stored yet to translate. */
+    translateNothing: string;
+    translateWarning: string;
+
+    /** The two-dial split, demoted into a disclosure. Still needed when a
+     *  Spanish-speaking foreman joins a Portuguese company. */
+    advanced: string;
+    advancedHint: string;
     yourLanguage: string;
     yourLanguageHint: string;
     companyLanguage: string;
@@ -279,6 +293,16 @@ export interface Catalog {
     // imported: @capo/i18n is a zero-dependency leaf and must never reach into
     // an app. Same pattern as billing.statusLabel below.
     themeOption: Record<'light' | 'dark' | 'system', string>;
+
+    translationRunning(p: { done: number; total: number }): string;
+    translationDone(n: number): string;
+    translationFailed: string;
+    translationResume: string;
+    revert: string;
+    revertHint(days: number): string;
+    reverted: string;
+    revertFailed: string;
+
     saved: string;
     failed: string;
   };

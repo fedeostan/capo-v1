@@ -30,12 +30,18 @@ export function buildLanguageDirective(locales: LocaleContext): string {
   }
 
   lines.push(
+    // Deliberately placed BEFORE the manager_instruction carve-out so that the
+    // carve-out stays the last and most emphatic thing said about translating.
+    // Do not reorder these two.
+    '- If the manager wants the STORED data itself in another language ("traduz tudo para inglês", "pon todo en español", "put everything in Spanish"), call `translate_company_data`. It counts what would change and raises an approval card; it writes nothing on its own. `set_language` only changes what YOU speak — it never touches stored rows.',
     // This is the highest-consequence line in the whole prompt. The guard
     // (capabilities/guard.ts) authorizes a direct write by substring-matching
     // the model's quote against what the manager actually typed. A translated
     // quote matches nothing, so every direct write silently degrades into an
     // approval card — no error, just unexplainable friction for the manager.
-    '- `manager_instruction` is the ONE EXCEPTION, and it is absolute: it is the manager\'s own words, copied character-for-character in whatever language he used. NEVER translate, normalize, correct, or paraphrase it. A translated quote fails the authorization check and silently downgrades a direct command into an approval card.',
+    //
+    // Edit by APPENDING only, never by rewording what is already here.
+    '- `manager_instruction` is the ONE EXCEPTION, and it is absolute: it is the manager\'s own words, copied character-for-character in whatever language he used. NEVER translate, normalize, correct, or paraphrase it. A translated quote fails the authorization check and silently downgrades a direct command into an approval card. This holds most of all when the conversation is ABOUT translation.',
     '- The knowledge base is Portuguese, and its full-text ranking only works in Portuguese. ALWAYS write the `search_knowledge` query in Portuguese no matter what language the conversation is in, then translate the excerpt when you cite it.',
     `- Approval cards are rendered deterministically by the system in ${NAMES[locales.user]}. Never restate a card in your own words.`,
   );

@@ -67,6 +67,7 @@ const dict: Catalog = {
       remember: 'Noted',
       search_knowledge: 'Knowledge base searched',
       set_language: 'Language changed',
+      translate_company_data: 'Translation proposed',
       propose: 'Proposal created',
       generate_plan: 'Plan generated',
     },
@@ -291,15 +292,46 @@ const dict: Catalog = {
   },
 
   settings: {
+    language: 'Language',
+    languageHint:
+      "The language Capo speaks to you in, the language of this app, and the language the whole company's tasks, jobs, and notes are written in.",
+    translateExisting: p => {
+      const parts: string[] = [];
+      if (p.tasks) parts.push(`${p.tasks} task${p.tasks === 1 ? '' : 's'}`);
+      if (p.jobs) parts.push(`${p.jobs} job${p.jobs === 1 ? '' : 's'}`);
+      if (p.workers) parts.push(`${p.workers} trade${p.workers === 1 ? '' : 's'}`);
+      if (p.memories) parts.push(`${p.memories} note${p.memories === 1 ? '' : 's'}`);
+      const last = parts.pop();
+      if (!last) return 'Also translate what already exists';
+      const list = parts.length > 0 ? `${parts.join(', ')} and ${last}` : last;
+      return `Also translate what already exists (${list})`;
+    },
+    translateNothing: "There's nothing stored to translate yet.",
+    translateWarning:
+      "The crew's morning SMS will switch to the new language too, and materials will be grouped by their translated names. You can undo this for 30 days.",
+
+    advanced: 'Advanced settings',
+    advancedHint:
+      "Use different languages for yourself and for the company's data — useful if you speak a different language from the rest of the crew.",
     yourLanguage: 'Your language',
     yourLanguageHint: 'The language Capo speaks to you in, and the language of this app. Affects only you.',
     companyLanguage: 'Company data language',
     companyLanguageHint:
       'The language Capo writes tasks, jobs, and notes in — what the whole crew sees on the dashboard.',
-    companyLanguageWarning: 'Heads up: tasks and jobs that already exist are not translated.',
+    companyLanguageWarning: 'Heads up: changed here, tasks and jobs that already exist are not translated.',
     appearance: 'Appearance',
     appearanceHint: "Light, dark, or whatever your phone's set to. Saved on this device only.",
     themeOption: { light: 'Light', dark: 'Dark', system: 'System' },
+
+    translationRunning: p => `Translating… ${p.done} of ${p.total}`,
+    translationDone: n => `${n} field${n === 1 ? '' : 's'} translated.`,
+    translationFailed: 'The translation stopped partway. Nothing was lost — you can pick it back up.',
+    translationResume: 'Resume translation',
+    revert: 'Undo translation',
+    revertHint: days => `Restores the original wording exactly as it was, word for word. Available for ${days} days.`,
+    reverted: 'Translation undone.',
+    revertFailed: "Couldn't undo that. Try again.",
+
     saved: 'Saved.',
     failed: "Couldn't save that. Try again.",
   },

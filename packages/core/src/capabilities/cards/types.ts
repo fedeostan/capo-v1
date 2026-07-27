@@ -8,12 +8,20 @@
 // Date arguments arrive PRE-FORMATTED (via formatDate) so each template is pure
 // string assembly and cannot forget to format.
 
+import type { Locale } from '@capo/i18n/locale';
+
 export type TaskStatus = 'pending' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
 export type JobStatus = 'active' | 'paused' | 'done';
 
 export interface CardStrings {
   taskStatus: Record<TaskStatus, string>;
   jobStatus: Record<JobStatus, string>;
+
+  /** Language names as they appear INSIDE a card sentence, declined for this
+   *  locale ("de Português para Inglês"). Nine strings duplicated across the
+   *  three dictionaries rather than imported from @capo/i18n's catalog, because
+   *  UI copy deliberately never enters the agent bundle (see AGENTS.md). */
+  languageName: Record<Locale, string>;
 
   /** Hand-rolled rather than Intl.DateTimeFormat: @capo/core must render the
    *  same bytes on every runtime regardless of its ICU build, because the
@@ -27,6 +35,12 @@ export interface CardStrings {
     emptyChange: string;
     emptyPlan: string;
     noTemplate(action: string): string;
+    companyNotFound: string;
+    sameLanguage: string;
+    /** The company dial moved between propose and approve. This action's
+     *  referential re-check — the analogue of a dangling job id. */
+    languageMoved: string;
+    nothingToTranslate: string;
   };
 
   createTask(p: {
@@ -67,6 +81,19 @@ export interface CardStrings {
     /** The language of this worker's daily briefing (workers.language). */
     language(v: string): string;
   };
+
+  /** The counts are ROW counts, re-read from the DB at render time rather than
+   *  carried in action_args, so the card can never disagree with the payload.
+   *  Zero-count categories must be omitted, not printed as "0 obras". */
+  translateCompany(p: {
+    fromLanguage: string;
+    toLanguage: string;
+    tasks: number;
+    jobs: number;
+    workers: number;
+    memories: number;
+    undoDays: number;
+  }): string;
 
   plan: {
     header(p: { jobName: string; count: number; from: string; to: string }): string;

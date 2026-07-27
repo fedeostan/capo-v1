@@ -1,6 +1,13 @@
+import { after } from 'next/server';
 import { getApiAuth } from '@capo/db/session';
 import { resolveProposal } from '@capo/core/capabilities/propose';
+import { runTranslationBatch } from '@capo/core/translation';
 import { assertNotBlocked, BillingBlockedError } from '@/lib/billing';
+
+// Raised for one proposal only: apply_company_translation queues a batch, and
+// the after() hook below works it once the response has already gone out. Every
+// other action here still finishes in milliseconds.
+export const maxDuration = 300;
 
 // Approve/reject a proposal. Execution is deterministic — the stored
 // action_args run through the target tool after re-validation; no model is
@@ -32,6 +39,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       user: auth.locale,
       company: auth.companyLocale,
     });
+
+    // apply_company_translation only snapshots and queues — it does no model
+    // work, because resolveProposal must stay fast for every other action.
+    // Kick the batch off here so an approved card starts translating straight
+    // away instead of waiting for the manager to open /perfil. The chat client
+    // never polls: the card resolves, and the work finishes behind it.
+    const batchId =
+      resolution.outcome === 'approved' && typeof resolution.result === 'object' && resolution.result !== null
+        ? (resolution.result as { batchId?: unknown }).batchId
+        : undefined;
+    if (typeof batchId === 'string') {
+      after(async () => {
+        try {
+          await runTranslationBatch(auth.db, batchId, { budgetMs: 240_000 });
+        } catch (e) {
+          // The batch row keeps its own status/error; a throw here would be an
+          // unhandled rejection after the response has already been sent.
+          console.error('translation batch failed:', e instanceof Error ? e.message : e);
+        }
+      });
+    }
+
     return Response.json(resolution);
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : 'unknown error' }, { status: 404 });
