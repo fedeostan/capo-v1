@@ -1,0 +1,302 @@
+import { timingSafeEqual } from 'node:crypto';
+import { NextResponse, type NextRequest } from 'next/server';
+import { getDb, type Db } from '@capo/db/client';
+import { appendEventMessage, ensureConversation } from '@capo/core/conversation';
+import { sendWhatsAppTemplate, WhatsAppSendError } from '@capo/core/channels/whatsapp';
+import { coerceLocale, type Locale } from '@capo/i18n/locale';
+import { getCatalog } from '@capo/i18n/catalog';
+import { sendConfigFor, toSendTarget, whatsappSendEnv } from '../../../../lib/whatsapp';
+import { logEvent } from '../../../../lib/log';
+import {
+  loadCompanyBriefing,
+  renderManagerBriefing,
+  renderManagerEvent,
+  renderWorkerBriefing,
+} from '../../../notifications/briefing';
+
+// The daily 07:00 Europe/Lisbon briefing.
+//
+// This replaces the external n8n + Twilio SMS dispatch, which is switched off.
+// Nothing here reads dispatch_tasks_today or writes dispatch_log — that
+// contract stays frozen so SMS can be switched back on (see AGENTS.md).
+//
+// SYSTEM path: no user session, service-role client, acts across tenants. Its
+// structural gate is the CRON_SECRET bearer token, which Vercel injects
+// automatically on scheduled invocations.
+
+export const dynamic = 'force-dynamic';
+
+// One Graph API round-trip per worker plus one per manager, across every
+// company, all inside a single invocation. 300 matches the WhatsApp webhook.
+export const maxDuration = 300;
+
+/** 07:00 in Lisbon. Vercel schedules in UTC; see the hour gate below. */
+const SEND_HOUR = 7;
+
+/**
+ * The Meta template. Must already be approved in WhatsApp Manager for every
+ * locale in @capo/i18n — see docs/whatsapp-cloud-api-runbook.md. Two body
+ * parameters: {{1}} the recipient's name, {{2}} the one-line summary.
+ */
+const TEMPLATE_NAME = 'capo_daily_briefing';
+
+/**
+ * ── FEDERICO: message a worker who has nothing scheduled today?
+ * false  — stay quiet, and record a 'skipped' row. Saves a paid template send
+ *          per idle worker per day, which on the test tier is the whole cost.
+ * true   — Capo is never silent; an idle worker gets `reminders.workerNothing`,
+ *          so silence never has to be interpreted.
+ */
+const NOTIFY_IDLE_WORKERS = false;
+
+const KIND = 'daily_briefing';
+
+function bearerValid(header: string | null, secret: string): boolean {
+  if (!header?.startsWith('Bearer ')) return false;
+  const a = Buffer.from(header.slice('Bearer '.length), 'utf8');
+  const b = Buffer.from(secret, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+interface Claim {
+  id: string;
+}
+
+/**
+ * Claim a target for today, or report that someone already did.
+ *
+ * The insert goes in BEFORE the Graph API call, which is what turns
+ * notification_log's unique constraint into an idempotency lock: a retry, a
+ * double-scheduled cron, or a manual re-run cannot message the same person
+ * twice. Returns null when the claim was already taken.
+ *
+ * Note the trade-off this makes deliberately: a FAILED send also holds the
+ * claim, so a transient error costs that person their briefing for the day
+ * rather than risking a duplicate. The failure is visible in the operator's
+ * Briefing log; to force a retry, delete the row and re-invoke the route.
+ */
+async function claim(
+  db: Db,
+  row: {
+    company_id: string;
+    audience: 'worker' | 'manager';
+    worker_id?: string;
+    profile_id?: string;
+    notification_date: string;
+    task_ids: string[];
+  },
+): Promise<Claim | null> {
+  const { data, error } = await db
+    .from('notification_log')
+    .insert({ ...row, kind: KIND, channel: 'whatsapp', status: 'pending' })
+    .select('id')
+    .single();
+  // 23505 = unique_violation: already claimed today. Not an error.
+  if (error) {
+    if (error.code === '23505') return null;
+    throw new Error(`notification_log claim failed: ${error.message}`);
+  }
+  return data;
+}
+
+async function resolve(
+  db: Db,
+  claimId: string,
+  status: 'sent' | 'failed' | 'skipped',
+  extra: { provider_message_id?: string | null; error?: string | null } = {},
+): Promise<void> {
+  const { error } = await db.from('notification_log').update({ status, ...extra }).eq('id', claimId);
+  if (error) console.error(`cron/reminders: could not resolve claim ${claimId}: ${error.message}`);
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof WhatsAppSendError) return err.message;
+  return err instanceof Error ? err.message : String(err);
+}
+
+export async function GET(request: NextRequest) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return new NextResponse('cron not configured', { status: 503 });
+  if (!bearerValid(request.headers.get('authorization'), secret)) {
+    return new NextResponse('unauthorized', { status: 401 });
+  }
+
+  // dry_run renders everything and sends nothing, writes nothing. It also
+  // bypasses the hour gate, so the output can be inspected at any time of day.
+  const dryRun = request.nextUrl.searchParams.get('dry_run') === '1';
+
+  const db = getDb();
+
+  // The clock lives in SQL. Vercel Cron fires in UTC and Lisbon is UTC+0 in
+  // winter, UTC+1 in summer, so two daily schedules are registered (06:00 and
+  // 07:00 UTC) and exactly one of them passes this gate, year round. Asking
+  // Postgres avoids teaching the route about WET/WEST.
+  const { data: hour, error: hourError } = await db.rpc('lisbon_hour');
+  if (hourError) {
+    console.error('cron/reminders: lisbon_hour failed:', hourError.message);
+    return new NextResponse('clock unavailable', { status: 500 });
+  }
+  if (!dryRun && hour !== SEND_HOUR) {
+    return NextResponse.json({ skipped: 'outside the send hour', lisbonHour: hour });
+  }
+
+  const { data: today, error: todayError } = await db.rpc('lisbon_today');
+  if (todayError || !today) {
+    console.error('cron/reminders: lisbon_today failed:', todayError?.message);
+    return new NextResponse('clock unavailable', { status: 500 });
+  }
+
+  const env = whatsappSendEnv();
+  if (!env && !dryRun) return new NextResponse('whatsapp not configured', { status: 503 });
+
+  // Outbound template sends cost money, so unlike the inbound webhook (which
+  // is deliberately ungated) this skips companies that are no longer paying.
+  const { data: companies, error: companiesError } = await db
+    .from('companies')
+    .select('id, name, language')
+    .in('subscription_status', ['trialing', 'active']);
+  if (companiesError) {
+    console.error('cron/reminders: company read failed:', companiesError.message);
+    return new NextResponse('company read failed', { status: 500 });
+  }
+
+  const report: unknown[] = [];
+
+  for (const company of companies ?? []) {
+    try {
+      const briefing = await loadCompanyBriefing(db, company.id, company.language);
+      const sends: unknown[] = [];
+      let notified = 0;
+
+      // ── workers ──────────────────────────────────────────────────────────
+      for (const worker of briefing.workers) {
+        const [name, summary] = renderWorkerBriefing(worker);
+        const taskIds = worker.tasks.map(t => t.id);
+        const idle = worker.tasks.length === 0;
+
+        if (dryRun) {
+          sends.push({ audience: 'worker', to: toSendTarget(worker.phone), locale: worker.locale, name, summary, idle });
+          continue;
+        }
+
+        const claimed = await claim(db, {
+          company_id: company.id,
+          audience: 'worker',
+          worker_id: worker.workerId,
+          notification_date: today,
+          task_ids: taskIds,
+        });
+        if (!claimed) continue;
+
+        if (idle && !NOTIFY_IDLE_WORKERS) {
+          await resolve(db, claimed.id, 'skipped');
+          continue;
+        }
+
+        try {
+          const { providerMessageId } = await sendWhatsAppTemplate(
+            {
+              name: TEMPLATE_NAME,
+              languageCode: getCatalog(worker.locale).reminders.templateLanguage,
+              bodyParams: [name, summary],
+            },
+            sendConfigFor(env!, toSendTarget(worker.phone)),
+          );
+          await resolve(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
+          notified += 1;
+        } catch (err) {
+          // One unreachable worker must never abort the run — on the test tier
+          // a 131030 for a not-yet-allow-listed number is the expected case.
+          await resolve(db, claimed.id, 'failed', { error: describeError(err) });
+          logEvent('reminders.worker_send_failed', {
+            companyId: company.id,
+            workerId: worker.workerId,
+            error: describeError(err),
+          });
+        }
+      }
+
+      // ── managers ─────────────────────────────────────────────────────────
+      // Throw rather than fall through to `?? []`: a failed read here would
+      // otherwise look identical to a company with no managers, and silently
+      // stop briefing the one person who would notice.
+      const { data: managers, error: managersError } = await db
+        .from('profiles')
+        .select('id, full_name, phone, language')
+        .eq('company_id', company.id);
+      if (managersError) throw new Error(`profiles read failed: ${managersError.message}`);
+
+      for (const manager of managers ?? []) {
+        const locale: Locale = coerceLocale(manager.language);
+        const [name, summary] = renderManagerBriefing(manager.full_name, briefing.counts, locale);
+
+        if (dryRun) {
+          sends.push({ audience: 'manager', to: toSendTarget(manager.phone), locale, name, summary });
+          continue;
+        }
+
+        const claimed = await claim(db, {
+          company_id: company.id,
+          audience: 'manager',
+          profile_id: manager.id,
+          notification_date: today,
+          task_ids: [],
+        });
+        if (!claimed) continue;
+
+        try {
+          const { providerMessageId } = await sendWhatsAppTemplate(
+            {
+              name: TEMPLATE_NAME,
+              languageCode: getCatalog(locale).reminders.templateLanguage,
+              bodyParams: [name, summary],
+            },
+            sendConfigFor(env!, toSendTarget(manager.phone)),
+          );
+          await resolve(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
+        } catch (err) {
+          await resolve(db, claimed.id, 'failed', { error: describeError(err) });
+          logEvent('reminders.manager_send_failed', {
+            companyId: company.id,
+            error: describeError(err),
+          });
+        }
+      }
+
+      // ── the chat thread ──────────────────────────────────────────────────
+      // Written regardless of whether WhatsApp delivered: the thread is the
+      // permanent record, and a manager who later asks "what did you send the
+      // crew?" should get an answer even on a day Meta rejected every send.
+      // appendEventMessage writes role='event', which the chat page renders as
+      // a system note and toThread() presents to the model as <system-event>.
+      const eventLocale = firstManagerLocale(managers, briefing.companyLocale);
+      const eventText = renderManagerEvent(briefing.counts, notified, eventLocale);
+      if (!dryRun) {
+        const conversationId = await ensureConversation(db, company.id);
+        await appendEventMessage(db, conversationId, eventText);
+      } else {
+        sends.push({ audience: 'thread', locale: eventLocale, text: eventText });
+      }
+
+      report.push({ company: company.name, counts: briefing.counts, notified, sends });
+    } catch (err) {
+      // A broken company must not stop the rest of the estate being briefed.
+      console.error(`cron/reminders: company ${company.id} failed:`, err);
+      logEvent('reminders.company_failed', { companyId: company.id, error: describeError(err) });
+      report.push({ company: company.name, error: describeError(err) });
+    }
+  }
+
+  return NextResponse.json({ dryRun, date: today, lisbonHour: hour, companies: report });
+}
+
+// The thread is shared, so its note can only be in one language. The first
+// manager's is a better guess than the company's stored-content language,
+// which is about task titles rather than about who is reading.
+function firstManagerLocale(
+  managers: { language: string | null }[] | null,
+  fallback: Locale,
+): Locale {
+  const first = managers?.[0]?.language;
+  return first ? coerceLocale(first) : fallback;
+}

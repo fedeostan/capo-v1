@@ -1,9 +1,9 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { after, NextResponse, type NextRequest } from 'next/server';
-import { getDb } from '@capo/db/client';
+import { getDb, type Db } from '@capo/db/client';
 import { handleInbound } from '@capo/core/agent';
 import { MAX_AUDIO_BYTES, transcribeAudio } from '@capo/core/transcription';
-import { coerceLocale, type LocaleContext } from '@capo/i18n/locale';
+import { coerceLocale, type Locale, type LocaleContext } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
 import {
   parseProposalButtonId,
@@ -15,6 +15,7 @@ import { resolveProposal } from '@capo/core/capabilities/propose';
 import { downloadMedia } from '@capo/core/channels/whatsapp-media';
 import { getBillingState } from '../../../lib/billing';
 import { logEvent } from '../../../lib/log';
+import { testTierArSendTarget, type WhatsAppEnv } from '../../../lib/whatsapp';
 
 // WhatsApp manager channel — Meta Cloud API webhook (see
 // docs/whatsapp-cloud-api-runbook.md for the one-time Meta setup).
@@ -24,6 +25,12 @@ import { logEvent } from '../../../lib/log';
 // is sender phone → profiles.phone (unique E.164) → company_id, never
 // anything from the message body. Unknown senders are a silent no-op — no
 // reply, no error detail, nothing persisted.
+//
+// Two kinds of sender, and only one of them reaches the agent:
+//   profiles.phone → a MANAGER. Full agent loop, persisted to the thread.
+//   workers.phone  → a WORKER replying to their 07:00 briefing. Acknowledged
+//                    deterministically, never persisted, never given to the
+//                    model. See handleWorkerReply.
 //
 // All secrets are read lazily inside the handlers (never at module scope):
 //   WHATSAPP_VERIFY_TOKEN   — GET verification challenge
@@ -83,18 +90,113 @@ interface WhatsAppWebhookBody {
   }[];
 }
 
-// Meta's free test-tier "allowed recipients" list stores Buenos Aires
-// (area code 11) mobile numbers in the legacy domestic format (54 + area
-// code + 15 + local number) rather than the wa_id's modern format
-// (54 + 9 + area code + local number). Sending to the wa_id directly is
-// rejected with "(#131030) Recipient phone number not in allowed list"
-// even though it's the same number and inbound matching (above) works
-// fine. This is a test-tier-only quirk — a verified production number has
-// no allow-list, so this becomes a no-op once the pilot graduates. Buenos
-// Aires only for now; extend the regex if a non-11 area code joins.
-function testTierArSendTarget(waId: string): string {
-  const match = /^549(\d{2})(\d{8})$/.exec(waId);
-  return match ? `54${match[1]}15${match[2]}` : waId;
+// The whole worker-facing command surface: reply one of these, alone, and your
+// briefing language changes. Deliberately not a chat — a worker's text never
+// reaches the model (see handleWorkerReply), so this is a lookup, not a parse.
+//
+// Whole-message exact match only. A worker writing "es que falta material"
+// must not be read as "switch to Spanish", and a substring match would do
+// exactly that.
+const LANGUAGE_KEYWORDS: Record<string, Locale> = {
+  pt: 'pt-PT',
+  'pt-pt': 'pt-PT',
+  portugues: 'pt-PT',
+  português: 'pt-PT',
+  es: 'es-ES',
+  'es-es': 'es-ES',
+  espanol: 'es-ES',
+  español: 'es-ES',
+  en: 'en-US',
+  'en-us': 'en-US',
+  english: 'en-US',
+  ingles: 'en-US',
+  inglês: 'en-US',
+};
+
+function languageCommand(text: string | undefined): Locale | null {
+  if (!text) return null;
+  return LANGUAGE_KEYWORDS[text.trim().toLowerCase()] ?? null;
+}
+
+/**
+ * A reply from a WORKER — someone with a row in `workers` but no account, no
+ * profile, and no conversation with Capo.
+ *
+ * Returns true when the sender was recognised as a worker (handled, whatever
+ * the outcome), false when they are genuinely unknown.
+ *
+ * Three deliberate limits:
+ *   - The agent NEVER runs here and the text is NEVER persisted to `messages`.
+ *     Worker text is third-party input; keeping it out of the thread keeps it
+ *     out of the model's context window entirely.
+ *   - `workers.phone` has no unique constraint (unlike `profiles.phone`), so
+ *     two companies can hold the same number. On a collision we stay silent
+ *     rather than guess a tenant.
+ *   - The ack is not politeness. A template send does not open Meta's 24-hour
+ *     window — only the recipient's reply does — so acknowledging a worker is
+ *     what converts tomorrow's paid template into a free session message.
+ */
+async function handleWorkerReply(db: Db, message: WhatsAppMessage, env: WhatsAppEnv): Promise<boolean> {
+  const waIdSuffix = message.from.slice(-4);
+  const { data: matches, error } = await db
+    .from('workers')
+    .select('id, company_id, language, company:companies(language)')
+    .eq('phone', `+${message.from}`)
+    .eq('active', true)
+    .limit(2);
+
+  if (error) {
+    console.error('whatsapp: worker lookup failed:', error.message);
+    return false;
+  }
+  if (!matches || matches.length === 0) return false;
+  if (matches.length > 1) {
+    // Same number on two companies' crews. Answering either would leak which
+    // tenant we picked, and picking is guesswork.
+    logEvent('whatsapp.worker_ambiguous', { waIdSuffix, matches: matches.length });
+    return true;
+  }
+
+  const worker = matches[0];
+  const current = worker.language ? coerceLocale(worker.language) : coerceLocale(worker.company?.language);
+  const requested = message.type === 'text' ? languageCommand(message.text?.body) : null;
+
+  logEvent('whatsapp.worker_reply', {
+    companyId: worker.company_id,
+    workerId: worker.id,
+    messageId: message.id,
+    type: message.type,
+    // The message body is deliberately NOT logged — it is third-party content.
+    languageCommand: requested ?? undefined,
+  });
+
+  // Send-, not sink-config: a worker ack carries no approval buttons, and
+  // WhatsAppSinkConfig now requires the ApprovalLabels the cards need.
+  const sendConfig: WhatsAppSendConfig = {
+    accessToken: env.accessToken,
+    phoneNumberId: env.phoneNumberId,
+    to: testTierArSendTarget(message.from),
+  };
+
+  if (requested && requested !== current) {
+    const { error: updateError } = await db.from('workers').update({ language: requested }).eq('id', worker.id);
+    if (updateError) {
+      console.error('whatsapp: worker language update failed:', updateError.message);
+      return true;
+    }
+  }
+
+  // Confirmation is always in the language the worker will get from now on.
+  const locale = requested ?? current;
+  const t = getCatalog(locale).whatsapp;
+  await sendWhatsAppText(requested ? t.workerLanguageChanged : t.workerAck, sendConfig).catch(err => {
+    logEvent('whatsapp.worker_ack_failed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+  return true;
 }
 
 function signatureValid(raw: string, header: string | null, appSecret: string): boolean {
@@ -146,9 +248,17 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     if (!profile) {
-      // Safe no-op: don't reveal whether a number is known, don't reply.
-      console.warn(`whatsapp: inbound from unknown number (wa_id ending …${message.from.slice(-4)}), ignoring`);
-      logEvent('whatsapp.unknown_sender', { waIdSuffix: message.from.slice(-4) });
+      // Not a manager — but it may be a worker replying to their 07:00
+      // briefing, which is the one other number we know. Runs after the ack so
+      // the lookup and the ack send add no latency to Meta's webhook call.
+      after(async () => {
+        const handled = await handleWorkerReply(db, message, { accessToken, phoneNumberId });
+        if (!handled) {
+          // Safe no-op: don't reveal whether a number is known, don't reply.
+          console.warn(`whatsapp: inbound from unknown number (wa_id ending …${message.from.slice(-4)}), ignoring`);
+          logEvent('whatsapp.unknown_sender', { waIdSuffix: message.from.slice(-4) });
+        }
+      });
       continue;
     }
 

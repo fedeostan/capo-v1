@@ -185,8 +185,8 @@ export interface Catalog {
     /** e.g. "Today 2 · Tomorrow 1 · 5 open". */
     workerLoad(today: number, tomorrow: number, open: number): string;
     /** An active worker with no phone silently receives nothing at 07:00. */
-    noSmsWarning: string;
-    receivesSms: string;
+    noWhatsAppWarning: string;
+    receivesWhatsApp: string;
     teamHint: string;
     teamHintLink: string;
     subscription: string;
@@ -364,5 +364,42 @@ export interface Catalog {
     /** The interactive send itself failed: the card was shown with no way to
      *  act on it, but the proposal is still pending in the web chat. */
     approvalFallback: string;
+
+    /**
+     * Sent to a WORKER who replies to their briefing. Workers have no account
+     * and no conversation with Capo — this ack exists so the reply is not met
+     * with silence, and it carries the language hint because replying a
+     * keyword is the only control a worker has.
+     */
+    workerAck: string;
+    /** Sent after a worker switches language — always in the NEW language. */
+    workerLanguageChanged: string;
+  };
+
+  /**
+   * The daily 07:00 briefing. Worker-facing strings here are read in the
+   * worker's own language (workers.language, falling back to the company's),
+   * but the task TITLES they wrap are stored in companies.language and are
+   * never retranslated — so these must read acceptably around foreign text.
+   */
+  reminders: {
+    /** Meta template locale code — 'pt_PT', 'es_ES', 'en_US'. Underscore, not hyphen. */
+    templateLanguage: string;
+    /** Joins tasks inside the one-line template parameter. Never a newline. */
+    taskSeparator: string;
+    /** A task shown with the obra it belongs to. */
+    taskWithJob(title: string, job: string): string;
+    /** An overdue task, so it does not read like ordinary work for today. */
+    taskOverdue(title: string, days: number): string;
+    /** Tail when the list had to be truncated. */
+    andMore(n: number): string;
+    /** A worker with nothing scheduled today. */
+    workerNothing: string;
+    /** The manager's one-line WhatsApp summary. */
+    managerSummary(counts: { today: number; unassigned: number; overdue: number }): string;
+    /** The manager's line when the company has nothing on today. */
+    managerNothing: string;
+    /** The fuller version written into the chat thread, where newlines are fine. */
+    managerEvent(counts: { today: number; unassigned: number; overdue: number; notified: number }): string;
   };
 }

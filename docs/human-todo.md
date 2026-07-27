@@ -65,14 +65,19 @@ each feature.
 3. Until a domain exists, production is only reachable at
    `capo-v1.vercel.app` — see item 8 below on Deployment Protection.
 
-## 5. Twilio (worker SMS)
+## 5. Twilio (worker SMS) — PAUSED as of 2026-07-26, see §11
+
+Superseded: worker briefings now go out over WhatsApp. Kept here because the
+path is paused rather than deleted and these are the steps to bring it back.
 
 1. Upgrade the Twilio account from trial so worker SMS reaches real (not
    just verified) numbers.
-2. Confirm the external n8n 07:00 Lisbon cron that reads `dispatch_tasks_today`
-   is still running — this upgrade never touched that view (verified
-   byte-identical to the pre-upgrade baseline after every migration) or the
-   n8n/Twilio dispatch contract.
+2. The external n8n 07:00 Lisbon cron that reads `dispatch_tasks_today` should
+   now be **switched off** (§11.1). The view and `dispatch_log` are still
+   byte-identical to the pre-upgrade baseline, so re-enabling the workflow is
+   the only step needed to resume SMS — but do not run both channels at 07:00
+   without checking `dispatch_log`'s `unique (worker_id, dispatch_date)`
+   against the parallel `notification_log`.
 
 ## 6. Visual QA on a phone
 
@@ -209,19 +214,105 @@ nothing here blocks a deploy; it goes live with the code.
    registers in one dictionary — but the docs and the product now disagree,
    and only you can settle which is right for the first Spanish customer.
 
+## 11. SMS off, WhatsApp briefings on (2026-07-26) — see §10 for what stayed cut
+
+The 07:00 worker briefing moved from SMS (external n8n + Twilio) to WhatsApp,
+sent by a Vercel Cron inside `capo-v1`. The manager also gets it, both on
+WhatsApp and as a permanent note in their chat thread. Nothing in the repo can
+switch SMS off — that is step 1, and it is yours.
+
+**Nothing here works until all six steps are done.** Until then the cron runs,
+finds no approved template, and writes `failed` rows to `notification_log`.
+
+1. **Switch off the n8n workflow `LJu5bNaRL9gLpeQ0`.** This is the only thing
+   that actually stops the SMS going out. Leave the workflow in place — the DB
+   contract it reads is untouched, so re-enabling is a toggle.
+2. **Apply migration `0016_worker_notifications.sql` BEFORE deploying the
+   code.** It adds `workers.language`, `lisbon_hour()` and `notification_log`.
+   Deploying first means every cron run 500s and `/perfil` is unaffected but
+   the operator Briefing log page errors. (This is the same ordering hazard
+   that broke production in §8.1 — the DB sat at 0012 under a 0013 app.)
+3. **Create the `capo_daily_briefing` template** in WhatsApp Manager, in
+   pt_PT + es_ES + en_US, category Utility, two body parameters. Full
+   instructions in `docs/whatsapp-cloud-api-runbook.md` §6. Until it is
+   approved every send fails with Meta code **132001**.
+4. **Add every pilot worker's number to the WhatsApp test recipient
+   allow-list** (5 max on the free test tier) and have each confirm the opt-in
+   on their phone. The number must equal `workers.phone` exactly, in E.164.
+   A number that is not on the list fails with **131030** — expect to see this
+   in the operator Briefing log while you work through the list.
+5. **Set `CRON_SECRET`** in the Vercel `capo-v1` project (Production +
+   Preview) and in `apps/web/.env.local`. Vercel injects it automatically as
+   `Authorization: Bearer …` on scheduled invocations; without it the route
+   answers 503 and nothing is sent.
+6. **Confirm the Vercel Root Directory for `capo-v1`.** `vercel.json` was
+   written to `apps/web/vercel.json` on the assumption that the project root
+   is `apps/web` (which is what having two separate projects implies). If the
+   root is the repo root instead, **move the file there** — a misplaced
+   `vercel.json` is silently ignored, so the symptom is simply that no cron
+   ever fires. Also check the plan: Hobby allows **2 cron jobs, once daily,
+   fired within the hour**, and the two entries here consume that budget
+   exactly.
+
+Then verify, in this order:
+
+- `curl -H "Authorization: Bearer $CRON_SECRET" 'http://localhost:3000/api/cron/reminders?dry_run=1'`
+  — renders everything, sends nothing, writes nothing, and ignores the hour
+  gate so it works at any time of day. Check each worker with work today
+  appears once, and that the locale is theirs.
+- Re-run without `dry_run` and confirm a second call sends nothing more
+  (`notification_log`'s unique constraint holding).
+- On a real phone: the 07:00 message arrives; reply `ES` → confirmation in
+  Spanish and `workers.language` flips; reply anything else → the canned ack,
+  and **nothing** appears in the manager's chat thread; a number matching
+  neither table still gets total silence.
+- Operator app → **Briefing log** shows the sends, with Meta error codes on
+  the failures.
+
+A `failed` row holds that day's claim, so a transient error costs that person
+one briefing rather than risking a duplicate. To force a retry, delete the
+`notification_log` row and re-invoke the route.
+
+Two dials worth a look once it runs, both single constants:
+
+- `NOTIFY_IDLE_WORKERS` in `apps/web/app/api/cron/reminders/route.ts` —
+  currently `false`, so a worker with nothing today is not messaged at all
+  (recorded as `skipped`). Set it `true` if you would rather Capo were never
+  silent; it costs one template send per idle worker per day.
+- `renderWorkerBriefing()` in `apps/web/app/notifications/briefing.ts` — the
+  product-voice dial for the whole feature. It currently lists at most 5 tasks
+  then "+N", shows the obra in parentheses, and puts overdue tasks first with
+  their age. All three are judgement calls about your users, not architecture.
+
+Known and accepted: **briefings are bilingual.** Task titles and materials are
+stored in `companies.language` and nothing retranslates existing rows, so a
+worker who picks `es-ES` gets a Spanish sentence wrapping Portuguese titles.
+Also, no consent column was added — Meta's 5-number allow-list is the gate in
+test mode, but a real opt-in record is required before production under Meta's
+business-messaging policy.
+
 ## 10. Backlog (deliberately cut from this upgrade)
 
-Two-way worker SMS replies, multilingual worker briefings, Moloni/Vendus
-integration, client progress PDF (Flow 4's read-only share link is still
-unbuilt), per-seat billing, a real test framework, Gantt charts.
+Moloni/Vendus integration, client progress PDF (Flow 4's read-only share link
+is still unbuilt), per-seat billing, a real test framework, Gantt charts.
 
-**Now unblocked and worth doing next — the 18:00 anticipation send.** As of
-2026-07-26 the app surfaces tomorrow's materials on `/materiais` and the
-agent has a `materials_outlook` tool, so the manager-side half of the killer
-feature is live. The remaining half is the evening push to workers, which is
-n8n work, not app code: read `task_board` where `active_tomorrow` is true and
-`materials` is non-empty, grouped by `assignee_worker_id` — every column it
-needs already exists. Per `03_PRODUCT/02-flows.md` §Flow 2, the worker's
+Two items left this list on 2026-07-26 (see §11): **multilingual worker
+briefings** shipped as `workers.language`, and **two-way worker replies**
+shipped in the narrowest possible form — a worker can reply `PT`/`ES`/`EN` to
+change their language, and anything else gets a canned ack. A real
+conversation with workers is still cut: it would put third-party text into the
+model's context window, which is a security decision, not a feature decision.
+
+**Now much cheaper to build — the 18:00 anticipation send.** As of 2026-07-26
+the app surfaces tomorrow's materials on `/materiais` and the agent has a
+`materials_outlook` tool, so the manager-side half of the killer feature is
+live. The evening push to workers is no longer n8n work: `/api/cron/reminders`
+already has the scheduler, the template sender, the per-target idempotency
+ledger and the locale resolution. An evening send is a second `kind` in
+`notification_log` (the unique constraint is per-kind, so it will not collide
+with the morning briefing), a second Meta template, and a `task_board` read
+where `active_tomorrow` is true and `materials` is non-empty, grouped by
+`assignee_worker_id`. Per `03_PRODUCT/02-flows.md` §Flow 2, the worker's
 evening reply is also what keeps the 24h WhatsApp window open, so this send is
 both the feature and the cost mechanism.
 

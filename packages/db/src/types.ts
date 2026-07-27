@@ -356,6 +356,83 @@ export type Database = {
           },
         ]
       }
+      notification_log: {
+        Row: {
+          audience: string
+          channel: string
+          company_id: string
+          created_at: string
+          error: string | null
+          id: string
+          kind: string
+          notification_date: string
+          profile_id: string | null
+          provider_message_id: string | null
+          status: string
+          task_ids: Json
+          worker_id: string | null
+        }
+        Insert: {
+          audience: string
+          channel?: string
+          company_id: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          kind: string
+          notification_date: string
+          profile_id?: string | null
+          provider_message_id?: string | null
+          status: string
+          task_ids?: Json
+          worker_id?: string | null
+        }
+        Update: {
+          audience?: string
+          channel?: string
+          company_id?: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          kind?: string
+          notification_date?: string
+          profile_id?: string | null
+          provider_message_id?: string | null
+          status?: string
+          task_ids?: Json
+          worker_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notification_log_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notification_log_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notification_log_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["worker_id"]
+          },
+          {
+            foreignKeyName: "notification_log_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           company_id: string
@@ -628,6 +705,7 @@ export type Database = {
           company_id: string
           created_at: string
           id: string
+          language: string | null
           name: string
           phone: string | null
           trade: string | null
@@ -637,6 +715,7 @@ export type Database = {
           company_id: string
           created_at?: string
           id?: string
+          language?: string | null
           name: string
           phone?: string | null
           trade?: string | null
@@ -646,6 +725,7 @@ export type Database = {
           company_id?: string
           created_at?: string
           id?: string
+          language?: string | null
           name?: string
           phone?: string | null
           trade?: string | null
@@ -829,6 +909,7 @@ export type Database = {
         Args: { p_event: string; p_id: string; p_status: string }
         Returns: undefined
       }
+      lisbon_hour: { Args: never; Returns: number }
       lisbon_today: { Args: never; Returns: string }
       search_knowledge: {
         Args: {

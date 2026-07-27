@@ -268,8 +268,8 @@ const dict: Catalog = {
     noContact: 'No contact',
     inactive: 'inactive',
     workerLoad: (today, tomorrow, open) => `Today ${today} · Tomorrow ${tomorrow} · ${open} open`,
-    noSmsWarning: 'No phone number — gets nothing from the 07:00 SMS.',
-    receivesSms: 'gets the 07:00 SMS',
+    noWhatsAppWarning: 'No phone number — gets nothing from the 07:00 WhatsApp.',
+    receivesWhatsApp: 'gets the 07:00 WhatsApp',
     teamHint: 'To add or change someone,',
     teamHintLink: 'talk to Capo',
     subscription: 'Subscription',
@@ -366,7 +366,7 @@ const dict: Catalog = {
       },
       {
         title: 'The crew gets its morning briefing',
-        text: "Every worker gets the day's tasks by SMS — no apps, no accounts.",
+        text: "Every worker gets the day's tasks on WhatsApp — no apps, no accounts.",
       },
     ],
     materialsTitle: 'Materials ahead of time',
@@ -395,6 +395,35 @@ const dict: Catalog = {
     proposalNotPending: 'That one was already decided.',
     proposalError: "I couldn't record that decision. Do it in the app.",
     approvalFallback: "I couldn't show the buttons. Approve or reject it in the app.",
+    workerAck: 'Got it, thanks. Any questions, talk to your foreman. To change language reply PT, ES or EN.',
+    workerLanguageChanged: "Done — I'll write to you in English from now on.",
+  },
+
+  reminders: {
+    templateLanguage: 'en_US',
+    taskSeparator: ' · ',
+    taskWithJob: (title, job) => `${title} (${job})`,
+    taskOverdue: (title, days) => `${title} — ${days}d overdue`,
+    andMore: n => `+${n}`,
+    workerNothing: 'Nothing scheduled for today.',
+    managerSummary: ({ today, unassigned, overdue }) => {
+      const parts = [`${today} ${today === 1 ? 'task' : 'tasks'} for today`];
+      if (unassigned > 0) parts.push(`${unassigned} unassigned`);
+      if (overdue > 0) parts.push(`${overdue} overdue`);
+      return parts.join(' · ');
+    },
+    managerNothing: 'Nothing scheduled for today.',
+    managerEvent: ({ today, unassigned, overdue, notified }) => {
+      const parts = [`Morning. ${today} ${today === 1 ? 'task' : 'tasks'} in progress today`];
+      if (overdue > 0) parts.push(`${overdue} overdue`);
+      if (unassigned > 0) parts.push(`${unassigned} unassigned`);
+      const head = parts.join(' · ');
+      const tail =
+        notified === 0
+          ? "I didn't message the crew."
+          : `I sent the rundown to ${notified} ${notified === 1 ? 'person' : 'people'}.`;
+      return `${head}. ${tail}`;
+    },
   },
 };
 

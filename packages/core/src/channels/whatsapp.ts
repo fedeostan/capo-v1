@@ -19,11 +19,18 @@ import { toWhatsAppMarkdown } from './whatsapp-markdown';
 // catalog); this package never touches process.env, and never imports
 // @capo/i18n/catalog — UI strings must not enter the agent bundle.
 //
-// 24-hour window note: this sink only ever REPLIES to an inbound message, so
+// 24-hour window note: this SINK only ever REPLIES to an inbound message, so
 // it is always inside Meta's 24h customer-service window, where free-form text
-// AND interactive messages are both allowed. Proactive/outside-window sends
-// need an approved template — a template path is deliberately not implemented
-// until a real need appears (see docs/whatsapp-cloud-api-runbook.md).
+// AND interactive messages are both allowed. The daily reminder cron is the
+// opposite case — it messages someone who has not written to us — so
+// `sendWhatsAppTemplate` below exists for it.
+//
+// The window rule that catches people out: sending a template does NOT open
+// the window. Only the RECIPIENT's reply does. A worker who never replies
+// therefore needs a paid template every single day, which is why the webhook
+// acknowledges worker replies (see apps/web/app/api/whatsapp/route.ts) —
+// that ack is what converts them to free session messages.
+// (See docs/whatsapp-cloud-api-runbook.md.)
 
 export interface WhatsAppSendConfig {
   accessToken: string;
@@ -200,7 +207,99 @@ export function planAssistantMessages(
 
 // ── sending ─────────────────────────────────────────────────────────────────
 
-async function post(payload: Record<string, unknown>, config: WhatsAppSendConfig): Promise<void> {
+// Meta answers a failed send with a structured error body. Keeping the numeric
+// code is what makes a failed reminder diagnosable from notification_log.error
+// instead of "it didn't arrive". The ones actually worth recognising:
+//
+//   131030  recipient not in the allow-list — the test-tier error you WILL hit
+//           until every pilot number is added in WhatsApp Manager
+//   132000  parameter count mismatch, or a parameter containing a newline/tab/
+//           run of 4+ spaces (see toTemplateParam)
+//   132001  template name/language does not exist or is not approved yet
+//   131047  re-engagement required — a free-form send outside the 24h window
+//   131026  message undeliverable (recipient has no WhatsApp, or blocked us)
+export class WhatsAppSendError extends Error {
+  readonly status: number;
+  readonly code: number | null;
+  readonly subcode: number | null;
+
+  constructor(status: number, body: string) {
+    let code: number | null = null;
+    let subcode: number | null = null;
+    let detail = body;
+    try {
+      const parsed = JSON.parse(body) as {
+        error?: { message?: string; code?: number; error_subcode?: number; error_data?: { details?: string } };
+      };
+      if (parsed.error) {
+        code = parsed.error.code ?? null;
+        subcode = parsed.error.error_subcode ?? null;
+        detail = parsed.error.error_data?.details ?? parsed.error.message ?? body;
+      }
+    } catch {
+      // Not JSON (a gateway HTML error page, say) — keep the raw body.
+    }
+    super(`WhatsApp send failed (${status}${code === null ? '' : `, code ${code}`}): ${detail}`);
+    this.name = 'WhatsAppSendError';
+    this.status = status;
+    this.code = code;
+    this.subcode = subcode;
+  }
+}
+
+// Template body parameters may not contain newlines, tabs, or runs of 4+
+// spaces — Meta rejects the whole send with code 132000. This is the single
+// easiest way to break the reminder path, because the natural way to render a
+// task list is one per line. Every parameter goes through here, no exceptions.
+//
+// 1024 is Meta's per-parameter ceiling; we cut at 900 to leave room for the
+// template's own surrounding text against the 4096-char body limit.
+const MAX_PARAM = 900;
+
+export function toTemplateParam(value: string): string {
+  const flat = value.replace(/\s+/g, ' ').trim();
+  return flat.length <= MAX_PARAM ? flat : `${flat.slice(0, MAX_PARAM - 1).trimEnd()}…`;
+}
+
+export interface WhatsAppTemplate {
+  name: string;
+  /** Meta's locale format — 'pt_PT', 'es_ES', 'en_US'. Underscore, not hyphen. */
+  languageCode: string;
+  /** Positional {{1}}, {{2}}… body parameters, in order. */
+  bodyParams: string[];
+}
+
+// Proactive send: the only path that can reach someone who has not messaged us
+// first. The template and its language must already be approved in WhatsApp
+// Manager — see docs/whatsapp-cloud-api-runbook.md.
+export async function sendWhatsAppTemplate(
+  template: WhatsAppTemplate,
+  config: WhatsAppSendConfig,
+): Promise<{ providerMessageId: string | null }> {
+  return await post(
+    {
+      type: 'template',
+      template: {
+        name: template.name,
+        language: { code: template.languageCode },
+        components: [
+          {
+            type: 'body',
+            parameters: template.bodyParams.map(text => ({ type: 'text', text: toTemplateParam(text) })),
+          },
+        ],
+      },
+    },
+    config,
+  );
+}
+
+// Returns the provider message id so the reminder cron can record it in
+// notification_log; the sink's own sends ignore it.
+async function post(
+  payload: Record<string, unknown>,
+  config: WhatsAppSendConfig,
+): Promise<{ providerMessageId: string | null }> {
   const base = config.graphApiBase ?? 'https://graph.facebook.com/v23.0';
   const res = await fetch(`${base}/${config.phoneNumberId}/messages`, {
     method: 'POST',
@@ -211,7 +310,15 @@ async function post(payload: Record<string, unknown>, config: WhatsAppSendConfig
     body: JSON.stringify({ messaging_product: 'whatsapp', to: config.to, ...payload }),
   });
   if (!res.ok) {
-    throw new Error(`WhatsApp send failed (${res.status}): ${await res.text()}`);
+    throw new WhatsAppSendError(res.status, await res.text());
+  }
+  // A 200 with an unreadable body is not a failure — the message went out.
+  // Losing the id only costs us a column in notification_log.
+  try {
+    const json = (await res.json()) as { messages?: Array<{ id?: string }> };
+    return { providerMessageId: json.messages?.[0]?.id ?? null };
+  } catch {
+    return { providerMessageId: null };
   }
 }
 

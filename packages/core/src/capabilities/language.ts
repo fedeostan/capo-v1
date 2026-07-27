@@ -12,7 +12,7 @@ export const setLanguageInput = z.object({
 
 // UNGUARDED by design, and this is a deliberate exception rather than an
 // oversight. The guard exists because writes change the real world — a task
-// appears, a worker gets an SMS. This changes which words one person reads. It
+// appears, a worker gets a message. This changes which words one person reads. It
 // is fully reversible, invisible to everyone else, and putting an approval card
 // in front of "talk to me in English" would be absurd.
 //

@@ -1,7 +1,9 @@
 import { z } from 'zod';
+import { LOCALES } from '@capo/i18n/locale';
 import type { CapoTool } from './types';
 
-// E.164 — serves the SMS dispatch now and WhatsApp later. Validation failure
+// E.164 — this is the number the daily WhatsApp briefing is sent to, and the
+// number an inbound worker reply is matched against. Validation failure
 // bounces back to the model, which asks the manager for the full international
 // format instead of storing a bad number.
 const e164Phone = z
@@ -49,12 +51,18 @@ export const updateWorkerInput = z.object({
   name: z.string().min(1).optional(),
   trade: z.string().optional(),
   phone: e164Phone.optional(),
+  language: z
+    .enum(LOCALES)
+    .optional()
+    .describe(
+      "The language of this worker's daily WhatsApp briefing. Workers normally set this themselves by replying PT, ES or EN to the message — only set it here when the manager explicitly asks on their behalf. Unset means they follow the company language. Note this does NOT translate task titles, which are always stored in the company language.",
+    ),
 });
 
 export const updateWorker: CapoTool<z.infer<typeof updateWorkerInput>> = {
   name: 'update_worker',
   description:
-    'Update an existing worker (name, trade, phone). This is a write: only call it directly for an explicit manager command; otherwise use propose.',
+    'Update an existing worker (name, trade, phone, briefing language). This is a write: only call it directly for an explicit manager command; otherwise use propose.',
   inputSchema: updateWorkerInput,
   guarded: true,
   async execute(input, ctx) {
@@ -74,7 +82,7 @@ export const updateWorker: CapoTool<z.infer<typeof updateWorkerInput>> = {
 export const listWorkers: CapoTool<Record<string, never>> = {
   name: 'list_workers',
   description:
-    "List the team: trade, whether they are reachable by the 07:00 SMS briefing, and how loaded they are today/tomorrow. Use it to answer 'quem está livre?' and before assigning work. Read-only.",
+    "List the team: trade, whether they are reachable by the 07:00 WhatsApp briefing, and how loaded they are today/tomorrow. Use it to answer 'quem está livre?' and before assigning work. Read-only.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     const { data, error } = await ctx.db
@@ -109,9 +117,9 @@ export const listWorkers: CapoTool<Record<string, never>> = {
     return {
       workers: (data ?? []).map(w => ({
         ...w,
-        // The dispatch view requires an active worker WITH a phone; without
-        // one the manager has to relay the day's tasks by hand.
-        recebe_sms: Boolean(w.phone),
+        // The 07:00 briefing is addressed to workers.phone; without one the
+        // manager has to relay the day's tasks by hand.
+        recebe_whatsapp: Boolean(w.phone),
         tarefas: load.get(w.id) ?? { hoje: 0, amanha: 0, atrasadas: 0, abertas: 0 },
       })),
     };

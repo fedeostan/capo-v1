@@ -219,10 +219,19 @@ async function runMatrix(self, other) {
       error ? error.message : `${rows.length} rows, ${foreign.length} foreign`);
   }
 
-  // Deny-all table (not part of the 24): dispatch_log must be invisible.
+  // Deny-all tables (not part of the 24): the two dispatch ledgers must be
+  // invisible. Both are RLS-enabled with no policies and written only by a
+  // system actor — dispatch_log by the external n8n workflow, notification_log
+  // by the reminder cron. A tenant reading either would see every company's
+  // send history, since neither is scoped by a policy.
   {
     const { data, error } = await db.from('dispatch_log').select('id');
     check(`${L}: dispatch_log deny-all (bonus)`, !error && (data ?? []).length === 0,
+      error ? error.message : `${(data ?? []).length} rows`);
+  }
+  {
+    const { data, error } = await db.from('notification_log').select('id');
+    check(`${L}: notification_log deny-all (bonus)`, !error && (data ?? []).length === 0,
       error ? error.message : `${(data ?? []).length} rows`);
   }
 }

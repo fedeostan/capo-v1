@@ -272,8 +272,8 @@ const dict: Catalog = {
     noContact: 'Sem contacto',
     inactive: 'inativo',
     workerLoad: (today, tomorrow, open) => `Hoje ${today} · Amanhã ${tomorrow} · ${open} em aberto`,
-    noSmsWarning: 'Sem telemóvel — não recebe o SMS das 07:00.',
-    receivesSms: 'recebe o SMS das 07:00',
+    noWhatsAppWarning: 'Sem telemóvel — não recebe o WhatsApp das 07:00.',
+    receivesWhatsApp: 'recebe o WhatsApp das 07:00',
     teamHint: 'Para adicionar ou alterar alguém,',
     teamHintLink: 'fala com o Capo',
     subscription: 'Subscrição',
@@ -369,7 +369,7 @@ const dict: Catalog = {
       },
       {
         title: 'A equipa recebe o briefing de manhã',
-        text: 'Cada trabalhador recebe por SMS as tarefas do dia — sem apps, sem contas.',
+        text: 'Cada trabalhador recebe no WhatsApp as tarefas do dia — sem apps, sem contas.',
       },
     ],
     materialsTitle: 'Antecipação de materiais',
@@ -398,6 +398,35 @@ const dict: Catalog = {
     proposalNotPending: 'Essa proposta já tinha sido decidida.',
     proposalError: 'Não consegui registar essa decisão. Trata dela na app.',
     approvalFallback: 'Não consegui mostrar os botões. Aprova ou rejeita na app.',
+    workerAck: 'Recebido, obrigado. Qualquer dúvida fala com o teu encarregado. Para mudar de idioma responde PT, ES ou EN.',
+    workerLanguageChanged: 'Pronto — a partir de agora escrevo-te em português.',
+  },
+
+  reminders: {
+    templateLanguage: 'pt_PT',
+    taskSeparator: ' · ',
+    taskWithJob: (title, job) => `${title} (${job})`,
+    taskOverdue: (title, days) => `${title} — atrasada ${days}d`,
+    andMore: n => `+${n}`,
+    workerNothing: 'Nada agendado para hoje.',
+    managerSummary: ({ today, unassigned, overdue }) => {
+      const parts = [`${today} ${today === 1 ? 'tarefa' : 'tarefas'} para hoje`];
+      if (unassigned > 0) parts.push(`${unassigned} sem responsável`);
+      if (overdue > 0) parts.push(`${overdue} ${overdue === 1 ? 'atrasada' : 'atrasadas'}`);
+      return parts.join(' · ');
+    },
+    managerNothing: 'Nada agendado para hoje.',
+    managerEvent: ({ today, unassigned, overdue, notified }) => {
+      const parts = [`Bom dia. Hoje há ${today} ${today === 1 ? 'tarefa' : 'tarefas'} em curso`];
+      if (overdue > 0) parts.push(`${overdue} ${overdue === 1 ? 'atrasada' : 'atrasadas'}`);
+      if (unassigned > 0) parts.push(`${unassigned} sem responsável`);
+      const head = parts.join(' · ');
+      const tail =
+        notified === 0
+          ? 'Não enviei nada à equipa.'
+          : `Enviei o resumo a ${notified} ${notified === 1 ? 'pessoa' : 'pessoas'}.`;
+      return `${head}. ${tail}`;
+    },
   },
 };
 

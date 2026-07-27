@@ -64,6 +64,8 @@ export interface CardStrings {
     name(v: string): string;
     trade(v: string): string;
     phone(v: string): string;
+    /** The language of this worker's daily briefing (workers.language). */
+    language(v: string): string;
   };
 
   plan: {
