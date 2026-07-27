@@ -8,6 +8,7 @@ import { getBillingState } from '@/lib/billing';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { resolveTheme, THEMES, type Theme } from '@/lib/theme';
 import { setCompanyLanguage, setTheme, setUserLanguage } from './actions';
+import PullToRefresh from '@/app/pull-to-refresh';
 import { AccountForm, CompanyForm } from './profile-forms';
 
 export const dynamic = 'force-dynamic';
@@ -124,144 +125,148 @@ export default async function PerfilPage({
 
   return (
     <ScreenShell title={t.profile.title} subtitle={company?.name ?? undefined}>
-      {guardado && (
-        <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-center text-sm text-emerald-700 dark:text-emerald-400">
-          {t.settings.saved}
-        </p>
-      )}
-      {erro && (
-        <p className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-400">
-          {t.settings.failed}
-        </p>
-      )}
-
-      <Card title={t.profile.company}>
-        <CompanyForm name={company?.name ?? ''} locale={locale} />
-      </Card>
-
-      <Card title={t.profile.yourAccount}>
-        {/* Changing the login email is a Supabase auth flow with its own
-            confirmation round trip — out of scope here, so it is read-only. */}
-        {email && <p className="text-xs text-zinc-500">{email}</p>}
-        <AccountForm fullName={profile?.full_name ?? ''} phone={profile?.phone ?? ''} locale={locale} />
-      </Card>
-
-      {/* Above the language dials on purpose: appearance is personal and
-          reversible, while the company language card carries a warning. */}
-      <Card title={t.settings.appearance}>
-        <p className="text-xs text-zinc-500">{t.settings.appearanceHint}</p>
-        <ThemePills current={theme} t={t} />
-      </Card>
-
-      <Card title={t.settings.yourLanguage}>
-        <p className="text-xs text-zinc-500">{t.settings.yourLanguageHint}</p>
-        <LanguagePills current={ctx.locale} action={setUserLanguage} save={t.common.save} />
-      </Card>
-
-      <Card title={t.settings.companyLanguage}>
-        <p className="text-xs text-zinc-500">{t.settings.companyLanguageHint}</p>
-        {/* The warning is the whole reason this dial is unreachable from chat:
-            switching it does not retranslate anything already stored. */}
-        <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-          {t.settings.companyLanguageWarning}
-        </p>
-        <LanguagePills current={ctx.companyLocale} action={setCompanyLanguage} save={t.common.save} />
-      </Card>
-
-      <Card title={t.profile.team}>
-        {/* Read-only on purpose: worker CRUD stays on Capo's add_worker tool.
-            The chat writes. */}
-        {team.length === 0 ? (
-          <EmptyState text={t.profile.teamEmpty} cta={{ href: '/', label: t.profile.teamEmptyCta }} />
-        ) : (
-          <>
-            <ul className="space-y-3">
-              {team.map(worker => {
-                const load = teamLoad[worker.id];
-                return (
-                  <li key={worker.id} className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{worker.name}</p>
-                      <p className="text-xs text-zinc-500">
-                        {[worker.trade, worker.phone].filter(Boolean).join(' · ') || t.profile.noContact}
-                      </p>
-                      {/* Load turns the crew list from a phone book into an
-                          answer to "who is free?" — the question actually
-                          asked before assigning work. */}
-                      {load && load.open > 0 && (
-                        <p className="text-xs text-zinc-500">
-                          {t.profile.workerLoad(load.today, load.tomorrow, load.open)}
-                        </p>
-                      )}
-                      {/* An ACTIVE worker with no number is the silent failure
-                          worth shouting about: the 07:00 WhatsApp briefing is
-                          addressed to workers.phone, so without one it reaches
-                          them never, and nothing else in the product says so. */}
-                      {worker.active && !worker.phone ? (
-                        <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                          {t.profile.noWhatsAppWarning}
-                        </p>
-                      ) : (
-                        worker.active && <p className="mt-0.5 text-[11px] text-zinc-500">{t.profile.receivesWhatsApp}</p>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 flex-col items-end gap-1">
-                      {!worker.active && (
-                        <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[11px] text-zinc-500">
-                          {t.profile.inactive}
-                        </span>
-                      )}
-                      {load && load.overdue > 0 && (
-                        <span className="text-[11px] font-medium text-red-600">
-                          {t.dashboard.overdueCount(load.overdue)}
-                        </span>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-            <p className="text-xs text-zinc-500">
-              {t.profile.teamHint}{' '}
-              <Link href="/" className="underline">
-                {t.profile.teamHintLink}
-              </Link>
-              .
-            </p>
-          </>
+      <PullToRefresh locale={locale}>
+        {guardado && (
+          <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-center text-sm text-emerald-700 dark:text-emerald-400">
+            {t.settings.saved}
+          </p>
         )}
-      </Card>
+        {erro && (
+          <p className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-400">
+            {t.settings.failed}
+          </p>
+        )}
 
-      <Card title={t.profile.subscription}>
-        <p className="text-sm">
-          {!billing.enabled
-            ? t.billing.unavailable
-            : billing.status === 'trialing'
-              ? billing.daysLeft >= 0
-                ? t.billing.trialDaysLeft(billing.daysLeft)
-                : t.billing.trialEnded
-              : (t.billing.statusLabel[billing.status as keyof typeof t.billing.statusLabel] ?? billing.status)}
-        </p>
-        <Link href="/subscricao" className="inline-block text-sm text-orange-600 underline">
-          {t.profile.manageSubscription}
-        </Link>
-      </Card>
+        <Card title={t.profile.company}>
+          <CompanyForm name={company?.name ?? ''} locale={locale} />
+        </Card>
 
-      <Card title={t.profile.app}>
-        <Link href="/instalar" className="inline-block text-sm text-orange-600 underline">
-          {t.profile.install}
-        </Link>
-      </Card>
+        <Card title={t.profile.yourAccount}>
+          {/* Changing the login email is a Supabase auth flow with its own
+              confirmation round trip — out of scope here, so it is read-only. */}
+          {email && <p className="text-xs text-zinc-500">{email}</p>}
+          <AccountForm fullName={profile?.full_name ?? ''} phone={profile?.phone ?? ''} locale={locale} />
+        </Card>
 
-      {/* Plain form POST: sign-out works even before client JS hydrates. */}
-      <form method="post" action="/auth/signout">
-        <button
-          type="submit"
-          className="w-full rounded-xl border border-zinc-500/20 py-2.5 text-sm font-medium text-red-600 hover:bg-red-600/5"
-        >
-          {t.common.signOut}
-        </button>
-      </form>
+        {/* Above the language dials on purpose: appearance is personal and
+            reversible, while the company language card carries a warning. */}
+        <Card title={t.settings.appearance}>
+          <p className="text-xs text-zinc-500">{t.settings.appearanceHint}</p>
+          <ThemePills current={theme} t={t} />
+        </Card>
+
+        <Card title={t.settings.yourLanguage}>
+          <p className="text-xs text-zinc-500">{t.settings.yourLanguageHint}</p>
+          <LanguagePills current={ctx.locale} action={setUserLanguage} save={t.common.save} />
+        </Card>
+
+        <Card title={t.settings.companyLanguage}>
+          <p className="text-xs text-zinc-500">{t.settings.companyLanguageHint}</p>
+          {/* The warning is the whole reason this dial is unreachable from chat:
+              switching it does not retranslate anything already stored. */}
+          <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            {t.settings.companyLanguageWarning}
+          </p>
+          <LanguagePills current={ctx.companyLocale} action={setCompanyLanguage} save={t.common.save} />
+        </Card>
+
+        <Card title={t.profile.team}>
+          {/* Read-only on purpose: worker CRUD stays on Capo's add_worker tool.
+              The chat writes. */}
+          {team.length === 0 ? (
+            <EmptyState text={t.profile.teamEmpty} cta={{ href: '/', label: t.profile.teamEmptyCta }} />
+          ) : (
+            <>
+              <ul className="space-y-3">
+                {team.map(worker => {
+                  const load = teamLoad[worker.id];
+                  return (
+                    <li key={worker.id} className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{worker.name}</p>
+                        <p className="text-xs text-zinc-500">
+                          {[worker.trade, worker.phone].filter(Boolean).join(' · ') || t.profile.noContact}
+                        </p>
+                        {/* Load turns the crew list from a phone book into an
+                            answer to "who is free?" — the question actually
+                            asked before assigning work. */}
+                        {load && load.open > 0 && (
+                          <p className="text-xs text-zinc-500">
+                            {t.profile.workerLoad(load.today, load.tomorrow, load.open)}
+                          </p>
+                        )}
+                        {/* An ACTIVE worker with no number is the silent failure
+                            worth shouting about: the 07:00 WhatsApp briefing is
+                            addressed to workers.phone, so without one it reaches
+                            them never, and nothing else in the product says so. */}
+                        {worker.active && !worker.phone ? (
+                          <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                            {t.profile.noWhatsAppWarning}
+                          </p>
+                        ) : (
+                          worker.active && (
+                            <p className="mt-0.5 text-[11px] text-zinc-500">{t.profile.receivesWhatsApp}</p>
+                          )
+                        )}
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        {!worker.active && (
+                          <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[11px] text-zinc-500">
+                            {t.profile.inactive}
+                          </span>
+                        )}
+                        {load && load.overdue > 0 && (
+                          <span className="text-[11px] font-medium text-red-600">
+                            {t.dashboard.overdueCount(load.overdue)}
+                          </span>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="text-xs text-zinc-500">
+                {t.profile.teamHint}{' '}
+                <Link href="/" className="underline">
+                  {t.profile.teamHintLink}
+                </Link>
+                .
+              </p>
+            </>
+          )}
+        </Card>
+
+        <Card title={t.profile.subscription}>
+          <p className="text-sm">
+            {!billing.enabled
+              ? t.billing.unavailable
+              : billing.status === 'trialing'
+                ? billing.daysLeft >= 0
+                  ? t.billing.trialDaysLeft(billing.daysLeft)
+                  : t.billing.trialEnded
+                : (t.billing.statusLabel[billing.status as keyof typeof t.billing.statusLabel] ?? billing.status)}
+          </p>
+          <Link href="/subscricao" className="inline-block text-sm text-orange-600 underline">
+            {t.profile.manageSubscription}
+          </Link>
+        </Card>
+
+        <Card title={t.profile.app}>
+          <Link href="/instalar" className="inline-block text-sm text-orange-600 underline">
+            {t.profile.install}
+          </Link>
+        </Card>
+
+        {/* Plain form POST: sign-out works even before client JS hydrates. */}
+        <form method="post" action="/auth/signout">
+          <button
+            type="submit"
+            className="w-full rounded-xl border border-zinc-500/20 py-2.5 text-sm font-medium text-red-600 hover:bg-red-600/5"
+          >
+            {t.common.signOut}
+          </button>
+        </form>
+      </PullToRefresh>
     </ScreenShell>
   );
 }

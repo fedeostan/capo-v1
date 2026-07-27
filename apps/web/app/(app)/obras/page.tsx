@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { loadObras, loadOverdueByObra } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { ObrasList, ScreenShell } from '@capo/ui/dashboard-ui';
+import PullToRefresh from '@/app/pull-to-refresh';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +18,9 @@ export default async function ObrasPage() {
       title={t.screens.jobs.title}
       subtitle={t.screens.jobs.subtitle}
     >
-      <ObrasList obras={obras} empty={t.screens.jobs.empty} locale={locale} overdueByObra={overdueByObra} />
+      <PullToRefresh locale={locale}>
+        <ObrasList obras={obras} empty={t.screens.jobs.empty} locale={locale} overdueByObra={overdueByObra} />
+      </PullToRefresh>
     </ScreenShell>
   );
 }

@@ -8,6 +8,7 @@ import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 import Markdown from '@capo/ui/markdown';
 import MicButton from './mic-button';
+import PullToRefresh from './pull-to-refresh';
 
 // This is a client component, so it receives `locale` (a plain string) and
 // resolves the catalog itself — the catalog holds functions, which cannot be
@@ -322,97 +323,106 @@ export default function Chat({
 
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
-      <header className="border-b border-zinc-500/20 px-4 py-3">
+      <header className="shrink-0 border-b border-zinc-500/20 px-4 py-3">
         <h1 className="text-lg font-semibold">{t.chat.title}</h1>
         <p className="text-xs text-zinc-500">{t.chat.tagline}</p>
       </header>
 
-      <main className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-        {orphanedPending.length > 0 && (
-          <section className="rounded-xl border border-zinc-500/20 p-3">
-            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              {t.chat.pendingProposals}
-            </div>
-            {orphanedPending.map(p => (
-              <ProposalCard key={p.proposalId} proposalId={p.proposalId} renderedText={p.renderedText} t={t} />
-            ))}
-          </section>
-        )}
-        {messages.length === 0 && (
-          <p className="pt-10 text-center text-sm text-zinc-500">{t.chat.emptyThread}</p>
-        )}
-        {messages.map(message =>
-          message.role === 'system' ? (
-            <div key={message.id} className="text-center text-xs italic text-zinc-500">
-              {message.parts.map((part, i) => (part.type === 'text' ? <span key={i}>{part.text}</span> : null))}
-            </div>
-          ) : (
-            <div key={message.id} className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-              <div
-                className={
-                  message.role === 'user'
-                    ? 'max-w-[85%] rounded-2xl rounded-br-sm bg-emerald-700 px-3 py-2 text-sm text-white'
-                    : 'max-w-[85%] rounded-2xl rounded-bl-sm bg-zinc-500/10 px-3 py-2 text-sm'
-                }
+      {/* Pull-to-refresh is present for consistency with the other tabs, but
+          nearly inert here by construction: the thread is bottom-anchored, so
+          scrollTop is almost never 0, and chat already refreshes itself after
+          every turn. `disabled` while streaming, because refreshing the tree
+          under a live response would be actively harmful. */}
+      <PullToRefresh
+        locale={locale}
+        disabled={busy}
+        className="flex-1 space-y-3 overflow-y-auto overscroll-contain bg-background px-4 py-4"
+      >
+          {orphanedPending.length > 0 && (
+            <section className="rounded-xl border border-zinc-500/20 p-3">
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                {t.chat.pendingProposals}
+              </div>
+              {orphanedPending.map(p => (
+                <ProposalCard key={p.proposalId} proposalId={p.proposalId} renderedText={p.renderedText} t={t} />
+              ))}
+            </section>
+          )}
+          {messages.length === 0 && (
+            <p className="pt-10 text-center text-sm text-zinc-500">{t.chat.emptyThread}</p>
+          )}
+          {messages.map(message =>
+            message.role === 'system' ? (
+              <div key={message.id} className="text-center text-xs italic text-zinc-500">
+                {message.parts.map((part, i) => (part.type === 'text' ? <span key={i}>{part.text}</span> : null))}
+              </div>
+            ) : (
+              <div key={message.id} className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+                <div
+                  className={
+                    message.role === 'user'
+                      ? 'max-w-[85%] rounded-2xl rounded-br-sm bg-emerald-700 px-3 py-2 text-sm text-white'
+                      : 'max-w-[85%] rounded-2xl rounded-bl-sm bg-zinc-500/10 px-3 py-2 text-sm'
+                  }
+                >
+                  {message.parts.map((part, i) => (
+                    <Part
+                      key={`${message.id}-${i}`}
+                      part={part}
+                      proposalStatuses={proposalStatuses}
+                      t={t}
+                      markdown={message.role === 'assistant'}
+                    />
+                  ))}
+                </div>
+              </div>
+            ),
+          )}
+          {busy && (
+            <div className="flex items-center gap-3 text-xs text-zinc-500">
+              <span>{t.chat.typing}</span>
+              {/* Hover must DARKEN in light and lighten in dark — a single
+                  zinc-400 made the link fade out on a white background. */}
+              <button
+                type="button"
+                onClick={stop}
+                className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
               >
-                {message.parts.map((part, i) => (
-                  <Part
-                    key={`${message.id}-${i}`}
-                    part={part}
-                    proposalStatuses={proposalStatuses}
-                    t={t}
-                    markdown={message.role === 'assistant'}
-                  />
-                ))}
+                {t.chat.stop}
+              </button>
+            </div>
+          )}
+          {/* Before this, a 402 (subscription expired) or a 500 left the manager
+              staring at a message that never got an answer, with nothing to act
+              on. Silence is the worst failure mode a chat product has. */}
+          {error && (
+            <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-3 text-sm">
+              <p className="font-medium text-red-600 dark:text-red-400">{t.chat.errorTitle}</p>
+              <p className="mt-0.5 text-xs text-zinc-500">{errorHint(error, t)}</p>
+              <div className="mt-2 flex gap-2">
+                {/* Brand orange, not a grey slab: on a light error card the old
+                    bg-zinc-700 read as disabled next to the outlined Dismiss. */}
+                <button
+                  type="button"
+                  onClick={retry}
+                  className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
+                >
+                  {t.chat.retry}
+                </button>
+                <button
+                  type="button"
+                  onClick={clearError}
+                  className="rounded-lg border border-zinc-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10"
+                >
+                  {t.chat.dismiss}
+                </button>
               </div>
             </div>
-          ),
-        )}
-        {busy && (
-          <div className="flex items-center gap-3 text-xs text-zinc-500">
-            <span>{t.chat.typing}</span>
-            {/* Hover must DARKEN in light and lighten in dark — a single
-                zinc-400 made the link fade out on a white background. */}
-            <button
-              type="button"
-              onClick={stop}
-              className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
-            >
-              {t.chat.stop}
-            </button>
-          </div>
-        )}
-        {/* Before this, a 402 (subscription expired) or a 500 left the manager
-            staring at a message that never got an answer, with nothing to act
-            on. Silence is the worst failure mode a chat product has. */}
-        {error && (
-          <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-3 text-sm">
-            <p className="font-medium text-red-600 dark:text-red-400">{t.chat.errorTitle}</p>
-            <p className="mt-0.5 text-xs text-zinc-500">{errorHint(error, t)}</p>
-            <div className="mt-2 flex gap-2">
-              {/* Brand orange, not a grey slab: on a light error card the old
-                  bg-zinc-700 read as disabled next to the outlined Dismiss. */}
-              <button
-                type="button"
-                onClick={retry}
-                className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
-              >
-                {t.chat.retry}
-              </button>
-              <button
-                type="button"
-                onClick={clearError}
-                className="rounded-lg border border-zinc-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10"
-              >
-                {t.chat.dismiss}
-              </button>
-            </div>
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </main>
+          )}
+          <div ref={bottomRef} />
+      </PullToRefresh>
 
-      <form onSubmit={handleSubmit} className="flex items-end gap-2 border-t border-zinc-500/20 p-3">
+      <form onSubmit={handleSubmit} className="flex shrink-0 items-end gap-2 border-t border-zinc-500/20 p-3">
         <textarea
           ref={textareaRef}
           rows={1}

@@ -4,6 +4,7 @@ import { loadObraDetail } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { ScreenShell, TimelineList } from '@capo/ui/dashboard-ui';
 import TaskActions from '@/app/(app)/_tasks/task-actions';
+import PullToRefresh from '@/app/pull-to-refresh';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,15 +32,17 @@ export default async function ObraDetailPage({ params }: { params: Promise<{ id:
       title={detail.job.name}
       subtitle={[detail.job.address, detail.job.client_name].filter(Boolean).join(' · ') || undefined}
     >
-      <p className="text-xs text-zinc-500">
-        {total > 0 ? t.dashboard.tasksDone(done, total) : t.dashboard.noTasksRegistered}
-      </p>
-      <TimelineList
-        tasks={detail.tasks}
-        empty={t.screens.jobDetail.empty}
-        locale={locale}
-        renderExtra={task => <TaskActions taskId={task.id} status={task.status} locale={locale} />}
-      />
+      <PullToRefresh locale={locale}>
+        <p className="text-xs text-zinc-500">
+          {total > 0 ? t.dashboard.tasksDone(done, total) : t.dashboard.noTasksRegistered}
+        </p>
+        <TimelineList
+          tasks={detail.tasks}
+          empty={t.screens.jobDetail.empty}
+          locale={locale}
+          renderExtra={task => <TaskActions taskId={task.id} status={task.status} locale={locale} />}
+        />
+      </PullToRefresh>
     </ScreenShell>
   );
 }

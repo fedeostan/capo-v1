@@ -67,3 +67,18 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* This is an app shell, not a document. Without these two lines the whole UI
+   drags on a touch gesture — header and tab bar included — because the tab bar
+   is a static flex child of <body>, not a fixed element. Two separate leaks:
+   a route with no inner scroller overflows the h-dvh body and scrolls the
+   *document*, and even a route that scrolls internally rubber-bands at the
+   root. overflow:hidden removes the document scroll port; overscroll-behavior
+   kills the rubber-band (and, as a bonus, Chrome's native pull-to-refresh, so
+   ours is the only one). Every scroller inside must opt back in with
+   `overscroll-contain`. */
+html,
+body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
