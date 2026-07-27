@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./dashboard-ui": "./src/dashboard-ui.tsx",
+    "./task-detail": "./src/task-detail.tsx",
     "./markdown": "./src/markdown.tsx"
   },
   "scripts": {

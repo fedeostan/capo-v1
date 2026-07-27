@@ -169,14 +169,19 @@ export default function Chat({
   locale,
   proposalStatuses = {},
   orphanedPending = [],
+  initialInput = '',
 }: {
   initialMessages: UIMessage[];
   locale: Locale;
   proposalStatuses?: Record<string, string>;
   orphanedPending?: PendingProposal[];
+  /** Composer prefill from ?q= — e.g. "Ask Capo about this task" on /tarefas/[id]. */
+  initialInput?: string;
 }) {
   const t = getCatalog(locale);
-  const [input, setInput] = useState('');
+  // Prefill FILLS the composer, it never auto-sends — same rule as the mic
+  // below: the manager reads what is about to be sent in his name.
+  const [input, setInput] = useState(initialInput);
   const router = useRouter();
   const { messages, sendMessage, status, error, stop, clearError, regenerate } = useChat({
     messages: initialMessages,
