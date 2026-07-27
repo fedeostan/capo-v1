@@ -5,7 +5,13 @@ import { handleInbound } from '@capo/core/agent';
 import { MAX_AUDIO_BYTES, transcribeAudio } from '@capo/core/transcription';
 import { coerceLocale, type LocaleContext } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
-import { sendWhatsAppText, whatsappSink, type WhatsAppSinkConfig } from '@capo/core/channels/whatsapp';
+import {
+  parseProposalButtonId,
+  sendWhatsAppText,
+  whatsappSink,
+  type WhatsAppSendConfig,
+} from '@capo/core/channels/whatsapp';
+import { resolveProposal } from '@capo/core/capabilities/propose';
 import { downloadMedia } from '@capo/core/channels/whatsapp-media';
 import { getBillingState } from '../../../lib/billing';
 import { logEvent } from '../../../lib/log';
@@ -57,6 +63,14 @@ interface WhatsAppMessage {
   // file. Both are accepted — refusing a manager's own m4a of himself talking
   // would be user-hostile — but `voice` is logged so the split stays visible.
   audio?: { id: string; mime_type?: string; voice?: boolean };
+  // A tap on an approval card's Aprovar/Rechazar button. Note this is NOT
+  // `type: 'button'` with `button: { payload, text }` — that is the TEMPLATE
+  // quick-reply shape, and we send no templates. Other subtypes (`list_reply`,
+  // `nfm_reply`) are logged and ignored.
+  interactive?: {
+    type: string;
+    button_reply?: { id: string; title: string };
+  };
 }
 
 interface WhatsAppWebhookBody {
@@ -147,8 +161,113 @@ export async function POST(request: NextRequest) {
       company: coerceLocale(profile.company?.language),
     };
 
-    // Triage. Images, documents, stickers, reactions, delivery statuses and
-    // button replies are still acked and ignored — but now they leave a trace.
+    const t = getCatalog(locales.user);
+    const sendConfig: WhatsAppSendConfig = {
+      accessToken,
+      phoneNumberId,
+      to: testTierArSendTarget(message.from),
+    };
+
+    // ── Approval card button tap ────────────────────────────────────────────
+    // Must sit ABOVE the unsupported-type triage below, which would otherwise
+    // swallow it, and BELOW sender resolution, because companyId is the input
+    // to the ownership check.
+    //
+    // This path deliberately never reaches handleInbound: the decision is
+    // already deterministic (parse the button id → resolveProposal), exactly
+    // like the web card. An agent turn here would cost a model call and could
+    // re-propose or narrate the decision. The thread record still happens —
+    // finalize_proposal writes the role='event' message in the same
+    // transaction as the status flip, so the NEXT real turn sees the outcome
+    // as context.
+    if (message.type === 'interactive') {
+      const reply = message.interactive?.button_reply;
+      if (!reply) {
+        logEvent('whatsapp.unsupported_interactive', {
+          companyId,
+          messageId: message.id,
+          interactiveType: message.interactive?.type,
+        });
+        continue;
+      }
+
+      const button = parseProposalButtonId(reply.id);
+      if (!button) {
+        logEvent('whatsapp.unknown_button', { companyId, messageId: message.id });
+        continue;
+      }
+
+      // ── THE TENANT BOUNDARY ON THIS PATH ─────────────────────────────────
+      // resolveProposal below runs on the SERVICE-ROLE client, and
+      // finalize_proposal is SECURITY DEFINER scoped by
+      //   `where id = p_id and (auth.uid() is null or company_id = …)`
+      // (supabase/migrations/0007_auth_multitenancy.sql). With the service
+      // role auth.uid() IS null, so that predicate short-circuits to true.
+      // Nothing below this line enforces the tenant. Without this read any
+      // pilot manager could resolve any other company's proposal by guessing
+      // a uuid. Do not delete it as redundant.
+      //
+      // One query, not two: .eq('id').eq('company_id') collapses "no such
+      // proposal" and "not yours" into a single silent branch. Two branches
+      // would still differ in timing, which is an existence oracle.
+      // TOCTOU is benign — proposals.company_id is never updated anywhere.
+      const { data: owned } = await db
+        .from('proposals')
+        .select('id')
+        .eq('id', button.proposalId)
+        .eq('company_id', companyId)
+        .maybeSingle();
+      if (!owned) {
+        logEvent('whatsapp.proposal_not_owned', { companyId, messageId: message.id });
+        continue;
+      }
+
+      logEvent('whatsapp.button_reply', {
+        companyId,
+        messageId: message.id,
+        decision: button.decision,
+      });
+
+      after(async () => {
+        try {
+          const resolution = await resolveProposal(db, button.proposalId, button.decision, locales);
+          const confirmation =
+            resolution.outcome === 'approved'
+              ? t.whatsapp.proposalApproved
+              : resolution.outcome === 'rejected'
+                ? t.whatsapp.proposalRejected
+                : resolution.outcome === 'failed'
+                  ? t.whatsapp.proposalFailed(resolution.reason)
+                  : // 'not_pending' — a duplicate tap, or Meta redelivering the
+                    // webhook. The CAS in resolveProposal makes this a no-op.
+                    // resolution.status is deliberately not echoed: 'executing'
+                    // and 'expired' are internal vocabulary.
+                    t.whatsapp.proposalNotPending;
+          logEvent('whatsapp.proposal_resolved', {
+            companyId,
+            messageId: message.id,
+            decision: button.decision,
+            outcome: resolution.outcome,
+          });
+          await sendWhatsAppText(confirmation, sendConfig).catch(() => {});
+        } catch (err) {
+          // resolveProposal throws if the row vanished or the RPC failed.
+          // Silence after a button press reads as "Capo is broken" — the same
+          // failure mode the voice-note path already guards against.
+          logEvent('whatsapp.proposal_resolve_failed', {
+            companyId,
+            messageId: message.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          await sendWhatsAppText(t.whatsapp.proposalError, sendConfig).catch(() => {});
+        }
+      });
+      continue;
+    }
+
+    // Triage. Images, documents, stickers, reactions and delivery statuses are
+    // still acked and ignored — but now they leave a trace. (Approval-card
+    // button replies are handled above.)
     if (message.type !== 'text' && message.type !== 'audio') {
       logEvent('whatsapp.unsupported_message', { companyId, messageId: message.id, type: message.type });
       continue;
@@ -179,12 +298,6 @@ export async function POST(request: NextRequest) {
     // Ack Meta fast (retries + duplicate delivery kick in otherwise); the
     // transcription and agent loop run after the response, within maxDuration.
     after(async () => {
-      const sendConfig: WhatsAppSinkConfig = {
-        accessToken,
-        phoneNumberId,
-        to: testTierArSendTarget(message.from),
-      };
-
       let text: string;
       let transcribed = false;
 
@@ -192,7 +305,6 @@ export async function POST(request: NextRequest) {
         text = message.text!.body;
       } else {
         transcribed = true;
-        const t = getCatalog(locales.user);
         try {
           // The media URL from hop 1 is short-lived (~5 min) and single-use, so
           // the download must happen here and now — never stored, never retried.
@@ -229,7 +341,18 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        const { sink, delivery } = whatsappSink(sendConfig);
+        // Approval copy is INJECTED, not imported by the core: @capo/core
+        // depends on @capo/i18n/locale only, never on the copy catalog, so UI
+        // strings stay out of the agent bundle (AGENTS.md).
+        const { sink, delivery } = whatsappSink({
+          ...sendConfig,
+          approval: {
+            approve: t.whatsapp.approveButton,
+            reject: t.whatsapp.rejectButton,
+            prompt: t.whatsapp.approvalPrompt,
+            fallback: t.whatsapp.approvalFallback,
+          },
+        });
         await handleInbound({
           db,
           companyId,

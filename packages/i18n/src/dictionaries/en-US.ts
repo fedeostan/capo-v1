@@ -42,6 +42,7 @@ const dict: Catalog = {
     pendingProposals: 'Waiting on you',
     approve: 'Approve',
     reject: 'Reject',
+    deciding: 'Applying…',
     cardState: {
       approved: '✅ Approved — done',
       rejected: '❌ Rejected',
@@ -385,6 +386,15 @@ const dict: Catalog = {
   whatsapp: {
     voiceNoteFailed: "Couldn't play that voice note, boss. Can you resend it or type it out?",
     voiceNoteEmpty: "Got the voice note but couldn't make anything out. Can you say that again?",
+    approveButton: 'Approve',
+    rejectButton: 'Reject',
+    approvalPrompt: 'Approve this one, boss?',
+    proposalApproved: '✅ Done, boss.',
+    proposalRejected: '❌ Alright, leaving it.',
+    proposalFailed: reason => `⚠️ You approved it, but it failed to run: ${reason}`,
+    proposalNotPending: 'That one was already decided.',
+    proposalError: "I couldn't record that decision. Do it in the app.",
+    approvalFallback: "I couldn't show the buttons. Approve or reject it in the app.",
   },
 };
 
