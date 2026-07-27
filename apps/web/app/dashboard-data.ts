@@ -10,9 +10,12 @@ import type { AuthContext } from '@capo/db/session';
 import type { Tables } from '@capo/db/types';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { BoardTask, DashboardObra, MaterialsGroup } from '@capo/ui/dashboard-ui';
+// Type-only: keeps the 'use client' markdown renderer inside task-detail.tsx
+// out of this module's graph.
+import type { TaskDetailJob, TaskDetailWorker } from '@capo/ui/task-detail';
 import type { TarefasFilters } from '@/app/(app)/tarefas/filters';
 
-export type { BoardTask, DashboardObra, MaterialsGroup };
+export type { BoardTask, DashboardObra, MaterialsGroup, TaskDetailJob, TaskDetailWorker };
 
 export type GroupBy = 'date' | 'obra';
 
@@ -81,9 +84,17 @@ function toBoardTask(row: Tables<'task_board'>): BoardTask {
     id: row.id ?? '',
     title: row.title ?? '',
     status: row.status ?? 'pending',
+    // Already on the wire — loadBoardTasks selects '*' and this mapper simply
+    // used to drop these. Carrying them costs nothing and is what lets the
+    // detail screen render from the same single query.
+    description: row.description,
+    duration_days: row.duration_days,
+    materials: row.materials,
     job_id: row.job_id,
     job_name: row.job_name,
+    job_status: row.job_status,
     worker_name: row.worker_name,
+    assignee_worker_id: row.assignee_worker_id,
     start_date: row.start_date,
     due_date: row.due_date,
     overdue: row.overdue ?? false,
@@ -95,7 +106,60 @@ function toBoardTask(row: Tables<'task_board'>): BoardTask {
     risk_late_dependency: row.risk_late_dependency ?? false,
     risk_paused_job: row.risk_paused_job ?? false,
     late_dependency_titles: row.late_dependency_titles ?? [],
+    depends_on_titles: row.depends_on_titles ?? [],
   };
+}
+
+export interface TaskDetailData {
+  task: BoardTask;
+  job: TaskDetailJob | null;
+  worker: TaskDetailWorker | null;
+}
+
+// One task, read from task_board like every other screen — the detail must
+// never re-derive overdue/at-risk in TypeScript, or it would be able to
+// contradict the board row the manager just tapped.
+//
+// null means "no such task for this tenant". RLS on the security_invoker view
+// makes a foreign uuid indistinguishable from a missing one, which is the
+// behaviour we want: the page 404s either way and leaks nothing.
+export async function loadTaskDetail(
+  { db, companyId }: AuthContext,
+  taskId: string,
+): Promise<TaskDetailData | null> {
+  const { data: row } = await db
+    .from('task_board')
+    .select('*')
+    .eq('id', taskId)
+    .eq('company_id', companyId)
+    .maybeSingle();
+  if (!row) return null;
+  const task = toBoardTask(row);
+
+  // The view already denormalises job_name and worker_name. This second pass
+  // exists only for what it does NOT carry: the obra's address/client, and the
+  // worker's trade/phone/active. The phone matters most — it is why the screen
+  // can say a worker is unreachable instead of silently sending nothing.
+  const [jobRes, workerRes] = await Promise.all([
+    task.job_id
+      ? db
+          .from('jobs')
+          .select('id, name, address, client_name, status')
+          .eq('id', task.job_id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+      : null,
+    task.assignee_worker_id
+      ? db
+          .from('workers')
+          .select('id, name, trade, phone, active')
+          .eq('id', task.assignee_worker_id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+      : null,
+  ]);
+
+  return { task, job: jobRes?.data ?? null, worker: workerRes?.data ?? null };
 }
 
 // Options for the obra filter. Reads `jobs`, NOT dashboard_obras: that view is

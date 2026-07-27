@@ -4,9 +4,37 @@
    must be declared or their classes vanish from the built CSS. */
 @source "../../../packages/ui/src";
 
+/* Three appearance states, stamped onto <html> by the root layout from the
+   capo_theme cookie: `light` (the default), `dark`, and `system`. Only
+   `system` consults the OS — see lib/theme.ts for the other half of this.
+
+   Tailwind v4's built-in `dark:` is a MEDIA QUERY, so it would keep following
+   the OS while the variables below followed the cookie. Redefining it here is
+   what keeps the ~16 existing `dark:` utilities in step.
+
+   The block form is load-bearing. The selector form —
+   `@custom-variant dark (&:where(.dark, .dark *), @media (…))` — emits its
+   entries as SIBLINGS, so the media branch fires unconditionally and an
+   explicit `.light` root would still pick up dark utilities. Only the block
+   form can nest the selector INSIDE the media query. Every branch needs its
+   own @slot; a branch missing one silently drops the declarations. */
+@custom-variant dark {
+  &:where(.dark, .dark *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(.system, .system *) {
+      @slot;
+    }
+  }
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /* Inherited, so it reaches the parts of the page Tailwind cannot paint:
+     native form controls, scrollbars, the UA canvas. */
+  color-scheme: light;
 }
 
 @theme inline {
@@ -16,10 +44,21 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Both (0,2,0), so they beat the :root above; mutually exclusive by class, so
+   their order relative to each other does not matter. Note the deliberate
+   absence of a bare `:root:not(.light)` fallback — an unstamped root must
+   resolve to LIGHT, because light is the default rather than the fallback. */
+:root.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  color-scheme: dark;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root.system {
     --background: #0a0a0a;
     --foreground: #ededed;
+    color-scheme: dark;
   }
 }
 
@@ -27,4 +66,19 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* This is an app shell, not a document. Without these two lines the whole UI
+   drags on a touch gesture — header and tab bar included — because the tab bar
+   is a static flex child of <body>, not a fixed element. Two separate leaks:
+   a route with no inner scroller overflows the h-dvh body and scrolls the
+   *document*, and even a route that scrolls internally rubber-bands at the
+   root. overflow:hidden removes the document scroll port; overscroll-behavior
+   kills the rubber-band (and, as a bonus, Chrome's native pull-to-refresh, so
+   ours is the only one). Every scroller inside must opt back in with
+   `overscroll-contain`. */
+html,
+body {
+  overflow: hidden;
+  overscroll-behavior: none;
 }

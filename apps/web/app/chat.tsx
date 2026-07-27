@@ -3,11 +3,12 @@
 import { useChat } from '@ai-sdk/react';
 import { getToolName, isToolUIPart, type UIMessage } from 'ai';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 import Markdown from '@capo/ui/markdown';
 import MicButton from './mic-button';
+import PullToRefresh from './pull-to-refresh';
 
 // This is a client component, so it receives `locale` (a plain string) and
 // resolves the catalog itself — the catalog holds functions, which cannot be
@@ -51,9 +52,13 @@ function ProposalCard({
   initialState?: CardState;
 }) {
   const [state, setState] = useState<CardState>(initialState);
+  // Which button was pressed, so only that one turns into a spinner.
+  const [pressed, setPressed] = useState<'approve' | 'reject' | null>(null);
+  const [isRefreshing, startTransition] = useTransition();
   const router = useRouter();
 
   async function decide(decision: 'approve' | 'reject') {
+    setPressed(decision);
     setState('busy');
     try {
       const res = await fetch(`/api/proposals/${proposalId}`, {
@@ -62,15 +67,44 @@ function ProposalCard({
         body: JSON.stringify({ decision }),
       });
       const data = await res.json();
-      setState(data.outcome ?? 'error');
+      // res.ok explicitly: a 401 (session gone) or 402 (billing) answers with
+      // a body that has no `outcome`, and landing on 'error' should be by
+      // intent rather than by the ?? falling through.
+      setState(res.ok ? (data.outcome ?? 'error') : 'error');
       // An approved proposal writes real tasks. Without this the manager taps
       // Approve, switches to Tasks, and sees the pre-approval board from the
       // router cache — which reads as "it didn't work".
-      if (data.outcome === 'approved') router.refresh();
+      //
+      // Wrapped in a transition because router.refresh() is fire-and-forget:
+      // on a 15-task plan the RSC refetch keeps running after this fetch
+      // resolves, and isRefreshing is the only way to make that window
+      // visible instead of silent.
+      if (res.ok && data.outcome === 'approved') startTransition(() => router.refresh());
     } catch {
       setState('error');
+    } finally {
+      setPressed(null);
     }
   }
+
+  // Approving a plan writes a row per task, so this is seconds, not
+  // milliseconds. Disabled-and-faded alone reads as a frozen app.
+  const spinner = (
+    <span
+      className="inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent"
+      aria-hidden
+    />
+  );
+
+  const buttonLabel = (decision: 'approve' | 'reject', label: string) =>
+    state === 'busy' && pressed === decision ? (
+      <span className="flex items-center gap-1.5">
+        {spinner}
+        {t.chat.deciding}
+      </span>
+    ) : (
+      label
+    );
 
   return (
     <div className="my-2 rounded-xl border border-amber-500/60 bg-amber-500/10 p-3 text-sm">
@@ -79,24 +113,33 @@ function ProposalCard({
       </div>
       <p className="whitespace-pre-wrap">{renderedText}</p>
       {state === 'pending' || state === 'busy' ? (
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex gap-2" aria-busy={state === 'busy'}>
           <button
             disabled={state === 'busy'}
             onClick={() => decide('approve')}
             className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
           >
-            {t.chat.approve}
+            {buttonLabel('approve', t.chat.approve)}
           </button>
           <button
             disabled={state === 'busy'}
             onClick={() => decide('reject')}
-            className="rounded-lg border border-zinc-400 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10 disabled:opacity-50"
+            className="rounded-lg border border-zinc-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10 disabled:opacity-50"
           >
-            {t.chat.reject}
+            {buttonLabel('reject', t.chat.reject)}
           </button>
         </div>
       ) : (
-        <div className="mt-2 text-xs font-medium">{t.chat.cardState[state]}</div>
+        <div className="mt-2 flex items-center gap-1.5 text-xs font-medium">
+          {t.chat.cardState[state]}
+          {/* The board is still refetching — the decision landed, the screens
+              behind it have not caught up yet. */}
+          {isRefreshing ? (
+            <span role="status" aria-label={t.chat.deciding}>
+              {spinner}
+            </span>
+          ) : null}
+        </div>
       )}
     </div>
   );
@@ -169,14 +212,19 @@ export default function Chat({
   locale,
   proposalStatuses = {},
   orphanedPending = [],
+  initialInput = '',
 }: {
   initialMessages: UIMessage[];
   locale: Locale;
   proposalStatuses?: Record<string, string>;
   orphanedPending?: PendingProposal[];
+  /** Composer prefill from ?q= — e.g. "Ask Capo about this task" on /tarefas/[id]. */
+  initialInput?: string;
 }) {
   const t = getCatalog(locale);
-  const [input, setInput] = useState('');
+  // Prefill FILLS the composer, it never auto-sends — same rule as the mic
+  // below: the manager reads what is about to be sent in his name.
+  const [input, setInput] = useState(initialInput);
   const router = useRouter();
   const { messages, sendMessage, status, error, stop, clearError, regenerate } = useChat({
     messages: initialMessages,
@@ -275,89 +323,106 @@ export default function Chat({
 
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
-      <header className="border-b border-zinc-500/20 px-4 py-3">
+      <header className="shrink-0 border-b border-zinc-500/20 px-4 py-3">
         <h1 className="text-lg font-semibold">{t.chat.title}</h1>
         <p className="text-xs text-zinc-500">{t.chat.tagline}</p>
       </header>
 
-      <main className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-        {orphanedPending.length > 0 && (
-          <section className="rounded-xl border border-zinc-500/20 p-3">
-            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              {t.chat.pendingProposals}
-            </div>
-            {orphanedPending.map(p => (
-              <ProposalCard key={p.proposalId} proposalId={p.proposalId} renderedText={p.renderedText} t={t} />
-            ))}
-          </section>
-        )}
-        {messages.length === 0 && (
-          <p className="pt-10 text-center text-sm text-zinc-500">{t.chat.emptyThread}</p>
-        )}
-        {messages.map(message =>
-          message.role === 'system' ? (
-            <div key={message.id} className="text-center text-xs italic text-zinc-500">
-              {message.parts.map((part, i) => (part.type === 'text' ? <span key={i}>{part.text}</span> : null))}
-            </div>
-          ) : (
-            <div key={message.id} className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-              <div
-                className={
-                  message.role === 'user'
-                    ? 'max-w-[85%] rounded-2xl rounded-br-sm bg-emerald-700 px-3 py-2 text-sm text-white'
-                    : 'max-w-[85%] rounded-2xl rounded-bl-sm bg-zinc-500/10 px-3 py-2 text-sm'
-                }
+      {/* Pull-to-refresh is present for consistency with the other tabs, but
+          nearly inert here by construction: the thread is bottom-anchored, so
+          scrollTop is almost never 0, and chat already refreshes itself after
+          every turn. `disabled` while streaming, because refreshing the tree
+          under a live response would be actively harmful. */}
+      <PullToRefresh
+        locale={locale}
+        disabled={busy}
+        className="flex-1 space-y-3 overflow-y-auto overscroll-contain bg-background px-4 py-4"
+      >
+          {orphanedPending.length > 0 && (
+            <section className="rounded-xl border border-zinc-500/20 p-3">
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                {t.chat.pendingProposals}
+              </div>
+              {orphanedPending.map(p => (
+                <ProposalCard key={p.proposalId} proposalId={p.proposalId} renderedText={p.renderedText} t={t} />
+              ))}
+            </section>
+          )}
+          {messages.length === 0 && (
+            <p className="pt-10 text-center text-sm text-zinc-500">{t.chat.emptyThread}</p>
+          )}
+          {messages.map(message =>
+            message.role === 'system' ? (
+              <div key={message.id} className="text-center text-xs italic text-zinc-500">
+                {message.parts.map((part, i) => (part.type === 'text' ? <span key={i}>{part.text}</span> : null))}
+              </div>
+            ) : (
+              <div key={message.id} className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+                <div
+                  className={
+                    message.role === 'user'
+                      ? 'max-w-[85%] rounded-2xl rounded-br-sm bg-emerald-700 px-3 py-2 text-sm text-white'
+                      : 'max-w-[85%] rounded-2xl rounded-bl-sm bg-zinc-500/10 px-3 py-2 text-sm'
+                  }
+                >
+                  {message.parts.map((part, i) => (
+                    <Part
+                      key={`${message.id}-${i}`}
+                      part={part}
+                      proposalStatuses={proposalStatuses}
+                      t={t}
+                      markdown={message.role === 'assistant'}
+                    />
+                  ))}
+                </div>
+              </div>
+            ),
+          )}
+          {busy && (
+            <div className="flex items-center gap-3 text-xs text-zinc-500">
+              <span>{t.chat.typing}</span>
+              {/* Hover must DARKEN in light and lighten in dark — a single
+                  zinc-400 made the link fade out on a white background. */}
+              <button
+                type="button"
+                onClick={stop}
+                className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
               >
-                {message.parts.map((part, i) => (
-                  <Part
-                    key={`${message.id}-${i}`}
-                    part={part}
-                    proposalStatuses={proposalStatuses}
-                    t={t}
-                    markdown={message.role === 'assistant'}
-                  />
-                ))}
+                {t.chat.stop}
+              </button>
+            </div>
+          )}
+          {/* Before this, a 402 (subscription expired) or a 500 left the manager
+              staring at a message that never got an answer, with nothing to act
+              on. Silence is the worst failure mode a chat product has. */}
+          {error && (
+            <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-3 text-sm">
+              <p className="font-medium text-red-600 dark:text-red-400">{t.chat.errorTitle}</p>
+              <p className="mt-0.5 text-xs text-zinc-500">{errorHint(error, t)}</p>
+              <div className="mt-2 flex gap-2">
+                {/* Brand orange, not a grey slab: on a light error card the old
+                    bg-zinc-700 read as disabled next to the outlined Dismiss. */}
+                <button
+                  type="button"
+                  onClick={retry}
+                  className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
+                >
+                  {t.chat.retry}
+                </button>
+                <button
+                  type="button"
+                  onClick={clearError}
+                  className="rounded-lg border border-zinc-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10"
+                >
+                  {t.chat.dismiss}
+                </button>
               </div>
             </div>
-          ),
-        )}
-        {busy && (
-          <div className="flex items-center gap-3 text-xs text-zinc-500">
-            <span>{t.chat.typing}</span>
-            <button type="button" onClick={stop} className="underline hover:text-zinc-400">
-              {t.chat.stop}
-            </button>
-          </div>
-        )}
-        {/* Before this, a 402 (subscription expired) or a 500 left the manager
-            staring at a message that never got an answer, with nothing to act
-            on. Silence is the worst failure mode a chat product has. */}
-        {error && (
-          <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-3 text-sm">
-            <p className="font-medium text-red-600 dark:text-red-400">{t.chat.errorTitle}</p>
-            <p className="mt-0.5 text-xs text-zinc-500">{errorHint(error, t)}</p>
-            <div className="mt-2 flex gap-2">
-              <button
-                type="button"
-                onClick={retry}
-                className="rounded-lg bg-zinc-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-600"
-              >
-                {t.chat.retry}
-              </button>
-              <button
-                type="button"
-                onClick={clearError}
-                className="rounded-lg border border-zinc-400 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10"
-              >
-                {t.chat.dismiss}
-              </button>
-            </div>
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </main>
+          )}
+          <div ref={bottomRef} />
+      </PullToRefresh>
 
-      <form onSubmit={handleSubmit} className="flex items-end gap-2 border-t border-zinc-500/20 p-3">
+      <form onSubmit={handleSubmit} className="flex shrink-0 items-end gap-2 border-t border-zinc-500/20 p-3">
         <textarea
           ref={textareaRef}
           rows={1}

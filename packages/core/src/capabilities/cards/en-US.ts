@@ -10,6 +10,8 @@ export const cards: CardStrings = {
   },
   jobStatus: { active: 'active', paused: 'paused', done: 'done' },
 
+  languageName: { 'pt-PT': 'Portuguese', 'es-ES': 'Spanish', 'en-US': 'English' },
+
   // MM/DD/YYYY — the one locale where the date order differs.
   formatDate: iso => {
     const [y, m, d] = iso.split('-');
@@ -23,6 +25,10 @@ export const cards: CardStrings = {
     emptyChange: 'Empty change',
     emptyPlan: 'Empty plan',
     noTemplate: action => `No template for action "${action}"`,
+    companyNotFound: 'Company not found',
+    sameLanguage: 'The data is already in that language',
+    languageMoved: 'The company data language has changed in the meantime',
+    nothingToTranslate: 'There is nothing to translate',
   },
 
   createTask: p => {
@@ -72,6 +78,25 @@ export const cards: CardStrings = {
     name: v => `name → ${v}`,
     trade: v => `trade → ${v}`,
     phone: v => `phone → ${v}`,
+    language: v => `message language → ${v}`,
+  },
+
+  translateCompany: p => {
+    const parts: string[] = [];
+    if (p.tasks) parts.push(`${p.tasks} task${p.tasks === 1 ? '' : 's'}`);
+    if (p.jobs) parts.push(`${p.jobs} job${p.jobs === 1 ? '' : 's'}`);
+    if (p.workers) parts.push(`${p.workers} trade${p.workers === 1 ? '' : 's'}`);
+    if (p.memories) parts.push(`${p.memories} note${p.memories === 1 ? '' : 's'}`);
+    return [
+      `Translate all company data from ${p.fromLanguage} to ${p.toLanguage}:`,
+      `${parts.join(' · ')} will be rewritten.`,
+      // Not decoration: the 07:00 WhatsApp briefing to the crew reads task
+      // titles and job names straight out of these rows. It is the one
+      // consequence the manager cannot foresee from the dashboard he is
+      // looking at.
+      `The crew's morning WhatsApp briefing will switch to ${p.toLanguage} too.`,
+      `Reversible for ${p.undoDays} days.`,
+    ].join(' ');
   },
 
   plan: {

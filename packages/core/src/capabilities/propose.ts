@@ -7,13 +7,20 @@ import { taskTools } from './tasks';
 import { jobTools } from './jobs';
 import { workerTools } from './workers';
 import { planApplyTools } from './plan-apply';
+import { translationApplyTools } from './translate-apply';
 import type { CapoTool, ToolContext } from './types';
 
 // Every guarded write is proposable. propose imports the domain tool arrays
 // directly (not the roster in index.ts) to avoid an import cycle. plan-apply
-// is imported directly too (not plan.ts, which itself imports createProposal
-// from this file) for the same reason.
-const proposable: CapoTool[] = [...taskTools, ...jobTools, ...workerTools, ...planApplyTools].filter(t => t.guarded);
+// and translate-apply are imported directly too (not plan.ts / translate.ts,
+// which themselves import createProposal from this file) for the same reason.
+const proposable: CapoTool[] = [
+  ...taskTools,
+  ...jobTools,
+  ...workerTools,
+  ...planApplyTools,
+  ...translationApplyTools,
+].filter(t => t.guarded);
 
 const actionNames = proposable.map(t => t.name) as [string, ...string[]];
 
@@ -103,6 +110,21 @@ export type ProposalResolution =
 // tool receives a ToolContext: no proposal-executable tool reads the company
 // dial today, but handing one a fabricated value is how that stops being true
 // silently. The caller has both for free from AuthContext.
+//
+// ⚠ SERVICE-ROLE CALLERS MUST PRE-CHECK OWNERSHIP.
+// This function does NOT verify that the proposal belongs to the caller's
+// company. On the web path it does not have to: `db` is the RLS-scoped user
+// client. On the WhatsApp path it is the service client, and finalize_proposal
+// is SECURITY DEFINER scoped by `auth.uid() is null or company_id = …` — with
+// the service role auth.uid() IS null, so that predicate short-circuits to
+// true and enforces nothing. apps/web/app/api/whatsapp/route.ts therefore
+// reads `proposals` filtered by company_id before calling this.
+//
+// The check is not folded in here because the not_pending lookup below is
+// deliberately unscoped (RLS covers it on the web path): scoping only the CAS
+// would turn every foreign proposal into `{ outcome: 'not_pending', status }`
+// — an existence-and-status oracle. Move it inside once there is a second
+// service-role caller and both queries can be scoped together.
 export async function resolveProposal(
   db: Db,
   proposalId: string,

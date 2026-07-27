@@ -21,6 +21,8 @@ const dict: Catalog = {
     notAuthenticated: 'No autenticado',
   },
 
+  pullToRefresh: { refreshing: 'Actualizando…' },
+
   chat: {
     title: 'Capo 👷',
     tagline: 'Tu capataz virtual',
@@ -42,6 +44,7 @@ const dict: Catalog = {
     pendingProposals: 'Propuestas por decidir',
     approve: 'Aprobar',
     reject: 'Rechazar',
+    deciding: 'Aplicando…',
     cardState: {
       approved: '✅ Aprobada — ejecutada',
       rejected: '❌ Rechazada',
@@ -64,6 +67,7 @@ const dict: Catalog = {
       remember: 'Memorizado',
       search_knowledge: 'Base de conocimiento consultada',
       set_language: 'Idioma cambiado',
+      translate_company_data: 'Traducción propuesta',
       propose: 'Propuesta creada',
       generate_plan: 'Plan generado',
     },
@@ -87,6 +91,7 @@ const dict: Catalog = {
     },
     overdueBy: days => (days === 1 ? 'Plazo vencido hace 1 día' : `Plazo vencido hace ${days} días`),
     noAssignee: 'Sin responsable',
+    assignedTo: name => `Asignada a ${name}`,
     noJob: 'Sin obra',
     noDate: 'Sin fecha',
     talkToCapo: 'Hablar con el Capo',
@@ -138,6 +143,42 @@ const dict: Catalog = {
       empty: 'Todavía no hay tareas en esta obra — pídele al Capo que haga el plan.',
     },
     taskActions: { complete: 'Terminar', reopen: 'Reabrir', failed: 'Ha fallado, inténtalo otra vez.' },
+    taskDetail: {
+      fallbackTitle: 'Tarea',
+      backToTasks: '← Tareas',
+      assignee: 'Responsable',
+      assigneeNoPhone: 'sin móvil registrado',
+      assigneeInactive: 'inactivo',
+      dates: 'Fechas',
+      startDate: 'Inicio',
+      dueDate: 'Plazo',
+      durationDays: days => `${days} ${days === 1 ? 'día laborable' : 'días laborables'}`,
+      description: 'Descripción',
+      noDescription: 'Sin descripción. Pídele al Capo que añada lo que el trabajador necesita saber.',
+      materials: 'Materiales',
+      job: 'Obra',
+      help: 'Ayuda',
+      askCapo: 'Preguntar al Capo sobre esta tarea',
+      askCapoPrompt: title => `Háblame de la tarea "${title}".`,
+      knowledge: 'Qué dicen las normas',
+      knowledgeHint: 'Leyes, reglamentos y fichas técnicas relacionadas con esta tarea.',
+    },
+    taskHelp: {
+      title: 'Ayuda',
+      intro:
+        'Extractos de la base de conocimiento compartida, encontrados a partir del título y la descripción de esta tarea. Confírmalo siempre en la fuente antes de decidir.',
+      empty:
+        'No se ha encontrado nada sobre esta tarea. No significa que no exista — significa que no está en la base de conocimiento.',
+      failed: 'No se ha podido consultar la base de conocimiento ahora.',
+      backToTask: '← Volver a la tarea',
+      category: {
+        lei: 'Ley',
+        regulamento: 'Reglamento',
+        tecnica: 'Técnica',
+        material: 'Material',
+        fabricante: 'Fabricante',
+      },
+    },
     materials: {
       title: 'Materiales',
       subtitle: 'Lo que tiene que estar en obra',
@@ -230,8 +271,8 @@ const dict: Catalog = {
     noContact: 'Sin contacto',
     inactive: 'inactivo',
     workerLoad: (today, tomorrow, open) => `Hoy ${today} · Mañana ${tomorrow} · ${open} abiertas`,
-    noSmsWarning: 'Sin móvil — no recibe el SMS de las 07:00.',
-    receivesSms: 'recibe el SMS de las 07:00',
+    noWhatsAppWarning: 'Sin móvil — no recibe el WhatsApp de las 07:00.',
+    receivesWhatsApp: 'recibe el WhatsApp de las 07:00',
     teamHint: 'Para añadir o cambiar a alguien,',
     teamHintLink: 'habla con el Capo',
     subscription: 'Suscripción',
@@ -251,12 +292,47 @@ const dict: Catalog = {
   },
 
   settings: {
+    language: 'Idioma',
+    languageHint:
+      'El idioma en el que el Capo habla contigo, en el que ves la app, y en el que se escriben las tareas, obras y notas de toda la empresa.',
+    translateExisting: p => {
+      const parts: string[] = [];
+      if (p.tasks) parts.push(`${p.tasks} tarea${p.tasks === 1 ? '' : 's'}`);
+      if (p.jobs) parts.push(`${p.jobs} obra${p.jobs === 1 ? '' : 's'}`);
+      if (p.workers) parts.push(`${p.workers} oficio${p.workers === 1 ? '' : 's'}`);
+      if (p.memories) parts.push(`${p.memories} nota${p.memories === 1 ? '' : 's'}`);
+      const last = parts.pop();
+      if (!last) return 'Traducir también lo que ya existe';
+      const list = parts.length > 0 ? `${parts.join(', ')} y ${last}` : last;
+      return `Traducir también lo que ya existe (${list})`;
+    },
+    translateNothing: 'Todavía no hay nada guardado que traducir.',
+    translateWarning:
+      'Los mensajes del equipo en WhatsApp pasarán a enviarse en el nuevo idioma, y los materiales se agruparán por los nombres traducidos. Puedes revertirlo durante 30 días.',
+
+    advanced: 'Ajustes avanzados',
+    advancedHint:
+      'Usa idiomas distintos para ti y para los datos de la empresa — útil si hablas un idioma diferente al del resto del equipo.',
     yourLanguage: 'Tu idioma',
     yourLanguageHint: 'El idioma en el que el Capo habla contigo y en el que ves la app. Solo te afecta a ti.',
     companyLanguage: 'Idioma de los datos de la empresa',
     companyLanguageHint:
       'El idioma en el que el Capo escribe tareas, obras y notas — lo que todo el equipo ve en el panel.',
-    companyLanguageWarning: 'Ojo: las tareas y obras ya creadas no se traducen.',
+    companyLanguageWarning: 'Ojo: aquí las tareas y obras ya creadas no se traducen.',
+    appearance: 'Aspecto',
+    appearanceHint: 'Claro, oscuro, o lo que use el móvil. Se guarda solo en este dispositivo.',
+    themeOption: { light: 'Claro', dark: 'Oscuro', system: 'Sistema' },
+
+    translationRunning: p => `Traduciendo… ${p.done} de ${p.total}`,
+    translationDone: n => `${n} campo${n === 1 ? '' : 's'} traducido${n === 1 ? '' : 's'}.`,
+    translationFailed: 'La traducción se ha parado a medias. No se ha perdido nada — puedes reanudarla.',
+    translationResume: 'Reanudar traducción',
+    revert: 'Revertir traducción',
+    revertHint: days =>
+      `Restaura el texto original exactamente como estaba, palabra por palabra. Disponible durante ${days} días.`,
+    reverted: 'Traducción revertida.',
+    revertFailed: 'No se ha podido revertir. Inténtalo de nuevo.',
+
     saved: 'Guardado.',
     failed: 'No se ha podido guardar. Inténtalo de nuevo.',
   },
@@ -328,7 +404,7 @@ const dict: Catalog = {
       },
       {
         title: 'El equipo recibe el parte por la mañana',
-        text: 'Cada trabajador recibe por SMS las tareas del día — sin apps, sin cuentas.',
+        text: 'Cada trabajador recibe por WhatsApp las tareas del día — sin apps, sin cuentas.',
       },
     ],
     materialsTitle: 'Previsión de materiales',
@@ -348,6 +424,44 @@ const dict: Catalog = {
   whatsapp: {
     voiceNoteFailed: 'No he podido escuchar ese audio, jefe. ¿Lo repites o me lo escribes?',
     voiceNoteEmpty: 'Me ha llegado el audio pero no se entiende nada. ¿Lo repites?',
+    approveButton: 'Aprobar',
+    rejectButton: 'Rechazar',
+    approvalPrompt: '¿Apruebas esta propuesta, jefe?',
+    proposalApproved: '✅ Hecho, jefe.',
+    proposalRejected: '❌ Vale, no hago nada.',
+    proposalFailed: reason => `⚠️ Lo aprobaste, pero no pude ejecutarlo: ${reason}`,
+    proposalNotPending: 'Esa propuesta ya estaba decidida.',
+    proposalError: 'No he podido registrar esa decisión. Hazlo desde la app.',
+    approvalFallback: 'No he podido mostrar los botones. Apruébalo o recházalo en la app.',
+    workerAck: 'Recibido, gracias. Si tienes dudas habla con tu encargado. Para cambiar de idioma responde PT, ES o EN.',
+    workerLanguageChanged: 'Hecho — a partir de ahora te escribo en español.',
+  },
+
+  reminders: {
+    templateLanguage: 'es_ES',
+    taskSeparator: ' · ',
+    taskWithJob: (title, job) => `${title} (${job})`,
+    taskOverdue: (title, days) => `${title} — retrasada ${days}d`,
+    andMore: n => `+${n}`,
+    workerNothing: 'Nada previsto para hoy.',
+    managerSummary: ({ today, unassigned, overdue }) => {
+      const parts = [`${today} ${today === 1 ? 'tarea' : 'tareas'} para hoy`];
+      if (unassigned > 0) parts.push(`${unassigned} sin responsable`);
+      if (overdue > 0) parts.push(`${overdue} ${overdue === 1 ? 'retrasada' : 'retrasadas'}`);
+      return parts.join(' · ');
+    },
+    managerNothing: 'Nada previsto para hoy.',
+    managerEvent: ({ today, unassigned, overdue, notified }) => {
+      const parts = [`Buenos días. Hoy hay ${today} ${today === 1 ? 'tarea' : 'tareas'} en curso`];
+      if (overdue > 0) parts.push(`${overdue} ${overdue === 1 ? 'retrasada' : 'retrasadas'}`);
+      if (unassigned > 0) parts.push(`${unassigned} sin responsable`);
+      const head = parts.join(' · ');
+      const tail =
+        notified === 0
+          ? 'No he enviado nada al equipo.'
+          : `He enviado el resumen a ${notified} ${notified === 1 ? 'persona' : 'personas'}.`;
+      return `${head}. ${tail}`;
+    },
   },
 };
 

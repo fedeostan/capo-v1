@@ -24,11 +24,29 @@ const STATUS_STYLES: Record<string, string> = {
   in_progress: 'bg-orange-600/10 text-orange-600',
   blocked: 'bg-red-600/10 text-red-600',
   done: 'bg-emerald-700/10 text-emerald-700',
-  cancelled: 'bg-zinc-500/10 text-zinc-400 line-through',
+  // zinc-500 rather than 400: 400 is 2.3:1 on white and this file now renders
+  // on a light background by default in both apps.
+  cancelled: 'bg-zinc-500/10 text-zinc-500 line-through',
 };
 
-function StatusBadge({ status, locale }: { status: string | null; locale: Locale }) {
+// Exported so the task detail screen renders the same badge as the lists —
+// two renderings of "what state is this task in" would eventually disagree.
+export function StatusBadge({
+  status,
+  locale,
+  showPending = false,
+}: {
+  status: string | null;
+  locale: Locale;
+  /** Opt back in to the 'pending' badge. See below for why it is off by default. */
+  showPending?: boolean;
+}) {
   if (!status) return null;
+  // 'pending' is the status of almost every open task, so a badge saying it on
+  // every row is noise occupying the one slot where real state belongs (which
+  // is what the confirmation/proof signals will use). The detail screen opts
+  // back in: there is room there, and the complete picture is the point.
+  if (status === 'pending' && !showPending) return null;
   const labels = getCatalog(locale).dashboard.taskStatus;
   return (
     <span
@@ -49,15 +67,21 @@ export function ScreenShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col">
+    // No <main> here any more: the scroller moved to apps/web's PullToRefresh,
+    // because scrolling became a BEHAVIOUR (non-passive touch listeners,
+    // useTransition) and this package is presentational and 'use client'-free
+    // by contract. Callers pass their content wrapped in it. One that forgets
+    // still type-checks — overflow-hidden is what turns that mistake into
+    // visibly clipped content rather than a tab bar sliding off screen.
+    <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col overflow-hidden">
       {/* Sign-out used to live here, in a file whose own contract forbids
           forms. It now lives on /perfil, the tab that owns everything about
           the company and the account. */}
-      <header className="border-b border-zinc-500/20 px-4 py-3">
+      <header className="shrink-0 border-b border-zinc-500/20 px-4 py-3">
         <h1 className="text-lg font-semibold">{title}</h1>
         {subtitle && <p className="text-xs text-zinc-500">{subtitle}</p>}
       </header>
-      <main className="flex-1 space-y-5 overflow-y-auto px-4 py-4">{children}</main>
+      {children}
     </div>
   );
 }
@@ -142,9 +166,14 @@ export interface BoardTask {
   id: string;
   title: string;
   status: string;
+  description: string | null;
+  duration_days: number | null;
+  materials: string[] | null;
   job_id: string | null;
   job_name: string | null;
+  job_status: string | null;
   worker_name: string | null;
+  assignee_worker_id: string | null;
   start_date: string | null;
   due_date: string | null;
   overdue: boolean;
@@ -156,6 +185,15 @@ export interface BoardTask {
   risk_late_dependency: boolean;
   risk_paused_job: boolean;
   late_dependency_titles: string[];
+  depends_on_titles: string[];
+  // ── Slots for the worker-confirmation loop. Optional ON PURPOSE: the columns
+  // arrive in a later migration, and a deploy landing before its migration must
+  // degrade rather than error (the AGENTS.md view rule, applied one layer up at
+  // the component boundary). Nothing renders them yet.
+  confirmation_state?: string | null;
+  confirmed_at?: string | null;
+  last_reminder_at?: string | null;
+  proof_count?: number | null;
 }
 
 // Why a task is flagged, in the manager's words. A risk badge with no reason
@@ -173,7 +211,9 @@ export function riskReasons(task: BoardTask, locale: Locale): string[] {
   return reasons;
 }
 
-function formatShortDate(iso: string, locale: Locale): string {
+// Exported for the task detail screen — dates on the detail must read exactly
+// as they do on the row that led there.
+export function formatShortDate(iso: string, locale: Locale): string {
   return new Intl.DateTimeFormat(getCatalog(locale).meta.dateLocale, {
     timeZone: 'UTC',
     day: '2-digit',
@@ -224,16 +264,30 @@ export function TaskBoardList({
                 ? task.due_date && t.dueBy(formatShortDate(task.due_date, locale))
                 : (task.job_name ?? t.noJob);
             return (
-              <div key={task.id} className="rounded-xl border border-zinc-500/20 p-3">
+              <div
+                key={task.id}
+                className="relative rounded-xl border border-zinc-500/20 p-3 focus-within:border-zinc-500/40 hover:border-zinc-500/40"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium">{task.title}</p>
+                    {/* Navigation, not mutation — the same posture as ObrasList.
+                        `after:inset-0` stretches the hit target over the whole
+                        card, so the row is tappable WITHOUT wrapping it in an
+                        anchor: <a> around <button> is invalid HTML and mis-taps
+                        on iOS. The action column below lifts itself back out
+                        with z-10. */}
+                    <a
+                      href={`/tarefas/${task.id}`}
+                      className="block truncate text-sm font-medium after:absolute after:inset-0"
+                    >
+                      {task.title}
+                    </a>
                     <p className="text-xs text-zinc-500">
-                      {task.worker_name ?? t.noAssignee}
+                      {task.worker_name ? t.assignedTo(task.worker_name) : t.noAssignee}
                       {context ? ` · ${context}` : ''}
                     </p>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="relative z-10 flex shrink-0 items-center gap-2">
                     <StatusBadge status={task.status} locale={locale} />
                     {renderExtra?.(task)}
                   </div>
@@ -361,13 +415,24 @@ export function TimelineList({
             {key === 'sem-data' ? t.noDate : formatDayHeading(key, locale)}
           </h2>
           {groupTasks.map(task => (
-            <div key={task.id} className="rounded-xl border border-zinc-500/20 p-3">
+            <div
+              key={task.id}
+              className="relative rounded-xl border border-zinc-500/20 p-3 focus-within:border-zinc-500/40 hover:border-zinc-500/40"
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium">{task.title}</p>
-                  <p className="text-xs text-zinc-500">{task.assignee_name ?? t.noAssignee}</p>
+                  {/* Stretched link — see the note in TaskBoardList. */}
+                  <a
+                    href={`/tarefas/${task.id}`}
+                    className="block truncate text-sm font-medium after:absolute after:inset-0"
+                  >
+                    {task.title}
+                  </a>
+                  <p className="text-xs text-zinc-500">
+                    {task.assignee_name ? t.assignedTo(task.assignee_name) : t.noAssignee}
+                  </p>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="relative z-10 flex shrink-0 items-center gap-2">
                   <StatusBadge status={task.status} locale={locale} />
                   {renderExtra?.(task)}
                 </div>

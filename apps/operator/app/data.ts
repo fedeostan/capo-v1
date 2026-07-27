@@ -113,6 +113,11 @@ export interface DispatchRow extends Tables<'dispatch_log'> {
   workers: { name: string; company_id: string } | null;
 }
 
+export interface BriefingRow extends Tables<'notification_log'> {
+  workers: { name: string } | null;
+  companies: { name: string } | null;
+}
+
 export interface SignupRow {
   profileId: string;
   fullName: string;
@@ -178,7 +183,7 @@ export const ACTIVATION_STAGES: { key: ActivationStage; label: string }[] = [
   { key: 'has_obra', label: 'Created an obra' },
   { key: 'has_plan', label: 'Tasks scheduled' },
   { key: 'has_crew', label: 'Crew reachable' },
-  { key: 'dispatching', label: 'SMS going out' },
+  { key: 'dispatching', label: 'Briefings going out' },
 ];
 
 export interface ActivationRow {
@@ -240,10 +245,16 @@ export async function loadHealth(): Promise<HealthReport> {
         .order('created_at', { ascending: false })
         .limit(1000)
         .then(r => r.data ?? []),
+      // notification_log, NOT dispatch_log. The SMS dispatch is switched off,
+      // so dispatch_log is now a frozen historical record — reading it here
+      // would mean the "nothing went out today" alert fires as critical every
+      // single morning, which is worse than no alert at all. The live daily
+      // briefing writes notification_log (see apps/web/app/api/cron/reminders).
       db
-        .from('dispatch_log')
-        .select('worker_id, sent_at, dispatch_date')
-        .order('sent_at', { ascending: false })
+        .from('notification_log')
+        .select('company_id, created_at, notification_date, status')
+        .eq('status', 'sent')
+        .order('created_at', { ascending: false })
         .limit(500)
         .then(r => r.data ?? []),
       db.from('knowledge_documents').select('id', { count: 'exact', head: true }).then(r => r.count ?? 0),
@@ -261,8 +272,7 @@ export async function loadHealth(): Promise<HealthReport> {
 
   const lastDispatchByCompany = new Map<string, string>();
   for (const d of dispatches) {
-    const companyId = d.worker_id ? companyOfWorker.get(d.worker_id) : undefined;
-    if (companyId && !lastDispatchByCompany.has(companyId)) lastDispatchByCompany.set(companyId, d.sent_at);
+    if (!lastDispatchByCompany.has(d.company_id)) lastDispatchByCompany.set(d.company_id, d.created_at);
   }
 
   const activation: ActivationRow[] = companies.map(company => {
@@ -366,8 +376,8 @@ export async function loadHealth(): Promise<HealthReport> {
     } else if (row.tasks > 0 && row.reachableWorkers === 0) {
       alerts.push({
         level: 'warning',
-        title: `${row.companyName} — ${row.tasks} open tasks, nobody reachable by SMS`,
-        detail: 'No active worker has a phone number, so the 07:00 dispatch reaches nobody. The daily loop is dead here.',
+        title: `${row.companyName} — ${row.tasks} open tasks, nobody reachable on WhatsApp`,
+        detail: 'No active worker has a phone number, so the 07:00 briefing reaches nobody. The daily loop is dead here.',
       });
     } else if (quiet != null && quiet >= 7) {
       alerts.push({
@@ -380,13 +390,13 @@ export async function loadHealth(): Promise<HealthReport> {
   }
 
   const dispatchingCompanies = activation.filter(r => r.stage === 'dispatching').length;
-  const dispatchesToday = dispatches.filter(d => d.dispatch_date === todayKey).length;
+  const dispatchesToday = dispatches.filter(d => d.notification_date === todayKey).length;
   if (dispatchingCompanies > 0 && dispatchesToday === 0) {
     alerts.push({
       level: 'critical',
-      title: 'No SMS dispatched today',
+      title: 'No briefings sent today',
       detail:
-        'At least one company has dispatched before but nothing went out today — check the external n8n 07:00 cron and Twilio.',
+        'At least one company has been briefed before but nothing went out today — check the Vercel cron on capo-v1 (/api/cron/reminders), CRON_SECRET, and that the capo_daily_briefing template is still approved in WhatsApp Manager.',
       href: '/dispatch',
     });
   }
@@ -415,6 +425,23 @@ export async function loadHealth(): Promise<HealthReport> {
   };
 }
 
+// The LIVE send log: the 07:00 WhatsApp briefing written by the Vercel cron.
+// Failures are included on purpose — a run where every send returned 131030
+// (number not allow-listed) is exactly the thing worth seeing, and filtering
+// to status='sent' would render it as an empty, blameless table.
+export async function loadBriefingLog(): Promise<BriefingRow[]> {
+  const db = getDb();
+  return await db
+    .from('notification_log')
+    .select('*, workers(name), companies(name)')
+    .order('created_at', { ascending: false })
+    .limit(100)
+    .then(r => (r.data ?? []) as unknown as BriefingRow[]);
+}
+
+// The FROZEN SMS ledger, written by the external n8n/Twilio workflow before it
+// was switched off. Nothing new lands here; it is kept so the pilot's history
+// stays readable and so SMS can be turned back on without losing continuity.
 export async function loadDispatchLog(): Promise<{ rows: DispatchRow[]; companyNames: Map<string, string> }> {
   const db = getDb();
   const [rows, companies] = await Promise.all([

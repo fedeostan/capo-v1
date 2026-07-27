@@ -1,5 +1,6 @@
 import type { Db } from '@capo/db/client';
 import type { Locale } from '@capo/i18n/locale';
+import { countTranslatable } from '../translation';
 import { cards, type CardStrings, type JobStatus, type TaskStatus } from './cards';
 
 // Deterministic proposal card templates. The card text is ALWAYS a pure
@@ -18,6 +19,10 @@ import { cards, type CardStrings, type JobStatus, type TaskStatus } from './card
 // which would make the card stop matching the dashboard.
 
 export class RenderError extends Error {}
+
+/** Must match translation_batches.expires_at in 0015 — the card promises this
+ *  number to the manager, so the two cannot be allowed to drift silently. */
+const UNDO_DAYS = 30;
 
 async function jobName(db: Db, companyId: string, id: string, t: CardStrings): Promise<string> {
   const { data } = await db.from('jobs').select('name').eq('id', id).eq('company_id', companyId).maybeSingle();
@@ -108,6 +113,7 @@ export async function renderProposal(
       if (args.name) changes.push(t.workerChange.name(args.name));
       if (args.trade) changes.push(t.workerChange.trade(args.trade));
       if (args.phone) changes.push(t.workerChange.phone(args.phone));
+      if (args.language) changes.push(t.workerChange.language(args.language));
       if (changes.length === 0) throw new RenderError(t.errors.emptyChange);
       return t.updateWorker({ name, changes });
     }
@@ -158,6 +164,33 @@ export async function renderProposal(
         to: fmt(allDates[allDates.length - 1]),
       });
       return `${header}\n${lines.join('\n')}`;
+    }
+
+    case 'apply_company_translation': {
+      const { data: company } = await db.from('companies').select('language').eq('id', companyId).maybeSingle();
+      if (!company) throw new RenderError(t.errors.companyNotFound);
+      if (args.from_language === args.to_language) throw new RenderError(t.errors.sameLanguage);
+      // Referential re-check, the analogue of jobName() throwing on a dangling
+      // id: the dial may have moved between propose and approve (another
+      // manager, or a card left open overnight). Approving then would translate
+      // FROM a language the rows are no longer in.
+      if (company.language !== args.from_language) throw new RenderError(t.errors.languageMoved);
+
+      // Counts are re-read here rather than carried in action_args, so the card
+      // always describes the tenant as it is now and can never drift from what
+      // the approval will actually rewrite.
+      const n = await countTranslatable(db, companyId);
+      if (n.total === 0) throw new RenderError(t.errors.nothingToTranslate);
+
+      return t.translateCompany({
+        fromLanguage: t.languageName[args.from_language as Locale],
+        toLanguage: t.languageName[args.to_language as Locale],
+        tasks: n.tasks,
+        jobs: n.jobs,
+        workers: n.workers,
+        memories: n.memories,
+        undoDays: UNDO_DAYS,
+      });
     }
 
     default:

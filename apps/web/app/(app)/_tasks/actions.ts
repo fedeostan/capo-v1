@@ -32,6 +32,7 @@ async function setTaskStatus(taskId: string, status: 'done' | 'pending', event: 
   // paths to three: /hoje, /amanha and /atrasadas are next.config redirects,
   // not routes, and there is nothing there to revalidate.
   if (data.job_id) revalidatePath(`/obras/${data.job_id}`);
+  revalidatePath(`/tarefas/${taskId}`);
   revalidatePath('/tarefas');
   revalidatePath('/obras');
   // Completing a task drops it out of task_board entirely, so it also leaves

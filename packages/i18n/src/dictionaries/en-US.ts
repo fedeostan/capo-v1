@@ -21,6 +21,8 @@ const dict: Catalog = {
     notAuthenticated: 'Not authenticated',
   },
 
+  pullToRefresh: { refreshing: 'Refreshing…' },
+
   chat: {
     title: 'Capo 👷',
     tagline: 'Your virtual foreman',
@@ -42,6 +44,7 @@ const dict: Catalog = {
     pendingProposals: 'Waiting on you',
     approve: 'Approve',
     reject: 'Reject',
+    deciding: 'Applying…',
     cardState: {
       approved: '✅ Approved — done',
       rejected: '❌ Rejected',
@@ -64,6 +67,7 @@ const dict: Catalog = {
       remember: 'Noted',
       search_knowledge: 'Knowledge base searched',
       set_language: 'Language changed',
+      translate_company_data: 'Translation proposed',
       propose: 'Proposal created',
       generate_plan: 'Plan generated',
     },
@@ -87,6 +91,7 @@ const dict: Catalog = {
     },
     overdueBy: days => (days === 1 ? '1 day past due' : `${days} days past due`),
     noAssignee: 'Unassigned',
+    assignedTo: name => `Assigned to ${name}`,
     noJob: 'No job',
     noDate: 'No date',
     talkToCapo: 'Talk to Capo',
@@ -138,6 +143,42 @@ const dict: Catalog = {
       empty: 'No tasks on this job yet — ask Capo to build the plan.',
     },
     taskActions: { complete: 'Complete', reopen: 'Reopen', failed: "That didn't work, try again." },
+    taskDetail: {
+      fallbackTitle: 'Task',
+      backToTasks: '← Tasks',
+      assignee: 'Assignee',
+      assigneeNoPhone: 'no phone on record',
+      assigneeInactive: 'inactive',
+      dates: 'Dates',
+      startDate: 'Start',
+      dueDate: 'Due',
+      durationDays: days => `${days} working ${days === 1 ? 'day' : 'days'}`,
+      description: 'Description',
+      noDescription: 'No description. Ask Capo to add what the worker needs to know.',
+      materials: 'Materials',
+      job: 'Job',
+      help: 'Help',
+      askCapo: 'Ask Capo about this task',
+      askCapoPrompt: title => `Tell me about the task "${title}".`,
+      knowledge: 'What the rules say',
+      knowledgeHint: 'Laws, regulations and technical datasheets related to this task.',
+    },
+    taskHelp: {
+      title: 'Help',
+      intro:
+        "Excerpts from the shared knowledge base, found from this task's title and description. Always confirm at the source before you decide.",
+      empty:
+        'Nothing found about this task. That does not mean it does not exist — it means it is not in the knowledge base.',
+      failed: 'Could not reach the knowledge base right now.',
+      backToTask: '← Back to task',
+      category: {
+        lei: 'Law',
+        regulamento: 'Regulation',
+        tecnica: 'Technique',
+        material: 'Material',
+        fabricante: 'Manufacturer',
+      },
+    },
     materials: {
       title: 'Materials',
       subtitle: 'What has to be on site',
@@ -230,8 +271,8 @@ const dict: Catalog = {
     noContact: 'No contact',
     inactive: 'inactive',
     workerLoad: (today, tomorrow, open) => `Today ${today} · Tomorrow ${tomorrow} · ${open} open`,
-    noSmsWarning: 'No phone number — gets nothing from the 07:00 SMS.',
-    receivesSms: 'gets the 07:00 SMS',
+    noWhatsAppWarning: 'No phone number — gets nothing from the 07:00 WhatsApp.',
+    receivesWhatsApp: 'gets the 07:00 WhatsApp',
     teamHint: 'To add or change someone,',
     teamHintLink: 'talk to Capo',
     subscription: 'Subscription',
@@ -251,12 +292,46 @@ const dict: Catalog = {
   },
 
   settings: {
+    language: 'Language',
+    languageHint:
+      "The language Capo speaks to you in, the language of this app, and the language the whole company's tasks, jobs, and notes are written in.",
+    translateExisting: p => {
+      const parts: string[] = [];
+      if (p.tasks) parts.push(`${p.tasks} task${p.tasks === 1 ? '' : 's'}`);
+      if (p.jobs) parts.push(`${p.jobs} job${p.jobs === 1 ? '' : 's'}`);
+      if (p.workers) parts.push(`${p.workers} trade${p.workers === 1 ? '' : 's'}`);
+      if (p.memories) parts.push(`${p.memories} note${p.memories === 1 ? '' : 's'}`);
+      const last = parts.pop();
+      if (!last) return 'Also translate what already exists';
+      const list = parts.length > 0 ? `${parts.join(', ')} and ${last}` : last;
+      return `Also translate what already exists (${list})`;
+    },
+    translateNothing: "There's nothing stored to translate yet.",
+    translateWarning:
+      "The crew's morning WhatsApp briefing will switch to the new language too, and materials will be grouped by their translated names. You can undo this for 30 days.",
+
+    advanced: 'Advanced settings',
+    advancedHint:
+      "Use different languages for yourself and for the company's data — useful if you speak a different language from the rest of the crew.",
     yourLanguage: 'Your language',
     yourLanguageHint: 'The language Capo speaks to you in, and the language of this app. Affects only you.',
     companyLanguage: 'Company data language',
     companyLanguageHint:
       'The language Capo writes tasks, jobs, and notes in — what the whole crew sees on the dashboard.',
-    companyLanguageWarning: 'Heads up: tasks and jobs that already exist are not translated.',
+    companyLanguageWarning: 'Heads up: changed here, tasks and jobs that already exist are not translated.',
+    appearance: 'Appearance',
+    appearanceHint: "Light, dark, or whatever your phone's set to. Saved on this device only.",
+    themeOption: { light: 'Light', dark: 'Dark', system: 'System' },
+
+    translationRunning: p => `Translating… ${p.done} of ${p.total}`,
+    translationDone: n => `${n} field${n === 1 ? '' : 's'} translated.`,
+    translationFailed: 'The translation stopped partway. Nothing was lost — you can pick it back up.',
+    translationResume: 'Resume translation',
+    revert: 'Undo translation',
+    revertHint: days => `Restores the original wording exactly as it was, word for word. Available for ${days} days.`,
+    reverted: 'Translation undone.',
+    revertFailed: "Couldn't undo that. Try again.",
+
     saved: 'Saved.',
     failed: "Couldn't save that. Try again.",
   },
@@ -328,7 +403,7 @@ const dict: Catalog = {
       },
       {
         title: 'The crew gets its morning briefing',
-        text: "Every worker gets the day's tasks by SMS — no apps, no accounts.",
+        text: "Every worker gets the day's tasks on WhatsApp — no apps, no accounts.",
       },
     ],
     materialsTitle: 'Materials ahead of time',
@@ -348,6 +423,44 @@ const dict: Catalog = {
   whatsapp: {
     voiceNoteFailed: "Couldn't play that voice note, boss. Can you resend it or type it out?",
     voiceNoteEmpty: "Got the voice note but couldn't make anything out. Can you say that again?",
+    approveButton: 'Approve',
+    rejectButton: 'Reject',
+    approvalPrompt: 'Approve this one, boss?',
+    proposalApproved: '✅ Done, boss.',
+    proposalRejected: '❌ Alright, leaving it.',
+    proposalFailed: reason => `⚠️ You approved it, but it failed to run: ${reason}`,
+    proposalNotPending: 'That one was already decided.',
+    proposalError: "I couldn't record that decision. Do it in the app.",
+    approvalFallback: "I couldn't show the buttons. Approve or reject it in the app.",
+    workerAck: 'Got it, thanks. Any questions, talk to your foreman. To change language reply PT, ES or EN.',
+    workerLanguageChanged: "Done — I'll write to you in English from now on.",
+  },
+
+  reminders: {
+    templateLanguage: 'en_US',
+    taskSeparator: ' · ',
+    taskWithJob: (title, job) => `${title} (${job})`,
+    taskOverdue: (title, days) => `${title} — ${days}d overdue`,
+    andMore: n => `+${n}`,
+    workerNothing: 'Nothing scheduled for today.',
+    managerSummary: ({ today, unassigned, overdue }) => {
+      const parts = [`${today} ${today === 1 ? 'task' : 'tasks'} for today`];
+      if (unassigned > 0) parts.push(`${unassigned} unassigned`);
+      if (overdue > 0) parts.push(`${overdue} overdue`);
+      return parts.join(' · ');
+    },
+    managerNothing: 'Nothing scheduled for today.',
+    managerEvent: ({ today, unassigned, overdue, notified }) => {
+      const parts = [`Morning. ${today} ${today === 1 ? 'task' : 'tasks'} in progress today`];
+      if (overdue > 0) parts.push(`${overdue} overdue`);
+      if (unassigned > 0) parts.push(`${unassigned} unassigned`);
+      const head = parts.join(' · ');
+      const tail =
+        notified === 0
+          ? "I didn't message the crew."
+          : `I sent the rundown to ${notified} ${notified === 1 ? 'person' : 'people'}.`;
+      return `${head}. ${tail}`;
+    },
   },
 };
 

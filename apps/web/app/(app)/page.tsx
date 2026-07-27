@@ -10,11 +10,22 @@ export const dynamic = 'force-dynamic';
 // Proposal card state is derived from proposals.status — never from stale
 // client state — and pending proposals whose cards fell behind the summary
 // watermark are surfaced separately so they can always be resolved.
-export default async function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const {
     ctx: { db, companyId },
     locale,
   } = await requireAuthT();
+
+  // ?q= prefills the composer (the "Ask Capo about this task" link on a task
+  // detail). Capped and single-valued: it lands in a textarea the manager
+  // reads before sending, but it is still URL input, so it does not get to be
+  // arbitrarily long.
+  const rawQ = (await searchParams).q;
+  const initialInput = (Array.isArray(rawQ) ? rawQ[0] : rawQ)?.slice(0, 500) ?? '';
 
   let initialMessages: UIMessage[] = [];
   const proposalStatuses: Record<string, string> = {};
@@ -61,6 +72,7 @@ export default async function Page() {
       locale={locale}
       proposalStatuses={proposalStatuses}
       orphanedPending={orphanedPending}
+      initialInput={initialInput}
     />
   );
 }

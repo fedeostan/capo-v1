@@ -5,6 +5,7 @@ import { ScreenShell, TaskBoardList } from '@capo/ui/dashboard-ui';
 import { loadBoardTasks, loadDayLabel, loadMaterials, loadObraOptions, type GroupBy } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import TaskActions from '@/app/(app)/_tasks/task-actions';
+import PullToRefresh from '@/app/pull-to-refresh';
 import FilterChips from './filter-chips';
 import FilterControls from './filter-controls';
 import { parseFilters, type RawSearchParams, type TarefasFilters } from './filters';
@@ -61,31 +62,33 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
 
   return (
     <ScreenShell title={t.screens.tasks.title} subtitle={subtitle}>
-      <div className="space-y-2">
-        <FilterChips filters={filters} locale={locale} />
-        <FilterControls filters={filters} obras={obras} locale={locale} />
-      </div>
-      {materialCount > 0 && (
-        <Link
-          href="/materiais"
-          className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/50 bg-amber-500/10 p-3"
-        >
-          <span className="text-sm">
-            <span className="font-medium">{t.screens.materials.pending(materialCount)}</span>
-            <span className="block text-xs text-zinc-500">{t.screens.materials.pendingHint}</span>
-          </span>
-          <span aria-hidden className="shrink-0 text-zinc-500">
-            →
-          </span>
-        </Link>
-      )}
-      <TaskBoardList
-        tasks={tasks}
-        groupBy={groupBy}
-        locale={locale}
-        empty={emptyText(filters, t)}
-        renderExtra={task => <TaskActions taskId={task.id} status={task.status} locale={locale} />}
-      />
+      <PullToRefresh locale={locale}>
+        <div className="space-y-2">
+          <FilterChips filters={filters} locale={locale} />
+          <FilterControls filters={filters} obras={obras} locale={locale} />
+        </div>
+        {materialCount > 0 && (
+          <Link
+            href="/materiais"
+            className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/50 bg-amber-500/10 p-3"
+          >
+            <span className="text-sm">
+              <span className="font-medium">{t.screens.materials.pending(materialCount)}</span>
+              <span className="block text-xs text-zinc-500">{t.screens.materials.pendingHint}</span>
+            </span>
+            <span aria-hidden className="shrink-0 text-zinc-500">
+              →
+            </span>
+          </Link>
+        )}
+        <TaskBoardList
+          tasks={tasks}
+          groupBy={groupBy}
+          locale={locale}
+          empty={emptyText(filters, t)}
+          renderExtra={task => <TaskActions taskId={task.id} status={task.status} locale={locale} />}
+        />
+      </PullToRefresh>
     </ScreenShell>
   );
 }

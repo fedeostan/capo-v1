@@ -41,3 +41,9 @@ jobs:
       # this is the slice that can run on every PR.
       - name: Scheduler & calendar check
         run: pnpm scheduler-check
+
+      # Same idea for the WhatsApp channel: approval-card delivery, ordering,
+      # markdown conversion, the button-id codec and Meta's payload limits are
+      # all pure functions, so they can be asserted without credentials.
+      - name: WhatsApp channel check
+        run: pnpm whatsapp-check

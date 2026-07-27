@@ -38,7 +38,7 @@ export default async function CompaniesPage() {
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 className="font-semibold">{company.name}</h2>
               <span className="flex items-center gap-3 text-xs text-zinc-500">
-                <span className={STATUS_STYLE[company.subscription_status] ?? 'text-zinc-400'}>
+                <span className={STATUS_STYLE[company.subscription_status] ?? 'text-zinc-500'}>
                   {formatSubscription(company.subscription_status, company.trial_ends_at)}
                 </span>
                 <span>last activity {formatWhen(lastMessageAt)}</span>
@@ -53,14 +53,14 @@ export default async function CompaniesPage() {
             </p>
             <p className="mt-2 flex flex-wrap gap-3 text-sm">
               {STATUS_ORDER.filter(s => taskCounts[s]).map(s => (
-                <span key={s} className="text-zinc-400">
+                <span key={s} className="text-zinc-500">
                   {taskCounts[s]} {s.replace('_', ' ')}
                 </span>
               ))}
               {Object.keys(taskCounts).length === 0 && <span className="text-zinc-500">no tasks</span>}
             </p>
             <p className="mt-3 text-sm">
-              <Link href={`/conversations/${company.id}`} className="text-zinc-400 underline hover:text-zinc-200">
+              <Link href={`/conversations/${company.id}`} className="text-zinc-500 underline hover:text-zinc-800">
                 View conversation →
               </Link>
             </p>

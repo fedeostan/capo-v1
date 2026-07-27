@@ -1,13 +1,23 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { getCatalog } from '@capo/i18n/catalog';
+import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import { LOCALES, type Locale } from '@capo/i18n/locale';
 import { EmptyState, ScreenShell } from '@capo/ui/dashboard-ui';
 import { loadTeam, loadTeamLoad } from '@/app/dashboard-data';
 import { getBillingState } from '@/lib/billing';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
-import { setCompanyLanguage, setUserLanguage } from './actions';
+import { countTranslatable } from '@capo/core/translation';
+import { resolveTheme, THEMES, type Theme } from '@/lib/theme';
+import {
+  revertTranslation,
+  saveLanguage,
+  setCompanyLanguage,
+  setTheme,
+  setUserLanguage,
+} from './actions';
+import PullToRefresh from '@/app/pull-to-refresh';
 import { AccountForm, CompanyForm } from './profile-forms';
+import { TranslationProgress } from './translation-progress';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,8 +34,40 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
   );
 }
 
-// Plain radio pills + a submit button: no client JS, same posture as sign-out
-// below. Three options is not worth a client component.
+// Plain radio pills: no client JS, same posture as sign-out below. Three
+// options is not worth a client component.
+function Pills({ current }: { current: Locale }) {
+  return (
+    <div className="flex gap-2">
+      {LOCALES.map(option => (
+        <label key={option} className="flex-1">
+          <input
+            type="radio"
+            name="idioma"
+            value={option}
+            defaultChecked={option === current}
+            className="peer sr-only"
+          />
+          <span className="block cursor-pointer rounded-lg border border-zinc-500/30 py-2 text-center text-sm peer-checked:border-orange-600 peer-checked:bg-orange-600/10 peer-checked:font-semibold">
+            {getCatalog(option).meta.languageName}
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function SubmitButton({ label }: { label: string }) {
+  return (
+    <button
+      type="submit"
+      className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-semibold hover:bg-zinc-500/10"
+    >
+      {label}
+    </button>
+  );
+}
+
 function LanguagePills({
   current,
   action,
@@ -37,18 +79,31 @@ function LanguagePills({
 }) {
   return (
     <form action={action} className="space-y-2">
+      <Pills current={current} />
+      <SubmitButton label={save} />
+    </form>
+  );
+}
+
+// Deliberately the same shape as LanguagePills: three options, no client JS,
+// works before hydration on a cold PWA. Indexing themeOption with a Theme is
+// the tripwire that keeps @capo/i18n and lib/theme.ts from drifting apart —
+// widen one union without the other and tsc fails here.
+function ThemePills({ current, t }: { current: Theme; t: Catalog }) {
+  return (
+    <form action={setTheme} className="space-y-2">
       <div className="flex gap-2">
-        {LOCALES.map(option => (
+        {THEMES.map(option => (
           <label key={option} className="flex-1">
             <input
               type="radio"
-              name="idioma"
+              name="tema"
               value={option}
               defaultChecked={option === current}
               className="peer sr-only"
             />
             <span className="block cursor-pointer rounded-lg border border-zinc-500/30 py-2 text-center text-sm peer-checked:border-orange-600 peer-checked:bg-orange-600/10 peer-checked:font-semibold">
-              {getCatalog(option).meta.languageName}
+              {t.settings.themeOption[option]}
             </span>
           </label>
         ))}
@@ -57,7 +112,7 @@ function LanguagePills({
         type="submit"
         className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-semibold hover:bg-zinc-500/10"
       >
-        {save}
+        {t.common.save}
       </button>
     </form>
   );
@@ -68,156 +123,264 @@ function LanguagePills({
 export default async function PerfilPage({
   searchParams,
 }: {
-  searchParams: Promise<{ guardado?: string; erro?: string }>;
+  searchParams: Promise<{ guardado?: string; erro?: string; traducao?: string }>;
 }) {
   const { ctx, locale, t } = await requireAuthT();
   const { db, userId, companyId } = ctx;
   const { guardado, erro } = await searchParams;
 
-  const [{ data: company }, { data: profile }, { data: claims }, team, billing] = await Promise.all([
+  const [
+    { data: company },
+    { data: profile },
+    { data: claims },
+    team,
+    billing,
+    counts,
+    { data: batch },
+    theme,
+  ] = await Promise.all([
     db.from('companies').select('name').eq('id', companyId).maybeSingle(),
     db.from('profiles').select('full_name, phone').eq('id', userId).maybeSingle(),
     db.auth.getClaims(),
     loadTeam(ctx),
     getBillingState(ctx),
+    countTranslatable(db, companyId),
+    // Only the most recent batch matters: the partial unique index in 0015
+    // means at most one can be live, and undo is offered for the last one.
+    db
+      .from('translation_batches')
+      .select('id, status, done_count, item_count, expires_at')
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    // A cookie read, not a query — it rides along here only to keep the
+    // awaits in one place.
+    resolveTheme(),
   ]);
   const teamLoad = await loadTeamLoad(ctx);
 
   const email = typeof claims?.claims?.email === 'string' ? claims.claims.email : null;
 
+  const batchInFlight = batch?.status === 'pending' || batch?.status === 'running' || batch?.status === 'failed';
+  const canRevert = batch?.status === 'completed' && new Date(batch.expires_at) > new Date();
+
   return (
     <ScreenShell title={t.profile.title} subtitle={company?.name ?? undefined}>
-      {guardado && (
-        <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-center text-sm text-emerald-700 dark:text-emerald-400">
-          {t.settings.saved}
-        </p>
-      )}
-      {erro && (
-        <p className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-400">
-          {t.settings.failed}
-        </p>
-      )}
-
-      <Card title={t.profile.company}>
-        <CompanyForm name={company?.name ?? ''} locale={locale} />
-      </Card>
-
-      <Card title={t.profile.yourAccount}>
-        {/* Changing the login email is a Supabase auth flow with its own
-            confirmation round trip — out of scope here, so it is read-only. */}
-        {email && <p className="text-xs text-zinc-500">{email}</p>}
-        <AccountForm fullName={profile?.full_name ?? ''} phone={profile?.phone ?? ''} locale={locale} />
-      </Card>
-
-      <Card title={t.settings.yourLanguage}>
-        <p className="text-xs text-zinc-500">{t.settings.yourLanguageHint}</p>
-        <LanguagePills current={ctx.locale} action={setUserLanguage} save={t.common.save} />
-      </Card>
-
-      <Card title={t.settings.companyLanguage}>
-        <p className="text-xs text-zinc-500">{t.settings.companyLanguageHint}</p>
-        {/* The warning is the whole reason this dial is unreachable from chat:
-            switching it does not retranslate anything already stored. */}
-        <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-          {t.settings.companyLanguageWarning}
-        </p>
-        <LanguagePills current={ctx.companyLocale} action={setCompanyLanguage} save={t.common.save} />
-      </Card>
-
-      <Card title={t.profile.team}>
-        {/* Read-only on purpose: worker CRUD stays on Capo's add_worker tool.
-            The chat writes. */}
-        {team.length === 0 ? (
-          <EmptyState text={t.profile.teamEmpty} cta={{ href: '/', label: t.profile.teamEmptyCta }} />
-        ) : (
-          <>
-            <ul className="space-y-3">
-              {team.map(worker => {
-                const load = teamLoad[worker.id];
-                return (
-                  <li key={worker.id} className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{worker.name}</p>
-                      <p className="text-xs text-zinc-500">
-                        {[worker.trade, worker.phone].filter(Boolean).join(' · ') || t.profile.noContact}
-                      </p>
-                      {/* Load turns the crew list from a phone book into an
-                          answer to "who is free?" — the question actually
-                          asked before assigning work. */}
-                      {load && load.open > 0 && (
-                        <p className="text-xs text-zinc-500">
-                          {t.profile.workerLoad(load.today, load.tomorrow, load.open)}
-                        </p>
-                      )}
-                      {/* An ACTIVE worker with no number is the silent failure
-                          worth shouting about: dispatch_tasks_today requires a
-                          phone, so the 07:00 SMS reaches them never, and
-                          nothing else in the product says so. */}
-                      {worker.active && !worker.phone ? (
-                        <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                          {t.profile.noSmsWarning}
-                        </p>
-                      ) : (
-                        worker.active && <p className="mt-0.5 text-[11px] text-zinc-500">{t.profile.receivesSms}</p>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 flex-col items-end gap-1">
-                      {!worker.active && (
-                        <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[11px] text-zinc-500">
-                          {t.profile.inactive}
-                        </span>
-                      )}
-                      {load && load.overdue > 0 && (
-                        <span className="text-[11px] font-medium text-red-600">
-                          {t.dashboard.overdueCount(load.overdue)}
-                        </span>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-            <p className="text-xs text-zinc-500">
-              {t.profile.teamHint}{' '}
-              <Link href="/" className="underline">
-                {t.profile.teamHintLink}
-              </Link>
-              .
-            </p>
-          </>
+      <PullToRefresh locale={locale}>
+        {guardado && (
+          <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-center text-sm text-emerald-700 dark:text-emerald-400">
+            {guardado === 'reversao' ? t.settings.reverted : t.settings.saved}
+          </p>
         )}
-      </Card>
+        {erro && (
+          <p className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-400">
+            {erro === 'reversao' ? t.settings.revertFailed : t.settings.failed}
+          </p>
+        )}
 
-      <Card title={t.profile.subscription}>
-        <p className="text-sm">
-          {!billing.enabled
-            ? t.billing.unavailable
-            : billing.status === 'trialing'
-              ? billing.daysLeft >= 0
-                ? t.billing.trialDaysLeft(billing.daysLeft)
-                : t.billing.trialEnded
-              : (t.billing.statusLabel[billing.status as keyof typeof t.billing.statusLabel] ?? billing.status)}
-        </p>
-        <Link href="/subscricao" className="inline-block text-sm text-orange-600 underline">
-          {t.profile.manageSubscription}
-        </Link>
-      </Card>
+        <Card title={t.profile.company}>
+          <CompanyForm name={company?.name ?? ''} locale={locale} />
+        </Card>
 
-      <Card title={t.profile.app}>
-        <Link href="/instalar" className="inline-block text-sm text-orange-600 underline">
-          {t.profile.install}
-        </Link>
-      </Card>
+        <Card title={t.profile.yourAccount}>
+          {/* Changing the login email is a Supabase auth flow with its own
+              confirmation round trip — out of scope here, so it is read-only. */}
+          {email && <p className="text-xs text-zinc-500">{email}</p>}
+          <AccountForm fullName={profile?.full_name ?? ''} phone={profile?.phone ?? ''} locale={locale} />
+        </Card>
 
-      {/* Plain form POST: sign-out works even before client JS hydrates. */}
-      <form method="post" action="/auth/signout">
-        <button
-          type="submit"
-          className="w-full rounded-xl border border-zinc-500/20 py-2.5 text-sm font-medium text-red-600 hover:bg-red-600/5"
-        >
-          {t.common.signOut}
-        </button>
-      </form>
+        {/* Above the language dials on purpose: appearance is personal and
+            reversible, while the company language card carries a warning. */}
+        <Card title={t.settings.appearance}>
+          <p className="text-xs text-zinc-500">{t.settings.appearanceHint}</p>
+          <ThemePills current={theme} t={t} />
+        </Card>
+
+        {/* One control, because "the language" is one thing to the manager. The
+            two-dial split underneath is real and load-bearing, but it is an edge
+            case (a foreman who speaks a different language from the crew), so it
+            lives in the disclosure rather than on the surface. */}
+        <Card title={t.settings.language}>
+          <p className="text-xs text-zinc-500">{t.settings.languageHint}</p>
+
+          <form action={saveLanguage} className="space-y-3">
+            {/* Both dials move together here, so the pills show the one the
+                manager thinks of as "the language" — what he reads. */}
+            <Pills current={ctx.locale} />
+
+            {counts.total > 0 ? (
+              <>
+                <label className="flex items-start gap-2 text-sm">
+                  {/* Checked by default: carrying the data across is what he
+                      means by changing the language. Unchecking is the escape
+                      hatch, not the norm. */}
+                  <input
+                    type="checkbox"
+                    name="traduzir"
+                    defaultChecked
+                    className="mt-0.5 size-4 shrink-0 accent-orange-600"
+                  />
+                  <span>{t.settings.translateExisting(counts)}</span>
+                </label>
+                <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                  {t.settings.translateWarning}
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-zinc-500">{t.settings.translateNothing}</p>
+            )}
+
+            <SubmitButton label={t.common.save} />
+          </form>
+
+          {/* Rendered from the batch row, not from the redirect param: a reload,
+              a second tab, or a batch started from chat all show the same thing. */}
+          {batch && batchInFlight && (
+            <TranslationProgress
+              batchId={batch.id}
+              initialDone={batch.done_count}
+              initialTotal={batch.item_count}
+              initialStatus={batch.status as 'pending' | 'running' | 'failed'}
+              locale={locale}
+            />
+          )}
+
+          {batch && canRevert && (
+            <form action={revertTranslation} className="space-y-2 border-t border-zinc-500/20 pt-3">
+              <input type="hidden" name="lote" value={batch.id} />
+              <p className="text-xs text-zinc-500">{t.settings.revertHint(30)}</p>
+              <button
+                type="submit"
+                className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-medium text-red-600 hover:bg-red-600/5"
+              >
+                {t.settings.revert}
+              </button>
+            </form>
+          )}
+
+          <details className="border-t border-zinc-500/20 pt-3">
+            <summary className="cursor-pointer text-xs font-medium text-zinc-500">{t.settings.advanced}</summary>
+            <div className="space-y-4 pt-3">
+              <p className="text-xs text-zinc-500">{t.settings.advancedHint}</p>
+
+              <div className="space-y-2">
+                <h3 className="text-xs font-semibold">{t.settings.yourLanguage}</h3>
+                <p className="text-xs text-zinc-500">{t.settings.yourLanguageHint}</p>
+                <LanguagePills current={ctx.locale} action={setUserLanguage} save={t.common.save} />
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-xs font-semibold">{t.settings.companyLanguage}</h3>
+                <p className="text-xs text-zinc-500">{t.settings.companyLanguageHint}</p>
+                {/* Still the honest warning for THIS form: setting the dial on
+                    its own is the one path that does not retranslate anything. */}
+                <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                  {t.settings.companyLanguageWarning}
+                </p>
+                <LanguagePills current={ctx.companyLocale} action={setCompanyLanguage} save={t.common.save} />
+              </div>
+            </div>
+          </details>
+        </Card>
+
+        <Card title={t.profile.team}>
+          {/* Read-only on purpose: worker CRUD stays on Capo's add_worker tool.
+              The chat writes. */}
+          {team.length === 0 ? (
+            <EmptyState text={t.profile.teamEmpty} cta={{ href: '/', label: t.profile.teamEmptyCta }} />
+          ) : (
+            <>
+              <ul className="space-y-3">
+                {team.map(worker => {
+                  const load = teamLoad[worker.id];
+                  return (
+                    <li key={worker.id} className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{worker.name}</p>
+                        <p className="text-xs text-zinc-500">
+                          {[worker.trade, worker.phone].filter(Boolean).join(' · ') || t.profile.noContact}
+                        </p>
+                        {/* Load turns the crew list from a phone book into an
+                            answer to "who is free?" — the question actually
+                            asked before assigning work. */}
+                        {load && load.open > 0 && (
+                          <p className="text-xs text-zinc-500">
+                            {t.profile.workerLoad(load.today, load.tomorrow, load.open)}
+                          </p>
+                        )}
+                        {/* An ACTIVE worker with no number is the silent failure
+                            worth shouting about: the 07:00 WhatsApp briefing is
+                            addressed to workers.phone, so without one it reaches
+                            them never, and nothing else in the product says so. */}
+                        {worker.active && !worker.phone ? (
+                          <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                            {t.profile.noWhatsAppWarning}
+                          </p>
+                        ) : (
+                          worker.active && (
+                            <p className="mt-0.5 text-[11px] text-zinc-500">{t.profile.receivesWhatsApp}</p>
+                          )
+                        )}
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        {!worker.active && (
+                          <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[11px] text-zinc-500">
+                            {t.profile.inactive}
+                          </span>
+                        )}
+                        {load && load.overdue > 0 && (
+                          <span className="text-[11px] font-medium text-red-600">
+                            {t.dashboard.overdueCount(load.overdue)}
+                          </span>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="text-xs text-zinc-500">
+                {t.profile.teamHint}{' '}
+                <Link href="/" className="underline">
+                  {t.profile.teamHintLink}
+                </Link>
+                .
+              </p>
+            </>
+          )}
+        </Card>
+
+        <Card title={t.profile.subscription}>
+          <p className="text-sm">
+            {!billing.enabled
+              ? t.billing.unavailable
+              : billing.status === 'trialing'
+                ? billing.daysLeft >= 0
+                  ? t.billing.trialDaysLeft(billing.daysLeft)
+                  : t.billing.trialEnded
+                : (t.billing.statusLabel[billing.status as keyof typeof t.billing.statusLabel] ?? billing.status)}
+          </p>
+          <Link href="/subscricao" className="inline-block text-sm text-orange-600 underline">
+            {t.profile.manageSubscription}
+          </Link>
+        </Card>
+
+        <Card title={t.profile.app}>
+          <Link href="/instalar" className="inline-block text-sm text-orange-600 underline">
+            {t.profile.install}
+          </Link>
+        </Card>
+
+        {/* Plain form POST: sign-out works even before client JS hydrates. */}
+        <form method="post" action="/auth/signout">
+          <button
+            type="submit"
+            className="w-full rounded-xl border border-zinc-500/20 py-2.5 text-sm font-medium text-red-600 hover:bg-red-600/5"
+          >
+            {t.common.signOut}
+          </button>
+        </form>
+      </PullToRefresh>
     </ScreenShell>
   );
 }

@@ -11,9 +11,17 @@ import LanguageSwitch from './language-switch';
 export default async function PublicLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const locale = await publicLocale();
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {children}
-      <LanguageSwitch current={locale} />
+    // The scroller lives here rather than in each page: every screen in this
+    // group is the same centred column, and the shell above is now
+    // unscrollable, so a tall one (a keyboard-open signup form, /landing on a
+    // small phone) would otherwise have nowhere to go.
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
+      {/* min-h-full, not flex-1: `justify-center` on a column taller than its
+          scroll port would push its own top edge out of reach. */}
+      <div className="flex min-h-full flex-col">
+        {children}
+        <LanguageSwitch current={locale} />
+      </div>
     </div>
   );
 }

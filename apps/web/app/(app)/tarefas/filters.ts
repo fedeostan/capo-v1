@@ -33,6 +33,13 @@ function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+// Shared with /tarefas/[id]: a route segment is checked here before it ever
+// reaches the DB. A well-formed uuid belonging to another tenant still needs no
+// special handling — RLS returns zero rows and the page 404s.
+export function isUuid(value: string): boolean {
+  return UUID.test(value);
+}
+
 // Round-trip through Date so 2026-02-31 is rejected rather than silently
 // shifted to 2026-03-03 — a filter that quietly shows the wrong day is worse
 // than one that falls back to today.

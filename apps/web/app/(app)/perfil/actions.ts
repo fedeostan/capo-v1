@@ -4,9 +4,12 @@ import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { requireAuth } from '@capo/db/session';
+import { ActiveBatchError, createTranslationBatch, revertTranslationBatch } from '@capo/core/translation';
 import { getCatalog } from '@capo/i18n/catalog';
 import { asLocale } from '@capo/i18n/locale';
+import { assertNotBlocked } from '@/lib/billing';
 import { localeCookieOptions, LOCALE_COOKIE } from '@/lib/i18n';
+import { asTheme, themeCookieOptions, THEME_COOKIE } from '@/lib/theme';
 import { logEvent } from '@/lib/log';
 
 // Editing your own company name or contact details is a manager command, the
@@ -79,23 +82,114 @@ export async function updateProfile(_prev: FormState, formData: FormData): Promi
 }
 
 // ── language ────────────────────────────────────────────────────────────────
-// Two independent dials, and only ONE of them is reachable from chat.
+// Two independent dials:
 //
 //   profiles.language  — what Capo speaks to you and what this app renders in.
 //                        Also settable by telling Capo "talk to me in English"
 //                        (the set_language tool).
 //   companies.language — what Capo WRITES: task titles, job names, memories.
-//                        Deliberately NOT reachable from chat: switching it
-//                        does not retranslate anything already stored, so a
-//                        casual "let's use English" would leave the shared
-//                        dashboard permanently half-translated.
+//                        Moving it alone does not retranslate anything already
+//                        stored, which is why the primary control below moves
+//                        it together with a translation batch, and why the bare
+//                        dial is demoted into the advanced disclosure.
 //
 // Plain redirects rather than useActionState: these are radio-pill forms that
 // must work before client JS hydrates, same posture as sign-out above.
 //
 // The real guard is the grant level, as everywhere else here: migration 0014
 // re-grants UPDATE only on (full_name, phone, language) for profiles and
-// (name, language) for companies.
+// (name, language) for companies; 0015 does the same for the batch tables so
+// the undo snapshot is immutable.
+
+/**
+ * The primary control: set what you read AND, optionally, bring the company's
+ * stored data with it.
+ *
+ * Creates the batch but never runs it — translating hundreds of rows does not
+ * fit in a server action, and a redirecting action has nowhere to report
+ * progress. The client island on /perfil drives /api/translation/[id]/run.
+ */
+export async function saveLanguage(formData: FormData): Promise<void> {
+  const language = asLocale(String(formData.get('idioma') ?? ''));
+  if (!language) redirect('/perfil?erro=idioma');
+  const translate = formData.get('traduzir') != null;
+
+  const ctx = await requireAuth();
+  const { db, userId, companyId, companyLocale } = ctx;
+
+  const { error } = await db.from('profiles').update({ language }).eq('id', userId);
+  if (error) {
+    console.error('saveLanguage failed:', error.message);
+    redirect('/perfil?erro=idioma');
+  }
+  (await cookies()).set(LOCALE_COOKIE, language, localeCookieOptions);
+
+  let batchId: string | null = null;
+  if (language !== companyLocale) {
+    if (translate) {
+      // assertNotBlocked ONLY on this branch, and the asymmetry is deliberate
+      // rather than an oversight: a lapsed tenant must keep every dial on this
+      // page (see the header comment), but must not be able to spend our model
+      // budget on a few thousand translation calls.
+      await assertNotBlocked(ctx);
+      try {
+        // Also flips companies.language — the dial and the rewrite move
+        // together or not at all.
+        ({ batchId } = await createTranslationBatch({
+          db,
+          companyId,
+          userId,
+          from: companyLocale,
+          to: language,
+          origin: 'web',
+        }));
+      } catch (e) {
+        // ActiveBatchError is the partial unique index doing its job: a second
+        // tab, or an impatient double-submit. Not worth its own message — the
+        // running batch is already rendered on the page they land back on.
+        console.error('saveLanguage translation failed:', e instanceof Error ? e.message : e);
+        redirect(e instanceof ActiveBatchError ? '/perfil' : '/perfil?erro=idioma');
+      }
+    } else {
+      const { error: dialError } = await db.from('companies').update({ language }).eq('id', companyId);
+      if (dialError) {
+        console.error('saveLanguage company dial failed:', dialError.message);
+        redirect('/perfil?erro=idioma');
+      }
+    }
+  }
+
+  logEvent('profile.language_saved', { companyId, userId, language, translated: translate, batchId });
+  // 'layout' scope, not the page: the nav and <html lang> live above this route
+  // and both just changed language.
+  revalidatePath('/', 'layout');
+  redirect(batchId ? `/perfil?traducao=${batchId}` : '/perfil?guardado=idioma');
+}
+
+/** Undo, delegated wholesale to the security-definer RPC in 0015 so the replay
+ *  is one atomic statement rather than hundreds of round trips. */
+export async function revertTranslation(formData: FormData): Promise<void> {
+  const batchId = String(formData.get('lote') ?? '');
+  if (!batchId) redirect('/perfil?erro=reversao');
+
+  const { db, companyId, userId } = await requireAuth();
+  try {
+    // The RPC re-checks the tenant itself (it is SECURITY DEFINER, so RLS does
+    // not cover it) and restores companies.language along with the text.
+    const result = await revertTranslationBatch(db, batchId);
+    logEvent('profile.translation_reverted', { companyId, userId, batchId, ...result });
+  } catch (e) {
+    console.error('revertTranslation failed:', e instanceof Error ? e.message : e);
+    redirect('/perfil?erro=reversao');
+  }
+
+  revalidatePath('/', 'layout');
+  redirect('/perfil?guardado=reversao');
+}
+
+// ── the advanced dials ──────────────────────────────────────────────────────
+// Unchanged, and still needed: a Spanish-speaking foreman joining a Portuguese
+// company sets only his own dial and leaves the shared board alone.
 
 export async function setUserLanguage(formData: FormData): Promise<void> {
   const language = asLocale(String(formData.get('idioma') ?? ''));
@@ -131,4 +225,28 @@ export async function setCompanyLanguage(formData: FormData): Promise<void> {
   logEvent('profile.company_language_changed', { companyId, language });
   revalidatePath('/', 'layout');
   redirect('/perfil?guardado=idioma');
+}
+
+// ── appearance ──────────────────────────────────────────────────────────────
+// A third dial, and the odd one out: per DEVICE, not per user or per tenant.
+// Cookie only, no DB write, so dark on the van tablet and light on the office
+// laptop are both true at once.
+//
+// Deliberately no requireAuth(): this writes one cookie on the caller's own
+// browser and reads nothing. A session round trip would buy nothing that
+// document.cookie does not already allow.
+//
+// Constants live in lib/theme.ts, not here — a 'use server' module may only
+// export async functions.
+
+export async function setTheme(formData: FormData): Promise<void> {
+  const theme = asTheme(String(formData.get('tema') ?? ''));
+  if (!theme) redirect('/perfil?erro=tema');
+
+  (await cookies()).set(THEME_COOKIE, theme, themeCookieOptions);
+  logEvent('profile.theme_changed', { theme });
+  // 'layout' scope, not the page: the class this sets lives on <html> in the
+  // ROOT layout, above this route. Without it the change needs a hard reload.
+  revalidatePath('/', 'layout');
+  redirect('/perfil?guardado=tema');
 }
