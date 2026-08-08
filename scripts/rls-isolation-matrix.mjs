@@ -159,6 +159,17 @@ async function seedTenant(label) {
     `translation_item(${label})`,
   );
 
+  // A check-in answer. Written as the service role, which is the ONLY writer in
+  // production too — the WhatsApp webhook. There is no insert policy, so the
+  // adversarial pass below can assert that a tenant cannot forge one.
+  await must(
+    admin.from('worker_checkins').insert({
+      company_id: companyId, worker_id: worker.id,
+      checkin_date: '2026-01-05', answer: 'done', task_ids: [task1.id],
+    }).select(),
+    `worker_checkin(${label})`,
+  );
+
   const client = createClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: false },
   });
@@ -186,6 +197,8 @@ async function cleanupTenant(t) {
   await companyEq(admin.from('memories').delete());
   await companyEq(admin.from('transcription_vocab').delete());
   await companyEq(admin.from('conversations').delete());
+  // Before workers: worker_checkins.worker_id is a FK.
+  await companyEq(admin.from('worker_checkins').delete());
   await companyEq(admin.from('workers').delete());
   await companyEq(admin.from('jobs').delete());
   await admin.from('profiles').delete().eq('id', t.userId);
@@ -204,7 +217,7 @@ async function runMatrix(self, other) {
   // screen reads the whole board through it. If it were ever recreated
   // without security_invoker it would leak every company's tasks, and nothing
   // else in this repo would notice.
-  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items']) {
+  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'worker_checkins']) {
     const { data, error } = await db.from(table).select('*');
     const rows = data ?? [];
     const ownKey = table === 'companies' ? 'id' : 'company_id';
@@ -322,6 +335,32 @@ async function runAdversarial(attacker, victim) {
     const { error } = await db.from('translation_items').update({ old_value: 'tampered' }).eq('batch_id', attacker.batchId);
     check('adversarial: tenant rewrite of own translation snapshot blocked', error != null,
       error ? `code=${error.code}` : 'UPDATE SUCCEEDED (undo is forgeable!)');
+  }
+
+  // Attack 6 (0017): worker check-in answers must be unforgeable. The table is
+  // readable by its tenant but has NO insert or update policy and no grant
+  // beyond select — the only writer is the WhatsApp webhook on the service
+  // role. A tenant that could write here could manufacture "the crew said they
+  // finished", which is exactly what a later PRD will trust when deciding
+  // whether a task is done. Assert BOTH directions: cannot insert a new answer,
+  // cannot rewrite the one it can see.
+  {
+    const { error } = await db.from('worker_checkins').insert({
+      company_id: attacker.companyId, worker_id: attacker.workerId,
+      checkin_date: '2026-01-06', answer: 'done', task_ids: [],
+    });
+    check('adversarial: tenant INSERT of a check-in answer blocked', error != null,
+      error ? `code=${error.code}` : 'INSERT SUCCEEDED (answers are forgeable!)');
+    if (!error) {
+      await admin.from('worker_checkins').delete()
+        .eq('company_id', attacker.companyId).eq('checkin_date', '2026-01-06');
+    }
+  }
+  {
+    const { error } = await db.from('worker_checkins').update({ answer: 'done' })
+      .eq('company_id', attacker.companyId);
+    check('adversarial: tenant UPDATE of a check-in answer blocked', error != null,
+      error ? `code=${error.code}` : 'UPDATE SUCCEEDED (answers are forgeable!)');
   }
 }
 

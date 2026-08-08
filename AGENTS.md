@@ -21,10 +21,13 @@ This version has breaking changes — APIs, conventions, and file structure may 
   deliberately separate, so UI strings never enter the agent bundle.
 - `packages/config` (`@capo/config`) — shared tsconfig/eslint presets.
 - `supabase/migrations` — single shared DB; migrations stay at the root.
-- `scripts/rls-isolation-matrix.mjs` — the two-tenant RLS isolation matrix
-  (24 visibility checks + 2 adversarial cross-tenant attacks). Run with
-  `pnpm rls-matrix` after any change that touches auth, RLS, or the DB
-  clients; it must stay green.
+- `scripts/rls-isolation-matrix.mjs` — the two-tenant RLS isolation matrix: a
+  per-tenant visibility sweep over every relation carrying `company_id`, a
+  deny-all check on the two send ledgers, and a set of adversarial cross-tenant
+  attacks (cross-company FKs, billing self-upgrade, forging a translation undo
+  snapshot, forging a worker check-in answer). Run with `pnpm rls-matrix` after
+  any change that touches auth, RLS, or the DB clients; it must stay green.
+  Needs credentials, so it does not run in CI.
 - `scripts/scheduler-check.mts` — deterministic checks over the plan
   scheduler and the Portuguese working-day calendar. Needs **no credentials
   and no network**, so it runs in CI on every PR (`pnpm scheduler-check`).
@@ -113,6 +116,21 @@ Structural invariants (do not regress):
   else. Proactive sends need an approved Meta **template** — free-form text is
   only allowed inside the 24h window a recipient's own reply opens, which is
   why the webhook acknowledges worker replies.
+- **There is a second daily send: the 16:30 check-in**, from
+  `apps/web/app/api/cron/checkin`, same two-entry/`lisbon_hour()` shape. It asks
+  "did you finish today's tasks?" as a template with two quick-reply buttons and
+  records the tap in `worker_checkins`. Three things about it are load-bearing:
+  it is **deterministic in both directions** (no model is called on this path at
+  all); it **records an answer and never writes `tasks.status`**; and it claims
+  under `kind='task_checkin'` in `notification_log`, which is the only reason
+  two sends can share a day under that table's unique constraint. Both routes
+  share `apps/web/lib/cron.ts` for auth and the claim protocol — the parts where
+  drift would be a correctness bug — and nothing else.
+  The inbound tap is a **template quick reply** (`type: 'button'`, from a
+  worker), a different shape from an approval card's **interactive reply
+  button** (`type: 'interactive'`, from a manager). They are handled on
+  different paths and their payload codecs are deliberately non-overlapping;
+  conflating them is the mistake to watch for.
 - **`workers.language` is the third dial** (see the top of this file).
   Nullable, and the null means "inherit `companies.language`" — do not give it
   a default. A worker sets it themselves by replying `PT`/`ES`/`EN` to their

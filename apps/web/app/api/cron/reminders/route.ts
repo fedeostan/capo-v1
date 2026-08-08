@@ -1,12 +1,19 @@
-import { timingSafeEqual } from 'node:crypto';
 import { NextResponse, type NextRequest } from 'next/server';
-import { getDb, type Db } from '@capo/db/client';
+import { getDb } from '@capo/db/client';
 import { appendEventMessage, ensureConversation } from '@capo/core/conversation';
-import { sendWhatsAppTemplate, WhatsAppSendError } from '@capo/core/channels/whatsapp';
+import { sendWhatsAppTemplate } from '@capo/core/channels/whatsapp';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
 import { sendConfigFor, toSendTarget, whatsappSendEnv } from '../../../../lib/whatsapp';
 import { logEvent } from '../../../../lib/log';
+import {
+  authorizeCron,
+  billableCompanies,
+  claimNotification,
+  describeSendError,
+  readLisbonClock,
+  resolveNotification,
+} from '../../../../lib/cron';
 import {
   loadCompanyBriefing,
   renderManagerBriefing,
@@ -51,75 +58,9 @@ const NOTIFY_IDLE_WORKERS = false;
 
 const KIND = 'daily_briefing';
 
-function bearerValid(header: string | null, secret: string): boolean {
-  if (!header?.startsWith('Bearer ')) return false;
-  const a = Buffer.from(header.slice('Bearer '.length), 'utf8');
-  const b = Buffer.from(secret, 'utf8');
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-interface Claim {
-  id: string;
-}
-
-/**
- * Claim a target for today, or report that someone already did.
- *
- * The insert goes in BEFORE the Graph API call, which is what turns
- * notification_log's unique constraint into an idempotency lock: a retry, a
- * double-scheduled cron, or a manual re-run cannot message the same person
- * twice. Returns null when the claim was already taken.
- *
- * Note the trade-off this makes deliberately: a FAILED send also holds the
- * claim, so a transient error costs that person their briefing for the day
- * rather than risking a duplicate. The failure is visible in the operator's
- * Briefing log; to force a retry, delete the row and re-invoke the route.
- */
-async function claim(
-  db: Db,
-  row: {
-    company_id: string;
-    audience: 'worker' | 'manager';
-    worker_id?: string;
-    profile_id?: string;
-    notification_date: string;
-    task_ids: string[];
-  },
-): Promise<Claim | null> {
-  const { data, error } = await db
-    .from('notification_log')
-    .insert({ ...row, kind: KIND, channel: 'whatsapp', status: 'pending' })
-    .select('id')
-    .single();
-  // 23505 = unique_violation: already claimed today. Not an error.
-  if (error) {
-    if (error.code === '23505') return null;
-    throw new Error(`notification_log claim failed: ${error.message}`);
-  }
-  return data;
-}
-
-async function resolve(
-  db: Db,
-  claimId: string,
-  status: 'sent' | 'failed' | 'skipped',
-  extra: { provider_message_id?: string | null; error?: string | null } = {},
-): Promise<void> {
-  const { error } = await db.from('notification_log').update({ status, ...extra }).eq('id', claimId);
-  if (error) console.error(`cron/reminders: could not resolve claim ${claimId}: ${error.message}`);
-}
-
-function describeError(err: unknown): string {
-  if (err instanceof WhatsAppSendError) return err.message;
-  return err instanceof Error ? err.message : String(err);
-}
-
 export async function GET(request: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return new NextResponse('cron not configured', { status: 503 });
-  if (!bearerValid(request.headers.get('authorization'), secret)) {
-    return new NextResponse('unauthorized', { status: 401 });
-  }
+  const denied = authorizeCron(request);
+  if (denied) return denied;
 
   // dry_run renders everything and sends nothing, writes nothing. It also
   // bypasses the hour gate, so the output can be inspected at any time of day.
@@ -127,42 +68,27 @@ export async function GET(request: NextRequest) {
 
   const db = getDb();
 
-  // The clock lives in SQL. Vercel Cron fires in UTC and Lisbon is UTC+0 in
-  // winter, UTC+1 in summer, so two daily schedules are registered (06:00 and
-  // 07:00 UTC) and exactly one of them passes this gate, year round. Asking
-  // Postgres avoids teaching the route about WET/WEST.
-  const { data: hour, error: hourError } = await db.rpc('lisbon_hour');
-  if (hourError) {
-    console.error('cron/reminders: lisbon_hour failed:', hourError.message);
-    return new NextResponse('clock unavailable', { status: 500 });
-  }
+  const clock = await readLisbonClock(db, 'cron/reminders');
+  if (!clock) return new NextResponse('clock unavailable', { status: 500 });
+  const { hour, today } = clock;
   if (!dryRun && hour !== SEND_HOUR) {
     return NextResponse.json({ skipped: 'outside the send hour', lisbonHour: hour });
-  }
-
-  const { data: today, error: todayError } = await db.rpc('lisbon_today');
-  if (todayError || !today) {
-    console.error('cron/reminders: lisbon_today failed:', todayError?.message);
-    return new NextResponse('clock unavailable', { status: 500 });
   }
 
   const env = whatsappSendEnv();
   if (!env && !dryRun) return new NextResponse('whatsapp not configured', { status: 503 });
 
-  // Outbound template sends cost money, so unlike the inbound webhook (which
-  // is deliberately ungated) this skips companies that are no longer paying.
-  const { data: companies, error: companiesError } = await db
-    .from('companies')
-    .select('id, name, language')
-    .in('subscription_status', ['trialing', 'active']);
-  if (companiesError) {
-    console.error('cron/reminders: company read failed:', companiesError.message);
+  let companies;
+  try {
+    companies = await billableCompanies(db);
+  } catch (err) {
+    console.error('cron/reminders:', describeSendError(err));
     return new NextResponse('company read failed', { status: 500 });
   }
 
   const report: unknown[] = [];
 
-  for (const company of companies ?? []) {
+  for (const company of companies) {
     try {
       const briefing = await loadCompanyBriefing(db, company.id, company.language);
       const sends: unknown[] = [];
@@ -179,7 +105,8 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        const claimed = await claim(db, {
+        const claimed = await claimNotification(db, {
+          kind: KIND,
           company_id: company.id,
           audience: 'worker',
           worker_id: worker.workerId,
@@ -189,7 +116,7 @@ export async function GET(request: NextRequest) {
         if (!claimed) continue;
 
         if (idle && !NOTIFY_IDLE_WORKERS) {
-          await resolve(db, claimed.id, 'skipped');
+          await resolveNotification(db, claimed.id, 'skipped');
           continue;
         }
 
@@ -202,16 +129,16 @@ export async function GET(request: NextRequest) {
             },
             sendConfigFor(env!, toSendTarget(worker.phone)),
           );
-          await resolve(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
+          await resolveNotification(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
           notified += 1;
         } catch (err) {
           // One unreachable worker must never abort the run — on the test tier
           // a 131030 for a not-yet-allow-listed number is the expected case.
-          await resolve(db, claimed.id, 'failed', { error: describeError(err) });
+          await resolveNotification(db, claimed.id, 'failed', { error: describeSendError(err) });
           logEvent('reminders.worker_send_failed', {
             companyId: company.id,
             workerId: worker.workerId,
-            error: describeError(err),
+            error: describeSendError(err),
           });
         }
       }
@@ -235,7 +162,8 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        const claimed = await claim(db, {
+        const claimed = await claimNotification(db, {
+          kind: KIND,
           company_id: company.id,
           audience: 'manager',
           profile_id: manager.id,
@@ -253,12 +181,12 @@ export async function GET(request: NextRequest) {
             },
             sendConfigFor(env!, toSendTarget(manager.phone)),
           );
-          await resolve(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
+          await resolveNotification(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
         } catch (err) {
-          await resolve(db, claimed.id, 'failed', { error: describeError(err) });
+          await resolveNotification(db, claimed.id, 'failed', { error: describeSendError(err) });
           logEvent('reminders.manager_send_failed', {
             companyId: company.id,
-            error: describeError(err),
+            error: describeSendError(err),
           });
         }
       }
@@ -282,8 +210,8 @@ export async function GET(request: NextRequest) {
     } catch (err) {
       // A broken company must not stop the rest of the estate being briefed.
       console.error(`cron/reminders: company ${company.id} failed:`, err);
-      logEvent('reminders.company_failed', { companyId: company.id, error: describeError(err) });
-      report.push({ company: company.name, error: describeError(err) });
+      logEvent('reminders.company_failed', { companyId: company.id, error: describeSendError(err) });
+      report.push({ company: company.name, error: describeSendError(err) });
     }
   }
 

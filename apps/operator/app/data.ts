@@ -204,7 +204,8 @@ export interface HealthReport {
   alerts: Alert[];
   activation: ActivationRow[];
   today: {
-    dispatchesToday: number;
+    briefingsToday: number;
+    checkinsToday: number;
     messagesToday: number;
     tasksCompletedToday: number;
     proposalsPending: number;
@@ -252,7 +253,9 @@ export async function loadHealth(): Promise<HealthReport> {
       // briefing writes notification_log (see apps/web/app/api/cron/reminders).
       db
         .from('notification_log')
-        .select('company_id, created_at, notification_date, status')
+        // `kind` is not optional here: two daily sends write this table now, and
+        // every counter below is about one of them specifically.
+        .select('company_id, created_at, notification_date, status, kind')
         .eq('status', 'sent')
         .order('created_at', { ascending: false })
         .limit(500)
@@ -390,8 +393,18 @@ export async function loadHealth(): Promise<HealthReport> {
   }
 
   const dispatchingCompanies = activation.filter(r => r.stage === 'dispatching').length;
-  const dispatchesToday = dispatches.filter(d => d.notification_date === todayKey).length;
-  if (dispatchingCompanies > 0 && dispatchesToday === 0) {
+  // Filtered by KIND, not just by date. notification_log now carries two daily
+  // sends — the 07:00 'daily_briefing' and the 16:30 'task_checkin' — and this
+  // alert is about the briefing only. Counting every kind would mean a working
+  // check-in permanently holds this number above zero, so the briefing could
+  // fail every single morning and this alert would never fire again.
+  const briefingsToday = dispatches.filter(
+    d => d.notification_date === todayKey && d.kind === 'daily_briefing',
+  ).length;
+  const checkinsToday = dispatches.filter(
+    d => d.notification_date === todayKey && d.kind === 'task_checkin',
+  ).length;
+  if (dispatchingCompanies > 0 && briefingsToday === 0) {
     alerts.push({
       level: 'critical',
       title: 'No briefings sent today',
@@ -416,7 +429,8 @@ export async function loadHealth(): Promise<HealthReport> {
     alerts,
     activation: activation.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     today: {
-      dispatchesToday,
+      briefingsToday,
+      checkinsToday,
       messagesToday: messages.filter(m => lisbonDateKey(m.created_at) === todayKey).length,
       tasksCompletedToday: tasks.filter(t => t.status === 'done' && lisbonDateKey(t.updated_at) === todayKey).length,
       proposalsPending: proposals.filter(p => p.status === 'pending').length,

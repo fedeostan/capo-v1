@@ -6,6 +6,14 @@ function formatWhen(iso: string): string {
   return new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Lisbon' });
 }
 
+// notification_log.kind. Both daily sends write this table, and the raw values
+// are snake_case wire vocabulary shared with the cron routes — label them here
+// rather than teaching the reader to translate.
+const KIND_LABEL: Record<string, string> = {
+  daily_briefing: '07:00 briefing',
+  task_checkin: '16:30 check-in',
+};
+
 const STATUS_STYLE: Record<string, string> = {
   sent: 'text-emerald-600',
   failed: 'text-red-600 font-medium',
@@ -23,14 +31,17 @@ export default async function DispatchPage() {
       <section className="space-y-5">
         <h1 className="text-lg font-semibold">Daily briefing log</h1>
         <p className="text-xs text-zinc-500">
-          The 07:00 Europe/Lisbon WhatsApp send, written by the Vercel cron on <code>capo-v1</code> (
-          <code>/api/cron/reminders</code>) — read-only here. Last {briefings.length} rows, failures included.
+          Both Europe/Lisbon WhatsApp sends, written by the Vercel crons on <code>capo-v1</code> —
+          the 07:00 briefing (<code>/api/cron/reminders</code>) and the 16:30 check-in (
+          <code>/api/cron/checkin</code>) — read-only here. Last {briefings.length} rows, failures
+          included.
         </p>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-zinc-500/20 text-xs text-zinc-500">
                 <th className="py-2 pr-4 font-normal">When</th>
+                <th className="py-2 pr-4 font-normal">Kind</th>
                 <th className="py-2 pr-4 font-normal">Company</th>
                 <th className="py-2 pr-4 font-normal">To</th>
                 <th className="py-2 pr-4 font-normal">Date</th>
@@ -43,6 +54,11 @@ export default async function DispatchPage() {
               {briefings.map(row => (
                 <tr key={row.id}>
                   <td className="py-2 pr-4 whitespace-nowrap">{formatWhen(row.created_at)}</td>
+                  {/* Two daily sends land in this table now — the 07:00
+                      briefing and the 16:30 check-in. Without this column they
+                      are indistinguishable, and "did the briefing go out?"
+                      becomes unanswerable by looking. */}
+                  <td className="py-2 pr-4 whitespace-nowrap text-xs">{KIND_LABEL[row.kind] ?? row.kind}</td>
                   <td className="py-2 pr-4">{row.companies?.name ?? '—'}</td>
                   <td className="py-2 pr-4">
                     {row.audience === 'manager' ? 'Manager' : (row.workers?.name ?? 'Worker')}
@@ -57,7 +73,7 @@ export default async function DispatchPage() {
               ))}
               {briefings.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-4 text-zinc-500">
+                  <td colSpan={8} className="py-4 text-zinc-500">
                     No briefings logged yet.
                   </td>
                 </tr>

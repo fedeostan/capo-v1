@@ -11,6 +11,7 @@
     "rls-matrix": "node scripts/rls-isolation-matrix.mjs",
     "scheduler-check": "tsx scripts/scheduler-check.mts",
     "whatsapp-check": "tsx scripts/whatsapp-check.mts",
+    "whatsapp-template": "tsx scripts/whatsapp-template.mts",
     "agent-smoke": "tsx scripts/agent-smoke.mts",
     "knowledge-ingest": "tsx scripts/knowledge-ingest.mts"
   },
@@ -18,6 +19,7 @@
     "@ai-sdk/google": "^4.0.8",
     "@capo/core": "workspace:*",
     "@capo/db": "workspace:*",
+    "@capo/i18n": "workspace:*",
     "@supabase/supabase-js": "^2.110.0",
     "ai": "^7.0.15",
     "tsx": "^4.19.2",
