@@ -7,13 +7,19 @@
 // translation_items, revert_translation_batch, notification_log, lisbon_hour
 // and workers.language all matched.
 //
-// ⚠ The `worker_checkins` block below is HAND-WRITTEN AHEAD of its migration.
-// 0017_worker_checkins.sql is NOT yet applied to the live project, so this file
-// currently describes one table that does not exist there. That is the usual
-// order here — the route code does not typecheck without it, and typecheck and
-// build are the merge gate — but it means the standing chore is real: once 0017
-// is applied, regenerate and confirm this file is reproduced byte for byte.
-// See docs/human-todo.md §0.
+// `0017_worker_checkins.sql` is APPLIED (version 20260808140249). Its block
+// below was hand-written ahead of the migration — the route code does not
+// typecheck without it, and typecheck/build are the merge gate — and was then
+// verified column by column against the live schema: names, types, nullability
+// and defaults all match, which is what decides Row vs Insert vs Update
+// optionality.
+//
+// ⚠ The usual byte-equality regeneration check could NOT be run for it. The
+// live project also carries `task_reviews` (versions 20260808123135 /
+// 20260808125233 / 20260808130731) from the parallel PRD #19 work, which is not
+// in this branch — so a full regeneration today emits tables this file has
+// never had, and the diff would look like corruption without being it. Do the
+// byte-equality pass once #19 lands. See docs/human-todo.md §0.
 export type Json =
   | string
   | number
