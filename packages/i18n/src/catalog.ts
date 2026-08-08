@@ -79,7 +79,7 @@ export interface Catalog {
   };
 
   dashboard: {
-    taskStatus: Record<'pending' | 'in_progress' | 'blocked' | 'done' | 'cancelled', string>;
+    taskStatus: Record<'pending' | 'in_progress' | 'pending_review' | 'blocked' | 'done' | 'cancelled', string>;
     /** Full phrase, e.g. "Prazo passou há 3 dias" / "3 days past due". */
     overdueBy(days: number): string;
     noAssignee: string;

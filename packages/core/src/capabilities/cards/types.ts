@@ -10,7 +10,7 @@
 
 import type { Locale } from '@capo/i18n/locale';
 
-export type TaskStatus = 'pending' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
+export type TaskStatus = 'pending' | 'in_progress' | 'pending_review' | 'blocked' | 'done' | 'cancelled';
 export type JobStatus = 'active' | 'paused' | 'done';
 
 export interface CardStrings {

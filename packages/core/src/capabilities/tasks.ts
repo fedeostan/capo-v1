@@ -6,7 +6,7 @@ const isoDate = z
   .regex(/^\d{4}-\d{2}-\d{2}$/)
   .describe('ISO date, YYYY-MM-DD');
 
-const taskStatus = z.enum(['pending', 'in_progress', 'blocked', 'done', 'cancelled']);
+const taskStatus = z.enum(['pending', 'in_progress', 'pending_review', 'blocked', 'done', 'cancelled']);
 
 const startDate = isoDate
   .optional()

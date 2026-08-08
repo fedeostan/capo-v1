@@ -85,6 +85,7 @@ const dict: Catalog = {
     taskStatus: {
       pending: 'Pendiente',
       in_progress: 'En curso',
+      pending_review: 'Pendiente de control',
       blocked: 'Bloqueada',
       done: 'Terminada',
       cancelled: 'Cancelada',

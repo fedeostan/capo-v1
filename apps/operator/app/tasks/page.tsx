@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic';
 const STATUS_STYLES: Record<string, string> = {
   pending: 'text-zinc-500',
   in_progress: 'text-sky-400',
+  pending_review: 'text-violet-400',
   blocked: 'text-amber-400',
   done: 'text-emerald-400',
   cancelled: 'text-zinc-500 line-through',

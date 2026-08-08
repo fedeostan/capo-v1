@@ -5,7 +5,7 @@ import { loadOverview } from '../data';
 // prerendered at build time, when those secrets don't exist.
 export const dynamic = 'force-dynamic';
 
-const STATUS_ORDER = ['pending', 'in_progress', 'blocked', 'done', 'cancelled'];
+const STATUS_ORDER = ['pending', 'in_progress', 'pending_review', 'blocked', 'done', 'cancelled'];
 
 function formatWhen(iso: string | null): string {
   if (!iso) return '—';
