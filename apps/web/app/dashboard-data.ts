@@ -386,7 +386,15 @@ export interface PendingReview {
   taskId: string;
   note: string | null;
   declaredAt: string;
-  /** null = the manager opened this check themselves. */
+  /** true when a worker filed this claim, even if their name did not resolve
+   *  (e.g. their crew row is gone or invisible while the review is still
+   *  pending). Carried separately from `declaredByName` so the UI can still
+   *  attribute the note to a worker rather than silently reading as the
+   *  manager's own check — see declaredByName below. */
+  declaredByWorker: boolean;
+  /** null when either the manager opened this check themselves, OR a worker
+   *  did but their name did not resolve. Branch on `declaredByWorker`, not on
+   *  this, to tell those two apart. */
   declaredByName: string | null;
 }
 
@@ -440,6 +448,7 @@ export async function loadPendingReviews(
         taskId: r.task_id,
         note: r.note,
         declaredAt: r.declared_at,
+        declaredByWorker: Boolean(r.declared_by_worker_id),
         declaredByName: r.declared_by_worker_id ? (names.get(r.declared_by_worker_id) ?? null) : null,
       },
     ]),

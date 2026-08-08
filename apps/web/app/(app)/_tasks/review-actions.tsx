@@ -18,12 +18,19 @@ import { approveReview, dismissReview, rejectReview } from './actions';
 export default function ReviewActions({
   reviewId,
   note,
+  declaredByWorker,
   declaredByName,
   locale,
 }: {
   reviewId: string;
   note: string | null;
-  /** null = the manager opened this check themselves. */
+  /** true when a worker filed this claim, even if their name did not
+   *  resolve. Branch the header on THIS, not on declaredByName — a worker
+   *  whose name is missing must still read as a worker's claim, never as the
+   *  manager's own check. */
+  declaredByWorker: boolean;
+  /** null when either the manager opened this check, or a worker did but
+   *  their name did not resolve — see declaredByWorker. */
   declaredByName: string | null;
   // A plain string, not a catalog: the catalog holds functions, which cannot
   // cross the server→client boundary.
@@ -50,9 +57,13 @@ export default function ReviewActions({
     // column does — otherwise every button here would just open the task.
     <div className="relative z-10 mt-2 rounded-lg border border-violet-600/30 bg-violet-600/5 p-2">
       <p className="text-[11px] font-medium text-violet-700">
-        {declaredByName ? t.declaredBy(declaredByName) : t.declaredByManager}
+        {declaredByWorker ? (declaredByName ? t.declaredBy(declaredByName) : t.declaredByUnknownWorker) : t.declaredByManager}
       </p>
-      {note && <blockquote className="mt-0.5 text-xs italic text-zinc-600">“{note}”</blockquote>}
+      {note && (
+        <blockquote className="mt-0.5 whitespace-pre-line break-words text-xs italic text-zinc-600 line-clamp-6">
+          “{note}”
+        </blockquote>
+      )}
       <div className="mt-2 flex flex-wrap gap-2">
         <button
           type="button"

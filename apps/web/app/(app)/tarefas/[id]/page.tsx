@@ -2,8 +2,9 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { ScreenShell } from '@capo/ui/dashboard-ui';
 import { TaskDetail } from '@capo/ui/task-detail';
-import { loadTaskDetail } from '@/app/dashboard-data';
+import { loadPendingReviews, loadTaskDetail } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
+import ReviewActions from '@/app/(app)/_tasks/review-actions';
 import TaskActions from '@/app/(app)/_tasks/task-actions';
 import PullToRefresh from '@/app/pull-to-refresh';
 import { isUuid } from '../filters';
@@ -33,6 +34,14 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
   const detail = await loadTaskDetail(ctx, id);
   if (!detail) notFound();
 
+  // The board's per-row review lookup, narrowed to this one task. Needed here
+  // too: a pending_review task with an active window outside "today" (not
+  // overdue, deliberately not at_risk) shows the resolution buttons ONLY
+  // under the Todas chip or an exact-date filter — the manager who just
+  // requested the check from THIS screen would otherwise have no way back to
+  // resolve it from here.
+  const review = (await loadPendingReviews(ctx, [detail.task.id])).get(detail.task.id) ?? null;
+
   const subtitle = [detail.job?.name, detail.job?.address].filter(Boolean).join(' · ') || undefined;
 
   return (
@@ -47,7 +56,18 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
           worker={detail.worker}
           locale={locale}
           renderActions={() => (
-            <TaskActions taskId={detail.task.id} status={detail.task.status} locale={locale} allowRequestReview />
+            <>
+              <TaskActions taskId={detail.task.id} status={detail.task.status} locale={locale} allowRequestReview />
+              {review && (
+                <ReviewActions
+                  reviewId={review.id}
+                  note={review.note}
+                  declaredByWorker={review.declaredByWorker}
+                  declaredByName={review.declaredByName}
+                  locale={locale}
+                />
+              )}
+            </>
           )}
         />
       </PullToRefresh>

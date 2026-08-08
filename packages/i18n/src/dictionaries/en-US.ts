@@ -147,6 +147,7 @@ const dict: Catalog = {
     taskReview: {
       declaredBy: name => `${name} says this is done:`,
       declaredByManager: 'Awaiting review:',
+      declaredByUnknownWorker: 'A worker says this is done:',
       approve: 'Approve',
       reject: 'Reject',
       dismiss: 'No check needed',

@@ -137,6 +137,11 @@ export interface Catalog {
       declaredBy(name: string): string;
       /** Header when declared_by_worker_id is null (manager opened the check). */
       declaredByManager: string;
+      /** Header when a worker filed the claim but their name did not resolve
+       *  (e.g. their crew row is gone or invisible while the review is still
+       *  pending). Still attributes to a worker, not the manager — never fall
+       *  back to declaredByManager here. */
+      declaredByUnknownWorker: string;
       approve: string;
       reject: string;
       /** "No check needed" — the manager closing it without a site visit. */

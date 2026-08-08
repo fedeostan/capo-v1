@@ -148,6 +148,7 @@ const dict: Catalog = {
     taskReview: {
       declaredBy: name => `${name} diz que está feita:`,
       declaredByManager: 'A aguardar controlo:',
+      declaredByUnknownWorker: 'Um trabalhador diz que está feita:',
       approve: 'Aprovar',
       reject: 'Rejeitar',
       dismiss: 'Não precisa controlo',
