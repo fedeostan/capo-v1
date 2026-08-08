@@ -36,10 +36,11 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
 
   // The board's per-row review lookup, narrowed to this one task. Needed here
   // too: a pending_review task with an active window outside "today" (not
-  // overdue, deliberately not at_risk) shows the resolution buttons ONLY
-  // under the Todas chip or an exact-date filter — the manager who just
-  // requested the check from THIS screen would otherwise have no way back to
-  // resolve it from here.
+  // overdue, and at_risk only if risk_late_dependency or risk_paused_job
+  // fires — risk_late_start/risk_due_soon are pending-only allowlists that
+  // never do) shows the resolution buttons ONLY under the Todas chip or an
+  // exact-date filter — the manager who just requested the check from THIS
+  // screen would otherwise have no way back to resolve it from here.
   const review = (await loadPendingReviews(ctx, [detail.task.id])).get(detail.task.id) ?? null;
 
   const subtitle = [detail.job?.name, detail.job?.address].filter(Boolean).join(' · ') || undefined;

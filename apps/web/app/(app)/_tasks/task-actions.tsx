@@ -20,7 +20,8 @@ export default function TaskActions({
    *  the board row has no space and this is a deliberate, not a routine, act. */
   allowRequestReview?: boolean;
 }) {
-  const t = getCatalog(locale).screens.taskActions;
+  const catalog = getCatalog(locale);
+  const t = catalog.screens.taskActions;
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -64,7 +65,7 @@ export default function TaskActions({
           onClick={() => run(requestReview)}
           className="mb-1 shrink-0 rounded-lg border border-violet-600/40 px-2 py-1 text-xs text-violet-700 hover:bg-violet-600/10 disabled:opacity-50"
         >
-          {getCatalog(locale).screens.taskReview.request}
+          {catalog.screens.taskReview.request}
         </button>
       )}
       <button

@@ -117,29 +117,32 @@ Structural invariants (do not regress):
   Nullable, and the null means "inherit `companies.language`" — do not give it
   a default. A worker sets it themselves by replying `PT`/`ES`/`EN` to their
   briefing.
-- **`pending_review` is the completion claim, and its five semantics differ
-  on purpose.** A worker (PRD 4) or the manager declares a task finished; it
+- **`pending_review` is the completion claim, and the surfaces that see it
+  split into denylists and allowlists on purpose.** A worker (PRD 4) or the
+  manager declares a task finished; it
   lands in `task_reviews` and the task moves to `pending_review` until the
   manager approves, rejects, or dismisses it. Adding a status touches ~10
   hand-written enumerations — the map is in `0017_task_reviews.sql`. Three
   migrations built this: `0017_task_reviews.sql` (table, RLS, both RPCs),
   `0018_task_reviews_hardening.sql` (fix round 1: closed a fail-open tenant
   guard, added a row lock, revoked the INSERT grant), and
-  `0019_task_review_supersede.sql` (the trigger below). Five SQL surfaces
-  matter, and the review that shipped this feature found the map itself had
-  contained one inversion — treat this list as ground truth, not the
-  in-progress draft:
+  `0019_task_review_supersede.sql` (the trigger below). The surfaces that
+  matter are listed below, and the review that shipped this feature found
+  the map itself had contained one inversion — treat this list as ground
+  truth, not the in-progress draft:
   - `task_board.is_open` (`0013:71`) is a **denylist**
     (`status not in ('done','cancelled')`), so `pending_review` stays
     **open**: on the board, and still overdue when its dates say so. That is
     the safety property — a false completion claim is visible, never silent.
     Note the asymmetry inside the same view: `risk_late_start`/
     `risk_due_soon` (`0013:116-121`) are `status = 'pending'` **allowlists**,
-    so a task in review is deliberately not "at risk" — overdue is the signal
-    that matters there. A third signal in the same view,
-    `risk_late_dependency` (`0013:92`), is a **denylist** over its
-    predecessors, so a task declared finished but not yet approved still
-    counts as a late dependency blocking its successors.
+    so those two *at-risk-of-slipping* signals never fire for a task in
+    review. That does **not** make a task in review immune to `at_risk`
+    overall: `risk_late_dependency` (`0013:92`) and `risk_paused_job`
+    (`0013:125`) are **not** status-gated, so either can still put a
+    `pending_review` task under the Em risco chip — e.g. a task declared
+    finished but not yet approved still counts as a late dependency blocking
+    its successors.
   - `dashboard_tasks` (`0006:31`, replacing `0005:71`) is a **denylist**, so
     `pending_review` rows DO appear in it — superseded predecessor of
     `task_board`, kept only so an old bundle served mid-deploy keeps working;

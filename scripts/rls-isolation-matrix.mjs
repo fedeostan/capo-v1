@@ -17,11 +17,13 @@
 // The adversarial set covers, in order: the two migration-0009 FK triggers
 // (own-company task pointing at the other company's job/worker; own-company
 // proposal pointing at the other company's conversation), the 0011 billing
-// column revoke, the 0015 revert_translation_batch RPC, and the two 0017
-// task-review RPCs plus its absent INSERT/UPDATE grants. The SECURITY
-// DEFINER ones matter more than they look: RLS does NOT cover them, so their
-// internal auth.uid() checks are the entire tenant boundary — which is
-// exactly what the no-profiles-row actor above is seeded to probe.
+// column revoke, the 0015 revert_translation_batch RPC, the two 0017
+// task-review RPCs plus the table's absent INSERT/UPDATE grants, and — run
+// separately, as the no-profiles-row actor — the same two RPCs again against
+// a real tenant's task/review. The SECURITY DEFINER ones matter more than
+// they look: RLS does NOT cover them, so their internal auth.uid() checks
+// are the entire tenant boundary — which is exactly what the no-profiles-row
+// actor above is seeded to probe.
 //
 // Runs against the live Supabase project using apps/web/.env.local:
 //   pnpm rls-matrix        (root: node scripts/rls-isolation-matrix.mjs)
@@ -426,7 +428,7 @@ async function runAdversarial(attacker, victim) {
     const { data: after } = await admin.from('tasks').select('status').eq('id', foreignTask).single();
     check(
       'adversarial: open review on foreign task blocked',
-      error != null && after?.status !== 'pending_review',
+      error != null && after?.status === 'pending',
       error ? `rejected (${error.code ?? 'err'}), victim task still ${after?.status}` : 'ACCEPTED — boundary broken',
     );
   }
@@ -492,7 +494,7 @@ async function runOrphanAttack(orphan, victim) {
     const { data: after } = await admin.from('tasks').select('status').eq('id', foreignTask).single();
     check(
       'adversarial: orphan (no profiles row) open_task_review blocked',
-      error != null && after?.status !== 'pending_review',
+      error != null && after?.status === 'pending',
       error ? `rejected (${error.code ?? 'err'}), victim task still ${after?.status}` : 'ACCEPTED — boundary broken',
     );
   }

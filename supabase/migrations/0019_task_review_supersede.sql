@@ -77,6 +77,31 @@ create trigger tasks_supersede_review
   when (old.status = 'pending_review' and new.status is distinct from 'pending_review')
   execute function private.supersede_task_review();
 
+-- ── lock-order asymmetry (accepted, not restructured) ───────────────────────
+-- resolve_task_review (below) locks task_reviews first, then tasks: its
+-- `update task_reviews ... where status = 'pending'` runs before its
+-- `update tasks ... where status = 'pending_review'`. This trigger runs the
+-- other way around: it fires AFTER an UPDATE on tasks has already taken that
+-- row's lock, and only then does `update task_reviews` inside
+-- supersede_task_review() above — tasks first, task_reviews second.
+--
+-- So a manager calling resolve_task_review() concurrently with anything that
+-- writes tasks.status directly (the agent's update_task, or a future
+-- completeTask-style path) can take the two locks in opposite orders.
+-- Postgres detects the resulting wait cycle and aborts one transaction with
+-- `40P01 deadlock_detected` — the loser sees a clear, retryable error, and
+-- there is no corruption or half-applied state either way; the aborted
+-- transaction rolls back in full. This is expected and safe, not a bug to
+-- chase if it shows up in logs. Restructuring to a single lock order would
+-- mean either resolve_task_review updating tasks before task_reviews
+-- (breaking the load-bearing ordering documented on that function below,
+-- which is what keeps a legitimate approve/reject/dismiss from overwriting
+-- itself with 'superseded') or this trigger somehow locking task_reviews
+-- before its own firing UPDATE locks tasks (not possible — the trigger only
+-- runs after that lock is already held). Given both paths are rare, both are
+-- single-row, and the failure mode is a clean abort-and-retry, that
+-- restructuring cost is not worth paying.
+
 -- ── resolve_task_review: same body, one added comment ──────────────────────
 -- Behaviourally identical to 0017/0018's version. The only change is the
 -- comment above the task_reviews update, which was silently load-bearing for

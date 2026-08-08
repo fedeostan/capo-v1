@@ -8,6 +8,14 @@ const isoDate = z
 
 const taskStatus = z.enum(['pending', 'in_progress', 'pending_review', 'blocked', 'done', 'cancelled']);
 
+// update_task must NOT be an entry point into pending_review: that status is
+// meaningful only alongside a task_reviews row, which only open_task_review
+// creates, and every UI control keys off that row existing. Writing the status
+// alone yields a task badged "a aguardar controlo" with no way to resolve it.
+// Exits from pending_review stay allowed — tasks_supersede_review (0019)
+// closes the stranded review when the task leaves.
+const updatableTaskStatus = z.enum(['pending', 'in_progress', 'blocked', 'done', 'cancelled']);
+
 const startDate = isoDate
   .optional()
   .describe(
@@ -72,7 +80,9 @@ export const updateTaskInput = z.object({
   task_id: z.string().uuid().describe('Task to update — use list_tasks to find ids.'),
   title: z.string().min(1).optional(),
   description: z.string().optional(),
-  status: taskStatus.optional(),
+  status: updatableTaskStatus
+    .optional()
+    .describe("Cannot be set to 'pending_review' — that status only comes from a worker or manager filing a review claim, not a direct write."),
   job_id: z.string().uuid().optional(),
   assignee_worker_id: z.string().uuid().optional(),
   start_date: startDate,
