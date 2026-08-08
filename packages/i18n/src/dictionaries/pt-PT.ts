@@ -145,6 +145,15 @@ const dict: Catalog = {
       empty: 'Sem tarefas nesta obra ainda — pede ao Capo para criar o plano.',
     },
     taskActions: { complete: 'Concluir', reopen: 'Reabrir', failed: 'Falhou, tenta outra vez.' },
+    taskReview: {
+      declaredBy: name => `${name} diz que está feita:`,
+      declaredByManager: 'A aguardar controlo:',
+      approve: 'Aprovar',
+      reject: 'Rejeitar',
+      dismiss: 'Não precisa controlo',
+      request: 'Pedir controlo',
+      failed: 'Não foi possível resolver o controlo',
+    },
     taskDetail: {
       fallbackTitle: 'Tarefa',
       backToTasks: '← Tarefas',

@@ -128,6 +128,23 @@ export interface Catalog {
     jobs: { title: string; subtitle: string; empty: string };
     jobDetail: { fallbackTitle: string; empty: string };
     taskActions: { complete: string; reopen: string; failed: string };
+    /** The pending-review control on a board row. Separate from taskActions
+     *  because these three buttons resolve a REVIEW, not a task. */
+    taskReview: {
+      /** Attributes the note to its author. The worker's own words are quoted
+       *  BELOW this line, never merged into it — see the note handling rule in
+       *  0017_task_reviews.sql. */
+      declaredBy(name: string): string;
+      /** Header when declared_by_worker_id is null (manager opened the check). */
+      declaredByManager: string;
+      approve: string;
+      reject: string;
+      /** "No check needed" — the manager closing it without a site visit. */
+      dismiss: string;
+      /** Opens a review from the task detail screen. */
+      request: string;
+      failed: string;
+    };
     taskDetail: {
       /** Page title when the task cannot be named (metadata runs before the row loads). */
       fallbackTitle: string;

@@ -144,6 +144,15 @@ const dict: Catalog = {
       empty: 'No tasks on this job yet — ask Capo to build the plan.',
     },
     taskActions: { complete: 'Complete', reopen: 'Reopen', failed: "That didn't work, try again." },
+    taskReview: {
+      declaredBy: name => `${name} says this is done:`,
+      declaredByManager: 'Awaiting review:',
+      approve: 'Approve',
+      reject: 'Reject',
+      dismiss: 'No check needed',
+      request: 'Request review',
+      failed: 'Could not resolve the review',
+    },
     taskDetail: {
       fallbackTitle: 'Task',
       backToTasks: '← Tasks',
