@@ -117,6 +117,78 @@ Structural invariants (do not regress):
   Nullable, and the null means "inherit `companies.language`" — do not give it
   a default. A worker sets it themselves by replying `PT`/`ES`/`EN` to their
   briefing.
+- **`pending_review` is the completion claim, and its five semantics differ
+  on purpose.** A worker (PRD 4) or the manager declares a task finished; it
+  lands in `task_reviews` and the task moves to `pending_review` until the
+  manager approves, rejects, or dismisses it. Adding a status touches ~10
+  hand-written enumerations — the map is in `0017_task_reviews.sql`. Three
+  migrations built this: `0017_task_reviews.sql` (table, RLS, both RPCs),
+  `0018_task_reviews_hardening.sql` (fix round 1: closed a fail-open tenant
+  guard, added a row lock, revoked the INSERT grant), and
+  `0019_task_review_supersede.sql` (the trigger below). Five SQL surfaces
+  matter, and the review that shipped this feature found the map itself had
+  contained one inversion — treat this list as ground truth, not the
+  in-progress draft:
+  - `task_board.is_open` (`0013:71`) is a **denylist**
+    (`status not in ('done','cancelled')`), so `pending_review` stays
+    **open**: on the board, and still overdue when its dates say so. That is
+    the safety property — a false completion claim is visible, never silent.
+    Note the asymmetry inside the same view: `risk_late_start`/
+    `risk_due_soon` (`0013:116-121`) are `status = 'pending'` **allowlists**,
+    so a task in review is deliberately not "at risk" — overdue is the signal
+    that matters there. A third signal in the same view,
+    `risk_late_dependency` (`0013:92`), is a **denylist** over its
+    predecessors, so a task declared finished but not yet approved still
+    counts as a late dependency blocking its successors.
+  - `dashboard_tasks` (`0006:31`, replacing `0005:71`) is a **denylist**, so
+    `pending_review` rows DO appear in it — superseded predecessor of
+    `task_board`, kept only so an old bundle served mid-deploy keeps working;
+    it has no live reader.
+  - `dashboard_obras.pendentes` (`0005:82`) is a **denylist**, so a task in
+    review counts as *pendente* on the Obras screen. This view **is**
+    live-read (`apps/web/app/dashboard-data.ts`).
+  - `dispatch_tasks_today` (`0003:34`) and `BRIEFABLE`
+    (`apps/web/app/notifications/briefing.ts:51`) are both **allowlists**, so
+    both exclude it with no edit: the 07:00 briefing stops nagging a worker
+    about work they already declared finished, and the frozen n8n view stays
+    byte-identical.
+  - `context.ts`'s `openTasks` count (`packages/core/src/agent/context.ts:39`)
+    is an **allowlist that had to be widened by hand**, or a task in review
+    would silently vanish from the count Capo sees while still showing on the
+    manager's board.
+
+  Resolution goes through `resolve_task_review()`, never two client-side
+  updates: the review and its task must move in one transaction or the
+  half-applied state is exactly what the feature exists to prevent. Like
+  `revert_translation_batch`, it is SECURITY DEFINER — RLS does **not** cover
+  it and its internal `auth.uid()` check is the whole tenant boundary, which
+  is why `scripts/rls-isolation-matrix.mjs` attacks it directly. `task_reviews`
+  has **no INSERT and no UPDATE grant** for `authenticated` — SELECT is the
+  only tenant grant that exists on the table. Every write, filing a claim as
+  well as resolving one, goes through the two SECURITY DEFINER RPCs
+  (`open_task_review` / `resolve_task_review`), so a tenant can neither forge
+  `status`/`resolved_by` nor strand a task open by hand.
+
+  The fifth status, **`superseded`**, exists because a task can leave
+  `pending_review` out of band — `update_task` writes `status` straight
+  through with no precondition, so "marca a tarefa como concluída" while a
+  claim is outstanding would otherwise strand the review at `pending`
+  forever: `task_reviews_one_pending_idx` blocks a replacement review, and
+  tenants have no UPDATE grant to fix it themselves. `tasks_supersede_review`
+  (`0019`) is an `after update of status on tasks when (old.status =
+  'pending_review' and new.status is distinct from 'pending_review')` trigger
+  that marks any still-`pending` review `superseded` instead. It is safe to
+  fire on every exit from `pending_review`, including the legitimate one
+  through `resolve_task_review()`, only because that RPC updates
+  `task_reviews` to its resolution **before** it updates `tasks` — by the time
+  the trigger fires on the `tasks` update, the review is no longer `pending`
+  and the trigger's `where status = 'pending'` matches nothing. **This
+  statement ordering inside `resolve_task_review` is load-bearing**: reorder
+  it and every legitimate approve/reject/dismiss overwrites itself with
+  `superseded`.
+
+  `task_reviews.note` is the one place worker-authored text reaches the
+  manager. Render it as an attributed quote, never as UI copy.
 - **One clock, one definition of "today".** The active-window rule
   (`lisbon_today() BETWEEN coalesce(start_date, created_at) AND
   coalesce(due_date, 'infinity')`) and every schedule-risk signal live in SQL,
