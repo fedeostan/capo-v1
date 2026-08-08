@@ -3,18 +3,22 @@
 import { useState, useTransition } from 'react';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
-import { completeTask, reopenTask } from './actions';
+import { completeTask, reopenTask, requestReview } from './actions';
 
 export default function TaskActions({
   taskId,
   status,
   locale,
+  allowRequestReview,
 }: {
   taskId: string;
   status: string;
   // A plain string, not a catalog: the catalog holds functions, which cannot
   // cross the server→client boundary.
   locale: Locale;
+  /** Show "Pedir controlo" beside Concluir. On the detail screen only —
+   *  the board row has no space and this is a deliberate, not a routine, act. */
+  allowRequestReview?: boolean;
 }) {
   const t = getCatalog(locale).screens.taskActions;
   const [pending, startTransition] = useTransition();
@@ -33,6 +37,11 @@ export default function TaskActions({
 
   if (status === 'cancelled') return null;
 
+  // pending_review has its own control (ReviewActions, rendered full-width
+  // below the row). Offering "Concluir" here as well would let the manager
+  // close the task while leaving the review row stranded at 'pending'.
+  if (status === 'pending_review') return null;
+
   if (status === 'done') {
     return (
       <button
@@ -48,6 +57,16 @@ export default function TaskActions({
 
   return (
     <span className="inline-flex flex-col items-end">
+      {allowRequestReview && (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => run(requestReview)}
+          className="mb-1 shrink-0 rounded-lg border border-violet-600/40 px-2 py-1 text-xs text-violet-700 hover:bg-violet-600/10 disabled:opacity-50"
+        >
+          {getCatalog(locale).screens.taskReview.request}
+        </button>
+      )}
       <button
         type="button"
         disabled={pending}

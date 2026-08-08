@@ -235,6 +235,7 @@ export function TaskBoardList({
   groupBy,
   locale,
   renderExtra,
+  renderBelow,
 }: {
   tasks: BoardTask[];
   empty: string;
@@ -243,6 +244,11 @@ export function TaskBoardList({
   // Optional per-row slot (the Concluir/Reabrir buttons), kept as a plain
   // render prop so this package never has to import a mutation.
   renderExtra?: (task: BoardTask) => React.ReactNode;
+  // A second slot, full width and below the risk reasons, for content that
+  // cannot live in the narrow action column — today the pending-review quote
+  // and its three buttons. Same render-prop posture as renderExtra: this
+  // package still never imports a mutation.
+  renderBelow?: (task: BoardTask) => React.ReactNode;
 }) {
   if (tasks.length === 0) return <EmptyState text={empty} cta={talkToCapo(locale)} />;
   const t = getCatalog(locale).dashboard;
@@ -303,6 +309,7 @@ export function TaskBoardList({
                     {reasons.join(' · ')}
                   </p>
                 )}
+                {renderBelow?.(task)}
               </div>
             );
           })}

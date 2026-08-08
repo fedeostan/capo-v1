@@ -47,7 +47,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
           worker={detail.worker}
           locale={locale}
           renderActions={() => (
-            <TaskActions taskId={detail.task.id} status={detail.task.status} locale={locale} />
+            <TaskActions taskId={detail.task.id} status={detail.task.status} locale={locale} allowRequestReview />
           )}
         />
       </PullToRefresh>
