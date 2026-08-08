@@ -79,11 +79,61 @@ WHATSAPP_PHONE_NUMBER_ID=<phone number id>
    board. `whatsapp.button_reply` then `whatsapp.proposal_resolved` in the
    logs.
 
-## 6. Message template — `capo_daily_briefing`
+## 6. Message templates
+
+Two of them, both Utility, both in pt_PT + es_ES + en_US. Every proactive send
+goes through one: they are the only way to reach someone outside the 24-hour
+window.
+
+`pnpm whatsapp-template` manages them from the repo:
+
+```
+pnpm whatsapp-template list     every template on the WABA, with status
+pnpm whatsapp-template status   the ones we manage: PASS/FAIL + exit code
+pnpm whatsapp-template create   submit scripts/whatsapp-templates.ts
+```
+
+It needs `WHATSAPP_ACCESS_TOKEN`, which lives in Vercel and **not** in
+`apps/web/.env.local`. Export it for the one command:
+
+```
+vercel env pull /tmp/vercel.env --environment=production
+set -a; . /tmp/vercel.env; set +a; pnpm whatsapp-template status
+```
+
+> ⚠ Never `vercel env pull` **over `apps/web/.env.local`**. It rewrites its
+> target file wholesale, and that file holds local-only keys that are not in
+> Vercel (`GOOGLE_GENERATIVE_AI_API_KEY`, `SUPABASE_PASSWORD`, `TWILIO_*`,
+> `VERIFIED_TEST_PHONE`). It is also a symlink into the main checkout, so the
+> loss would not be confined to a worktree.
+
+> ⚠ The WhatsApp secrets are marked **Sensitive** in Vercel, which makes them
+> write-only: `vercel env pull` returns the literal string `[SENSITIVE]` for
+> them and the dashboard will not show them either. If you no longer hold the
+> System User token outside Vercel, generating a fresh one (§3) is the only way
+> to run this script — and it has to be updated in Vercel at the same time.
+
+The WABA id is discovered from the token itself (`GET /debug_token` →
+`granular_scopes` → `whatsapp_business_management.target_ids`), so there is no
+env var to keep in sync. `WHATSAPP_WABA_ID` overrides if one token ever covers
+several accounts.
+
+Template copy lives in `scripts/whatsapp-templates.ts`, and the button labels in
+`@capo/i18n` (`whatsapp.checkinDoneButton` / `checkinNotDoneButton`) so there is
+one home for user-facing strings. `status` diffs the live buttons against the
+catalog — editing a label in the catalog does **not** change the approved
+template, and that diff is what tells you so.
+
+### 6a. `capo_daily_briefing`
 
 Needed by the 07:00 reminder cron (`apps/web/app/api/cron/reminders`), which
 messages workers who have never written to Capo and so is always outside the
 24-hour window.
+
+Created by hand before `pnpm whatsapp-template` existed, so it has **no
+definition in the repo** — only its parameter contract is recorded here, and
+`allTemplates()` deliberately omits it rather than shipping a definition nobody
+has verified against the live template. `status` still checks it by name.
 
 1. WhatsApp Manager → **Message templates** → Create template.
    - Name: `capo_daily_briefing` (must match `TEMPLATE_NAME` in the route).
@@ -101,12 +151,64 @@ messages workers who have never written to Capo and so is always outside the
 3. Approval usually takes minutes; the send fails with **132001** until it
    lands.
 
+### 6b. `capo_task_checkin`
+
+The 16:30 check-in (`apps/web/app/api/cron/checkin`): "did you finish today's
+tasks?", answered by tapping one of two quick-reply buttons. Submit it with
+`pnpm whatsapp-template create`; the definition is
+`capoTaskCheckin()` in `scripts/whatsapp-templates.ts`.
+
+- Name `capo_task_checkin`, category **Utility**, `parameter_format`
+  **POSITIONAL**, three languages.
+- Body: two parameters, same order as the briefing — `{{1}}` the worker's name,
+  `{{2}}` the task list. Both rendered by `renderWorkerBriefing`, the same
+  function the 07:00 briefing uses, so the two messages cannot drift about what
+  "your tasks today" means.
+- **Two `QUICK_REPLY` buttons**, and their ORDER IS A CONTRACT: index 0 is
+  "done", index 1 is "not_done". `/api/cron/checkin` mints its payloads in that
+  order. Reordering them in WhatsApp Manager inverts every answer and the Graph
+  API answers the send with a cheerful **200**.
+
+**Outbound** — the button payload is set per-send, not at creation:
+
+```json
+{ "type": "button", "sub_type": "quick_reply", "index": "0",
+  "parameters": [{ "type": "payload", "payload": "capo:checkin:done:<uuid>" }] }
+```
+
+`index` is a **string**. The uuid is the `notification_log` row of the ask —
+not the worker, not the date — which is what lets a tap arriving hours later
+still be recorded against the day it was asked about, and gives the webhook
+exactly one row to check ownership against.
+
+**Inbound** — `messages[].type === 'button'` with `button: { payload, text }`,
+handled in `handleWorkerReply` → `handleCheckinTap`. No model, in either
+direction.
+
+Two ways this fails that do not look like failures:
+
+- **Buttons approved, button component omitted on send.** Meta returns **200**,
+  the worker sees the buttons, and their tap comes back with
+  `payload: "Sim, terminei"` — the button's own LABEL. `parseCheckinPayload`
+  returns null, the tap falls through to the ordinary `workerAck`, and the only
+  evidence anywhere is a `whatsapp.unknown_checkin_payload` log line. This is
+  the single most likely silent failure in the feature.
+- **A button component for an index the approved template does not declare** →
+  **132000** on every send. So the template must be approved *with* its buttons
+  before the first send; a body-only approval is not enough.
+
 Four things that fail silently or confusingly:
 
 - **A template does NOT open the 24-hour window.** Only the recipient's reply
   does. Until a worker replies, every briefing is a paid template send — which
   is why the webhook acknowledges worker replies (`handleWorkerReply`): the ack
   is what converts them into free session messages.
+  Be honest about the arithmetic for workers, though: a worker who never taps
+  costs **two** paid templates a day (07:00 and 16:30), and a worker who *does*
+  tap at 16:30 opens a window that has closed again by the next morning's
+  briefing 14½ hours later. The check-in acks are worth sending for the UX and
+  because a tap is what makes PRD 4's conversational reply legal — not because
+  they save money on the briefing.
 - **Parameters may not contain newlines, tabs, or runs of 4+ spaces.** Meta
   rejects the whole send with **132000**. `toTemplateParam()` in
   `packages/core/src/channels/whatsapp.ts` flattens whitespace for exactly this
@@ -127,6 +229,23 @@ switches `workers.language`, anything else gets a canned ack. `workers.phone`
 has no unique constraint, so a number on two companies' crews is logged as
 `whatsapp.worker_ambiguous` and answered with silence rather than a guessed
 tenant.
+
+A **check-in button tap** (§6b) is handled on this same path, in
+`handleCheckinTap`, above the language check and below the ambiguity guard.
+Three consequences of that placement, all deliberate:
+
+- **A shared phone number can never check in.** The ambiguity guard returns
+  first, so the tap is dropped in silence. Better than recording an answer
+  against a guessed tenant, but invisible unless someone reads the logs.
+- **A worker deactivated between 16:30 and their tap** no longer matches
+  `.eq('active', true)`, so they become `whatsapp.unknown_sender` — total
+  silence, by design, though it looks like the button is broken.
+- **A malformed or unowned payload falls through to the ordinary ack** rather
+  than to silence. Silence after a tap reads as "Capo is broken", and the ack
+  also refreshes the 24h window.
+
+The ack after a tap goes out in `workers.language ?? companies.language` — the
+same locale the card itself was sent in.
 
 ## Limits & follow-ups (known, deliberate)
 
@@ -206,9 +325,26 @@ native WhatsApp numbered list precisely because nothing touches them.)
 carrying the decision — no model in the approval loop, and no outbound
 message-id bookkeeping.
 
-> ⚠ `messages[].type === 'button'` with `button: { payload, text }` is the
-> **template** quick-reply shape. We send no templates; it is intentionally
-> not handled. Do not "fix" the handler by adding it.
+> ⚠ **Two different button shapes arrive on this webhook and they are easy to
+> conflate.**
+>
+> `messages[].type === 'interactive'` with `interactive.button_reply.{id,title}`
+> is an **approval card**, always from a MANAGER, resolved on the manager path
+> above.
+>
+> `messages[].type === 'button'` with `button: { payload, text }` is a
+> **template quick reply** — the 16:30 check-in (§6b) — and only ever comes from
+> a WORKER. It is handled in `handleWorkerReply` → `handleCheckinTap`, never on
+> the manager path, where a `type: 'button'` still correctly falls to
+> `whatsapp.unsupported_message`.
+>
+> The two codecs are deliberately non-overlapping: `parseProposalButtonId`
+> rejects a check-in payload and `parseCheckinPayload` rejects a proposal id,
+> both asserted in `scripts/whatsapp-check.mts`.
+>
+> (This note used to say the template shape was intentionally unhandled and to
+> not "fix" it by adding it. That was true only while Capo sent no templates at
+> all — it stopped being true when the 07:00 briefing shipped.)
 
 **Tenant boundary.** `resolveProposal` runs on the **service-role** client
 here, and `finalize_proposal` is `SECURITY DEFINER` scoped by

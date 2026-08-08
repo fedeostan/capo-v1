@@ -121,6 +121,43 @@ export function parseProposalButtonId(
   return { decision: match[1].toLowerCase() as 'approve' | 'reject', proposalId: match[2] };
 }
 
+// ── check-in quick-reply payloads ───────────────────────────────────────────
+// The 16:30 check-in's two template buttons. Same shape and the same reasoning
+// as the approval button ids above, on a tighter budget: a TEMPLATE quick-reply
+// payload gets far less room than an interactive reply id's 256 chars, so this
+// is capped at 128. `capo:checkin:not_done:<uuid>` is 58.
+//
+// TWO DIFFERENT BUTTON SHAPES arrive on the webhook and they must not be
+// conflated. An approval card is `type: 'interactive'` with
+// `interactive.button_reply.id`, from a MANAGER. A check-in is
+// `type: 'button'` with `button.payload`, from a WORKER. The two prefixes are
+// deliberately non-overlapping so neither parser can ever accept the other's
+// value — asserted in scripts/whatsapp-check.mts.
+//
+// The uuid is the notification_log row of the ASK — not the worker, not the
+// date. That is what makes a tap on yesterday's still-tappable card record
+// against yesterday, and it gives the webhook a single row to check ownership
+// against.
+
+const CHECKIN_PAYLOAD =
+  /^capo:checkin:(done|not_done):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+export type CheckinAnswer = 'done' | 'not_done';
+
+export function checkinPayload(answer: CheckinAnswer, notificationId: string): string {
+  return `capo:checkin:${answer}:${notificationId}`;
+}
+
+// Validated here for the same reason parseProposalButtonId validates there:
+// notificationId goes straight into `.eq('id', …)` on a uuid column.
+export function parseCheckinPayload(
+  payload: string,
+): { answer: CheckinAnswer; notificationId: string } | null {
+  const match = CHECKIN_PAYLOAD.exec(payload);
+  if (!match) return null;
+  return { answer: match[1].toLowerCase() as CheckinAnswer, notificationId: match[2] };
+}
+
 // ── outbound planning ───────────────────────────────────────────────────────
 
 // Recognises the shape returned identically by propose.ts, guard.ts and
@@ -261,12 +298,87 @@ export function toTemplateParam(value: string): string {
   return flat.length <= MAX_PARAM ? flat : `${flat.slice(0, MAX_PARAM - 1).trimEnd()}…`;
 }
 
+// Meta's cap on a template quick-reply payload.
+//
+// This THROWS rather than clamping, which is the opposite of what
+// MAX_BUTTON_TITLE does above — deliberately. A truncated button TITLE is an
+// ugly label the recipient can still act on; a truncated PAYLOAD comes back
+// unparseable and the tap disappears with nothing but a log line to show for
+// it. Fail the send instead, where the caller records it in notification_log.
+const MAX_QUICK_REPLY_PAYLOAD = 128;
+
+function assertQuickReplyPayload(payload: string): string {
+  if (!payload || payload.length > MAX_QUICK_REPLY_PAYLOAD) {
+    throw new Error(
+      `quick-reply payload must be 1..${MAX_QUICK_REPLY_PAYLOAD} chars, got ${payload.length}`,
+    );
+  }
+  return payload;
+}
+
+export interface TemplateQuickReply {
+  /** Echoed back verbatim on `messages[].button.payload`. Max 128 chars. */
+  payload: string;
+}
+
 export interface WhatsAppTemplate {
   name: string;
   /** Meta's locale format — 'pt_PT', 'es_ES', 'en_US'. Underscore, not hyphen. */
   languageCode: string;
   /** Positional {{1}}, {{2}}… body parameters, in order. */
   bodyParams: string[];
+  /**
+   * Quick-reply buttons the APPROVED template declares, in template order.
+   *
+   * Omit for a button-less template — the payload is then byte-identical to
+   * what this function has always sent, which is why capo_daily_briefing needs
+   * no change.
+   *
+   * The array INDEX is the contract: Meta addresses buttons positionally, so
+   * reordering them in WhatsApp Manager without reordering these inverts every
+   * answer, silently, with a 200 from the Graph API.
+   *
+   * Two ways this fails that do not look like failures:
+   *   - a button component for an index the approved template does NOT declare
+   *     → 132000 on every send;
+   *   - NO button component for a template that DOES declare quick replies
+   *     → Meta accepts the send and echoes the button's own LABEL as the
+   *       payload, so the tap comes back as "Sim, terminei" and parses as null.
+   */
+  quickReplies?: TemplateQuickReply[];
+}
+
+// Pure: template in, Graph payload out. Split out of sendWhatsAppTemplate so
+// scripts/whatsapp-check.mts can assert the component shape — the string
+// indices, the sub_type, the backward-compatible single-component case —
+// without credentials or a network, the same way planAssistantMessages is.
+export function buildTemplatePayload(template: WhatsAppTemplate): Record<string, unknown> {
+  const components: Record<string, unknown>[] = [
+    {
+      type: 'body',
+      parameters: template.bodyParams.map(text => ({ type: 'text', text: toTemplateParam(text) })),
+    },
+  ];
+
+  (template.quickReplies ?? []).forEach((button, index) => {
+    components.push({
+      type: 'button',
+      sub_type: 'quick_reply',
+      // A STRING, per Meta's schema. A number is accepted by some versions and
+      // rejected by others; pinning it removes the question.
+      index: String(index),
+      parameters: [{ type: 'payload', payload: assertQuickReplyPayload(button.payload) }],
+    });
+  });
+
+  return {
+    type: 'template',
+    template: {
+      name: template.name,
+      language: { code: template.languageCode },
+      components,
+    },
+  };
 }
 
 // Proactive send: the only path that can reach someone who has not messaged us
@@ -276,22 +388,7 @@ export async function sendWhatsAppTemplate(
   template: WhatsAppTemplate,
   config: WhatsAppSendConfig,
 ): Promise<{ providerMessageId: string | null }> {
-  return await post(
-    {
-      type: 'template',
-      template: {
-        name: template.name,
-        language: { code: template.languageCode },
-        components: [
-          {
-            type: 'body',
-            parameters: template.bodyParams.map(text => ({ type: 'text', text: toTemplateParam(text) })),
-          },
-        ],
-      },
-    },
-    config,
-  );
+  return await post(buildTemplatePayload(template), config);
 }
 
 // Returns the provider message id so the reminder cron can record it in

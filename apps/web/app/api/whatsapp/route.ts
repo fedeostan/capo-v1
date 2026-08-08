@@ -6,6 +6,7 @@ import { MAX_AUDIO_BYTES, transcribeAudio } from '@capo/core/transcription';
 import { coerceLocale, type Locale, type LocaleContext } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
 import {
+  parseCheckinPayload,
   parseProposalButtonId,
   sendWhatsAppText,
   whatsappSink,
@@ -70,14 +71,23 @@ interface WhatsAppMessage {
   // file. Both are accepted — refusing a manager's own m4a of himself talking
   // would be user-hostile — but `voice` is logged so the split stays visible.
   audio?: { id: string; mime_type?: string; voice?: boolean };
-  // A tap on an approval card's Aprovar/Rechazar button. Note this is NOT
-  // `type: 'button'` with `button: { payload, text }` — that is the TEMPLATE
-  // quick-reply shape, and we send no templates. Other subtypes (`list_reply`,
-  // `nfm_reply`) are logged and ignored.
+  // A tap on an approval card's Aprovar/Rechazar button — an INTERACTIVE reply
+  // button, sent by the sink inside the 24h window, always to a MANAGER. Other
+  // subtypes (`list_reply`, `nfm_reply`) are logged and ignored.
   interactive?: {
     type: string;
     button_reply?: { id: string; title: string };
   };
+  // A tap on a TEMPLATE quick-reply button — the 16:30 check-in. A DIFFERENT
+  // shape from `interactive` above and easy to conflate: `payload` is the string
+  // we set when sending (see checkinPayload), `text` is the label the worker
+  // actually saw.
+  //
+  // Only ever arrives from a WORKER, and is handled on the worker path in
+  // handleWorkerReply → handleCheckinTap. A manager is never sent a template
+  // with buttons, so a manager-side `type: 'button'` still falls to the
+  // unsupported-message triage, which is correct.
+  button?: { payload?: string; text?: string };
 }
 
 interface WhatsAppWebhookBody {
@@ -116,6 +126,143 @@ const LANGUAGE_KEYWORDS: Record<string, Locale> = {
 function languageCommand(text: string | undefined): Locale | null {
   if (!text) return null;
   return LANGUAGE_KEYWORDS[text.trim().toLowerCase()] ?? null;
+}
+
+/** notification_log.kind for the 16:30 ask. Must match /api/cron/checkin. */
+const CHECKIN_KIND = 'task_checkin';
+
+/**
+ * A check-in button tap: the worker answering the 16:30 template.
+ *
+ * Returns true when it was one AND the worker has been answered; false to fall
+ * through to the ordinary ack path, which is where a malformed or unowned
+ * payload goes. Never silence — silence after a tap reads as "Capo is broken",
+ * and the ack is also what refreshes Meta's 24h window.
+ *
+ * NO MODEL IS INVOLVED, in either direction. The payload is one of exactly two
+ * strings /api/cron/checkin minted a few hours earlier, so there is nothing to
+ * interpret. A worker's TEXT already never reaches the model (see the header of
+ * handleWorkerReply) and a button tap carries no text at all — the only things a
+ * model could add here are cost, latency, and the ability to be wrong about a
+ * two-valued answer.
+ */
+async function handleCheckinTap(
+  db: Db,
+  message: WhatsAppMessage,
+  worker: { id: string; company_id: string },
+  locale: Locale,
+  sendConfig: WhatsAppSendConfig,
+): Promise<boolean> {
+  const parsed = parseCheckinPayload(message.button?.payload ?? '');
+  if (!parsed) {
+    // Also the shape you get when the template declares quick replies but the
+    // send omitted the button component: Meta then echoes the button's LABEL as
+    // the payload, so this logs "Sim, terminei" arriving as a payload. See
+    // docs/whatsapp-cloud-api-runbook.md §6b — it is the single most likely
+    // silent failure in this feature, and this log line is its only symptom.
+    logEvent('whatsapp.unknown_checkin_payload', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      messageId: message.id,
+    });
+    return false;
+  }
+
+  // ── THE TENANT BOUNDARY ON THIS PATH ───────────────────────────────────────
+  // Everything here runs on the SERVICE-ROLE client, so RLS enforces nothing.
+  // Without this read a worker could record an answer against another company's
+  // ask by guessing a uuid. Same shape and same reasoning as the `proposals`
+  // read on the manager button path below: ONE query, so "no such ask", "not
+  // your company" and "not your row" collapse into a single silent outcome with
+  // no timing difference to read as an existence oracle.
+  //
+  // The kind filter is not decoration. Without it a guessed daily_briefing row
+  // id would be accepted, and that row's 07:00 task snapshot recorded as the
+  // answer to a question it never asked.
+  const { data: ask } = await db
+    .from('notification_log')
+    .select('id, notification_date, task_ids')
+    .eq('id', parsed.notificationId)
+    .eq('company_id', worker.company_id)
+    .eq('worker_id', worker.id)
+    .eq('kind', CHECKIN_KIND)
+    .maybeSingle();
+  if (!ask) {
+    logEvent('whatsapp.checkin_not_owned', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      messageId: message.id,
+    });
+    return false;
+  }
+
+  // Read before write, purely to tell a REDELIVERY from a change of mind. Meta
+  // redelivers on non-200 or timeout carrying the same wamid; a worker who taps
+  // "Ainda não" at 16:35 and "Sim, terminei" at 17:40 sends a new one and
+  // deserves a fresh confirmation.
+  const { data: prior } = await db
+    .from('worker_checkins')
+    .select('inbound_message_id')
+    .eq('worker_id', worker.id)
+    .eq('checkin_date', ask.notification_date)
+    .maybeSingle();
+  const redelivery = prior?.inbound_message_id === message.id;
+
+  const t = getCatalog(locale).whatsapp;
+  const { error: writeError } = await db.from('worker_checkins').upsert(
+    {
+      company_id: worker.company_id,
+      worker_id: worker.id,
+      // From the ASK, never from the clock: the buttons stay tappable, so a
+      // late answer must still land on the day it was asked about.
+      checkin_date: ask.notification_date,
+      notification_id: ask.id,
+      answer: parsed.answer,
+      // Explicit. The column DEFAULT fires on INSERT only, so an upsert that
+      // UPDATES would otherwise keep the first tap's timestamp against the
+      // second tap's answer.
+      answered_at: new Date().toISOString(),
+      task_ids: ask.task_ids,
+      inbound_message_id: message.id,
+    },
+    { onConflict: 'worker_id,checkin_date' },
+  );
+
+  if (writeError) {
+    logEvent('whatsapp.checkin_write_failed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      messageId: message.id,
+      error: writeError.message,
+    });
+    await sendWhatsAppText(t.checkinError, sendConfig).catch(() => {});
+    return true;
+  }
+
+  logEvent('whatsapp.checkin_recorded', {
+    companyId: worker.company_id,
+    workerId: worker.id,
+    messageId: message.id,
+    answer: parsed.answer,
+    date: ask.notification_date,
+    redelivery,
+  });
+
+  // Recorded either way; only the acknowledgement is suppressed, so Meta
+  // retrying does not double-message the worker.
+  if (redelivery) return true;
+
+  await sendWhatsAppText(
+    parsed.answer === 'done' ? t.checkinDone : t.checkinNotDone,
+    sendConfig,
+  ).catch(err => {
+    logEvent('whatsapp.checkin_ack_failed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+  return true;
 }
 
 /**
@@ -177,6 +324,19 @@ async function handleWorkerReply(db: Db, message: WhatsAppMessage, env: WhatsApp
     phoneNumberId: env.phoneNumberId,
     to: testTierArSendTarget(message.from),
   };
+
+  // The 16:30 check-in answer. Sits here — inside the WORKER path — and not
+  // beside the manager's `interactive` branch below, because a check-in tap
+  // comes from a workers.phone sender: sender resolution diverts it here and
+  // `continue`s, so it never reaches that branch or the triage after it. Before
+  // this existed, a tap fell straight through to the canned workerAck.
+  //
+  // It is also below the .limit(2) ambiguity guard above, deliberately: a number
+  // on two companies' crews still gets silence rather than an answer recorded
+  // against a guessed tenant.
+  if (message.type === 'button' && (await handleCheckinTap(db, message, worker, current, sendConfig))) {
+    return true;
+  }
 
   if (requested && requested !== current) {
     const { error: updateError } = await db.from('workers').update({ language: requested }).eq('id', worker.id);
