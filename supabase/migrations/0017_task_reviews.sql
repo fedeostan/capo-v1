@@ -13,7 +13,7 @@ alter table tasks drop constraint tasks_status_check;
 alter table tasks add constraint tasks_status_check
   check (status in ('pending', 'in_progress', 'pending_review', 'blocked', 'done', 'cancelled'));
 
--- Three existing SQL surfaces see this new value. All three are already
+-- Five existing SQL surfaces see this new value. All five are already
 -- correct and are deliberately NOT edited — recorded here because the next
 -- person to add a status will need the same map:
 --
@@ -27,13 +27,29 @@ alter table tasks add constraint tasks_status_check
 --     "At risk of starting late" is meaningless for work already declared
 --     finished; overdue is the signal that matters, and it still fires.
 --
+--     A third signal in the SAME view, task_board.risk_late_dependency
+--     (0013:92), scans predecessor tasks with `x.status not in
+--     ('done','cancelled')` — a DENYLIST. A task declared finished but not
+--     yet approved therefore still counts as a late dependency blocking its
+--     successors. Defensible (it is not confirmed done yet), but it is a
+--     real behaviour change and sits in the same view as the allowlist
+--     asymmetry above.
+--
 --   dispatch_tasks_today (0003:34) is `status in ('pending','in_progress')` —
 --     an ALLOWLIST, so it excludes the new status with no edit. The view
 --     definition stays byte-identical against
 --     docs/plans/dispatch-viewdef-baseline.sql, as AGENTS.md requires.
 --
---   dashboard_tasks (0005:31) is the same allowlist and the superseded
---     predecessor of task_board. Untouched; no new readers.
+--   dashboard_tasks (0006:31, replacing 0005:71) is `status not in
+--     ('done','cancelled')` — a DENYLIST like task_board, so pending_review
+--     tasks DO appear in it. Superseded predecessor of task_board; no live
+--     reader and no new ones.
+--
+--   dashboard_obras.pendentes (0005:82-83) counts `status not in
+--     ('done','cancelled')` — a DENYLIST, so a pending_review task counts as
+--     *pendente* on the Obras screen. Behaviourally right, and unlike
+--     dashboard_tasks this view IS live-read (apps/web/app/dashboard-data.ts,
+--     typed as DashboardObra in packages/ui/src/dashboard-ui.tsx:17).
 
 -- ── task_reviews: the control task ─────────────────────────────────────────
 -- Deliberately NOT a row in `tasks`. A tasks row automatically enters
@@ -122,32 +138,33 @@ create trigger task_reviews_fks_same_company
 alter table task_reviews enable row level security;
 
 -- Written out rather than generated in the 0007/0015 loop, because this table
--- deliberately DIVERGES from the uniform three-policy shape: there is no
--- UPDATE policy. A review is resolved ONLY through resolve_task_review()
--- below, which moves the review and its task in one transaction. A direct
--- UPDATE could set the review to 'approved' while leaving the task open —
--- precisely the half-applied state this feature exists to prevent.
+-- deliberately DIVERGES from the uniform three-policy shape: SELECT only, no
+-- INSERT and no UPDATE policy. Every write — filing a claim as well as
+-- resolving one — goes through the SECURITY DEFINER RPCs below
+-- (open_task_review / resolve_task_review), which run as the table owner and
+-- bypass RLS/grants entirely, so a policy for the RPCs to satisfy would be
+-- pointless. A direct tenant INSERT would create a task_reviews row without
+-- ever flipping the task to 'pending_review', breaking the "a review exists
+-- => the task is in review" invariant Tasks 4-5 depend on. A direct UPDATE
+-- could set the review to 'approved' while leaving the task open — precisely
+-- the half-applied state this feature exists to prevent.
 create policy task_reviews_select_company on task_reviews
   for select to authenticated
   using (company_id = (select private.current_company_id()));
-create policy task_reviews_insert_company on task_reviews
-  for insert to authenticated
-  with check (company_id = (select private.current_company_id()));
 
 -- ── column grants ──────────────────────────────────────────────────────────
 -- Supabase default-grants ALL on new public tables, so revoke first.
 --
--- The important half is what is NOT here. No UPDATE grant at all, so the
--- resolution columns are unreachable except through the RPC. And INSERT is
--- granted column-by-column, so a tenant can file a claim but cannot forge its
--- outcome: status falls to its 'pending' default, resolved_by/resolved_at stay
--- null, declared_at is the server's clock. Same grant-layer posture as
--- translation_items.old_value (0015) — the evidence is immutable to the tenant
--- that owns it.
+-- Tenants get SELECT only — no INSERT, no UPDATE. Every write goes through
+-- open_task_review() / resolve_task_review(), which run SECURITY DEFINER as
+-- the table owner and are unaffected by this revoke. A tenant cannot file a
+-- claim except through the RPC, and so cannot forge an outcome either:
+-- status, resolved_by, resolved_at and declared_at are only ever set by code
+-- that also moves the task's own status in the same transaction. Same
+-- grant-layer posture as translation_items.old_value (0015) — the evidence
+-- is immutable to the tenant that owns it.
 revoke all on table task_reviews from anon, authenticated;
 grant select on table task_reviews to authenticated;
-grant insert (company_id, task_id, declared_by_worker_id, note)
-  on table task_reviews to authenticated;
 
 -- ── open_task_review ───────────────────────────────────────────────────────
 -- Moves the task to pending_review and files the claim, atomically. This is
@@ -171,11 +188,23 @@ declare
   v_status  text;
   v_review  uuid;
 begin
-  select company_id, status into v_company, v_status from tasks where id = p_task;
+  -- FOR UPDATE: without the lock, a concurrent transaction can change the
+  -- task's status between this read and the update below, making the
+  -- done/cancelled guard advisory. Same device as revert_translation_batch
+  -- (0015). Two concurrent open_task_review calls still converge rather than
+  -- stack — that is task_reviews_one_pending_idx's job, not this lock's.
+  select company_id, status into v_company, v_status from tasks where id = p_task for update;
   if v_company is null then
     raise exception 'task % not found', p_task using errcode = 'no_data_found';
   end if;
-  if auth.uid() is not null and v_company <> private.current_company_id() then
+  -- IS DISTINCT FROM, not <>: private.current_company_id() returns NULL for
+  -- an authenticated user with no profiles row yet (self-serve signup before
+  -- complete_onboarding runs). `v_company <> NULL` is NULL, so a plain `<>`
+  -- guard is skipped by three-valued logic and this SECURITY DEFINER
+  -- function's entire tenant boundary falls open. IS DISTINCT FROM treats
+  -- that NULL as a real mismatch and fails closed.
+  if auth.uid() is not null
+     and v_company is distinct from private.current_company_id() then
     raise exception 'task % is not yours', p_task using errcode = 'insufficient_privilege';
   end if;
   -- A closed task has nothing to declare finished. Reopen it first.
@@ -242,9 +271,21 @@ begin
       using errcode = 'no_data_found';
   end if;
 
+  -- status = 'pending_review' guard: open_task_review refuses to open a
+  -- review on a done/cancelled task, but without this, resolve had no
+  -- matching guard — open a review, cancel the task directly through the
+  -- tasks UPDATE policy, then approve, and 'cancelled' becomes 'done'. If
+  -- the task moved out of pending_review since the review was filed, this
+  -- update touches no row and the whole statement (including the
+  -- task_reviews update above) rolls back with the exception.
   update tasks set status = v_new, updated_at = now()
-   where id = v_task and company_id = v_company
+   where id = v_task and company_id = v_company and status = 'pending_review'
    returning job_id into v_job;
+
+  if not found then
+    raise exception 'task % is no longer awaiting review', v_task
+      using errcode = 'check_violation';
+  end if;
 
   return query select v_task, v_new, v_job;
 end;
