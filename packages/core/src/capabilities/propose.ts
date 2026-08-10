@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Db } from '@capo/db/client';
-import type { LocaleContext } from '@capo/i18n/locale';
+import type { Locale, LocaleContext } from '@capo/i18n/locale';
 import { events } from './cards';
 import { renderProposal, RenderError } from './render';
 import { taskTools } from './tasks';
@@ -8,18 +8,21 @@ import { jobTools } from './jobs';
 import { workerTools } from './workers';
 import { planApplyTools } from './plan-apply';
 import { translationApplyTools } from './translate-apply';
+import { rescheduleApplyTools } from './reschedule-apply';
 import type { CapoTool, ToolContext } from './types';
 
 // Every guarded write is proposable. propose imports the domain tool arrays
-// directly (not the roster in index.ts) to avoid an import cycle. plan-apply
-// and translate-apply are imported directly too (not plan.ts / translate.ts,
-// which themselves import createProposal from this file) for the same reason.
+// directly (not the roster in index.ts) to avoid an import cycle. plan-apply,
+// translate-apply and reschedule-apply are imported directly too (not plan.ts /
+// translate.ts / reschedule-propose.ts, which themselves import createProposal
+// from this file) for the same reason.
 const proposable: CapoTool[] = [
   ...taskTools,
   ...jobTools,
   ...workerTools,
   ...planApplyTools,
   ...translationApplyTools,
+  ...rescheduleApplyTools,
 ].filter(t => t.guarded);
 
 const actionNames = proposable.map(t => t.name) as [string, ...string[]];
@@ -28,28 +31,43 @@ export function getProposableTool(name: string): CapoTool | undefined {
   return proposable.find(t => t.name === name);
 }
 
-export async function createProposal(
-  ctx: ToolContext,
+/** Everything creating a proposal needs that is NOT a live conversation turn. */
+export interface ProposalTarget {
+  companyId: string;
+  /** Null lands an orphaned card: still resolvable, but only surfaced by the
+   *  chat page once the tenant has a thread. Callers outside a conversation
+   *  should ensureConversation() first rather than pass null. */
+  conversationId: string | null;
+  /** The USER dial — the card is a sentence spoken to a human. */
+  locale: Locale;
+}
+
+// Split out of createProposal because the web server actions have an
+// AuthContext, not a ToolContext, and no conversation of their own. The wrong
+// fix is to fabricate a ToolContext at the call site: `actor`, `userId` and
+// `recentUserTexts` would all have to be invented, and recentUserTexts is the
+// guard's evidence pool.
+export async function createProposalForCompany(
+  db: Db,
+  target: ProposalTarget,
   actionName: string,
   args: unknown,
 ): Promise<{ proposalId: string; renderedText: string }> {
-  const target = getProposableTool(actionName);
-  if (!target) throw new Error(`Unknown proposable action: ${actionName}`);
+  const action = getProposableTool(actionName);
+  if (!action) throw new Error(`Unknown proposable action: ${actionName}`);
 
-  const parsed = target.inputSchema.safeParse(args);
+  const parsed = action.inputSchema.safeParse(args);
   if (!parsed.success) {
     throw new Error(`Invalid args for ${actionName}: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
   }
 
-  // ctx.locales.user, read at call time: set_language may have changed it
-  // earlier in this same tool loop, and the card must follow.
-  const renderedText = await renderProposal(ctx.db, ctx.companyId, actionName, parsed.data, ctx.locales.user);
+  const renderedText = await renderProposal(db, target.companyId, actionName, parsed.data, target.locale);
 
-  const { data, error } = await ctx.db
+  const { data, error } = await db
     .from('proposals')
     .insert({
-      company_id: ctx.companyId,
-      conversation_id: ctx.conversationId,
+      company_id: target.companyId,
+      conversation_id: target.conversationId,
       action_name: actionName,
       action_args: parsed.data,
       rendered_text: renderedText,
@@ -59,6 +77,25 @@ export async function createProposal(
   if (error) throw new Error(`Failed to store proposal: ${error.message}`);
 
   return { proposalId: data.id, renderedText };
+}
+
+export async function createProposal(
+  ctx: ToolContext,
+  actionName: string,
+  args: unknown,
+): Promise<{ proposalId: string; renderedText: string }> {
+  return createProposalForCompany(
+    ctx.db,
+    {
+      companyId: ctx.companyId,
+      conversationId: ctx.conversationId || null,
+      // ctx.locales.user, read at call time: set_language may have changed it
+      // earlier in this same tool loop, and the card must follow.
+      locale: ctx.locales.user,
+    },
+    actionName,
+    args,
+  );
 }
 
 export const propose: CapoTool<{ action_name: string; action_args: Record<string, unknown> }> = {

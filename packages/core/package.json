@@ -12,12 +12,15 @@
     "./capabilities/propose": "./src/capabilities/propose.ts",
     "./capabilities/plan": "./src/capabilities/plan.ts",
     "./capabilities/workdays": "./src/capabilities/workdays.ts",
+    "./capabilities/reschedule": "./src/capabilities/reschedule.ts",
+    "./capabilities/reschedule-propose": "./src/capabilities/reschedule-propose.ts",
     "./translation": "./src/translation/index.ts",
     "./channels/types": "./src/channels/types.ts",
     "./channels/web": "./src/channels/web.ts",
     "./channels/whatsapp": "./src/channels/whatsapp.ts",
     "./transcription": "./src/agent/transcription.ts",
-    "./channels/whatsapp-media": "./src/channels/whatsapp-media.ts"
+    "./channels/whatsapp-media": "./src/channels/whatsapp-media.ts",
+    "./media/photos": "./src/media/photos.ts"
   },
   "scripts": {
     "lint": "eslint .",

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { ScreenShell } from '@capo/ui/dashboard-ui';
 import { TaskDetail } from '@capo/ui/task-detail';
-import { loadPendingReviews, loadTaskDetail } from '@/app/dashboard-data';
+import { loadPendingReviews, loadTaskDetail, loadTaskPhotos } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import ReviewActions from '@/app/(app)/_tasks/review-actions';
 import TaskActions from '@/app/(app)/_tasks/task-actions';
@@ -41,7 +41,13 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
   // never do) shows the resolution buttons ONLY under the Todas chip or an
   // exact-date filter — the manager who just requested the check from THIS
   // screen would otherwise have no way back to resolve it from here.
-  const review = (await loadPendingReviews(ctx, [detail.task.id])).get(detail.task.id) ?? null;
+  // Both reads are per-request and neither may be cached: loadTaskPhotos mints
+  // signed URLs, which is the reason `export const dynamic = 'force-dynamic'`
+  // above is now load-bearing rather than merely tidy.
+  const [review, photos] = await Promise.all([
+    loadPendingReviews(ctx, [detail.task.id]).then(m => m.get(detail.task.id) ?? null),
+    loadTaskPhotos(ctx, detail.task.id),
+  ]);
 
   const subtitle = [detail.job?.name, detail.job?.address].filter(Boolean).join(' · ') || undefined;
 
@@ -55,6 +61,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
           task={detail.task}
           job={detail.job}
           worker={detail.worker}
+          photos={photos}
           locale={locale}
           renderActions={() => (
             <>

@@ -23,30 +23,54 @@
 // `string` rather than a literal union, so widening its check constraint is
 // invisible here.
 //
+//   0023_task_photos (version 20260810074738) — task_photos, plus one new column,
+//                          tasks.completion_proof. Applied to the live project
+//                          from this branch after confirming its migration
+//                          ledger was IDENTICAL to supabase/migrations/ (21
+//                          entries, through revert_translation_batch_null_guard)
+//                          — which is the precondition the warning below is
+//                          about, not a blanket ban.
+//
+// Note what 0023 does NOT appear as. The bucket, the two storage.objects
+// policies and every grant/RLS/CHECK are invisible here: this file types the
+// `public` schema's shape only. `storage` is a different schema, and nothing
+// about a column's WRITABILITY survives into TypeScript. task_photos'
+// column-scoped INSERT grant is the load-bearing example — `source`,
+// `worker_id` and `uploaded_by` are all typed as ordinary optional Insert
+// fields, and tsc will happily let you write them. The database rejects it
+// with 42501 at runtime. Do not read this file as a permission model.
+//
 // The byte-equality regeneration check has NOT been re-run since both streams
 // merged. Worth doing once, on main, after this lands — but do not regenerate
-// from a feature branch: the live project may carry migrations your branch does
+// from a feature branch WITHOUT first checking `list_migrations` against
+// supabase/migrations/: the live project may carry migrations your branch does
 // not, and the diff will look like corruption without being it.
 //
-// ── notifications (0023), applied and VERIFIED ─────────────────────────────
-// The `notifications` block below was written by hand — the migration had not
-// been applied yet, and generating against a project that lacks the table
-// would have silently DELETED the block instead of adding it. 0023 is now
-// applied (version 20260810105627), and the block has been diffed against a
-// real `generate_typescript_types` run: byte-identical, FK Relationships
-// included. It is not a transcription any more; it is confirmed.
+// ── notifications (0024), applied and VERIFIED ─────────────────────────────
+// The `notifications` block below was written by hand, because the migration
+// had not been applied yet and generating against a project that lacks the
+// table would have silently DELETED the block instead of adding it. It is
+// applied now (version 20260810105627) and the block has since been diffed
+// against a real `generate_typescript_types` run: byte-identical, FK
+// Relationships included. It is not a transcription any more; it is confirmed.
 //
-// ── THE FILE IS STILL BEHIND THE LIVE PROJECT, DELIBERATELY ────────────────
-// Regenerating here would ALSO pull in a parallel stream this branch does not
-// carry — the exact trap the paragraph above warns about, now concrete:
+// ── AHEAD OF THE LIVE SCHEMA ───────────────────────────────────────────────
+// This file now LEADS the live project by one migration, which is the one case
+// the paragraph above does not cover. profiles.whatsapp_user_id and
+// workers.whatsapp_user_id are hand-added here from
+// supabase/migrations/0022_whatsapp_bsuid.sql, which is deliberately NOT
+// applied — writing the file is this stage's deliverable and applying it is the
+// maintainer's call (issue #27). Regenerating from the live project right now
+// would therefore DELETE those two columns and break typecheck; regenerate only
+// after 0022 has actually been applied.
 //
-//   task_photos (version 20260810074738) — a whole table, plus
-//   tasks.completion_proof, from the branch that claimed the 0022 file number.
-//   That is why this file's migration is 0023 and not 0022.
-//
-// So: do NOT regenerate from this branch. Regenerate on main once both streams
-// have merged, which will add task_photos/completion_proof and leave the
-// notifications block untouched.
+// Nothing reads these columns, and the single writer (the WhatsApp webhook's
+// best-effort BSUID capture) runs inside after() and swallows its own errors,
+// so a deploy that lands before 0022 is applied degrades to a logged
+// whatsapp.bsuid_capture_failed rather than breaking sender resolution. That
+// asymmetry is why the capture does its own write instead of widening the
+// profiles/workers SELECTs the webhook already runs — see AGENTS.md on code
+// that reads ahead of a pending migration.
 export type Json =
   | string
   | number
@@ -542,6 +566,7 @@ export type Database = {
           id: string
           language: string
           phone: string
+          whatsapp_user_id: string | null
         }
         Insert: {
           company_id: string
@@ -550,6 +575,7 @@ export type Database = {
           id: string
           language?: string
           phone: string
+          whatsapp_user_id?: string | null
         }
         Update: {
           company_id?: string
@@ -558,6 +584,7 @@ export type Database = {
           id?: string
           language?: string
           phone?: string
+          whatsapp_user_id?: string | null
         }
         Relationships: [
           {
@@ -692,6 +719,105 @@ export type Database = {
           },
         ]
       }
+      task_photos: {
+        Row: {
+          byte_size: number
+          company_id: string
+          created_at: string
+          id: string
+          mime: string
+          source: string
+          storage_path: string
+          taken_at: string | null
+          task_id: string
+          uploaded_by: string | null
+          worker_id: string | null
+        }
+        Insert: {
+          byte_size: number
+          company_id: string
+          created_at?: string
+          id?: string
+          mime: string
+          source?: string
+          storage_path: string
+          taken_at?: string | null
+          task_id: string
+          uploaded_by?: string | null
+          worker_id?: string | null
+        }
+        Update: {
+          byte_size?: number
+          company_id?: string
+          created_at?: string
+          id?: string
+          mime?: string
+          source?: string
+          storage_path?: string
+          taken_at?: string | null
+          task_id?: string
+          uploaded_by?: string | null
+          worker_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_photos_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_photos_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "dashboard_tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_photos_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "task_photos_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "task_board"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_photos_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_photos_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_photos_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["worker_id"]
+          },
+          {
+            foreignKeyName: "task_photos_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       task_reviews: {
         Row: {
           company_id: string
@@ -789,6 +915,7 @@ export type Database = {
         Row: {
           assignee_worker_id: string | null
           company_id: string
+          completion_proof: string | null
           created_at: string
           description: string | null
           due_date: string | null
@@ -805,6 +932,7 @@ export type Database = {
         Insert: {
           assignee_worker_id?: string | null
           company_id: string
+          completion_proof?: string | null
           created_at?: string
           description?: string | null
           due_date?: string | null
@@ -821,6 +949,7 @@ export type Database = {
         Update: {
           assignee_worker_id?: string | null
           company_id?: string
+          completion_proof?: string | null
           created_at?: string
           description?: string | null
           due_date?: string | null
@@ -1111,6 +1240,7 @@ export type Database = {
           name: string
           phone: string | null
           trade: string | null
+          whatsapp_user_id: string | null
         }
         Insert: {
           active?: boolean
@@ -1121,6 +1251,7 @@ export type Database = {
           name: string
           phone?: string | null
           trade?: string | null
+          whatsapp_user_id?: string | null
         }
         Update: {
           active?: boolean
@@ -1131,6 +1262,7 @@ export type Database = {
           name?: string
           phone?: string | null
           trade?: string | null
+          whatsapp_user_id?: string | null
         }
         Relationships: [
           {

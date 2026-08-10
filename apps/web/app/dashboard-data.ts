@@ -8,6 +8,7 @@
 // kept on top as belt-and-braces.
 import type { AuthContext } from '@capo/db/session';
 import type { Tables } from '@capo/db/types';
+import { TASK_PHOTO_BUCKET } from '@capo/core/media/photos';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { BoardTask, DashboardObra, MaterialsGroup } from '@capo/ui/dashboard-ui';
 // Type-only: keeps the 'use client' markdown renderer inside task-detail.tsx
@@ -453,4 +454,74 @@ export async function loadPendingReviews(
       },
     ]),
   );
+}
+
+/** One photo attached to a task, with a URL that works for the next few minutes. */
+export interface TaskPhoto {
+  id: string;
+  /** A freshly minted signed URL. Never store or cache this — see below. */
+  url: string;
+  /** 'worker' (PRD 4, via WhatsApp) or 'manager' (the completion sheet). The
+   *  detail screen says which, because "the crew sent this" and "I took this"
+   *  are different claims. */
+  source: string;
+  createdAt: string;
+}
+
+/**
+ * The photos on one task, newest first, each with a signed URL.
+ *
+ * SIGNED URLS ARE MINTED PER REQUEST AND MUST STAY THAT WAY. A signed URL is a
+ * bearer token in a query string: anyone holding it can read the object for as
+ * long as it lasts, with no session. Baked into a statically rendered page it
+ * would be served to whoever asked, and it would expire long before the page
+ * did — leaking briefly and then rendering broken frames forever. The only
+ * caller, /tarefas/[id], is `export const dynamic = 'force-dynamic'`; keep it
+ * that way, and do not add a cached wrapper around this function.
+ *
+ * The expiry is minutes, not seconds: the manager scrolls, and an image that
+ * 403s while they are still looking at the page is a bug they cannot explain.
+ *
+ * createSignedUrls runs on the RLS-scoped client, so the storage.objects
+ * SELECT policy (0023) is what decides whether a URL can be minted at all — a
+ * session from another company gets an error, not a working link. That is the
+ * boundary; the company_id filter below is belt-and-braces on top of it.
+ */
+const SIGNED_URL_TTL_SECONDS = 300;
+
+export async function loadTaskPhotos(
+  { db, companyId }: AuthContext,
+  taskId: string,
+): Promise<TaskPhoto[]> {
+  const { data: rows, error } = await db
+    .from('task_photos')
+    .select('id, storage_path, source, created_at')
+    .eq('company_id', companyId)
+    .eq('task_id', taskId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`task_photos read failed: ${error.message}`);
+  if (!rows || rows.length === 0) return [];
+
+  const { data: signed, error: signError } = await db.storage
+    .from(TASK_PHOTO_BUCKET)
+    .createSignedUrls(
+      rows.map(r => r.storage_path),
+      SIGNED_URL_TTL_SECONDS,
+    );
+  if (signError) throw new Error(`task_photos signing failed: ${signError.message}`);
+
+  // Match on path, never by position: createSignedUrls reports per-object
+  // failures inline (an `error` field and a null url) rather than throwing, so
+  // one unsignable object would shift every later row onto the wrong image if
+  // the two lists were zipped. Same rule the translation applier follows for
+  // exactly the same reason (AGENTS.md).
+  const urls = new Map((signed ?? []).map(s => [s.path, s.signedUrl]));
+
+  return rows.flatMap(r => {
+    const url = urls.get(r.storage_path);
+    // A row whose object cannot be signed is dropped rather than rendered as a
+    // broken frame the manager can neither open nor clear.
+    if (!url) return [];
+    return [{ id: r.id, url, source: r.source, createdAt: r.created_at }];
+  });
 }
