@@ -108,6 +108,40 @@ export interface Catalog {
     dependsOn(titles: string[]): string;
   };
 
+  /** The in-app inbox, plus the strip in the app shell that leads to it.
+   *  Top-level rather than under `screens` because it spans two surfaces —
+   *  the strip renders on every authenticated screen. */
+  notifications: {
+    title: string;
+    subtitle: string;
+    empty: string;
+    /** The shell strip. COUNTED on purpose: "you have news" is not
+     *  actionable and "3 novidades" is. */
+    banner(n: number): string;
+    markAllRead: string;
+    failed: string;
+    /** Accessible name for the unread dot, which is otherwise colour alone. */
+    unread: string;
+    /** The row on /perfil — the way in when nothing is unread and the strip
+     *  is therefore absent. */
+    profileLink: string;
+    /** One line per kind, given the subject's OWN NAME (a task title, stored
+     *  in companies.language). The name is data: interpolated, never
+     *  translated. Keyed by the `kind` check constraint in
+     *  0023_notifications.sql, so widening that constraint without adding
+     *  copy in all three dictionaries is a tsc error. */
+    kind: Record<'review_pending', (subject: string) => string>;
+    /** Stand-in when the row carries no title — an unnamed task. */
+    noSubject: string;
+    /** Label above the worker's quoted note. Sits ABOVE it and is never
+     *  merged into it: same attribution rule as the review control, because
+     *  it is the same worker-authored text. */
+    noteLabel: string;
+    /** Sends the manager where the decision actually gets made — the board,
+     *  not the inbox. */
+    openSubject: string;
+  };
+
   screens: {
     tasks: {
       title: string;

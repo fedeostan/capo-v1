@@ -46,6 +46,14 @@
 // supabase/migrations/: the live project may carry migrations your branch does
 // not, and the diff will look like corruption without being it.
 //
+// ── notifications (0024), applied and VERIFIED ─────────────────────────────
+// The `notifications` block below was written by hand, because the migration
+// had not been applied yet and generating against a project that lacks the
+// table would have silently DELETED the block instead of adding it. It is
+// applied now (version 20260810105627) and the block has since been diffed
+// against a real `generate_typescript_types` run: byte-identical, FK
+// Relationships included. It is not a transcription any more; it is confirmed.
+//
 // ── AHEAD OF THE LIVE SCHEMA ───────────────────────────────────────────────
 // This file now LEADS the live project by one migration, which is the one case
 // the paragraph above does not cover. profiles.whatsapp_user_id and
@@ -492,6 +500,60 @@ export type Database = {
             columns: ["worker_id"]
             isOneToOne: false
             referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notifications: {
+        Row: {
+          body: string | null
+          company_id: string
+          created_at: string
+          id: string
+          kind: string
+          profile_id: string
+          read_at: string | null
+          subject_id: string | null
+          subject_type: string | null
+          title: string | null
+        }
+        Insert: {
+          body?: string | null
+          company_id: string
+          created_at?: string
+          id?: string
+          kind: string
+          profile_id: string
+          read_at?: string | null
+          subject_id?: string | null
+          subject_type?: string | null
+          title?: string | null
+        }
+        Update: {
+          body?: string | null
+          company_id?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          profile_id?: string
+          read_at?: string | null
+          subject_id?: string | null
+          subject_type?: string | null
+          title?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

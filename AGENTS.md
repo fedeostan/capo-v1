@@ -308,7 +308,8 @@ Structural invariants (do not regress):
   `superseded`.
 
   `task_reviews.note` is the one place worker-authored text reaches the
-  manager. Render it as an attributed quote, never as UI copy.
+  manager. Render it as an attributed quote, never as UI copy — in the
+  inbox (`notifications.body`) as well as on the board.
 - **Task photos are the project's only Storage use, and the object path IS
   the tenant boundary.** Migration `0023_task_photos.sql` adds a private
   bucket `task-photos`, the `task_photos` table, and one column,
@@ -348,6 +349,43 @@ Structural invariants (do not regress):
   - `tasks.completion_proof` is `'photos' | 'skipped' | NULL`, written only by
     the completion sheet. **NULL means "closed some other way" (chat, agent,
     pre-0023) — unknown, never "skipped".** Do not conflate them when counting.
+- **`notifications` (0024) is the in-app inbox, and is NOT
+  `notification_log` (0016).** They share a stem and nothing else.
+  `notification_log` is the OUTBOUND ledger — one row per paid WhatsApp
+  template send, RLS on with deliberately zero policies, written only by the
+  cron as the service role, readable by nobody. `notifications` is read by
+  the tenant on every page load and written only by triggers. Four things
+  about it are load-bearing:
+  - **It is scoped per PROFILE as well as per company.** The select/update
+    policies carry both predicates, because one `read_at` shared across a
+    company would let whichever manager opened the app first clear everyone
+    else's badge. This is the repo's first per-profile relation, which is
+    why `scripts/rls-isolation-matrix.mjs` now seeds a **colleague** — a
+    second profile per company. Without one, a policy that dropped the
+    `profile_id` clause still reports green.
+  - **Producers are triggers on the subject table, never app code.**
+    `task_reviews_notify_pending` fans a row out to every profile in the
+    company except the actor (`is distinct from auth.uid()` — the naive `<>`
+    notifies *nobody* when the actor is the service role). Wiring a producer
+    into `open_task_review` instead would miss every other path that files a
+    review: the WhatsApp webhook, PRD 4's worker agent, a backfill.
+  - **`task_reviews_retire_notifications` marks the row read when the review
+    leaves `pending`** — by any door, including 0020's `superseded`. The
+    manager resolves reviews on the board, not in the inbox, so without this
+    the badge would still be lit after the decision was made.
+  - **Copy is not in the row.** `title` is the task's title and `body` is the
+    worker's note — both data. The sentence around them comes from the
+    catalog, keyed on `kind`, so each manager reads it in their own
+    `profiles.language`. Adding a kind is therefore always two edits: the
+    `kind` check constraint and all three dictionaries (the catalog's
+    `Record<NotificationKind, …>` makes the second one a `tsc` error).
+
+  The inbox lives at `/notificacoes` and deliberately has **no tab**: all five
+  slots in `bottom-nav.tsx` are taken, and a sixth breaks the labels at 320px.
+  The unread signal is a full-width strip in `(app)/layout.tsx` matching
+  `BillingBanner`, which is also why it cannot be clipped — both strips are
+  siblings of the `overflow-hidden` content column, never children of it.
+  `/perfil` carries the always-present link for when nothing is unread.
 - **One clock, one definition of "today".** The active-window rule
   (`lisbon_today() BETWEEN coalesce(start_date, created_at) AND
   coalesce(due_date, 'infinity')`) and every schedule-risk signal live in SQL,

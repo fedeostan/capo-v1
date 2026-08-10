@@ -1,7 +1,8 @@
 // RLS isolation matrix — the recurring tenant-boundary QA gate.
 //
 // Seeds TWO throwaway tenants (auth user + company + one row in every tenant
-// table) PLUS a third throwaway actor: an authenticated user with a
+// table — plus a SECOND profile in each company, see below) PLUS a third
+// throwaway actor: an authenticated user with a
 // confirmed email and deliberately NO profiles row — Capo's real
 // signup-before-onboarding state. Two tenants alone cannot exercise that
 // actor's failure mode (every ordinary attacker has a company); it is the
@@ -20,10 +21,12 @@
 // column revoke, the 0015 revert_translation_batch RPC, the 0017
 // worker_checkins answers a tenant must not be able to forge or rewrite, the
 // two 0018 task-review RPCs plus that table's absent INSERT/UPDATE grants,
-// the 0023 STORAGE surface (see below), and — run separately, as the
-// no-profiles-row actor — those same two RPCs again against a real tenant's
-// task/review, plus revert_translation_batch against a real tenant's batch,
-// plus signing and downloading a real tenant's photo.
+// the 0023 STORAGE surface (see below), the 0024 notifications table (no
+// INSERT grant, read_at-only UPDATE grant, and its two-predicate policy —
+// company AND profile), and — run separately, as the no-profiles-row actor —
+// those same two RPCs again against a real tenant's task/review, plus
+// revert_translation_batch against a real tenant's batch, plus signing and
+// downloading a real tenant's photo.
 //
 // 0023 is the first surface here that is not only Postgres. task_photos is an
 // ordinary RLS table and rides in the visibility matrix like any other, but
@@ -36,6 +39,14 @@
 // filing an own-company row that points at a foreign object, forging
 // worker attribution past the column-scoped INSERT grant, and rewriting or
 // deleting evidence the tenant owns.
+//
+// notifications (0024) is the first relation in this repo scoped per PROFILE
+// and not only per company, which is why seedTenant now creates a COLLEAGUE — a
+// second profile in the same company. Without one, a policy that dropped
+// `profile_id = auth.uid()` entirely would still report green here: the owner
+// would be the only recipient in their company, so company scoping alone
+// would look indistinguishable from correct. Same shape of blind spot as the
+// no-profiles-row actor above, one level down.
 //
 // The SECURITY DEFINER ones matter more than they look: RLS does NOT cover
 // them, so their internal auth.uid() checks are the entire tenant boundary —
@@ -127,6 +138,31 @@ async function seedTenant(label) {
     admin.from('profiles').insert({ id: userId, company_id: companyId, full_name: `Matrix ${label}`, phone }).select().single(),
     `profile(${label})`,
   );
+
+  // A SECOND manager in the same company, and the ONLY reason this matrix
+  // needs one: notifications (0024) is scoped per profile as well as per
+  // company. Every other tenant table is company-scoped, where a colleague is
+  // indistinguishable from the owner — which is exactly why one was never
+  // needed before, and why a per-profile policy would be untestable without
+  // one. Seeded BEFORE open_task_review below, because the notification
+  // fan-out reads the profiles that exist at the moment the review is filed.
+  const colleagueEmail = `rls-matrix-${label}-mate-${run}@example.com`;
+  const { data: colleagueData, error: colleagueErr } = await admin.auth.admin.createUser({
+    email: colleagueEmail,
+    password: randomBytes(16).toString('hex'),
+    email_confirm: true,
+    user_metadata: { rls_matrix_run: run },
+  });
+  if (colleagueErr) throw new Error(`createUser(${label}-mate): ${colleagueErr.message}`);
+  const colleagueId = colleagueData.user.id;
+  await must(
+    admin.from('profiles').insert({
+      id: colleagueId, company_id: companyId, full_name: `Matrix ${label} mate`,
+      phone: `+35192${randomInt(1000000, 9999999)}`,
+    }).select().single(),
+    `profile(${label}-mate)`,
+  );
+
   const worker = await must(
     admin.from('workers').insert({ company_id: companyId, name: `Worker ${label}` }).select().single(),
     `worker(${label})`,
@@ -218,6 +254,25 @@ async function seedTenant(label) {
     `task_review(${label})`,
   );
 
+  // The notifications that review just produced, via the 0024 trigger. Read
+  // back rather than inserted: this IS the producer assertion — PRD 6 requires
+  // a pending review to notify EVERY manager of the company, and the throw
+  // below is what fails loudly if the fan-out ever reaches only the actor, or
+  // only one profile, or nobody. auth.uid() is null here (service role), so
+  // the "never notify the actor" clause excludes no one and both profiles must
+  // be present.
+  const notifications = await must(
+    admin.from('notifications').select('id, profile_id').eq('company_id', companyId),
+    `notifications(${label})`,
+  );
+  const ownNotificationId = notifications.find(n => n.profile_id === userId)?.id;
+  const colleagueNotificationId = notifications.find(n => n.profile_id === colleagueId)?.id;
+  if (!ownNotificationId || !colleagueNotificationId) {
+    throw new Error(
+      `notifications(${label}): the review fan-out produced ${notifications.length} row(s); expected one per profile in the company`,
+    );
+  }
+
   // A check-in answer. Written as the service role, which is the ONLY writer in
   // production too — the WhatsApp webhook. There is no insert policy, so the
   // adversarial pass below can assert that a tenant cannot forge one.
@@ -268,6 +323,7 @@ async function seedTenant(label) {
     workerId: worker.id, jobId: job.id, taskIds: [task1.id, task2.id],
     conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
     photoPath,
+    colleagueId, ownNotificationId, colleagueNotificationId,
   };
 }
 
@@ -333,6 +389,10 @@ async function cleanupTenant(t) {
   // Reverse dependency order; every delete is scoped to this run's rows only.
   const companyEq = (q) => q.eq('company_id', t.companyId);
   await companyEq(admin.from('task_photos').delete());
+  // Before profiles: notifications.profile_id is a FK (on delete cascade, but
+  // the delete is explicit here so a leftover row is never mistaken for one
+  // the app wrote).
+  await companyEq(admin.from('notifications').delete());
   await companyEq(admin.from('translation_items').delete());
   await companyEq(admin.from('translation_batches').delete());
   await companyEq(admin.from('proposals').delete());
@@ -348,9 +408,10 @@ async function cleanupTenant(t) {
   await companyEq(admin.from('worker_checkins').delete());
   await companyEq(admin.from('workers').delete());
   await companyEq(admin.from('jobs').delete());
-  await admin.from('profiles').delete().eq('id', t.userId);
+  await companyEq(admin.from('profiles').delete());
   await admin.from('companies').delete().eq('id', t.companyId);
   await admin.auth.admin.deleteUser(t.userId);
+  if (t.colleagueId) await admin.auth.admin.deleteUser(t.colleagueId);
 }
 
 // ── the matrix ──────────────────────────────────────────────────────────────
@@ -374,12 +435,29 @@ async function runMatrix(self, other) {
       error ? error.message : `${rows.length} rows, ${foreign.length} foreign`);
   }
 
-  // profiles: strictly own row.
+  // profiles: strictly own row — still one, even though this company now has
+  // two profiles. profiles_select_own is `id = auth.uid()`, not company-scoped.
   {
     const { data, error } = await db.from('profiles').select('*');
     const rows = data ?? [];
     check(`${L}: profiles`, !error && rows.length === 1 && rows[0].id === self.userId,
       error ? error.message : `${rows.length} rows`);
+  }
+
+  // notifications (0024): company AND profile, checked separately rather than
+  // in the loop above. The seeded review fanned out TWO rows in this company —
+  // one for this user, one for their colleague — so `foreignProfile` is the
+  // assertion the generic loop structurally cannot make: a policy missing its
+  // `profile_id = auth.uid()` clause returns both rows, every one of them with
+  // the right company_id.
+  {
+    const { data, error } = await db.from('notifications').select('*');
+    const rows = data ?? [];
+    const foreignCompany = rows.filter(r => r.company_id !== self.companyId);
+    const foreignProfile = rows.filter(r => r.profile_id !== self.userId);
+    check(`${L}: notifications`,
+      !error && rows.length === 1 && foreignCompany.length === 0 && foreignProfile.length === 0,
+      error ? error.message : `${rows.length} rows, ${foreignCompany.length} foreign company, ${foreignProfile.length} foreign profile`);
   }
 
   // Conversation-scoped tables: every visible row must hang off an own-company
@@ -727,6 +805,87 @@ async function runAdversarial(attacker, victim) {
       deleteError ? `rejected (${deleteError.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
     );
   }
+
+  // ── 0024 notifications ─────────────────────────────────────────────────
+  // Attack 19 (grant layer): no INSERT grant for authenticated. Every row is
+  // written by the triggers, so a tenant cannot manufacture a notification —
+  // which would otherwise be a way to put attacker-chosen text in front of a
+  // COLLEAGUE under the app's own chrome, inside the app's own inbox. Scoped
+  // to the attacker's own company and own profile, so only the grant can
+  // reject it.
+  {
+    const { error } = await db.from('notifications').insert({
+      company_id: attacker.companyId, profile_id: attacker.userId,
+      kind: 'review_pending', title: 'forged',
+    });
+    check(
+      'adversarial: direct insert into notifications blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — insert grant leaked',
+    );
+  }
+
+  // Attack 20 (grant layer): the UPDATE grant is `(read_at)` only. The policy
+  // alone would happily pass this — it is the attacker's own row, in their own
+  // company — so this is purely a column-grant check. If it leaks, a manager
+  // reads notification text their own browser chose.
+  {
+    const { error } = await db
+      .from('notifications')
+      .update({ title: 'tampered' })
+      .eq('id', attacker.ownNotificationId);
+    check(
+      'adversarial: update of a non-read_at notification column blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — column grant leaked',
+    );
+  }
+
+  // Attack 21 (policy, same company): marking a COLLEAGUE's notification read.
+  // The one attack in this file that is not cross-tenant — it is same-tenant,
+  // cross-PROFILE, and it is the whole reason the colleague exists. A
+  // company-only policy would let whichever manager opened the app first clear
+  // everyone else's badge, silently.
+  //
+  // Asserting on `error` would be wrong here: RLS filters rows, it does not
+  // raise. A blocked UPDATE matches zero rows and returns no error at all, so
+  // the row's own state is the only truthful signal.
+  {
+    const { error } = await db
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('id', attacker.colleagueNotificationId);
+    const { data: after } = await admin
+      .from('notifications').select('read_at').eq('id', attacker.colleagueNotificationId).single();
+    check(
+      "adversarial: marking a colleague's notification read blocked",
+      after?.read_at === null,
+      after?.read_at === null
+        ? `no row matched${error ? ` (${error.code ?? 'err'})` : ''}`
+        : 'ACCEPTED — per-profile scoping broken',
+    );
+  }
+
+  // Attack 22 (policy, cross-tenant): the same write against the OTHER
+  // company's manager. Weaker than attack 21 — company scoping alone stops
+  // this one — but it is the boundary every other row in this matrix asserts,
+  // and leaving it out would make notifications the only tenant table with no
+  // cross-tenant check of its own.
+  {
+    const { error } = await db
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('id', victim.ownNotificationId);
+    const { data: after } = await admin
+      .from('notifications').select('read_at').eq('id', victim.ownNotificationId).single();
+    check(
+      "adversarial: marking a foreign tenant's notification read blocked",
+      after?.read_at === null,
+      after?.read_at === null
+        ? `no row matched${error ? ` (${error.code ?? 'err'})` : ''}`
+        : 'ACCEPTED — boundary broken',
+    );
+  }
 }
 
 // A third actor's attacks: an authenticated user with a confirmed email and
@@ -736,7 +895,7 @@ async function runAdversarial(attacker, victim) {
 // actor that would have caught the fail-open bug fix round 1 found in
 // open_task_review (0019): before that fix, `v_company <> NULL` evaluated to
 // NULL under three-valued logic, the guard silently did not fire, and this
-// exact user could write to any tenant's tasks/task_reviews. Attack 21 is the
+// exact user could write to any tenant's tasks/task_reviews. Attack 25 is the
 // same defect in revert_translation_batch, which is where open_task_review
 // inherited it from.
 //
@@ -747,7 +906,7 @@ async function runAdversarial(attacker, victim) {
 async function runOrphanAttack(orphan, victim) {
   const db = orphan.client;
 
-  // Attack 19: filing a claim on a real tenant's real task. Targets
+  // Attack 23: filing a claim on a real tenant's real task. Targets
   // taskIds[1] for the same reason as attack 9 — task1 already carries the
   // seeded pending review, so aiming there would risk tripping
   // task_reviews_one_pending_idx instead of exercising the tenant guard.
@@ -766,7 +925,7 @@ async function runOrphanAttack(orphan, victim) {
     );
   }
 
-  // Attack 20: resolving a real tenant's real review. Note this one was
+  // Attack 24: resolving a real tenant's real review. Note this one was
   // already safe even before the 0019 fix — the guard lives inside the
   // UPDATE's WHERE clause (`company_id = private.current_company_id()`),
   // and `real_uuid = NULL` is NULL, which WHERE treats as no match, not as
@@ -790,7 +949,7 @@ async function runOrphanAttack(orphan, victim) {
     );
   }
 
-  // Attack 21 (0015 + 0021): revert_translation_batch is SECURITY DEFINER, so
+  // Attack 25 (0015 + 0021): revert_translation_batch is SECURITY DEFINER, so
   // RLS does not cover it and its auth.uid() clause is the entire tenant
   // boundary. Before 0021 that clause used `<>`, which three-valued logic
   // turned into a no-op for exactly this caller — the RPC did not merely allow
@@ -822,7 +981,7 @@ async function runOrphanAttack(orphan, victim) {
     );
   }
 
-  // Attack 22 (0023): the storage boundary, seen by the actor it is most
+  // Attack 26 (0023): the storage boundary, seen by the actor it is most
   // likely to fail open for. The storage.objects policies read
   // `(storage.foldername(name))[1] = (select private.current_company_id())::text`,
   // and for this user that function returns NULL — the exact input that turned
