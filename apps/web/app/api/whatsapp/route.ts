@@ -6,8 +6,10 @@ import { MAX_AUDIO_BYTES, transcribeAudio } from '@capo/core/transcription';
 import { coerceLocale, type Locale, type LocaleContext } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
 import {
+  isBsuid,
   parseCheckinPayload,
   parseProposalButtonId,
+  senderLabel,
   sendWhatsAppText,
   whatsappSink,
   type WhatsAppSendConfig,
@@ -32,6 +34,13 @@ import { testTierArSendTarget, type WhatsAppEnv } from '../../../lib/whatsapp';
 //   workers.phone  → a WORKER replying to their 07:00 briefing. Acknowledged
 //                    deterministically, never persisted, never given to the
 //                    model. See handleWorkerReply.
+//
+// The phone is on its way out as the name badge. Once a sender adopts a
+// WhatsApp username Meta omits `from` entirely and sends only `from_user_id`
+// (a BSUID). This route already RECORDS that id against whoever the phone
+// resolved to — see captureBsuid — but it still resolves on phone alone, so a
+// message with no phone is an unknown sender. Reading the BSUID as a
+// resolution key is Stage 2 (issue #28).
 //
 // All secrets are read lazily inside the handlers (never at module scope):
 //   WHATSAPP_VERIFY_TOKEN   — GET verification challenge
@@ -63,7 +72,21 @@ export async function GET(request: NextRequest) {
 export const maxDuration = 300;
 
 interface WhatsAppMessage {
-  from: string; // wa_id: digits, no '+'
+  // wa_id: digits, no '+'. OPTIONAL, and this is a correction rather than a new
+  // possibility — it has been a type lie since April 2026. Meta omits `from`
+  // entirely once the sender has adopted a WhatsApp username; that is the whole
+  // point of the feature. Every use below must guard on it.
+  from?: string;
+  // The BSUID Meta has sent on every message since April 2026 — a per-person,
+  // portfolio-scoped id (PT.13491208655302741918) that survives username
+  // changes. Stage 1 only RECORDS it (see captureBsuid); phone is still the
+  // sole resolution key. Resolving by BSUID is Stage 2 (issue #28).
+  //
+  // Deliberately read from the MESSAGE and not from the sibling `contacts[]`
+  // array: from_user_id is per-message and unambiguous, while `contacts` lives
+  // one level up in `value` and the parser below flat-maps messages, discarding
+  // exactly the context that pairing them would need.
+  from_user_id?: string;
   id: string;
   type: string;
   text?: { body: string };
@@ -130,6 +153,118 @@ function languageCommand(text: string | undefined): Locale | null {
 
 /** notification_log.kind for the 16:30 ask. Must match /api/cron/checkin. */
 const CHECKIN_KIND = 'task_checkin';
+
+/**
+ * The silent no-op, in one place so both callers stay identical: a sender we
+ * cannot place, whether the number is unknown or there is no number at all.
+ *
+ * Never reveals whether a number is known and never replies — that silence is
+ * the security property, not an omission. senderLabel is truncated for the same
+ * reason it always was.
+ */
+function logUnknownSender(message: WhatsAppMessage): void {
+  const sender = senderLabel(message);
+  console.warn(`whatsapp: inbound from unknown sender (${sender}), ignoring`);
+  logEvent('whatsapp.unknown_sender', { sender });
+}
+
+/** Where a captured BSUID goes. `id` is the primary key of the resolved row. */
+type BsuidTarget =
+  | { audience: 'manager'; id: string; companyId: string }
+  | { audience: 'worker'; id: string; companyId: string };
+
+/**
+ * Record the sender's BSUID against the row their PHONE just resolved to.
+ *
+ * This is the whole point of Stage 1 (issue #27). Meta shows both identifiers
+ * on the same message only until 30 days after a username adopter's last
+ * exchange with us; after that the phone is gone for good and there is no way
+ * left to connect the BSUID to someone we already know. So we bind them now,
+ * on every message, while both are still on the wire.
+ *
+ * Best-effort by construction, three ways:
+ *   - Every failure is logged and swallowed. A failed capture must never cost a
+ *     manager their reply — this is bookkeeping, not the conversation.
+ *   - It runs inside after(), never on the synchronous path. Slowing the ack to
+ *     Meta buys retries and duplicate delivery.
+ *   - It adds no query to sender resolution. The obvious alternative — select
+ *     whatsapp_user_id alongside the existing profiles/workers lookup and
+ *     compare — would couple resolution to a migration that is deliberately not
+ *     applied yet: PostgREST would 42703, the lookup would come back null, and
+ *     EVERY MANAGER would silently become an unknown sender. Here the same
+ *     error is one swallowed log line. (AGENTS.md, on code that reads ahead of
+ *     a pending migration.)
+ *
+ * ONE conditional UPDATE, no read: the `or` filter makes the statement match
+ * nothing when the stored value is already this BSUID, so an unchanged value
+ * writes nothing and a redelivered webhook is free. No read means no TOCTOU
+ * window either. `.select('id')` is how we tell "wrote" from "matched nothing".
+ */
+async function captureBsuid(db: Db, message: WhatsAppMessage, target: BsuidTarget): Promise<void> {
+  const bsuid = message.from_user_id;
+  if (!bsuid || !isBsuid(bsuid)) return;
+
+  // isBsuid is load-bearing beyond validity HERE: it has already established
+  // that the value is [A-Za-z0-9.] only, so it cannot contain a PostgREST
+  // filter metacharacter (comma, parenthesis, quote) and is safe to interpolate
+  // into the `or` expression below. Do not reorder these two statements.
+  //
+  // The `is.null` disjunct is NOT redundant with `neq`, and dropping it would
+  // silently disable the whole feature. Under three-valued logic
+  // `NULL <> 'PT.…'` is NULL, not true, so `neq` alone matches no row whose
+  // column is still null — which is every row we have never captured, i.e. the
+  // only rows this write exists for. (Same trap as 0021, opposite direction:
+  // there a null made a guard fail open, here it would make a write fail shut.)
+  const unchanged = `whatsapp_user_id.is.null,whatsapp_user_id.neq.${bsuid}`;
+
+  try {
+    // Awaited inside each branch rather than building one query and awaiting
+    // after: a ternary over two different table builders gives TypeScript a
+    // union it cannot apply .or() to.
+    const { data, error } =
+      target.audience === 'manager'
+        ? await db
+            .from('profiles')
+            .update({ whatsapp_user_id: bsuid })
+            .eq('id', target.id)
+            .or(unchanged)
+            .select('id')
+        : await db
+            .from('workers')
+            .update({ whatsapp_user_id: bsuid })
+            .eq('id', target.id)
+            // Defence in depth. The row was already resolved within the tenant;
+            // this makes a mis-wired call site fail closed rather than write
+            // across companies.
+            .eq('company_id', target.companyId)
+            .or(unchanged)
+            .select('id');
+
+    if (error) {
+      // Expected, and harmless, on any deploy that lands before 0022 is
+      // applied: "column whatsapp_user_id does not exist".
+      logEvent('whatsapp.bsuid_capture_failed', {
+        companyId: target.companyId,
+        audience: target.audience,
+        error: error.message,
+      });
+      return;
+    }
+    // No rows means the stored value already matched — the common case after
+    // the first message, and deliberately not an event.
+    if (data?.length) {
+      // No raw identifier in the payload: a BSUID is exactly as identifying as
+      // the phone number it replaces.
+      logEvent('whatsapp.bsuid_captured', { companyId: target.companyId, audience: target.audience });
+    }
+  } catch (err) {
+    logEvent('whatsapp.bsuid_capture_failed', {
+      companyId: target.companyId,
+      audience: target.audience,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
 
 /**
  * A check-in button tap: the worker answering the 16:30 template.
@@ -283,12 +418,20 @@ async function handleCheckinTap(
  *     window — only the recipient's reply does — so acknowledging a worker is
  *     what converts tomorrow's paid template into a free session message.
  */
-async function handleWorkerReply(db: Db, message: WhatsAppMessage, env: WhatsAppEnv): Promise<boolean> {
-  const waIdSuffix = message.from.slice(-4);
+async function handleWorkerReply(
+  db: Db,
+  message: WhatsAppMessage,
+  // Passed in already narrowed rather than re-read from the message: the POST
+  // loop has to guard on it anyway, and taking it as a parameter makes "there
+  // is a phone here" structural instead of a defensive branch that can never
+  // run. A worker with no phone on the wire is unresolvable in Stage 1.
+  from: string,
+  env: WhatsAppEnv,
+): Promise<boolean> {
   const { data: matches, error } = await db
     .from('workers')
     .select('id, company_id, language, company:companies(language)')
-    .eq('phone', `+${message.from}`)
+    .eq('phone', `+${from}`)
     .eq('active', true)
     .limit(2);
 
@@ -300,11 +443,19 @@ async function handleWorkerReply(db: Db, message: WhatsAppMessage, env: WhatsApp
   if (matches.length > 1) {
     // Same number on two companies' crews. Answering either would leak which
     // tenant we picked, and picking is guesswork.
-    logEvent('whatsapp.worker_ambiguous', { waIdSuffix, matches: matches.length });
+    logEvent('whatsapp.worker_ambiguous', { sender: senderLabel(message), matches: matches.length });
     return true;
   }
 
   const worker = matches[0];
+
+  // Above every branch below, so it covers all three of this function's
+  // remaining exits — check-in tap, language switch, plain ack. Deliberately
+  // NOT above the ambiguity guard: a number on two companies' crews would mean
+  // guessing which tenant to write the BSUID into, which is the same guess the
+  // guard exists to refuse.
+  await captureBsuid(db, message, { audience: 'worker', id: worker.id, companyId: worker.company_id });
+
   const current = worker.language ? coerceLocale(worker.language) : coerceLocale(worker.company?.language);
   const requested = message.type === 'text' ? languageCommand(message.text?.body) : null;
 
@@ -322,7 +473,7 @@ async function handleWorkerReply(db: Db, message: WhatsAppMessage, env: WhatsApp
   const sendConfig: WhatsAppSendConfig = {
     accessToken: env.accessToken,
     phoneNumberId: env.phoneNumberId,
-    to: testTierArSendTarget(message.from),
+    to: testTierArSendTarget(from),
   };
 
   // The 16:30 check-in answer. Sits here — inside the WORKER path — and not
@@ -400,11 +551,27 @@ export async function POST(request: NextRequest) {
 
   const db = getDb();
   for (const message of inbound) {
+    const from = message.from;
+
+    // No phone on the wire: the sender has adopted a WhatsApp username and Meta
+    // has stopped telling us their number. Stage 1 resolves by phone ONLY, so
+    // there is nothing to look up and this is genuinely an unknown sender — the
+    // same silent no-op an unrecognised number gets, reached without throwing.
+    // Binding a BSUID to a person needs a message that still carries both, and
+    // this one does not. Stage 2 (issue #28) is what turns this branch into a
+    // resolution.
+    //
+    // It is also what narrows `from` to a string for every use below.
+    if (!from) {
+      logUnknownSender(message);
+      continue;
+    }
+
     // wa_id is digits-only; profiles.phone is E.164 with '+'.
     const { data: profile } = await db
       .from('profiles')
       .select('id, company_id, language, company:companies(language)')
-      .eq('phone', `+${message.from}`)
+      .eq('phone', `+${from}`)
       .maybeSingle();
 
     if (!profile) {
@@ -412,18 +579,23 @@ export async function POST(request: NextRequest) {
       // briefing, which is the one other number we know. Runs after the ack so
       // the lookup and the ack send add no latency to Meta's webhook call.
       after(async () => {
-        const handled = await handleWorkerReply(db, message, { accessToken, phoneNumberId });
-        if (!handled) {
-          // Safe no-op: don't reveal whether a number is known, don't reply.
-          console.warn(`whatsapp: inbound from unknown number (wa_id ending …${message.from.slice(-4)}), ignoring`);
-          logEvent('whatsapp.unknown_sender', { waIdSuffix: message.from.slice(-4) });
-        }
+        const handled = await handleWorkerReply(db, message, from, { accessToken, phoneNumberId });
+        // Safe no-op: don't reveal whether a number is known, don't reply.
+        if (!handled) logUnknownSender(message);
       });
       continue;
     }
 
     const companyId = profile.company_id;
     const userId = profile.id;
+
+    // Placed ABOVE the interactive-button branch and the triage below, so it
+    // covers every path a resolved manager can take out of this loop —
+    // including the ones that `continue` without ever reaching handleInbound.
+    // A manager who only ever taps approval buttons still gets their BSUID
+    // recorded.
+    after(() => captureBsuid(db, message, { audience: 'manager', id: userId, companyId }));
+
     // Service role: auth.uid() is null on this path, so the locale cannot come
     // from RLS — it comes from the profile row matched by phone.
     const locales: LocaleContext = {
@@ -435,7 +607,7 @@ export async function POST(request: NextRequest) {
     const sendConfig: WhatsAppSendConfig = {
       accessToken,
       phoneNumberId,
-      to: testTierArSendTarget(message.from),
+      to: testTierArSendTarget(from),
     };
 
     // ── Approval card button tap ────────────────────────────────────────────

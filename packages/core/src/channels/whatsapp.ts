@@ -158,6 +158,51 @@ export function parseCheckinPayload(
   return { answer: match[1].toLowerCase() as CheckinAnswer, notificationId: match[2] };
 }
 
+// ── business-scoped user ids ────────────────────────────────────────────────
+// Meta's answer to WhatsApp usernames. When a person adopts a username, the
+// inbound message's `from` (their phone) is OMITTED entirely and `from_user_id`
+// — a BSUID like PT.13491208655302741918 — is all we get. It is stable across
+// username changes and scoped to our business portfolio.
+//
+// ISO-3166 alpha-2, a period, up to 128 alphanumerics. ONE dot, which is what
+// rejects a PARENT BSUID (US.ENT.11815799212886844830): Meta issues those to
+// multi-portfolio businesses, and we are a single portfolio. Storing one would
+// look like an identity while pointing at no one in particular.
+//
+// This regex is duplicated as a CHECK constraint in
+// supabase/migrations/0022_whatsapp_bsuid.sql, deliberately — one rule, two
+// enforcement points. It lives here rather than in the webhook route so
+// scripts/whatsapp-check.mts can assert it with no credentials and no network,
+// the same reason parseProposalButtonId lives here.
+const BSUID = /^[A-Z]{2}\.[A-Za-z0-9]{1,128}$/;
+
+export function isBsuid(value: string): boolean {
+  return BSUID.test(value);
+}
+
+/**
+ * Log-safe sender label. Never throws; never emits a full identifier.
+ *
+ * Both fields are optional and BOTH can be absent — `from` since Meta started
+ * omitting it for username adopters, `from_user_id` on anything Meta sends that
+ * is not a person's message. Every call site is a log line inside an `after()`
+ * callback, where a TypeError is an unhandled rejection that bypasses the very
+ * logEvent it was reaching for, so this must not be able to throw.
+ *
+ * `…1234` for a phone, `id:…1234` for the BSUID-only case, `'unknown'` for
+ * neither. The `id:` prefix is what tells triage WHICH identifier got
+ * truncated — without it the two shapes are indistinguishable in a log drain.
+ *
+ * Four trailing characters identify no one on their own. (A pathologically
+ * short id — 4 chars or fewer — would be emitted whole, but nothing that short
+ * is a real BSUID.)
+ */
+export function senderLabel(message: { from?: string; from_user_id?: string }): string {
+  if (message.from) return `…${message.from.slice(-4)}`;
+  if (message.from_user_id) return `id:…${message.from_user_id.slice(-4)}`;
+  return 'unknown';
+}
+
 // ── outbound planning ───────────────────────────────────────────────────────
 
 // Recognises the shape returned identically by propose.ts, guard.ts and
