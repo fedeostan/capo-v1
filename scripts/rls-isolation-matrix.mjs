@@ -17,13 +17,18 @@
 // The adversarial set covers, in order: the two migration-0009 FK triggers
 // (own-company task pointing at the other company's job/worker; own-company
 // proposal pointing at the other company's conversation), the 0011 billing
-// column revoke, the 0015 revert_translation_batch RPC, the two 0017
-// task-review RPCs plus the table's absent INSERT/UPDATE grants, and — run
-// separately, as the no-profiles-row actor — the same two RPCs again against
-// a real tenant's task/review. The SECURITY DEFINER ones matter more than
-// they look: RLS does NOT cover them, so their internal auth.uid() checks
-// are the entire tenant boundary — which is exactly what the no-profiles-row
-// actor above is seeded to probe.
+// column revoke, the 0015 revert_translation_batch RPC, the 0017
+// worker_checkins answers a tenant must not be able to forge or rewrite, the
+// two 0018 task-review RPCs plus that table's absent INSERT/UPDATE grants,
+// and — run separately, as the no-profiles-row actor — the same two RPCs
+// again against a real tenant's task/review.
+//
+// The SECURITY DEFINER ones matter more than they look: RLS does NOT cover
+// them, so their internal auth.uid() checks are the entire tenant boundary —
+// which is exactly what the no-profiles-row actor is seeded to probe. Two
+// ordinary tenants structurally cannot: every ordinary attacker has a
+// company, so private.current_company_id() never returns NULL for them, and
+// a guard that fails open only on NULL stays invisible.
 //
 // Runs against the live Supabase project using apps/web/.env.local:
 //   pnpm rls-matrix        (root: node scripts/rls-isolation-matrix.mjs)
@@ -183,6 +188,17 @@ async function seedTenant(label) {
     `task_review(${label})`,
   );
 
+  // A check-in answer. Written as the service role, which is the ONLY writer in
+  // production too — the WhatsApp webhook. There is no insert policy, so the
+  // adversarial pass below can assert that a tenant cannot forge one.
+  await must(
+    admin.from('worker_checkins').insert({
+      company_id: companyId, worker_id: worker.id,
+      checkin_date: '2026-01-05', answer: 'done', task_ids: [task1.id],
+    }).select(),
+    `worker_checkin(${label})`,
+  );
+
   const client = createClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: false },
   });
@@ -201,7 +217,7 @@ async function seedTenant(label) {
 // signup-before-onboarding state (apps/web/app/(public)/registar/actions.ts;
 // signup and onboarding are separate steps). private.current_company_id()
 // returns NULL for this user. That NULL is exactly what made
-// open_task_review's original `<>` tenant guard fail OPEN before the 0018
+// open_task_review's original `<>` tenant guard fail OPEN before the 0019
 // hardening fix (three-valued logic: `v_company <> NULL` is NULL, not true),
 // and no ordinary two-tenant attack can reach that code path, because every
 // ordinary attacker has a company.
@@ -248,6 +264,8 @@ async function cleanupTenant(t) {
   await companyEq(admin.from('memories').delete());
   await companyEq(admin.from('transcription_vocab').delete());
   await companyEq(admin.from('conversations').delete());
+  // Before workers: worker_checkins.worker_id is a FK.
+  await companyEq(admin.from('worker_checkins').delete());
   await companyEq(admin.from('workers').delete());
   await companyEq(admin.from('jobs').delete());
   await admin.from('profiles').delete().eq('id', t.userId);
@@ -266,7 +284,7 @@ async function runMatrix(self, other) {
   // screen reads the whole board through it. If it were ever recreated
   // without security_invoker it would leak every company's tasks, and nothing
   // else in this repo would notice.
-  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews']) {
+  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'worker_checkins']) {
     const { data, error } = await db.from(table).select('*');
     const rows = data ?? [];
     const ownKey = table === 'companies' ? 'id' : 'company_id';
@@ -386,7 +404,34 @@ async function runAdversarial(attacker, victim) {
       error ? `code=${error.code}` : 'UPDATE SUCCEEDED (undo is forgeable!)');
   }
 
-  // Attack 6 (review resolution): resolve_task_review is SECURITY DEFINER, so
+  // Attack 6 (0017): worker check-in answers must be unforgeable. The table is
+  // readable by its tenant but has NO insert or update policy and no grant
+  // beyond select — the only writer is the WhatsApp webhook on the service
+  // role. A tenant that could write here could manufacture "the crew said they
+  // finished", which is exactly what a later PRD will trust when deciding
+  // whether a task is done. Assert BOTH directions: cannot insert a new answer,
+  // cannot rewrite the one it can see.
+  {
+    const { error } = await db.from('worker_checkins').insert({
+      company_id: attacker.companyId, worker_id: attacker.workerId,
+      checkin_date: '2026-01-06', answer: 'done', task_ids: [],
+    });
+    check('adversarial: tenant INSERT of a check-in answer blocked', error != null,
+      error ? `code=${error.code}` : 'INSERT SUCCEEDED (answers are forgeable!)');
+    if (!error) {
+      await admin.from('worker_checkins').delete()
+        .eq('company_id', attacker.companyId).eq('checkin_date', '2026-01-06');
+    }
+  }
+  // Attack 7 (0017): and the same tenant cannot rewrite the answer it CAN see.
+  {
+    const { error } = await db.from('worker_checkins').update({ answer: 'done' })
+      .eq('company_id', attacker.companyId);
+    check('adversarial: tenant UPDATE of a check-in answer blocked', error != null,
+      error ? `code=${error.code}` : 'UPDATE SUCCEEDED (answers are forgeable!)');
+  }
+
+  // Attack 8 (review resolution): resolve_task_review is SECURITY DEFINER, so
   // RLS does NOT cover it — its internal auth.uid() check is the whole tenant
   // boundary. Same class of risk as revert_translation_batch, and a successful
   // attack here would let one tenant mark another tenant's work done.
@@ -408,7 +453,7 @@ async function runAdversarial(attacker, victim) {
     );
   }
 
-  // Attack 7 (review creation): open_task_review is likewise SECURITY DEFINER.
+  // Attack 9 (review creation): open_task_review is likewise SECURITY DEFINER.
   // Filing a claim on a foreign task would flip that task to pending_review —
   // a cross-tenant WRITE to the tasks table.
   //
@@ -433,7 +478,7 @@ async function runAdversarial(attacker, victim) {
     );
   }
 
-  // Attack 8 (grant layer): task_reviews has NO update grant for authenticated,
+  // Attack 10 (grant layer): task_reviews has NO update grant for authenticated,
   // so a tenant cannot resolve its OWN review by hand and strand the task open.
   {
     const { error } = await db
@@ -447,8 +492,8 @@ async function runAdversarial(attacker, victim) {
     );
   }
 
-  // Attack 9 (grant layer): task_reviews has NO insert grant for authenticated
-  // either (0018, M6) — every write goes through the two RPCs above. Scoped to
+  // Attack 11 (grant layer): task_reviews has NO insert grant for authenticated
+  // either (0019, M6) — every write goes through the two RPCs above. Scoped to
   // the attacker's OWN company/task (not cross-tenant) because this is a
   // grant-layer check, not a boundary check: even a well-formed, same-tenant
   // direct insert must fail, or a tenant could create a task_reviews row that
@@ -474,14 +519,14 @@ async function runAdversarial(attacker, victim) {
 // exercise this path — every ordinary attacker has a company, so
 // private.current_company_id() never returns NULL for them. This is the
 // actor that would have caught the fail-open bug fix round 1 found in
-// open_task_review (0018): before that fix, `v_company <> NULL` evaluated to
+// open_task_review (0019): before that fix, `v_company <> NULL` evaluated to
 // NULL under three-valued logic, the guard silently did not fire, and this
 // exact user could write to any tenant's tasks/task_reviews.
 async function runOrphanAttack(orphan, victim) {
   const db = orphan.client;
 
-  // Attack 10: filing a claim on a real tenant's real task. Targets
-  // taskIds[1] for the same reason as attack 7 — task1 already carries the
+  // Attack 12: filing a claim on a real tenant's real task. Targets
+  // taskIds[1] for the same reason as attack 9 — task1 already carries the
   // seeded pending review, so aiming there would risk tripping
   // task_reviews_one_pending_idx instead of exercising the tenant guard.
   {
@@ -499,8 +544,8 @@ async function runOrphanAttack(orphan, victim) {
     );
   }
 
-  // Attack 11: resolving a real tenant's real review. Note this one was
-  // already safe even before the 0018 fix — the guard lives inside the
+  // Attack 13: resolving a real tenant's real review. Note this one was
+  // already safe even before the 0019 fix — the guard lives inside the
   // UPDATE's WHERE clause (`company_id = private.current_company_id()`),
   // and `real_uuid = NULL` is NULL, which WHERE treats as no match, not as
   // true. It is included anyway so this actor's coverage of both RPCs is

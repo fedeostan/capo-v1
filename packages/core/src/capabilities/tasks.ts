@@ -12,7 +12,7 @@ const taskStatus = z.enum(['pending', 'in_progress', 'pending_review', 'blocked'
 // meaningful only alongside a task_reviews row, which only open_task_review
 // creates, and every UI control keys off that row existing. Writing the status
 // alone yields a task badged "a aguardar controlo" with no way to resolve it.
-// Exits from pending_review stay allowed — tasks_supersede_review (0019)
+// Exits from pending_review stay allowed — tasks_supersede_review (0020)
 // closes the stranded review when the task leaves.
 const updatableTaskStatus = z.enum(['pending', 'in_progress', 'blocked', 'done', 'cancelled']);
 

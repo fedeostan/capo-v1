@@ -26,6 +26,66 @@ so **`old_value` is not writable by a tenant** and the undo snapshot is
 immutable at the grant layer. Regenerating `packages/db/src/types.ts` was
 confirmed to reproduce the committed file exactly.
 
+### 0017 — ✅ APPLIED (2026-08-08)
+
+`0017_worker_checkins.sql` ships with the 16:30 check-in (§12), applied as
+version `20260808140249`. It adds `worker_checkins` (one row per worker per day
+holding their answer), one SELECT-only RLS policy plus `grant select`, and the
+`worker_checkins_fks_same_company` trigger.
+
+Verified after applying: 10 columns; RLS on with exactly **one** policy and that
+policy is `SELECT`; the FK trigger present; and the grants hold — `authenticated`
+has `SELECT` and nothing else, `anon` has none. There is deliberately no insert
+or update policy, because the sole writer is the WhatsApp webhook on the service
+role and a tenant able to write there could forge a worker's answer.
+
+The hand-written `packages/db/src/types.ts` block was checked column by column
+against the live schema (names, types, nullability, defaults) and matches.
+
+Two chores still open:
+
+1. **The byte-equality regeneration for `types.ts` has NOT been done**, and
+   currently cannot be. See the ⚠ below — the live project carries
+   `task_reviews` from the parallel PRD #19 work, which is not in this branch,
+   so a regeneration emits tables this file has never had.
+2. Re-run `pnpm rls-matrix`. It gains a visibility check for the new table plus
+   two adversarial "a tenant cannot forge a check-in answer" cases.
+
+### ⚠ The live project is ahead of `main` (2026-08-08)
+
+Three migrations were applied from the parallel PRD #19 work and are **not** in
+any pushed branch:
+
+| Version | Name |
+|---|---|
+| `20260808123135` | `task_reviews` |
+| `20260808125233` | `task_reviews_hardening` |
+| `20260808130731` | `task_review_supersede` |
+
+Two consequences worth knowing before either stream continues:
+
+- **~~Two migration files are both numbered `0017`~~ — RESOLVED on the #19
+  branch.** `0017_worker_checkins.sql` reached `main` first and kept `0017`;
+  the task-review stream renumbered upward to `0018_task_reviews.sql`,
+  `0019_task_reviews_hardening.sql` and `0020_task_review_supersede.sql`, with
+  every cross-reference updated. Worth recording *why* it needed a human: git
+  does not flag it, because the filenames differ and the contents do not
+  overlap, so the merge is silently clean and you simply end up with two
+  `0017_*` files. **File numbers no longer match application order** —
+  `task_reviews` was applied ~90 minutes before `worker_checkins` — and that is
+  fine: the live ledger keys on the timestamps above, and the two streams are
+  independent (`0017_worker_checkins` deliberately never touches `tasks.status`).
+- **`0020` is now taken.** The `revert_translation_batch` null-guard fix on
+  branch `claude/strange-gagarin-53bb5b` was written as
+  `0020_revert_translation_batch_null_guard.sql` and must move to `0021` before
+  it merges — otherwise this exact collision happens a second time. That branch
+  also ports its own `seedOrphanUser` into `scripts/rls-isolation-matrix.mjs`,
+  which #19 already adds, so expect a conflict there too.
+- **Whichever stream regenerates `types.ts` second sees a diff that looks like
+  corruption and is not.** Regenerating today pulls in `task_reviews`; doing it
+  from the #19 branch pulls in `worker_checkins`. One regeneration after both
+  have landed, not two before.
+
 Still outstanding, because neither runs in CI and both need credentials:
 `pnpm rls-matrix` (#11 adds two adversarial checks against the new
 `SECURITY DEFINER` `revert_translation_batch`) and a `pnpm agent-smoke` pass
@@ -274,9 +334,15 @@ finds no approved template, and writes `failed` rows to `notification_log`.
    is `apps/web` (which is what having two separate projects implies). If the
    root is the repo root instead, **move the file there** — a misplaced
    `vercel.json` is silently ignored, so the symptom is simply that no cron
-   ever fires. Also check the plan: Hobby allows **2 cron jobs, once daily,
-   fired within the hour**, and the two entries here consume that budget
-   exactly.
+   ever fires.
+
+   > Updated 2026-08-08: this step used to warn that Hobby allows **2 cron
+   > jobs, once daily, fired within the hour**, and that the two entries here
+   > consumed that budget exactly. The project is on **Pro**, so the cap does
+   > not bind and schedules fire at the stated minute. §12 adds two more
+   > entries on that basis. If the plan is ever downgraded, those four entries
+   > are the first thing that breaks — silently, because a rejected cron
+   > config just means no cron ever fires.
 
 Then verify, in this order:
 
@@ -314,6 +380,66 @@ worker who picks `es-ES` gets a Spanish sentence wrapping Portuguese titles.
 Also, no consent column was added — Meta's 5-number allow-list is the gate in
 test mode, but a real opt-in record is required before production under Meta's
 business-messaging policy.
+
+## 12. 16:30 worker check-in (2026-08-08)
+
+The end-of-day "did you finish today's tasks?" nudge, answered by two template
+quick-reply buttons and recorded in `worker_checkins`. Deterministic end to end —
+no model is called in either direction, so the "Ainda não" branch is free.
+
+It records an **answer only**. It does not flip `tasks.status`; that is a later
+PRD, and it should land against a table that already holds the answers.
+
+**Nothing here works until all five steps are done.** Until then the cron runs,
+finds no approved template, and writes `failed` rows to `notification_log` — the
+same pre-launch state as §11, not a bug.
+
+1. ✅ **DONE (2026-08-08).** `0017_worker_checkins.sql` is applied (version
+   `20260808140249`) and verified — see §0. `pnpm rls-matrix` still needs a run.
+2. **Submit the template.** `pnpm whatsapp-template create`, then
+   `pnpm whatsapp-template status` until every line is PASS. Full instructions
+   and the credential caveats are in `docs/whatsapp-cloud-api-runbook.md` §6.
+   ⚠ The WhatsApp secrets are **Sensitive** in Vercel and cannot be pulled back
+   — `vercel env pull` returns the literal `[SENSITIVE]`. You need the System
+   User token from your own records, or a freshly generated one (runbook §3),
+   which must then also be updated in Vercel.
+3. **Set `CRON_SECRET`** — still outstanding from §11 step 5, and confirmed
+   absent from the `capo-v1` production env on 2026-08-08. Without it *both*
+   cron routes answer 503 and nothing is ever sent.
+4. **The allow-list is the same as §11 step 4.** Same numbers, so this is a
+   no-op if that is done.
+5. **Confirm the two new cron entries deployed.** `apps/web/vercel.json` now has
+   four, two per route. This depends on being on **Pro** — see the note in §11
+   step 6.
+
+Then verify, in this order:
+
+- `curl -H "Authorization: Bearer $CRON_SECRET" 'http://localhost:3000/api/cron/checkin?dry_run=1'`
+  — renders every eligible worker, sends nothing, writes nothing, and ignores
+  the hour gate so it works at any time of day. Workers with no tasks today
+  must be **absent** entirely, not listed as skipped.
+- Re-run without `dry_run` twice and confirm the second call sends nothing more,
+  and that `notification_log` holds exactly one `task_checkin` row per worker
+  per day alongside the morning's `daily_briefing` row.
+- On a real phone: tap **Ainda não** → an ack in the worker's language, one
+  `worker_checkins` row with `answer='not_done'`, and **zero** model calls in
+  the logs. Then tap **Sim, terminei** → a second ack, the **same** row flipped
+  to `done` with a newer `answered_at`, and a free-form send now succeeds
+  (proving the tap opened the 24h window).
+- Confirm `tasks.status` is untouched and **nothing** appeared in the manager's
+  chat thread.
+- Operator app → **Health** shows "Check-ins asked", and **Briefing log** now
+  has a Kind column separating the two daily sends.
+
+Same retry rule as §11: a `failed` row holds that day's claim, so approving the
+template at 17:00 and re-invoking sends nothing that day. Delete the
+`notification_log` rows to force a retry.
+
+One dial worth a look, and it is a single line in
+`apps/web/app/api/cron/checkin/route.ts`: there is deliberately **no**
+`NOTIFY_IDLE_WORKERS` equivalent — a worker with nothing on today is skipped
+before any claim is written, because asking them whether they finished it is not
+a product decision with two defensible answers.
 
 ## 10. Backlog (deliberately cut from this upgrade)
 

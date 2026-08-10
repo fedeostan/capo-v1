@@ -1,6 +1,6 @@
 -- Hardening pass on 0017, from Task 1's quality review (fix round 1).
 -- 0017 is unmerged and lives only on this branch, so the fixes below were
--- also folded directly into 0017_task_reviews.sql in place — a fresh
+-- also folded directly into 0018_task_reviews.sql in place — a fresh
 -- database gets the corrected functions/grants on first apply. This file is
 -- the delta actually needed against a database where 0017 already ran
 -- (idempotent by construction: two create-or-replace, one drop-policy-if-

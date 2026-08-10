@@ -446,6 +446,11 @@ const dict: Catalog = {
     approvalFallback: 'No he podido mostrar los botones. Apruébalo o recházalo en la app.',
     workerAck: 'Recibido, gracias. Si tienes dudas habla con tu encargado. Para cambiar de idioma responde PT, ES o EN.',
     workerLanguageChanged: 'Hecho — a partir de ahora te escribo en español.',
+    checkinDoneButton: 'Sí, he terminado',
+    checkinNotDoneButton: 'Todavía no',
+    checkinDone: 'Genial, gracias. Queda registrado que has terminado hoy.',
+    checkinNotDone: 'Vale, gracias por avisar. Queda registrado.',
+    checkinError: 'No he podido registrar tu respuesta. Habla con tu encargado.',
   },
 
   reminders: {

@@ -43,7 +43,7 @@ export async function reopenTask(taskId: string): Promise<void> {
 // Both RPCs move a review AND its task in one transaction. Doing it as two
 // updates from here would let a crash or a lost round-trip leave the review
 // approved with the task still open — the exact half-applied state the
-// feature exists to prevent. See 0017_task_reviews.sql.
+// feature exists to prevent. See 0018_task_reviews.sql.
 //
 // Shared revalidation with setTaskStatus above: a task changing status drops
 // in or out of task_board, and with it the materials outlook and the crew's

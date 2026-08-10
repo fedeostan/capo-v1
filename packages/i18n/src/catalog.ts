@@ -133,7 +133,7 @@ export interface Catalog {
     taskReview: {
       /** Attributes the note to its author. The worker's own words are quoted
        *  BELOW this line, never merged into it — see the note handling rule in
-       *  0017_task_reviews.sql. */
+       *  0018_task_reviews.sql. */
       declaredBy(name: string): string;
       /** Header when declared_by_worker_id is null (manager opened the check). */
       declaredByManager: string;
@@ -433,6 +433,35 @@ export interface Catalog {
     workerAck: string;
     /** Sent after a worker switches language — always in the NEW language. */
     workerLanguageChanged: string;
+
+    // ── The 16:30 check-in ──────────────────────────────────────────────
+    /**
+     * The two QUICK_REPLY labels on the capo_task_checkin template. Meta caps a
+     * TEMPLATE quick-reply button at 25 chars — not the 20 an interactive reply
+     * title gets — and the two must differ.
+     *
+     * These are NOT sent at runtime: they are baked into the template Meta
+     * approved. They live here so the copy has one home — scripts/whatsapp-
+     * templates.ts reads them when it submits, and `pnpm whatsapp-template
+     * status` diffs them against what Meta actually holds. Editing a string
+     * here does NOT change the live template; it needs a re-submit and a fresh
+     * approval, which is exactly what that diff is there to catch.
+     *
+     * The ORDER is a contract: done is button index 0, notDone is index 1, and
+     * /api/cron/checkin mints its payloads in that order. Swapping them inverts
+     * every answer, and the Graph API returns a cheerful 200.
+     */
+    checkinDoneButton: string;
+    /** See `checkinDoneButton`. Max 25 chars, must differ from it. */
+    checkinNotDoneButton: string;
+    /** Sent after a worker taps "done". */
+    checkinDone: string;
+    /** Sent after a worker taps "not yet". Never scolding — the answer is
+     *  useful precisely because it is safe to give. */
+    checkinNotDone: string;
+    /** The worker_checkins write failed. Silence after a tap reads as "Capo is
+     *  broken", the same failure mode proposalError guards against. */
+    checkinError: string;
   };
 
   /**
@@ -440,9 +469,20 @@ export interface Catalog {
    * worker's own language (workers.language, falling back to the company's),
    * but the task TITLES they wrap are stored in companies.language and are
    * never retranslated — so these must read acceptably around foreign text.
+   *
+   * `renderWorkerBriefing` renders BOTH daily messages — the 07:00 briefing and
+   * the 16:30 check-in — from these strings, deliberately, so the two can never
+   * drift about what "your tasks today" means. Changing the voice here changes
+   * both.
    */
   reminders: {
-    /** Meta template locale code — 'pt_PT', 'es_ES', 'en_US'. Underscore, not hyphen. */
+    /**
+     * Meta template locale code — 'pt_PT', 'es_ES', 'en_US'. Underscore, not
+     * hyphen. Serves both templates (capo_daily_briefing and
+     * capo_task_checkin): it is the recipient's locale in Meta's format, which
+     * is a property of the person, not of the message. A second per-template
+     * key could only ever drift.
+     */
     templateLanguage: string;
     /** Joins tasks inside the one-line template parameter. Never a newline. */
     taskSeparator: string;

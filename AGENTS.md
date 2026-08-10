@@ -21,10 +21,13 @@ This version has breaking changes — APIs, conventions, and file structure may 
   deliberately separate, so UI strings never enter the agent bundle.
 - `packages/config` (`@capo/config`) — shared tsconfig/eslint presets.
 - `supabase/migrations` — single shared DB; migrations stay at the root.
-- `scripts/rls-isolation-matrix.mjs` — the two-tenant RLS isolation matrix
-  (24 visibility checks + 2 adversarial cross-tenant attacks). Run with
-  `pnpm rls-matrix` after any change that touches auth, RLS, or the DB
-  clients; it must stay green.
+- `scripts/rls-isolation-matrix.mjs` — the two-tenant RLS isolation matrix: a
+  per-tenant visibility sweep over every relation carrying `company_id`, a
+  deny-all check on the two send ledgers, and a set of adversarial cross-tenant
+  attacks (cross-company FKs, billing self-upgrade, forging a translation undo
+  snapshot, forging a worker check-in answer). Run with `pnpm rls-matrix` after
+  any change that touches auth, RLS, or the DB clients; it must stay green.
+  Needs credentials, so it does not run in CI.
 - `scripts/scheduler-check.mts` — deterministic checks over the plan
   scheduler and the Portuguese working-day calendar. Needs **no credentials
   and no network**, so it runs in CI on every PR (`pnpm scheduler-check`).
@@ -113,6 +116,21 @@ Structural invariants (do not regress):
   else. Proactive sends need an approved Meta **template** — free-form text is
   only allowed inside the 24h window a recipient's own reply opens, which is
   why the webhook acknowledges worker replies.
+- **There is a second daily send: the 16:30 check-in**, from
+  `apps/web/app/api/cron/checkin`, same two-entry/`lisbon_hour()` shape. It asks
+  "did you finish today's tasks?" as a template with two quick-reply buttons and
+  records the tap in `worker_checkins`. Three things about it are load-bearing:
+  it is **deterministic in both directions** (no model is called on this path at
+  all); it **records an answer and never writes `tasks.status`**; and it claims
+  under `kind='task_checkin'` in `notification_log`, which is the only reason
+  two sends can share a day under that table's unique constraint. Both routes
+  share `apps/web/lib/cron.ts` for auth and the claim protocol — the parts where
+  drift would be a correctness bug — and nothing else.
+  The inbound tap is a **template quick reply** (`type: 'button'`, from a
+  worker), a different shape from an approval card's **interactive reply
+  button** (`type: 'interactive'`, from a manager). They are handled on
+  different paths and their payload codecs are deliberately non-overlapping;
+  conflating them is the mistake to watch for.
 - **`workers.language` is the third dial** (see the top of this file).
   Nullable, and the null means "inherit `companies.language`" — do not give it
   a default. A worker sets it themselves by replying `PT`/`ES`/`EN` to their
@@ -122,11 +140,11 @@ Structural invariants (do not regress):
   manager declares a task finished; it
   lands in `task_reviews` and the task moves to `pending_review` until the
   manager approves, rejects, or dismisses it. Adding a status touches ~10
-  hand-written enumerations — the map is in `0017_task_reviews.sql`. Three
-  migrations built this: `0017_task_reviews.sql` (table, RLS, both RPCs),
-  `0018_task_reviews_hardening.sql` (fix round 1: closed a fail-open tenant
+  hand-written enumerations — the map is in `0018_task_reviews.sql`. Three
+  migrations built this: `0018_task_reviews.sql` (table, RLS, both RPCs),
+  `0019_task_reviews_hardening.sql` (fix round 1: closed a fail-open tenant
   guard, added a row lock, revoked the INSERT grant), and
-  `0019_task_review_supersede.sql` (the trigger below). The surfaces that
+  `0020_task_review_supersede.sql` (the trigger below). The surfaces that
   matter are listed below, and the review that shipped this feature found
   the map itself had contained one inversion — treat this list as ground
   truth, not the in-progress draft:
@@ -155,6 +173,14 @@ Structural invariants (do not regress):
     both exclude it with no edit: the 07:00 briefing stops nagging a worker
     about work they already declared finished, and the frozen n8n view stays
     byte-identical.
+    `BRIEFABLE` now gates **both** daily sends, which is load-bearing and was
+    not designed — it fell out of the two streams meeting. The 16:30 check-in
+    (`apps/web/app/api/cron/checkin/route.ts`) reads through
+    `loadCompanyBriefing`, so a task in review is silently dropped from
+    "acabaste as tarefas de hoje?" too. That is exactly right: the worker
+    already said they finished it and is waiting on the manager, so asking
+    again would read as the system having forgotten. Anything that widens
+    `BRIEFABLE` therefore changes two messages, not one.
   - `context.ts`'s `openTasks` count (`packages/core/src/agent/context.ts:39`)
     is an **allowlist that had to be widened by hand**, or a task in review
     would silently vanish from the count Capo sees while still showing on the
@@ -178,7 +204,7 @@ Structural invariants (do not regress):
   claim is outstanding would otherwise strand the review at `pending`
   forever: `task_reviews_one_pending_idx` blocks a replacement review, and
   tenants have no UPDATE grant to fix it themselves. `tasks_supersede_review`
-  (`0019`) is an `after update of status on tasks when (old.status =
+  (`0020`) is an `after update of status on tasks when (old.status =
   'pending_review' and new.status is distinct from 'pending_review')` trigger
   that marks any still-`pending` review `superseded` instead. It is safe to
   fire on every exit from `pending_review`, including the legitimate one

@@ -10,18 +10,31 @@
 //      asterisk, so every emphasis rendered as literal asterisks.
 //   3. Meta rejects an interactive message whose button title exceeds 20 chars
 //      or whose body exceeds 1024 — a runtime 400 with no build-time signal.
+//   4. A template quick-reply payload has far less room than an interactive
+//      reply id's 256 chars, and a truncated payload does not fail loudly — it
+//      comes back unparseable and the worker's tap disappears.
+//   5. A template body parameter containing a newline, a tab or a run of 4+
+//      spaces is rejected wholesale with Meta's 132000, and the natural way to
+//      render a task list is one per line.
 //
 // Run with `pnpm whatsapp-check`. Exit 0 = green, 1 = at least one failure.
 
 import type { UIMessage } from 'ai';
 import {
+  buildTemplatePayload,
+  checkinPayload,
+  parseCheckinPayload,
   parseProposalButtonId,
   planAssistantMessages,
   proposalButtonId,
   splitForWhatsApp,
+  toTemplateParam,
   toWhatsAppMarkdown,
   type ApprovalLabels,
 } from '@capo/core/channels/whatsapp';
+import { getCatalog } from '@capo/i18n/catalog';
+import { LOCALES } from '@capo/i18n/locale';
+import { allTemplates } from './whatsapp-templates.ts';
 
 let failures = 0;
 const lines: string[] = [];
@@ -114,6 +127,123 @@ eq(
   proposalButtonId('approve', uuid) === proposalButtonId('reject', uuid),
   false,
 );
+
+// ── check-in payload codec ──────────────────────────────────────────────────
+const doneP = checkinPayload('done', uuid);
+const notDoneP = checkinPayload('not_done', uuid);
+eq('check-in payloads round-trip (answer)', parseCheckinPayload(doneP)?.answer, 'done');
+eq('check-in payloads round-trip (notification)', parseCheckinPayload(doneP)?.notificationId, uuid);
+eq('the not_done answer round-trips too', parseCheckinPayload(notDoneP)?.answer, 'not_done');
+// 128 is the cap sendWhatsAppTemplate THROWS on. If a minted payload ever
+// exceeded it, every check-in send would fail at once — assert it can't.
+check('a minted payload fits the 128-char cap', doneP.length <= 128, `${doneP.length} chars`);
+check('the longer answer also fits', notDoneP.length <= 128, `${notDoneP.length} chars`);
+eq('a malformed uuid is rejected', parseCheckinPayload('capo:checkin:done:not-a-uuid'), null);
+eq('an unknown answer is rejected', parseCheckinPayload(`capo:checkin:maybe:${uuid}`), null);
+eq('a foreign prefix is rejected', parseCheckinPayload(`evil:checkin:done:${uuid}`), null);
+eq('an empty payload is rejected', parseCheckinPayload(''), null);
+// THE failure mode this codec exists to make visible: if the template declares
+// quick replies but the send omits the button component, Meta returns 200 and
+// echoes the button's LABEL as the payload. It must parse as null, not as an
+// answer.
+eq('a bare button label is rejected', parseCheckinPayload('Sim, terminei'), null);
+eq('done and not_done payloads differ', doneP === notDoneP, false);
+// Cross-parse isolation. Two different button shapes arrive on the same
+// webhook; neither parser may ever accept the other's value, or a manager's
+// approval could be recorded as a worker's check-in.
+eq('a proposal id is not a check-in payload', parseCheckinPayload(approveId), null);
+eq('a check-in payload is not a proposal id', parseProposalButtonId(doneP), null);
+
+// ── template parameters ─────────────────────────────────────────────────────
+// toTemplateParam is the single easiest way to earn a 132000 and was asserted
+// nowhere before.
+eq('a newline is flattened', toTemplateParam('a\nb'), 'a b');
+eq('a tab is flattened', toTemplateParam('a\tb'), 'a b');
+eq('a run of spaces collapses', toTemplateParam('a    b'), 'a b');
+eq('surrounding whitespace is trimmed', toTemplateParam('  a  '), 'a');
+eq('already-flat text is untouched', toTemplateParam('Pintar paredes (Casa de Paco)'), 'Pintar paredes (Casa de Paco)');
+eq("the briefing's own separator survives", toTemplateParam('a · b'), 'a · b');
+const longParam = toTemplateParam('x'.repeat(2000));
+eq('an over-long parameter is cut to 900', longParam.length, 900);
+check('and is marked as truncated', longParam.endsWith('…'), JSON.stringify(longParam.slice(-3)));
+
+// ── template payload shape ──────────────────────────────────────────────────
+// The backward-compatibility guard: capo_daily_briefing passes no quickReplies
+// and must produce exactly what it always did.
+const plain = buildTemplatePayload({ name: 'capo_daily_briefing', languageCode: 'pt_PT', bodyParams: ['Miguel', 'Hoje: nada'] });
+const plainComponents = (plain.template as { components: Record<string, unknown>[] }).components;
+eq('a button-less template sends one component', plainComponents.length, 1);
+eq('and it is the body', plainComponents[0].type, 'body');
+
+const withButtons = buildTemplatePayload({
+  name: 'capo_task_checkin',
+  languageCode: 'pt_PT',
+  bodyParams: ['Miguel', 'Pintar paredes'],
+  quickReplies: [{ payload: doneP }, { payload: notDoneP }],
+});
+const btnComponents = (withButtons.template as { components: Record<string, unknown>[] }).components;
+eq('two quick replies add two components', btnComponents.length, 3);
+eq('the button component type', btnComponents[1].type, 'button');
+eq('the button sub_type', btnComponents[1].sub_type, 'quick_reply');
+// A STRING index. Meta accepts a number in some versions and rejects it in
+// others, so the type is pinned, not just the value.
+eq('the first index is the string "0"', btnComponents[1].index, '0');
+eq('and it really is a string', typeof btnComponents[1].index, 'string');
+eq('the second index is "1"', btnComponents[2].index, '1');
+const firstParam = (btnComponents[1].parameters as { type: string; payload: string }[])[0];
+eq('the parameter type is payload', firstParam.type, 'payload');
+// The ORDER CONTRACT: index 0 must carry 'done'. Swapping these inverts every
+// answer and Meta still returns 200, so nothing else would ever catch it.
+eq('index 0 carries the done payload', firstParam.payload, doneP);
+eq(
+  'index 1 carries the not_done payload',
+  (btnComponents[2].parameters as { payload: string }[])[0].payload,
+  notDoneP,
+);
+let threw = false;
+try {
+  buildTemplatePayload({ name: 'x', languageCode: 'pt_PT', bodyParams: [], quickReplies: [{ payload: 'y'.repeat(200) }] });
+} catch {
+  threw = true;
+}
+check('an over-long payload throws rather than truncating', threw);
+
+// ── committed template definitions ──────────────────────────────────────────
+// These are the mistakes that would otherwise surface as a Meta rejection days
+// later, or as an approved template that silently means the wrong thing.
+const defs = allTemplates();
+eq('one definition per locale', defs.length, LOCALES.length);
+for (const def of defs) {
+  const locale = LOCALES.find(l => getCatalog(l).reminders.templateLanguage === def.language)!;
+  const label = `${def.name} ${def.language}`;
+  check(`${label} — language matches a real locale`, Boolean(locale));
+  eq(`${label} — category`, def.category, 'UTILITY');
+  eq(`${label} — parameter format`, def.parameter_format, 'POSITIONAL');
+
+  const body = def.components.find(c => c.type === 'BODY') as { text: string; example: { body_text: string[][] } };
+  const text = body.text;
+  eq(`${label} — has {{1}} exactly once`, (text.match(/\{\{1\}\}/g) ?? []).length, 1);
+  eq(`${label} — has {{2}} exactly once`, (text.match(/\{\{2\}\}/g) ?? []).length, 1);
+  eq(`${label} — has no {{3}}`, text.includes('{{3}}'), false);
+  // Meta rejects a body that starts or ends with a parameter.
+  check(`${label} — does not start with a parameter`, !text.trimStart().startsWith('{{'), text.slice(0, 12));
+  check(`${label} — does not end with a parameter`, !text.trimEnd().endsWith('}}'), text.slice(-12));
+  // Sample count is validated against parameter count on submit.
+  eq(`${label} — supplies two example values`, body.example.body_text[0]?.length, 2);
+
+  const buttons = (def.components.find(c => c.type === 'BUTTONS') as { buttons: { type: string; text: string }[] }).buttons;
+  eq(`${label} — exactly two buttons`, buttons.length, 2);
+  check(`${label} — both are quick replies`, buttons.every(b => b.type === 'QUICK_REPLY'));
+  // The labels must be the catalog's, in done-then-notDone order — the same
+  // order /api/cron/checkin mints payloads in.
+  const t = getCatalog(locale!).whatsapp;
+  eq(`${label} — button 0 is the done label`, buttons[0].text, t.checkinDoneButton);
+  eq(`${label} — button 1 is the not-done label`, buttons[1].text, t.checkinNotDoneButton);
+  check(`${label} — labels differ`, buttons[0].text !== buttons[1].text);
+  for (const b of buttons) {
+    check(`${label} — "${b.text}" is 1..25 chars`, b.text.length >= 1 && b.text.length <= 25, `${b.text.length}`);
+  }
+}
 
 // ── outbound planning ───────────────────────────────────────────────────────
 const labels: ApprovalLabels = { approve: 'Aprobar', reject: 'Rechazar', prompt: '¿Apruebas, jefe?', fallback: 'Hazlo en la app.' };

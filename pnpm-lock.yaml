@@ -17,6 +17,9 @@ importers:
       '@capo/db':
         specifier: workspace:*
         version: link:packages/db
+      '@capo/i18n':
+        specifier: workspace:*
+        version: link:packages/i18n
       '@supabase/supabase-js':
         specifier: ^2.110.0
         version: 2.110.0
