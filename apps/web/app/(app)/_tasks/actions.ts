@@ -1,9 +1,12 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { requireAuth } from '@capo/db/session';
+import { requireAuth, type AuthContext } from '@capo/db/session';
+import { getCatalog } from '@capo/i18n/catalog';
 import { assertNotBlocked } from '@/lib/billing';
 import { logEvent } from '@/lib/log';
+import { TaskPhotoError, uploadTaskPhotos } from '@/lib/task-photos';
+import { isUuid } from '@/app/(app)/tarefas/filters';
 
 // Shared by /tarefas and /obras/[id] — hence the private `_tasks` folder
 // (the underscore keeps App Router from treating it as a route) rather than
@@ -12,31 +15,105 @@ import { logEvent } from '@/lib/log';
 // A manager tapping "Concluir"/"Reabrir" IS an explicit manager command — a
 // sanctioned non-chat write path (every other domain write only happens
 // through Capo). Direct status update on the RLS-scoped client; company_id
-// filter is belt-and-braces on top of RLS.
-async function setTaskStatus(taskId: string, status: 'done' | 'pending', event: string): Promise<void> {
-  const ctx = await requireAuth();
-  await assertNotBlocked(ctx);
+// filter is belt-and-braces on top of RLS. Photos do not change that: the
+// completion sheet is still the manager acting directly, so it must NOT be
+// routed through a proposal.
+//
+// `completionProof` is written in the same UPDATE as the status, so a task can
+// never be done-with-no-record-of-how. It is cleared on reopen: a task that is
+// open again has no completion to describe, and a stale 'skipped' would keep
+// counting against a manager who has since gone back to the job.
+async function setTaskStatus(
+  ctx: AuthContext,
+  taskId: string,
+  status: 'done' | 'pending',
+  event: string,
+  completionProof: 'photos' | 'skipped' | null,
+  fields: Record<string, unknown> = {},
+): Promise<void> {
   const { db, companyId } = ctx;
   const { data, error } = await db
     .from('tasks')
-    .update({ status, updated_at: new Date().toISOString() })
+    .update({ status, completion_proof: completionProof, updated_at: new Date().toISOString() })
     .eq('id', taskId)
     .eq('company_id', companyId)
     .select('job_id')
     .single();
   if (error) throw new Error(`${event} failed: ${error.message}`);
 
-  logEvent(event, { companyId, taskId });
+  logEvent(event, { companyId, taskId, proof: completionProof, ...fields });
 
   revalidateTask(taskId, data.job_id);
 }
 
-export async function completeTask(taskId: string): Promise<void> {
-  await setTaskStatus(taskId, 'done', 'dashboard.task_completed');
+// ── completing a task ──────────────────────────────────────────────────────
+// Two entry points rather than one with a flag, because they are two buttons
+// the manager can tell apart and the record they leave behind must be equally
+// unambiguous. Neither infers the other: a batch that happens to arrive empty
+// is an error, not a silent "skipped".
+
+/**
+ * "Concluir com fotos". The FormData shape (rather than a plain argument) is
+ * forced by the payload — File objects only cross to a Server Action inside
+ * FormData. `taskId` rides along in the same form; it is a reference the
+ * session is then checked against, never a claim of ownership (RLS plus the
+ * explicit company_id filter decide that).
+ *
+ * Photos are uploaded and recorded BEFORE the task is marked done, so a
+ * failure anywhere in the upload leaves the task open with a visible error
+ * instead of closed with a proof set that never arrived.
+ */
+export async function completeTaskWithPhotos(formData: FormData): Promise<void> {
+  const ctx = await requireAuth();
+  await assertNotBlocked(ctx);
+
+  const taskId = String(formData.get('taskId') ?? '');
+  if (!isUuid(taskId)) throw new Error('dashboard.task_completed failed: bad task id');
+
+  // Chrome submits an empty File for an untouched file input; drop those
+  // before counting, or "no photos chosen" arrives here as one zero-byte file.
+  const files = formData.getAll('photos').filter((f): f is File => f instanceof File && f.size > 0);
+  const t = getCatalog(ctx.locale).screens.taskPhotos;
+  if (files.length === 0) throw new Error(t.errors.empty);
+
+  let uploaded: number;
+  try {
+    uploaded = await uploadTaskPhotos(ctx, taskId, files);
+  } catch (e) {
+    // Translate the machine-readable reason into the manager's own language.
+    // The client component renders whatever message it catches verbatim, so an
+    // untranslated 'upload_failed: 413' would reach a manager who reads none
+    // of those words.
+    if (e instanceof TaskPhotoError) {
+      logEvent('dashboard.task_photos_rejected', {
+        companyId: ctx.companyId,
+        taskId,
+        reason: e.reason,
+        detail: e.message,
+      });
+      throw new Error(t.errors[e.reason]);
+    }
+    throw e;
+  }
+
+  await setTaskStatus(ctx, taskId, 'done', 'dashboard.task_completed', 'photos', { photos: uploaded });
+}
+
+/**
+ * "Concluir sem fotos" — the escape hatch. It never blocks and never nags; it
+ * only records that proof was declined, which is the whole reason the extra
+ * tap was worth adding.
+ */
+export async function completeTaskWithoutPhotos(taskId: string): Promise<void> {
+  const ctx = await requireAuth();
+  await assertNotBlocked(ctx);
+  await setTaskStatus(ctx, taskId, 'done', 'dashboard.task_completed', 'skipped');
 }
 
 export async function reopenTask(taskId: string): Promise<void> {
-  await setTaskStatus(taskId, 'pending', 'dashboard.task_reopened');
+  const ctx = await requireAuth();
+  await assertNotBlocked(ctx);
+  await setTaskStatus(ctx, taskId, 'pending', 'dashboard.task_reopened', null);
 }
 
 // ── the review control ─────────────────────────────────────────────────────

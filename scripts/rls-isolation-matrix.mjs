@@ -20,9 +20,22 @@
 // column revoke, the 0015 revert_translation_batch RPC, the 0017
 // worker_checkins answers a tenant must not be able to forge or rewrite, the
 // two 0018 task-review RPCs plus that table's absent INSERT/UPDATE grants,
-// and — run separately, as the no-profiles-row actor — those same two RPCs
-// again against a real tenant's task/review, plus revert_translation_batch
-// against a real tenant's batch.
+// the 0022 STORAGE surface (see below), and — run separately, as the
+// no-profiles-row actor — those same two RPCs again against a real tenant's
+// task/review, plus revert_translation_batch against a real tenant's batch,
+// plus signing and downloading a real tenant's photo.
+//
+// 0022 is the first surface here that is not only Postgres. task_photos is an
+// ordinary RLS table and rides in the visibility matrix like any other, but
+// the PHOTOS THEMSELVES live in Storage, behind policies on storage.objects
+// that a different service consults over a different endpoint. Table checks
+// say nothing about the bytes. Attacks 12-18 therefore aim at the bytes and at
+// the seam between the two: minting a signed URL for another tenant's object
+// (a signed URL is a bearer token — a leak there is a leak the attacker can
+// hand out), reading and listing without one, WRITING into a foreign folder,
+// filing an own-company row that points at a foreign object, forging
+// worker attribution past the column-scoped INSERT grant, and rewriting or
+// deleting evidence the tenant owns.
 //
 // The SECURITY DEFINER ones matter more than they look: RLS does NOT cover
 // them, so their internal auth.uid() checks are the entire tenant boundary —
@@ -65,6 +78,18 @@ const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { pe
 const run = randomBytes(4).toString('hex');
 const results = [];
 let failures = 0;
+
+// The smallest thing the seed can put in the task-photos bucket that is
+// honestly a JPEG: SOI, an empty APP0/JFIF segment, and EOI. It has to START
+// with FF D8 FF because apps/web/lib/task-photos.ts sniffs magic bytes rather
+// than trusting the declared mime — a buffer of zeroes would be accepted by
+// Storage (which only checks the declared content-type against the bucket's
+// allowed_mime_types) but would make this seed diverge from what the app path
+// can actually produce.
+const JPEG_BYTES = new Uint8Array([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+  0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9,
+]);
 
 function check(name, ok, detail = '') {
   results.push({ name, ok, detail });
@@ -204,6 +229,34 @@ async function seedTenant(label) {
     `worker_checkin(${label})`,
   );
 
+  // A real object in the task-photos bucket, plus the task_photos row that
+  // points at it (0022). Both are needed: the row is what the visibility
+  // matrix reads, and the OBJECT is what the storage.objects policies guard —
+  // and those two boundaries are enforced by completely different machinery
+  // (Postgres RLS on a public table vs. RLS on storage.objects, consulted by
+  // the Storage API when it mints or honours a signed URL). A check that only
+  // exercised the table would leave the entire new surface untested.
+  //
+  // Uploaded on the service role, which bypasses storage RLS — the same way
+  // the seed writes every other table. `source: 'worker'` is set here on
+  // purpose: it is the value a TENANT must never be able to write (the
+  // column-scoped INSERT grant omits it), so the seed proves the column
+  // exists and is writable by the system while the adversarial pass proves it
+  // is not writable by a manager.
+  const photoPath = `${companyId}/${task1.id}/${randomBytes(16).toString('hex')}.jpg`;
+  const { error: uploadErr } = await admin.storage
+    .from('task-photos')
+    .upload(photoPath, JPEG_BYTES, { contentType: 'image/jpeg', upsert: false });
+  if (uploadErr) throw new Error(`task_photo_object(${label}): ${uploadErr.message}`);
+  await must(
+    admin.from('task_photos').insert({
+      company_id: companyId, task_id: task1.id, storage_path: photoPath,
+      source: 'worker', worker_id: worker.id,
+      mime: 'image/jpeg', byte_size: JPEG_BYTES.length,
+    }).select(),
+    `task_photo(${label})`,
+  );
+
   const client = createClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: false },
   });
@@ -214,6 +267,7 @@ async function seedTenant(label) {
     label, userId, companyId, client,
     workerId: worker.id, jobId: job.id, taskIds: [task1.id, task2.id],
     conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
+    photoPath,
   };
 }
 
@@ -268,8 +322,17 @@ async function cleanupOrphanUser(o) {
 
 async function cleanupTenant(t) {
   if (!t) return;
+  // The bucket object first: it is the one seeded artefact that does NOT live
+  // in Postgres, so no cascade or FK ordering reaches it. Forgetting this
+  // leaves a file behind on every run — invisible, since nothing lists the
+  // bucket, and cumulative.
+  if (t.photoPath) {
+    const { error } = await admin.storage.from('task-photos').remove([t.photoPath]);
+    if (error) console.error(`cleanup object(${t.label}): ${error.message}`);
+  }
   // Reverse dependency order; every delete is scoped to this run's rows only.
   const companyEq = (q) => q.eq('company_id', t.companyId);
+  await companyEq(admin.from('task_photos').delete());
   await companyEq(admin.from('translation_items').delete());
   await companyEq(admin.from('translation_batches').delete());
   await companyEq(admin.from('proposals').delete());
@@ -301,7 +364,7 @@ async function runMatrix(self, other) {
   // screen reads the whole board through it. If it were ever recreated
   // without security_invoker it would leak every company's tasks, and nothing
   // else in this repo would notice.
-  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'worker_checkins']) {
+  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'worker_checkins', 'task_photos']) {
     const { data, error } = await db.from(table).select('*');
     const rows = data ?? [];
     const ownKey = table === 'companies' ? 'id' : 'company_id';
@@ -529,6 +592,141 @@ async function runAdversarial(attacker, victim) {
       error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — insert grant leaked',
     );
   }
+
+  // ── 0022: Supabase Storage ───────────────────────────────────────────────
+  // The first storage surface in this project, and the reason this section is
+  // longer than it looks like it needs to be: photos are guarded by TWO
+  // independent mechanisms that can fail independently. The task_photos table
+  // is ordinary Postgres RLS (covered by the visibility matrix above). The
+  // BYTES are guarded by policies on storage.objects, consulted by the Storage
+  // API — a different service, reached over a different endpoint, which the
+  // visibility matrix never touches. Every attack below aims at the bytes or
+  // at the seam between the two.
+
+  // Attack 12: mint a signed URL for the victim's photo. This is the one that
+  // matters most, because a signed URL is a BEARER TOKEN: it works for anyone
+  // who holds it, with no session at all. Minting one for a foreign object
+  // would not merely be a read, it would be a read the attacker can hand out.
+  {
+    const { data, error } = await db.storage.from('task-photos').createSignedUrl(victim.photoPath, 60);
+    check(
+      'adversarial: signed URL for foreign task photo blocked',
+      error != null && !data?.signedUrl,
+      error ? `rejected (${error.message})` : 'SIGNED — the URL works for anyone who holds it',
+    );
+  }
+
+  // Attack 13: skip the signature and read the object straight off the
+  // authenticated endpoint. Distinct from attack 12 — a policy could
+  // conceivably guard the signing path and not the direct one.
+  {
+    const { data, error } = await db.storage.from('task-photos').download(victim.photoPath);
+    check(
+      'adversarial: direct download of foreign task photo blocked',
+      error != null && data == null,
+      error ? `rejected (${error.message})` : 'DOWNLOADED — raw object readable cross-tenant',
+    );
+  }
+
+  // Attack 14: enumerate the victim's folder. Even with the bytes unreadable,
+  // a listing leaks how much work another company is documenting, and the
+  // object keys contain their company and task uuids.
+  {
+    const { data, error } = await db.storage.from('task-photos').list(victim.companyId);
+    check(
+      'adversarial: listing a foreign company folder blocked',
+      !error && (data ?? []).length === 0,
+      error ? error.message : `${(data ?? []).length} objects listed (leak!)`,
+    );
+  }
+
+  // Attack 15: WRITE into the victim's folder. The storage.objects INSERT
+  // policy compares path segment 1 against private.current_company_id(), so
+  // this is the check that the boundary is not read-only theatre. A tenant
+  // that could plant objects in another company's folder could put anything
+  // in front of that manager's eyes on their own task detail screen.
+  {
+    const path = `${victim.companyId}/${victim.taskIds[0]}/${randomBytes(16).toString('hex')}.jpg`;
+    const { error } = await db.storage
+      .from('task-photos')
+      .upload(path, JPEG_BYTES, { contentType: 'image/jpeg', upsert: false });
+    check(
+      'adversarial: upload into a foreign company folder blocked',
+      error != null,
+      error ? `rejected (${error.message})` : 'UPLOADED — foreign folder is writable!',
+    );
+    if (!error) await admin.storage.from('task-photos').remove([path]);
+  }
+
+  // Attack 16: the seam. company_id is honest (the attacker's own, so RLS
+  // passes) but storage_path names the VICTIM's folder — a record that would
+  // render another company's photo on the attacker's own task detail screen,
+  // since the screen signs whatever path the row carries. Nothing in RLS
+  // catches this; the task_photos_path_scoped CHECK is the only thing that
+  // does, which is exactly why it is a constraint and not app-side validation.
+  {
+    const { error } = await db.from('task_photos').insert({
+      company_id: attacker.companyId,
+      task_id: attacker.taskIds[1],
+      storage_path: victim.photoPath,
+      mime: 'image/jpeg',
+      byte_size: JPEG_BYTES.length,
+    });
+    check(
+      'adversarial: task_photos row pointing at a foreign object blocked',
+      error?.code === '23514',
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — path scoping is not enforced',
+    );
+  }
+
+  // Attack 17 (grant layer): forging attribution. `source` and `worker_id` are
+  // absent from task_photos' column-scoped INSERT grant, so a manager cannot
+  // manufacture "the crew sent proof of this" — the same forgery class
+  // worker_checkins is locked down against (attacks 6-7). Own company on
+  // purpose: this is a grant check, not a boundary check, so even a
+  // well-formed same-tenant write must be refused.
+  {
+    const path = `${attacker.companyId}/${attacker.taskIds[1]}/${randomBytes(16).toString('hex')}.jpg`;
+    const { error } = await db.from('task_photos').insert({
+      company_id: attacker.companyId,
+      task_id: attacker.taskIds[1],
+      storage_path: path,
+      source: 'worker',
+      worker_id: attacker.workerId,
+      mime: 'image/jpeg',
+      byte_size: JPEG_BYTES.length,
+    });
+    check(
+      'adversarial: tenant forging a worker-attributed photo blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — attribution is forgeable!',
+    );
+    if (!error) await admin.from('task_photos').delete().eq('storage_path', path);
+  }
+
+  // Attack 18 (grant layer): evidence a tenant can rewrite or delete is not
+  // evidence. task_photos has SELECT and a column-scoped INSERT and nothing
+  // else — no UPDATE policy, no DELETE policy, and no grant for either.
+  {
+    const { error: updateError } = await db
+      .from('task_photos')
+      .update({ storage_path: 'tampered' })
+      .eq('company_id', attacker.companyId);
+    check(
+      'adversarial: tenant UPDATE of its own task photo blocked',
+      updateError != null,
+      updateError ? `rejected (${updateError.code ?? 'err'})` : 'ACCEPTED — update grant leaked',
+    );
+    const { error: deleteError } = await db
+      .from('task_photos')
+      .delete()
+      .eq('company_id', attacker.companyId);
+    check(
+      'adversarial: tenant DELETE of its own task photo blocked',
+      deleteError != null,
+      deleteError ? `rejected (${deleteError.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
 }
 
 // A third actor's attacks: an authenticated user with a confirmed email and
@@ -538,7 +736,7 @@ async function runAdversarial(attacker, victim) {
 // actor that would have caught the fail-open bug fix round 1 found in
 // open_task_review (0019): before that fix, `v_company <> NULL` evaluated to
 // NULL under three-valued logic, the guard silently did not fire, and this
-// exact user could write to any tenant's tasks/task_reviews. Attack 14 is the
+// exact user could write to any tenant's tasks/task_reviews. Attack 21 is the
 // same defect in revert_translation_batch, which is where open_task_review
 // inherited it from.
 //
@@ -549,7 +747,7 @@ async function runAdversarial(attacker, victim) {
 async function runOrphanAttack(orphan, victim) {
   const db = orphan.client;
 
-  // Attack 12: filing a claim on a real tenant's real task. Targets
+  // Attack 19: filing a claim on a real tenant's real task. Targets
   // taskIds[1] for the same reason as attack 9 — task1 already carries the
   // seeded pending review, so aiming there would risk tripping
   // task_reviews_one_pending_idx instead of exercising the tenant guard.
@@ -568,7 +766,7 @@ async function runOrphanAttack(orphan, victim) {
     );
   }
 
-  // Attack 13: resolving a real tenant's real review. Note this one was
+  // Attack 20: resolving a real tenant's real review. Note this one was
   // already safe even before the 0019 fix — the guard lives inside the
   // UPDATE's WHERE clause (`company_id = private.current_company_id()`),
   // and `real_uuid = NULL` is NULL, which WHERE treats as no match, not as
@@ -592,7 +790,7 @@ async function runOrphanAttack(orphan, victim) {
     );
   }
 
-  // Attack 14 (0015 + 0021): revert_translation_batch is SECURITY DEFINER, so
+  // Attack 21 (0015 + 0021): revert_translation_batch is SECURITY DEFINER, so
   // RLS does not cover it and its auth.uid() clause is the entire tenant
   // boundary. Before 0021 that clause used `<>`, which three-valued logic
   // turned into a no-op for exactly this caller — the RPC did not merely allow
@@ -621,6 +819,37 @@ async function runOrphanAttack(orphan, victim) {
         : !untouched
           ? 'victim task title was reverted (leak!)'
           : `rejected (${error.code ?? 'err'})`,
+    );
+  }
+
+  // Attack 22 (0022): the storage boundary, seen by the actor it is most
+  // likely to fail open for. The storage.objects policies read
+  // `(storage.foldername(name))[1] = (select private.current_company_id())::text`,
+  // and for this user that function returns NULL — the exact input that turned
+  // two SECURITY DEFINER guards into no-ops (attacks 19 and 21). Inside a
+  // policy the comparison yields NULL, which is not true, so the policy denies
+  // and the direction is correct. That reasoning is worth exactly nothing
+  // unasserted, which is why it is asserted: the whole point of this third
+  // actor is that "it should be fine" is how both earlier holes shipped.
+  //
+  // Both halves, because signing and reading are different endpoints.
+  {
+    const { data: signed, error: signError } = await db.storage
+      .from('task-photos')
+      .createSignedUrl(victim.photoPath, 60);
+    check(
+      'adversarial: orphan (no profiles row) signed URL for a task photo blocked',
+      signError != null && !signed?.signedUrl,
+      signError ? `rejected (${signError.message})` : 'SIGNED — NULL company reads as a match!',
+    );
+
+    const { data: bytes, error: downloadError } = await db.storage
+      .from('task-photos')
+      .download(victim.photoPath);
+    check(
+      'adversarial: orphan (no profiles row) download of a task photo blocked',
+      downloadError != null && bytes == null,
+      downloadError ? `rejected (${downloadError.message})` : 'DOWNLOADED — boundary broken',
     );
   }
 }

@@ -3,7 +3,8 @@
 import { useState, useTransition } from 'react';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
-import { completeTask, reopenTask, requestReview } from './actions';
+import { reopenTask, requestReview } from './actions';
+import CompletionSheet from './completion-sheet';
 
 export default function TaskActions({
   taskId,
@@ -24,6 +25,10 @@ export default function TaskActions({
   const t = catalog.screens.taskActions;
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // "Concluir" no longer completes; it asks for proof first. The sheet owns
+  // both outcomes (with photos, and the "sem fotos" escape) so this component
+  // keeps exactly one job: deciding which controls a task's status earns.
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   function run(action: (id: string) => Promise<void>) {
     setError(null);
@@ -71,12 +76,15 @@ export default function TaskActions({
       <button
         type="button"
         disabled={pending}
-        onClick={() => run(completeTask)}
+        onClick={() => setSheetOpen(true)}
         className="shrink-0 rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
       >
         {t.complete}
       </button>
       {error && <span className="mt-1 text-[11px] text-red-600">{error}</span>}
+      {sheetOpen && (
+        <CompletionSheet taskId={taskId} locale={locale} onClose={() => setSheetOpen(false)} />
+      )}
     </span>
   );
 }

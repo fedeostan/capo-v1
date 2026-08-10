@@ -30,6 +30,21 @@ export interface TaskDetailWorker {
   active: boolean;
 }
 
+/**
+ * One photo attached to the task. `url` is a short-lived signed URL minted by
+ * the caller on this request — this component must never cache it, and the
+ * page that renders it has to be dynamic. See loadTaskPhotos in
+ * apps/web/app/dashboard-data.ts.
+ */
+export interface TaskDetailPhoto {
+  id: string;
+  url: string;
+  /** 'worker' or 'manager'. Attribution, not decoration: a photo the crew sent
+   *  and a photo the manager took are different claims about the same work. */
+  source: string;
+  createdAt: string;
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-1.5">
@@ -55,18 +70,28 @@ export function TaskDetail({
   task,
   job,
   worker,
+  photos,
   locale,
   renderActions,
 }: {
   task: BoardTask;
   job: TaskDetailJob | null;
   worker: TaskDetailWorker | null;
+  /** Proof of the work, newest first. Empty is the normal case and renders
+   *  nothing at all — an "no photos yet" placeholder on every task would turn
+   *  an optional feature into a standing reproach. */
+  photos?: TaskDetailPhoto[];
   locale: Locale;
   /** Concluir/Reabrir today; the reminder card joins it in phase 2. */
   renderActions?: () => React.ReactNode;
 }) {
   const catalog = getCatalog(locale);
   const t = catalog.screens.taskDetail;
+  // The photo copy lives under its own key rather than inside taskDetail's,
+  // because the completion sheet in apps/web reads the same strings — the
+  // section heading and the two source labels have to agree with the sheet
+  // that produced the photos.
+  const photoCopy = catalog.screens.taskPhotos;
   const dash = catalog.dashboard;
   const reasons = riskReasons(task, locale);
 
@@ -133,6 +158,51 @@ export function TaskDetail({
       {task.materials && task.materials.length > 0 && (
         <Section title={t.materials}>
           <Chips items={task.materials} />
+        </Section>
+      )}
+
+      {photos && photos.length > 0 && (
+        <Section title={photoCopy.sectionTitle}>
+          <ul className="grid grid-cols-3 gap-2">
+            {photos.map(photo => {
+              const label =
+                photo.source === 'worker' ? photoCopy.sourceWorker : photoCopy.sourceManager;
+              return (
+                <li key={photo.id}>
+                  {/* Opens the full image in a new tab. The signed URL is
+                      already in this page's HTML, so the link adds no exposure
+                      — but it does expire, which is why the page is dynamic
+                      and the manager gets a fresh one on every visit. */}
+                  <a href={photo.url} target="_blank" rel="noopener noreferrer">
+                    {/* Plain <img>, not next/image: @capo/ui is framework-
+                        agnostic presentation with no next dependency (which is
+                        also why there is no eslint-disable for
+                        @next/next/no-img-element here — this package lints
+                        under the library preset, where that rule does not
+                        exist and naming it is itself an error). A per-request
+                        signed URL on a Storage host is exactly what the image
+                        optimizer cannot cache anyway. */}
+                    <img
+                      src={photo.url}
+                      // slice(0, 10), and it is load-bearing: formatShortDate
+                      // takes a DATE, not a timestamp — it builds
+                      // `new Date(`${iso}T00:00:00Z`)` to pin the result to
+                      // UTC, so a full created_at produces an Invalid Date and
+                      // Intl.DateTimeFormat.format THROWS on it. Every other
+                      // caller passes start_date/due_date, which are already
+                      // date-only; this is the first timestamp column to reach
+                      // it. Both are `string`, so nothing but this comment
+                      // stands between the next caller and a crashed screen.
+                      alt={`${label} · ${formatShortDate(photo.createdAt.slice(0, 10), locale)}`}
+                      loading="lazy"
+                      className="aspect-square w-full rounded-lg object-cover"
+                    />
+                  </a>
+                  <p className="mt-0.5 text-[11px] text-zinc-500">{label}</p>
+                </li>
+              );
+            })}
+          </ul>
         </Section>
       )}
 

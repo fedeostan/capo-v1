@@ -25,9 +25,14 @@ This version has breaking changes — APIs, conventions, and file structure may 
   per-tenant visibility sweep over every relation carrying `company_id`, a
   deny-all check on the two send ledgers, and a set of adversarial cross-tenant
   attacks (cross-company FKs, billing self-upgrade, forging a translation undo
-  snapshot, forging a worker check-in answer). Run with `pnpm rls-matrix` after
-  any change that touches auth, RLS, or the DB clients; it must stay green.
+  snapshot, forging a worker check-in answer, the two task-review RPCs, and the
+  Supabase Storage surface — signing, downloading, listing and writing another
+  tenant's task photos). Run with `pnpm rls-matrix` after any change that
+  touches auth, RLS, Storage, or the DB clients; it must stay green.
   Needs credentials, so it does not run in CI.
+  Note what it does NOT prove: every check asserts a REFUSAL, so a policy that
+  denied everyone would pass all of them. After adding a policy, verify the
+  owner's own path still works too.
 - `scripts/scheduler-check.mts` — deterministic checks over the plan
   scheduler and the Portuguese working-day calendar. Needs **no credentials
   and no network**, so it runs in CI on every PR (`pnpm scheduler-check`).
@@ -218,6 +223,45 @@ Structural invariants (do not regress):
 
   `task_reviews.note` is the one place worker-authored text reaches the
   manager. Render it as an attributed quote, never as UI copy.
+- **Task photos are the project's only Storage use, and the object path IS
+  the tenant boundary.** Migration `0022_task_photos.sql` adds a private
+  bucket `task-photos`, the `task_photos` table, and one column,
+  `tasks.completion_proof`. Everything about it keys on the path convention
+  `{company_id}/{task_id}/{uuid}.{ext}` — build one only through
+  `taskPhotoPath()` in `packages/core/src/media/photos.ts`.
+  - **Two boundaries, not one, and they are enforced by different software.**
+    `task_photos` is ordinary Postgres RLS. The BYTES are guarded by policies
+    on `storage.objects` that compare `(storage.foldername(name))[1]` against
+    `private.current_company_id()`, consulted by the Storage API over a
+    different endpoint. A check that only touches the table proves nothing
+    about the photos. `scripts/rls-isolation-matrix.mjs` attacks both (and the
+    seam between them: a row whose `company_id` is honest but whose
+    `storage_path` names another company's folder — caught by the
+    `task_photos_path_scoped` CHECK, nothing else).
+  - **Signed URLs are bearer tokens.** Mint them per request, in a dynamic
+    segment (`loadTaskPhotos`, read only by `/tarefas/[id]`, which is
+    `force-dynamic`). One baked into a statically rendered page is served to
+    whoever asks and then expires, leaking briefly and rendering broken
+    frames forever.
+  - **Attribution is un-forgeable at the grant layer, not in app code.**
+    `task_photos` grants tenants SELECT plus a COLUMN-SCOPED INSERT on
+    `(company_id, task_id, storage_path, mime, byte_size, taken_at)`. `source`
+    and `uploaded_by` are absent and fall to their defaults (`'manager'`,
+    `auth.uid()`), so a manager cannot manufacture "the crew sent proof".
+    PRD 4's worker path writes on the service role, which bypasses grants.
+    There is no UPDATE and no DELETE — on the table or on `storage.objects`.
+  - **One cap, three statements of it.** 5 MiB and `jpeg|png|webp` live in
+    `TASK_PHOTO_MAX_BYTES`/`TASK_PHOTO_MIME_ALLOWLIST`, in the bucket's
+    `file_size_limit`/`allowed_mime_types`, and in `task_photos`' CHECK
+    constraints. The constant is meant to be passed straight through as
+    `downloadMedia`'s `maxBytes` so PRD 4 shares it. Changing it needs a
+    migration; nothing in CI will notice if you skip that.
+  - **Photos are never shown to a model.** Feeding an inbound image to a
+    vision model is a text-in-image prompt-injection surface with no guard in
+    front of it. The agent neither reads the bucket nor reads `task_photos`.
+  - `tasks.completion_proof` is `'photos' | 'skipped' | NULL`, written only by
+    the completion sheet. **NULL means "closed some other way" (chat, agent,
+    pre-0022) — unknown, never "skipped".** Do not conflate them when counting.
 - **One clock, one definition of "today".** The active-window rule
   (`lisbon_today() BETWEEN coalesce(start_date, created_at) AND
   coalesce(due_date, 'infinity')`) and every schedule-risk signal live in SQL,

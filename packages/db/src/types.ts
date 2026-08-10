@@ -23,9 +23,27 @@
 // `string` rather than a literal union, so widening its check constraint is
 // invisible here.
 //
+//   0022_task_photos (version 20260810074738) — task_photos, plus one new column,
+//                          tasks.completion_proof. Applied to the live project
+//                          from this branch after confirming its migration
+//                          ledger was IDENTICAL to supabase/migrations/ (21
+//                          entries, through revert_translation_batch_null_guard)
+//                          — which is the precondition the warning below is
+//                          about, not a blanket ban.
+//
+// Note what 0022 does NOT appear as. The bucket, the two storage.objects
+// policies and every grant/RLS/CHECK are invisible here: this file types the
+// `public` schema's shape only. `storage` is a different schema, and nothing
+// about a column's WRITABILITY survives into TypeScript. task_photos'
+// column-scoped INSERT grant is the load-bearing example — `source`,
+// `worker_id` and `uploaded_by` are all typed as ordinary optional Insert
+// fields, and tsc will happily let you write them. The database rejects it
+// with 42501 at runtime. Do not read this file as a permission model.
+//
 // The byte-equality regeneration check has NOT been re-run since both streams
 // merged. Worth doing once, on main, after this lands — but do not regenerate
-// from a feature branch: the live project may carry migrations your branch does
+// from a feature branch WITHOUT first checking `list_migrations` against
+// supabase/migrations/: the live project may carry migrations your branch does
 // not, and the diff will look like corruption without being it.
 export type Json =
   | string
@@ -618,6 +636,105 @@ export type Database = {
           },
         ]
       }
+      task_photos: {
+        Row: {
+          byte_size: number
+          company_id: string
+          created_at: string
+          id: string
+          mime: string
+          source: string
+          storage_path: string
+          taken_at: string | null
+          task_id: string
+          uploaded_by: string | null
+          worker_id: string | null
+        }
+        Insert: {
+          byte_size: number
+          company_id: string
+          created_at?: string
+          id?: string
+          mime: string
+          source?: string
+          storage_path: string
+          taken_at?: string | null
+          task_id: string
+          uploaded_by?: string | null
+          worker_id?: string | null
+        }
+        Update: {
+          byte_size?: number
+          company_id?: string
+          created_at?: string
+          id?: string
+          mime?: string
+          source?: string
+          storage_path?: string
+          taken_at?: string | null
+          task_id?: string
+          uploaded_by?: string | null
+          worker_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_photos_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_photos_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "dashboard_tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_photos_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "task_photos_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "task_board"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_photos_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_photos_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_photos_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["worker_id"]
+          },
+          {
+            foreignKeyName: "task_photos_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       task_reviews: {
         Row: {
           company_id: string
@@ -715,6 +832,7 @@ export type Database = {
         Row: {
           assignee_worker_id: string | null
           company_id: string
+          completion_proof: string | null
           created_at: string
           description: string | null
           due_date: string | null
@@ -731,6 +849,7 @@ export type Database = {
         Insert: {
           assignee_worker_id?: string | null
           company_id: string
+          completion_proof?: string | null
           created_at?: string
           description?: string | null
           due_date?: string | null
@@ -747,6 +866,7 @@ export type Database = {
         Update: {
           assignee_worker_id?: string | null
           company_id?: string
+          completion_proof?: string | null
           created_at?: string
           description?: string | null
           due_date?: string | null

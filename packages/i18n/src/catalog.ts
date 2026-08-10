@@ -174,6 +174,47 @@ export interface Catalog {
       knowledge: string;
       knowledgeHint: string;
     };
+    /** The completion sheet ("Concluir" now asks for proof first), plus the
+     *  photo strip the same photos land in on the task detail screen. One key
+     *  for both: the section heading and the two source labels must agree
+     *  across the screen that produces photos and the screen that shows them. */
+    taskPhotos: {
+      sheetTitle: string;
+      /** Says what a useful photo IS, in one line. A manager who has to guess
+       *  photographs the sky. */
+      sheetIntro: string;
+      addPhotos: string;
+      /** While the browser is re-encoding what was just picked. Can take a
+       *  second or two for six photos on an old phone — silence there reads as
+       *  a frozen app. */
+      preparing: string;
+      /** e.g. "Up to 6 photos, 5 MB each." Both numbers come from
+       *  @capo/core/media/photos so the copy cannot drift from the limit. */
+      limitHint(max: number, megabytes: number): string;
+      remove: string;
+      /** Primary button, e.g. "Complete with 3 photos". */
+      confirm(n: number): string;
+      /** The escape hatch. Plain and unhidden on purpose — see the note in
+       *  completion-sheet.tsx. */
+      skip: string;
+      cancel: string;
+      sending: string;
+      /** Heading of the photo strip on the task detail screen. */
+      sectionTitle: string;
+      /** Attribution under each photo. A photo the crew sent and one the
+       *  manager took are different claims about the same work. */
+      sourceWorker: string;
+      sourceManager: string;
+      /** Keyed by TaskPhotoFailure (apps/web/lib/task-photos.ts) plus a
+       *  generic fallback. The server action translates the machine-readable
+       *  reason through this map — the client renders whatever it catches
+       *  verbatim, so anything missing here would reach the manager in
+       *  English, or as raw Postgres. */
+      errors: Record<
+        'mime' | 'too_large' | 'empty' | 'too_many' | 'unknown_task' | 'upload_failed' | 'generic',
+        string
+      >;
+    };
     taskHelp: {
       title: string;
       /** Says where the excerpts come from and that they are not advice. */
