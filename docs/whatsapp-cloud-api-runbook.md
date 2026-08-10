@@ -41,13 +41,37 @@ ignored.
    asset access below).
 2. System user → **Add assets** → Apps → select the Meta app → **Full
    control**.
-3. System user → **Generate token**:
+3. **Also grant the WhatsApp Business Account itself** — Business Settings →
+   **Accounts → WhatsApp accounts** → select the WABA → **Add people** → the
+   system user → **Full control**.
+
+   This step is separate from the App grant above and easy to miss, because
+   sending messages does not need it: `POST /{phone-number-id}/messages` is
+   authorized by the App grant alone, so the webhook and the daily crons all
+   work without it. What breaks is anything addressing the **WABA** —
+   `/{waba-id}/message_templates`, i.e. all of `pnpm whatsapp-template`.
+
+   The symptom is not a permissions error. `debug_token` reports the
+   `whatsapp_business_management` scope as present but with an empty
+   `target_ids`, so the script reports *"this token carries no
+   whatsapp_business_management target"*.
+4. System user → **Generate token**:
    - App: the Meta app.
    - Expiration: **Never**.
    - Scopes: `whatsapp_business_messaging` + `whatsapp_business_management`.
-4. The generated token → `WHATSAPP_ACCESS_TOKEN`. It is shown once — store it
-   in the env vars and nowhere else.
-5. App secret: developers.facebook.com → the app → App settings → Basic →
+
+   **Generate the token AFTER the asset grants**, not before. Granular scopes
+   are resolved when the token is issued, so a token minted earlier keeps an
+   empty `target_ids` no matter what you grant afterwards — re-granting fixes
+   nothing until you mint a new token.
+5. The generated token → `WHATSAPP_ACCESS_TOKEN`. It is shown once — store it
+   somewhere you can retrieve it (a password manager). It is **not** enough to
+   put it only in Vercel: the vars there are marked *Sensitive*, which makes
+   them write-only, so `vercel env pull` returns the literal string
+   `[SENSITIVE]` and the dashboard will not show it either. A token that exists
+   only in Vercel cannot be used by `pnpm whatsapp-template`, `pnpm
+   agent-smoke`, or anything else local.
+6. App secret: developers.facebook.com → the app → App settings → Basic →
    **App secret** → `WHATSAPP_APP_SECRET` (signs `X-Hub-Signature-256`; the
    webhook rejects any POST that doesn't verify).
 

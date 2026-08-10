@@ -36,7 +36,7 @@ async function loadCompanySnapshot(db: Db, companyId: string): Promise<CompanySn
       db.from('companies').select('name').eq('id', companyId).single(),
       db.from('jobs').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'active'),
       db.from('workers').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('active', true),
-      db.from('tasks').select('id', { count: 'exact', head: true }).eq('company_id', companyId).in('status', ['pending', 'in_progress']),
+      db.from('tasks').select('id', { count: 'exact', head: true }).eq('company_id', companyId).in('status', ['pending', 'in_progress', 'pending_review']),
       db.from('proposals').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'pending'),
     ]);
     if (company.error || !company.data) return null;

@@ -26,24 +26,72 @@ so **`old_value` is not writable by a tenant** and the undo snapshot is
 immutable at the grant layer. Regenerating `packages/db/src/types.ts` was
 confirmed to reproduce the committed file exactly.
 
-### 0017 — ⏳ PENDING (not yet applied)
+### 0017 — ✅ APPLIED (2026-08-08)
 
-`0017_worker_checkins.sql` ships with the 16:30 check-in (§12) and is **not
-applied**. It adds `worker_checkins` (one row per worker per day holding their
-answer), one SELECT-only RLS policy plus `grant select`, and the
-`worker_checkins_fks_same_company` trigger. There is deliberately **no** insert
-or update policy: the sole writer is the WhatsApp webhook on the service role,
-and a tenant able to write there could forge a worker's answer.
+`0017_worker_checkins.sql` ships with the 16:30 check-in (§12), applied as
+version `20260808140249`. It adds `worker_checkins` (one row per worker per day
+holding their answer), one SELECT-only RLS policy plus `grant select`, and the
+`worker_checkins_fks_same_company` trigger.
 
-Two standing chores once it is applied:
+Verified after applying: 10 columns; RLS on with exactly **one** policy and that
+policy is `SELECT`; the FK trigger present; and the grants hold — `authenticated`
+has `SELECT` and nothing else, `anon` has none. There is deliberately no insert
+or update policy, because the sole writer is the WhatsApp webhook on the service
+role and a tenant able to write there could forge a worker's answer.
 
-1. Regenerate `packages/db/src/types.ts` via the Supabase MCP and confirm it
-   reproduces the committed file byte for byte. The `worker_checkins` block was
-   hand-written **ahead** of the migration — the route code does not typecheck
-   without it — so until this is done the file describes a table the live
-   project does not have.
+The hand-written `packages/db/src/types.ts` block was checked column by column
+against the live schema (names, types, nullability, defaults) and matches.
+
+Two chores still open:
+
+1. **The byte-equality regeneration for `types.ts` has NOT been done**, and
+   currently cannot be. See the ⚠ below — the live project carries
+   `task_reviews` from the parallel PRD #19 work, which is not in this branch,
+   so a regeneration emits tables this file has never had.
 2. Re-run `pnpm rls-matrix`. It gains a visibility check for the new table plus
-   an adversarial "a tenant cannot INSERT a check-in" case.
+   two adversarial "a tenant cannot forge a check-in answer" cases.
+
+### ⚠ The live project is ahead of `main` (2026-08-08)
+
+Three migrations were applied from the parallel PRD #19 work and are **not** in
+any pushed branch:
+
+| Version | Name |
+|---|---|
+| `20260808123135` | `task_reviews` |
+| `20260808125233` | `task_reviews_hardening` |
+| `20260808130731` | `task_review_supersede` |
+
+Two consequences worth knowing before either stream continues:
+
+- **~~Two migration files are both numbered `0017`~~ — RESOLVED on the #19
+  branch.** `0017_worker_checkins.sql` reached `main` first and kept `0017`;
+  the task-review stream renumbered upward to `0018_task_reviews.sql`,
+  `0019_task_reviews_hardening.sql` and `0020_task_review_supersede.sql`, with
+  every cross-reference updated. Worth recording *why* it needed a human: git
+  does not flag it, because the filenames differ and the contents do not
+  overlap, so the merge is silently clean and you simply end up with two
+  `0017_*` files. **File numbers no longer match application order** —
+  `task_reviews` was applied ~90 minutes before `worker_checkins` — and that is
+  fine: the live ledger keys on the timestamps above, and the two streams are
+  independent (`0017_worker_checkins` deliberately never touches `tasks.status`).
+- ~~**`0020` is now taken.**~~ **DONE** (PR #32). The `revert_translation_batch`
+  null-guard fix moved to `0021_revert_translation_batch_null_guard.sql` when
+  main was merged into `claude/strange-gagarin-53bb5b`, with its internal
+  references to #19's migrations renumbered `0018`→`0019` to match.
+  The predicted `seedOrphanUser` conflict happened, and git flagged it — but the
+  *dangerous* part of that same merge did not conflict at all: both branches had
+  added a `runOrphanAttack` function, and git kept **both declarations**. In
+  JavaScript the second one silently replaces the first, so #19's two orphan
+  checks (`open_task_review`, `resolve_task_review`) would have been dead code
+  and the suite would have reported green while running two fewer attacks than
+  its own totals implied. The two bodies are now merged into one function
+  carrying attacks 12, 13 and 14. Same lesson as the `0017` collision above:
+  what git flags is not what hurts you.
+- **Whichever stream regenerates `types.ts` second sees a diff that looks like
+  corruption and is not.** Regenerating today pulls in `task_reviews`; doing it
+  from the #19 branch pulls in `worker_checkins`. One regeneration after both
+  have landed, not two before.
 
 Still outstanding, because neither runs in CI and both need credentials:
 `pnpm rls-matrix` (#11 adds two adversarial checks against the new
@@ -353,9 +401,8 @@ PRD, and it should land against a table that already holds the answers.
 finds no approved template, and writes `failed` rows to `notification_log` — the
 same pre-launch state as §11, not a bug.
 
-1. **Apply `0017_worker_checkins.sql`**, then do the two standing chores in §0
-   (regenerate `packages/db/src/types.ts` and confirm byte-equality; re-run
-   `pnpm rls-matrix`).
+1. ✅ **DONE (2026-08-08).** `0017_worker_checkins.sql` is applied (version
+   `20260808140249`) and verified — see §0. `pnpm rls-matrix` still needs a run.
 2. **Submit the template.** `pnpm whatsapp-template create`, then
    `pnpm whatsapp-template status` until every line is PASS. Full instructions
    and the credential caveats are in `docs/whatsapp-cloud-api-runbook.md` §6.

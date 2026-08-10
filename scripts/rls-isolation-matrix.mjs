@@ -1,25 +1,39 @@
 // RLS isolation matrix — the recurring tenant-boundary QA gate.
 //
 // Seeds TWO throwaway tenants (auth user + company + one row in every tenant
-// table), then, authenticated as each user in turn, verifies the visibility
-// matrix: for each RLS-covered relation × 2 tenants, the caller sees its own
-// seeded row and nothing from the other tenant. Then runs the adversarial
-// cross-tenant attacks and expects every one to be rejected. Everything seeded
-// is deleted afterwards. The totals are printed at the end rather than asserted
-// against a hardcoded count, because both grow as tables are added.
+// table) PLUS a third throwaway actor: an authenticated user with a
+// confirmed email and deliberately NO profiles row — Capo's real
+// signup-before-onboarding state. Two tenants alone cannot exercise that
+// actor's failure mode (every ordinary attacker has a company); it is the
+// only way to catch a tenant guard that fails open when
+// private.current_company_id() returns NULL. Then, authenticated as each
+// tenant user in turn, verifies the visibility matrix: for each RLS-covered
+// relation × 2 tenants, the caller sees its own seeded row and nothing from
+// the other tenant. Then runs the adversarial cross-tenant attacks and
+// expects every one to be rejected. Everything seeded is deleted afterwards.
+// The totals are printed at the end rather than asserted against a
+// hardcoded count, because both grow as tables are added.
 //
 // The adversarial set covers, in order: the two migration-0009 FK triggers
 // (own-company task pointing at the other company's job/worker; own-company
 // proposal pointing at the other company's conversation), the 0011 billing
-// column revoke, and the 0015 revert_translation_batch RPC. That last one
-// matters more than it looks: the RPC is SECURITY DEFINER, so RLS does NOT
-// cover it and its internal auth.uid() check is the entire tenant boundary.
+// column revoke, the 0015 revert_translation_batch RPC, the 0017
+// worker_checkins answers a tenant must not be able to forge or rewrite, the
+// two 0018 task-review RPCs plus that table's absent INSERT/UPDATE grants,
+// and — run separately, as the no-profiles-row actor — those same two RPCs
+// again against a real tenant's task/review, plus revert_translation_batch
+// against a real tenant's batch.
 //
-// There is also a THIRD actor: an authenticated user with a confirmed email and
-// no profiles row, for whom private.current_company_id() returns NULL. Two
-// tenants structurally cannot catch a guard that fails open on a NULL company —
-// every ordinary attacker has one — which is how 0015's `<>` tenant check
-// stayed broken under a green matrix until 0020 fixed it. See seedOrphanUser.
+// The SECURITY DEFINER ones matter more than they look: RLS does NOT cover
+// them, so their internal auth.uid() checks are the entire tenant boundary —
+// which is exactly what the no-profiles-row actor is seeded to probe. Two
+// ordinary tenants structurally cannot: every ordinary attacker has a
+// company, so private.current_company_id() never returns NULL for them, and
+// a guard that fails open only on NULL stays invisible. That is not
+// hypothetical twice over: open_task_review (fixed in 0019) and
+// revert_translation_batch (fixed in 0021, and confirmed exploitable against
+// production before the fix) both shipped with exactly that hole while this
+// matrix reported green.
 //
 // Runs against the live Supabase project using apps/web/.env.local:
 //   pnpm rls-matrix        (root: node scripts/rls-isolation-matrix.mjs)
@@ -165,6 +179,20 @@ async function seedTenant(label) {
     `translation_item(${label})`,
   );
 
+  // A live completion claim on task1, so the visibility matrix and the two
+  // adversarial RPC attacks below all have a real row to act on. Seeded
+  // through the RPC rather than a raw insert, so the seed exercises the same
+  // path the app does — and so task1 genuinely lands in 'pending_review',
+  // which incidentally proves the new status survives the whole matrix.
+  const reviewId = await must(
+    admin.rpc('open_task_review', {
+      p_task: task1.id,
+      p_worker: worker.id,
+      p_note: `seed note ${label} ${run}`,
+    }),
+    `task_review(${label})`,
+  );
+
   // A check-in answer. Written as the service role, which is the ONLY writer in
   // production too — the WhatsApp webhook. There is no insert policy, so the
   // adversarial pass below can assert that a tenant cannot forge one.
@@ -185,7 +213,7 @@ async function seedTenant(label) {
   return {
     label, userId, companyId, client,
     workerId: worker.id, jobId: job.id, taskIds: [task1.id, task2.id],
-    conversationId: conversation.id, batchId: batch.id, originalTitle,
+    conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
   };
 }
 
@@ -194,14 +222,22 @@ async function seedTenant(label) {
 // signup-before-onboarding state (apps/web/app/(public)/registar/actions.ts;
 // signup and onboarding are separate steps, and the profiles row is written
 // only by complete_onboarding). private.current_company_id() returns NULL for
-// this user, and that NULL is what made revert_translation_batch's original
-// `<>` tenant guard fail OPEN before 0020 (three-valued logic: `company_id <>
-// NULL` is NULL, `true and NULL` is NULL, and `if NULL` does not fire).
+// this user, and that NULL has now made the SAME guard fail OPEN twice:
 //
-// No two-tenant attack can reach that path. Every ordinary attacker has a
-// company, so the comparison always yields a real boolean for them and the
-// guard fires correctly — which is precisely why this bug survived a green
-// matrix for as long as it did. The class of defect needs a third actor.
+//   open_task_review        — `v_company <> NULL` is NULL, fixed in 0019.
+//   revert_translation_batch — the original of that pattern, which
+//                              open_task_review was copied from. Fixed in 0021,
+//                              and confirmed exploitable against production
+//                              first: the RPC did not error, it returned
+//                              {"reverted": 1} and looked like a success.
+//
+// Three-valued logic in both cases: `x <> NULL` is NULL, `true and NULL` is
+// NULL, and `if NULL` does not fire, so the guard is skipped entirely.
+//
+// No ordinary two-tenant attack can reach that path. Every ordinary attacker
+// has a company, so the comparison always yields a real boolean for them and
+// the guard fires correctly — which is precisely why both bugs survived a green
+// matrix. The class of defect needs this third actor.
 async function seedOrphanUser() {
   const email = `rls-matrix-orphan-${run}@example.com`;
   const password = randomBytes(16).toString('hex');
@@ -239,6 +275,7 @@ async function cleanupTenant(t) {
   await companyEq(admin.from('proposals').delete());
   await admin.from('conversation_summaries').delete().eq('conversation_id', t.conversationId);
   await admin.from('messages').delete().eq('conversation_id', t.conversationId);
+  await companyEq(admin.from('task_reviews').delete());
   await admin.from('task_dependencies').delete().in('task_id', t.taskIds);
   await companyEq(admin.from('tasks').delete());
   await companyEq(admin.from('memories').delete());
@@ -264,7 +301,7 @@ async function runMatrix(self, other) {
   // screen reads the whole board through it. If it were ever recreated
   // without security_invoker it would leak every company's tasks, and nothing
   // else in this repo would notice.
-  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'worker_checkins']) {
+  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'worker_checkins']) {
     const { data, error } = await db.from(table).select('*');
     const rows = data ?? [];
     const ownKey = table === 'companies' ? 'id' : 'company_id';
@@ -403,25 +440,161 @@ async function runAdversarial(attacker, victim) {
         .eq('company_id', attacker.companyId).eq('checkin_date', '2026-01-06');
     }
   }
+  // Attack 7 (0017): and the same tenant cannot rewrite the answer it CAN see.
   {
     const { error } = await db.from('worker_checkins').update({ answer: 'done' })
       .eq('company_id', attacker.companyId);
     check('adversarial: tenant UPDATE of a check-in answer blocked', error != null,
       error ? `code=${error.code}` : 'UPDATE SUCCEEDED (answers are forgeable!)');
   }
+
+  // Attack 8 (review resolution): resolve_task_review is SECURITY DEFINER, so
+  // RLS does NOT cover it — its internal auth.uid() check is the whole tenant
+  // boundary. Same class of risk as revert_translation_batch, and a successful
+  // attack here would let one tenant mark another tenant's work done.
+  {
+    const { error } = await db.rpc('resolve_task_review', {
+      p_review: victim.reviewId,
+      p_resolution: 'approved',
+    });
+    const { data: after } = await admin
+      .from('task_reviews')
+      .select('status')
+      .eq('id', victim.reviewId)
+      .single();
+    const untouched = after?.status === 'pending';
+    check(
+      'adversarial: resolve of foreign task review blocked',
+      error != null && untouched,
+      error ? `rejected (${error.code ?? 'err'}), victim review still ${after?.status}` : 'ACCEPTED — boundary broken',
+    );
+  }
+
+  // Attack 9 (review creation): open_task_review is likewise SECURITY DEFINER.
+  // Filing a claim on a foreign task would flip that task to pending_review —
+  // a cross-tenant WRITE to the tasks table.
+  //
+  // taskIds[1], NOT taskIds[0]: the seed already put a pending review on
+  // task1, so aiming there would trip task_reviews_one_pending_idx and the
+  // check would pass for the wrong reason — refused as a duplicate rather than
+  // as another tenant's. Same trap the translation-batch seed comment calls
+  // out. task2 has no review, so the tenant boundary is the only thing that
+  // can stop this.
+  {
+    const foreignTask = victim.taskIds[1];
+    const { error } = await db.rpc('open_task_review', {
+      p_task: foreignTask,
+      p_worker: null,
+      p_note: 'cross-tenant claim',
+    });
+    const { data: after } = await admin.from('tasks').select('status').eq('id', foreignTask).single();
+    check(
+      'adversarial: open review on foreign task blocked',
+      error != null && after?.status === 'pending',
+      error ? `rejected (${error.code ?? 'err'}), victim task still ${after?.status}` : 'ACCEPTED — boundary broken',
+    );
+  }
+
+  // Attack 10 (grant layer): task_reviews has NO update grant for authenticated,
+  // so a tenant cannot resolve its OWN review by hand and strand the task open.
+  {
+    const { error } = await db
+      .from('task_reviews')
+      .update({ status: 'approved' })
+      .eq('id', attacker.reviewId);
+    check(
+      'adversarial: direct update of own task review blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — update grant leaked',
+    );
+  }
+
+  // Attack 11 (grant layer): task_reviews has NO insert grant for authenticated
+  // either (0019, M6) — every write goes through the two RPCs above. Scoped to
+  // the attacker's OWN company/task (not cross-tenant) because this is a
+  // grant-layer check, not a boundary check: even a well-formed, same-tenant
+  // direct insert must fail, or a tenant could create a task_reviews row that
+  // never flips its task to 'pending_review' — breaking the "a review exists
+  // => the task is in review" invariant Tasks 4-5 depend on. taskIds[1], same
+  // reasoning as attack 7: task1 already has a pending review, and aiming
+  // there would risk tripping task_reviews_one_pending_idx instead of the
+  // grant revoke.
+  {
+    const { error } = await db
+      .from('task_reviews')
+      .insert({ company_id: attacker.companyId, task_id: attacker.taskIds[1], declared_by_worker_id: attacker.workerId });
+    check(
+      'adversarial: direct insert into task_reviews blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — insert grant leaked',
+    );
+  }
 }
 
-// The third actor's attacks: an authenticated user with a confirmed email and
-// NO profiles row (see seedOrphanUser above). Runs LAST on purpose. If the
-// boundary is broken these calls genuinely mutate the victim's rows, and every
-// earlier check has already read the state it needed by then — so a failure
-// here reports one clean defect instead of cascading into unrelated noise.
+// A third actor's attacks: an authenticated user with a confirmed email and
+// NO profiles row (see seedOrphanUser above). Two ordinary tenants cannot
+// exercise this path — every ordinary attacker has a company, so
+// private.current_company_id() never returns NULL for them. This is the
+// actor that would have caught the fail-open bug fix round 1 found in
+// open_task_review (0019): before that fix, `v_company <> NULL` evaluated to
+// NULL under three-valued logic, the guard silently did not fire, and this
+// exact user could write to any tenant's tasks/task_reviews. Attack 14 is the
+// same defect in revert_translation_batch, which is where open_task_review
+// inherited it from.
+//
+// Runs LAST on purpose. If a boundary is broken these calls genuinely mutate
+// the victim's rows, and every earlier check has already read the state it
+// needed by then — so a failure here reports one clean defect instead of
+// cascading into unrelated noise.
 async function runOrphanAttack(orphan, victim) {
   const db = orphan.client;
 
-  // Attack 7 (0015 + 0020): revert_translation_batch is SECURITY DEFINER, so
+  // Attack 12: filing a claim on a real tenant's real task. Targets
+  // taskIds[1] for the same reason as attack 9 — task1 already carries the
+  // seeded pending review, so aiming there would risk tripping
+  // task_reviews_one_pending_idx instead of exercising the tenant guard.
+  {
+    const foreignTask = victim.taskIds[1];
+    const { error } = await db.rpc('open_task_review', {
+      p_task: foreignTask,
+      p_worker: null,
+      p_note: 'orphan claim, no profiles row',
+    });
+    const { data: after } = await admin.from('tasks').select('status').eq('id', foreignTask).single();
+    check(
+      'adversarial: orphan (no profiles row) open_task_review blocked',
+      error != null && after?.status === 'pending',
+      error ? `rejected (${error.code ?? 'err'}), victim task still ${after?.status}` : 'ACCEPTED — boundary broken',
+    );
+  }
+
+  // Attack 13: resolving a real tenant's real review. Note this one was
+  // already safe even before the 0019 fix — the guard lives inside the
+  // UPDATE's WHERE clause (`company_id = private.current_company_id()`),
+  // and `real_uuid = NULL` is NULL, which WHERE treats as no match, not as
+  // true. It is included anyway so this actor's coverage of both RPCs is
+  // complete and the asymmetry between the two guards is visible in the
+  // output rather than assumed.
+  {
+    const { error } = await db.rpc('resolve_task_review', {
+      p_review: victim.reviewId,
+      p_resolution: 'approved',
+    });
+    const { data: after } = await admin
+      .from('task_reviews')
+      .select('status')
+      .eq('id', victim.reviewId)
+      .single();
+    check(
+      'adversarial: orphan (no profiles row) resolve_task_review blocked',
+      error != null && after?.status === 'pending',
+      error ? `rejected (${error.code ?? 'err'}), victim review still ${after?.status}` : 'ACCEPTED — boundary broken',
+    );
+  }
+
+  // Attack 14 (0015 + 0021): revert_translation_batch is SECURITY DEFINER, so
   // RLS does not cover it and its auth.uid() clause is the entire tenant
-  // boundary. Before 0020 that clause used `<>`, which three-valued logic
+  // boundary. Before 0021 that clause used `<>`, which three-valued logic
   // turned into a no-op for exactly this caller — the RPC did not merely allow
   // the write, it returned {"reverted": 1} and looked like a success.
   //

@@ -2,11 +2,14 @@
 --
 -- Found while reviewing PR #31 (issue #19), where the identical defect had been
 -- introduced into open_task_review by copying this very function's pattern, and
--- was fixed there in 0018_task_reviews_hardening.sql. This migration fixes the
--- original. Unlike 0018 — which could fold its fix back into the unmerged 0017
+-- was fixed there in 0019_task_reviews_hardening.sql. This migration fixes the
+-- original. Unlike 0019 — which could fold its fix back into its own 0018
 -- because that file had never been applied anywhere — 0015 is live. Rewriting
 -- it in place would make the file describe SQL this project never ran, so the
 -- correction lands here instead and 0015 stays a faithful record.
+--
+-- (0019/0018 are #31's post-merge numbers; that PR was renumbered up one on
+-- merge because main had taken 0017 for worker_checkins in the meantime.)
 --
 -- ── the bug ────────────────────────────────────────────────────────────────
 -- The guard read:
@@ -46,17 +49,24 @@
 -- IS DISTINCT FROM is the only comparison that returns a real boolean when
 -- either side is NULL: it treats "one side is NULL, the other is not" as a
 -- genuine mismatch and the guard fails closed. This is the exact form
--- open_task_review took in 0018.
+-- open_task_review took in 0019.
 --
 -- The general rule, and the reason only this one call site was affected: a
 -- tenant check written as an IF fails OPEN on a NULL company, because IF needs
 -- `true` to branch and NULL is not true. The same comparison in a WHERE clause
 -- fails CLOSED, because WHERE also needs `true` and a non-matching row is the
--- safe outcome. finalize_proposal (0007/0009) and resolve_task_review (0018)
+-- safe outcome. finalize_proposal (0007/0009) and resolve_task_review (0019)
 -- use the WHERE form and were never exposed; so is every RLS policy in the
 -- schema, which is why an orphan user is invisible to ordinary table reads and
--- this RPC was the only door. A sweep of every SECURITY DEFINER function in
--- supabase/migrations/ found no other instance of the IF form.
+-- this RPC was the only door.
+--
+-- The sweep behind that claim ran over live pg_proc as well as over
+-- supabase/migrations/, and the second pass is the one that matters: at the
+-- time it ran, the database already contained supersede_task_review — a
+-- function in no file on main, because #31's SQL had been applied while the PR
+-- was still open. A files-only audit would have skipped it silently. Four
+-- SECURITY DEFINER functions reference current_company_id(); this was the only
+-- one using the IF form.
 --
 -- Body is otherwise byte-identical to 0015. Regression coverage lives in
 -- scripts/rls-isolation-matrix.mjs as the orphan-actor attack — two tenants

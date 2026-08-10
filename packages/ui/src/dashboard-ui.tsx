@@ -22,6 +22,10 @@ export type DashboardObra = Tables<'dashboard_obras'>;
 const STATUS_STYLES: Record<string, string> = {
   pending: 'bg-zinc-500/10 text-zinc-500',
   in_progress: 'bg-orange-600/10 text-orange-600',
+  // Violet, deliberately not amber or red: a completion claim awaiting the
+  // manager is a decision to make, not a problem to fix. blocked (red) and the
+  // overdue reason line (also red) own "something is wrong".
+  pending_review: 'bg-violet-600/10 text-violet-600',
   blocked: 'bg-red-600/10 text-red-600',
   done: 'bg-emerald-700/10 text-emerald-700',
   // zinc-500 rather than 400: 400 is 2.3:1 on white and this file now renders
@@ -231,6 +235,7 @@ export function TaskBoardList({
   groupBy,
   locale,
   renderExtra,
+  renderBelow,
 }: {
   tasks: BoardTask[];
   empty: string;
@@ -239,6 +244,11 @@ export function TaskBoardList({
   // Optional per-row slot (the Concluir/Reabrir buttons), kept as a plain
   // render prop so this package never has to import a mutation.
   renderExtra?: (task: BoardTask) => React.ReactNode;
+  // A second slot, full width and below the risk reasons, for content that
+  // cannot live in the narrow action column — today the pending-review quote
+  // and its three buttons. Same render-prop posture as renderExtra: this
+  // package still never imports a mutation.
+  renderBelow?: (task: BoardTask) => React.ReactNode;
 }) {
   if (tasks.length === 0) return <EmptyState text={empty} cta={talkToCapo(locale)} />;
   const t = getCatalog(locale).dashboard;
@@ -299,6 +309,7 @@ export function TaskBoardList({
                     {reasons.join(' · ')}
                   </p>
                 )}
+                {renderBelow?.(task)}
               </div>
             );
           })}
