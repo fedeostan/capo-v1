@@ -27,6 +27,19 @@
 // merged. Worth doing once, on main, after this lands — but do not regenerate
 // from a feature branch: the live project may carry migrations your branch does
 // not, and the diff will look like corruption without being it.
+//
+// ── HAND-WRITTEN AHEAD OF THE MIGRATION ────────────────────────────────────
+// The `notifications` block below (0022_notifications.sql) was written by hand
+// rather than generated, because that migration has NOT been applied to the
+// live project yet — generating from a project that lacks the table would
+// silently DELETE the block instead of adding it. It is transcribed from the
+// migration's column list and follows the generator's own conventions (keys
+// alphabetical, `not null default` → optional-on-Insert, every FK listed once
+// per relation it can be embedded through).
+//
+// AFTER 0022 is applied: regenerate on main and diff. Only the two FK
+// Relationships entries are guessable rather than mechanical, so that is where
+// a discrepancy would be.
 export type Json =
   | string
   | number
@@ -456,6 +469,60 @@ export type Database = {
             columns: ["worker_id"]
             isOneToOne: false
             referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notifications: {
+        Row: {
+          body: string | null
+          company_id: string
+          created_at: string
+          id: string
+          kind: string
+          profile_id: string
+          read_at: string | null
+          subject_id: string | null
+          subject_type: string | null
+          title: string | null
+        }
+        Insert: {
+          body?: string | null
+          company_id: string
+          created_at?: string
+          id?: string
+          kind: string
+          profile_id: string
+          read_at?: string | null
+          subject_id?: string | null
+          subject_type?: string | null
+          title?: string | null
+        }
+        Update: {
+          body?: string | null
+          company_id?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          profile_id?: string
+          read_at?: string | null
+          subject_id?: string | null
+          subject_type?: string | null
+          title?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

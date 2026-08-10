@@ -350,6 +350,15 @@ export default async function PerfilPage({
           )}
         </Card>
 
+        {/* The inbox has no tab of its own (see (app)/layout.tsx). The shell
+            strip is the way in while something is unread; this row is the way
+            in the rest of the time, so the history stays reachable. */}
+        <Card title={t.notifications.title}>
+          <Link href="/notificacoes" className="inline-block text-sm text-orange-600 underline">
+            {t.notifications.profileLink}
+          </Link>
+        </Card>
+
         <Card title={t.profile.subscription}>
           <p className="text-sm">
             {!billing.enabled

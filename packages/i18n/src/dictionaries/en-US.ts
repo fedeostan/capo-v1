@@ -112,6 +112,23 @@ const dict: Catalog = {
     dependsOn: titles => `⤷ after: ${titles.join(', ')}`,
   },
 
+  notifications: {
+    title: 'Notifications',
+    subtitle: 'What happened since you last looked.',
+    empty: 'Nothing unread. When a worker declares a task finished, it shows up here.',
+    banner: n => `${n} ${n === 1 ? 'update' : 'updates'}`,
+    markAllRead: 'Mark all as read',
+    failed: 'Could not mark as read.',
+    unread: 'Unread',
+    profileLink: 'Notifications',
+    kind: {
+      review_pending: subject => `“${subject}” is waiting for your review.`,
+    },
+    noSubject: 'A task',
+    noteLabel: 'What they wrote:',
+    openSubject: 'Open in tasks',
+  },
+
   screens: {
     tasks: {
       title: 'Tasks',
