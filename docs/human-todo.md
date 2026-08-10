@@ -26,24 +26,54 @@ so **`old_value` is not writable by a tenant** and the undo snapshot is
 immutable at the grant layer. Regenerating `packages/db/src/types.ts` was
 confirmed to reproduce the committed file exactly.
 
-### 0017 — ⏳ PENDING (not yet applied)
+### 0017 — ✅ APPLIED (2026-08-08)
 
-`0017_worker_checkins.sql` ships with the 16:30 check-in (§12) and is **not
-applied**. It adds `worker_checkins` (one row per worker per day holding their
-answer), one SELECT-only RLS policy plus `grant select`, and the
-`worker_checkins_fks_same_company` trigger. There is deliberately **no** insert
-or update policy: the sole writer is the WhatsApp webhook on the service role,
-and a tenant able to write there could forge a worker's answer.
+`0017_worker_checkins.sql` ships with the 16:30 check-in (§12), applied as
+version `20260808140249`. It adds `worker_checkins` (one row per worker per day
+holding their answer), one SELECT-only RLS policy plus `grant select`, and the
+`worker_checkins_fks_same_company` trigger.
 
-Two standing chores once it is applied:
+Verified after applying: 10 columns; RLS on with exactly **one** policy and that
+policy is `SELECT`; the FK trigger present; and the grants hold — `authenticated`
+has `SELECT` and nothing else, `anon` has none. There is deliberately no insert
+or update policy, because the sole writer is the WhatsApp webhook on the service
+role and a tenant able to write there could forge a worker's answer.
 
-1. Regenerate `packages/db/src/types.ts` via the Supabase MCP and confirm it
-   reproduces the committed file byte for byte. The `worker_checkins` block was
-   hand-written **ahead** of the migration — the route code does not typecheck
-   without it — so until this is done the file describes a table the live
-   project does not have.
+The hand-written `packages/db/src/types.ts` block was checked column by column
+against the live schema (names, types, nullability, defaults) and matches.
+
+Two chores still open:
+
+1. **The byte-equality regeneration for `types.ts` has NOT been done**, and
+   currently cannot be. See the ⚠ below — the live project carries
+   `task_reviews` from the parallel PRD #19 work, which is not in this branch,
+   so a regeneration emits tables this file has never had.
 2. Re-run `pnpm rls-matrix`. It gains a visibility check for the new table plus
-   an adversarial "a tenant cannot INSERT a check-in" case.
+   two adversarial "a tenant cannot forge a check-in answer" cases.
+
+### ⚠ The live project is ahead of `main` (2026-08-08)
+
+Three migrations were applied from the parallel PRD #19 work and are **not** in
+any pushed branch:
+
+| Version | Name |
+|---|---|
+| `20260808123135` | `task_reviews` |
+| `20260808125233` | `task_reviews_hardening` |
+| `20260808130731` | `task_review_supersede` |
+
+Two consequences worth knowing before either stream continues:
+
+- **Two migration files are both numbered `0017`** — `0017_worker_checkins.sql`
+  (merged to `main` in #29) and `0017_task_reviews.sql` (unpushed). Git will not
+  flag this: the filenames differ and the contents do not overlap, so the merge
+  is silently clean and the directory ends up with two `0017_*` files. The
+  `task_reviews` ones are the cheap side to renumber to `0018`+, since they are
+  not published yet.
+- **Whichever stream regenerates `types.ts` second sees a diff that looks like
+  corruption and is not.** Regenerating today pulls in `task_reviews`; doing it
+  from the #19 branch pulls in `worker_checkins`. One regeneration after both
+  have landed, not two before.
 
 Still outstanding, because neither runs in CI and both need credentials:
 `pnpm rls-matrix` (#11 adds two adversarial checks against the new
@@ -353,9 +383,8 @@ PRD, and it should land against a table that already holds the answers.
 finds no approved template, and writes `failed` rows to `notification_log` — the
 same pre-launch state as §11, not a bug.
 
-1. **Apply `0017_worker_checkins.sql`**, then do the two standing chores in §0
-   (regenerate `packages/db/src/types.ts` and confirm byte-equality; re-run
-   `pnpm rls-matrix`).
+1. ✅ **DONE (2026-08-08).** `0017_worker_checkins.sql` is applied (version
+   `20260808140249`) and verified — see §0. `pnpm rls-matrix` still needs a run.
 2. **Submit the template.** `pnpm whatsapp-template create`, then
    `pnpm whatsapp-template status` until every line is PASS. Full instructions
    and the credential caveats are in `docs/whatsapp-cloud-api-runbook.md` §6.
