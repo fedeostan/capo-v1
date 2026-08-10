@@ -219,7 +219,7 @@ Structural invariants (do not regress):
   `task_reviews.note` is the one place worker-authored text reaches the
   manager. Render it as an attributed quote, never as UI copy — in the
   inbox (`notifications.body`) as well as on the board.
-- **`notifications` (0022) is the in-app inbox, and is NOT
+- **`notifications` (0023) is the in-app inbox, and is NOT
   `notification_log` (0016).** They share a stem and nothing else.
   `notification_log` is the OUTBOUND ledger — one row per paid WhatsApp
   template send, RLS on with deliberately zero policies, written only by the

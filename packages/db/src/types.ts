@@ -28,18 +28,25 @@
 // from a feature branch: the live project may carry migrations your branch does
 // not, and the diff will look like corruption without being it.
 //
-// ── HAND-WRITTEN AHEAD OF THE MIGRATION ────────────────────────────────────
-// The `notifications` block below (0022_notifications.sql) was written by hand
-// rather than generated, because that migration has NOT been applied to the
-// live project yet — generating from a project that lacks the table would
-// silently DELETE the block instead of adding it. It is transcribed from the
-// migration's column list and follows the generator's own conventions (keys
-// alphabetical, `not null default` → optional-on-Insert, every FK listed once
-// per relation it can be embedded through).
+// ── notifications (0023), applied and VERIFIED ─────────────────────────────
+// The `notifications` block below was written by hand — the migration had not
+// been applied yet, and generating against a project that lacks the table
+// would have silently DELETED the block instead of adding it. 0023 is now
+// applied (version 20260810105627), and the block has been diffed against a
+// real `generate_typescript_types` run: byte-identical, FK Relationships
+// included. It is not a transcription any more; it is confirmed.
 //
-// AFTER 0022 is applied: regenerate on main and diff. Only the two FK
-// Relationships entries are guessable rather than mechanical, so that is where
-// a discrepancy would be.
+// ── THE FILE IS STILL BEHIND THE LIVE PROJECT, DELIBERATELY ────────────────
+// Regenerating here would ALSO pull in a parallel stream this branch does not
+// carry — the exact trap the paragraph above warns about, now concrete:
+//
+//   task_photos (version 20260810074738) — a whole table, plus
+//   tasks.completion_proof, from the branch that claimed the 0022 file number.
+//   That is why this file's migration is 0023 and not 0022.
+//
+// So: do NOT regenerate from this branch. Regenerate on main once both streams
+// have merged, which will add task_photos/completion_proof and leave the
+// notifications block untouched.
 export type Json =
   | string
   | number

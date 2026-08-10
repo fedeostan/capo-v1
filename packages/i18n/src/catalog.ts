@@ -128,7 +128,7 @@ export interface Catalog {
     /** One line per kind, given the subject's OWN NAME (a task title, stored
      *  in companies.language). The name is data: interpolated, never
      *  translated. Keyed by the `kind` check constraint in
-     *  0022_notifications.sql, so widening that constraint without adding
+     *  0023_notifications.sql, so widening that constraint without adding
      *  copy in all three dictionaries is a tsc error. */
     kind: Record<'review_pending', (subject: string) => string>;
     /** Stand-in when the row carries no title — an unnamed task. */

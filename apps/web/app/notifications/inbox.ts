@@ -15,7 +15,7 @@ export interface InboxItem {
   id: string;
   /** Key into the catalog's notifications.kind Record. Kept as a plain string
    *  because the DB is the source of truth for the set — see the check
-   *  constraint in 0022_notifications.sql. The renderer falls back rather than
+   *  constraint in 0023_notifications.sql. The renderer falls back rather than
    *  throwing on a value it does not know. */
   kind: string;
   /** The subject's own name — a task title, in companies.language. Data. */
@@ -71,7 +71,7 @@ export async function loadInbox(ctx: AuthContext, limit = 50): Promise<InboxItem
   const rows = data ?? [];
 
   // Resolve task_review subjects to the TASK they are about. The notification
-  // stores the review id (the retirement trigger in 0022 needs that identity),
+  // stores the review id (the retirement trigger in 0023 needs that identity),
   // but the manager wants the task screen — which is where ReviewActions
   // renders, i.e. the only place approve/reject/dismiss exist.
   //

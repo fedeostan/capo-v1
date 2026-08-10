@@ -90,7 +90,7 @@ function Item({ item, t }: { item: InboxItem; t: Catalog }) {
  * (app)/layout.tsx for why.
  *
  * Read state is cleared two ways, and neither is "you scrolled past it":
- * resolving the review retires its notification through the 0022 trigger, and
+ * resolving the review retires its notification through the 0023 trigger, and
  * this screen's one button clears the rest.
  */
 export default async function NotificacoesPage() {

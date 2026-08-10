@@ -5,7 +5,7 @@ import { requireAuth } from '@capo/db/session';
 import { logEvent } from '@/lib/log';
 
 // The only write this feature exposes to the tenant, and the grant layer
-// already narrows it to one column: 0022 gives `authenticated`
+// already narrows it to one column: 0023 gives `authenticated`
 // `grant update (read_at)` and nothing else, so even a hostile client can
 // only ever move this flag. RLS narrows the rows to this profile's own.
 //

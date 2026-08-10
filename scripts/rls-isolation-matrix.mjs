@@ -21,7 +21,7 @@
 // column revoke, the 0015 revert_translation_batch RPC, the 0017
 // worker_checkins answers a tenant must not be able to forge or rewrite, the
 // two 0018 task-review RPCs plus that table's absent INSERT/UPDATE grants,
-// the 0022 notifications table (no INSERT grant, read_at-only UPDATE grant,
+// the 0023 notifications table (no INSERT grant, read_at-only UPDATE grant,
 // and its two-predicate policy — company AND profile),
 // and — run separately, as the no-profiles-row actor — those same two RPCs
 // again against a real tenant's task/review, plus revert_translation_batch
@@ -115,7 +115,7 @@ async function seedTenant(label) {
   );
 
   // A SECOND manager in the same company, and the ONLY reason this matrix
-  // needs one: notifications (0022) is scoped per profile as well as per
+  // needs one: notifications (0023) is scoped per profile as well as per
   // company. Every other tenant table is company-scoped, where a colleague is
   // indistinguishable from the owner — which is exactly why one was never
   // needed before, and why a per-profile policy would be untestable without
@@ -229,7 +229,7 @@ async function seedTenant(label) {
     `task_review(${label})`,
   );
 
-  // The notifications that review just produced, via the 0022 trigger. Read
+  // The notifications that review just produced, via the 0023 trigger. Read
   // back rather than inserted: this IS the producer assertion — PRD 6 requires
   // a pending review to notify EVERY manager of the company, and the throw
   // below is what fails loudly if the fan-out ever reaches only the actor, or
@@ -381,7 +381,7 @@ async function runMatrix(self, other) {
       error ? error.message : `${rows.length} rows`);
   }
 
-  // notifications (0022): company AND profile, checked separately rather than
+  // notifications (0023): company AND profile, checked separately rather than
   // in the loop above. The seeded review fanned out TWO rows in this company —
   // one for this user, one for their colleague — so `foreignProfile` is the
   // assertion the generic loop structurally cannot make: a policy missing its
@@ -608,7 +608,7 @@ async function runAdversarial(attacker, victim) {
     );
   }
 
-  // ── 0022 notifications ─────────────────────────────────────────────────
+  // ── 0023 notifications ─────────────────────────────────────────────────
   // Attack 12 (grant layer): no INSERT grant for authenticated. Every row is
   // written by the triggers, so a tenant cannot manufacture a notification —
   // which would otherwise be a way to put attacker-chosen text in front of a
