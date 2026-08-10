@@ -99,6 +99,36 @@ export const cards: CardStrings = {
     ].join(' ');
   },
 
+  reschedule: {
+    header: p => {
+      const bits: string[] = [];
+      const shift = p.triggerShiftDays == null ? 0 : Math.abs(p.triggerShiftDays);
+      const habiles = `${shift} día${shift === 1 ? ' hábil' : 's hábiles'}`;
+      if (p.triggerTitle) {
+        if (p.reason === 'early_completion' && shift > 0) {
+          bits.push(`«${p.triggerTitle}» terminó ${habiles} antes.`);
+        } else if (p.reason === 'late_completion' && shift > 0) {
+          bits.push(`«${p.triggerTitle}» terminó ${habiles} más tarde.`);
+        } else {
+          bits.push(`«${p.triggerTitle}» está terminada.`);
+        }
+        // Said out loud, never implied: the manager is being asked to move real
+        // dates on the strength of somebody's word.
+        if (p.unverified) bits.push('Se dio por terminada y todavía no se ha comprobado.');
+      }
+      bits.push(`Reprogramación propuesta de ${p.count} tarea${p.count === 1 ? '' : 's'} en la obra «${p.jobName}»:`);
+      return bits.join(' ');
+    },
+    row: p => {
+      const before = p.fromStart && p.fromDue ? `${p.fromStart}-${p.fromDue}` : (p.fromDue ?? p.fromStart ?? 'sin fechas');
+      const n = Math.abs(p.shiftDays);
+      const delta = n === 0 ? '' : ` (${p.shiftDays < 0 ? '-' : '+'}${n} día${n === 1 ? ' hábil' : 's hábiles'})`;
+      return `• ${p.title}: ${before} → ${p.toStart}-${p.toDue}${delta}`;
+    },
+    more: n => `… y ${n} tarea${n === 1 ? '' : 's'} más.`,
+    jobEnd: p => (p.from ? `Fin de la obra: ${p.from} → ${p.to}.` : `Fin de la obra: ${p.to}.`),
+  },
+
   plan: {
     header: p => `Plan para la obra «${p.jobName}» — ${p.count} tarea${p.count === 1 ? '' : 's'}, del ${p.from} al ${p.to}`,
     row: p => {

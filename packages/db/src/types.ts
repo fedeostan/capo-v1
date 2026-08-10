@@ -45,6 +45,24 @@
 // from a feature branch WITHOUT first checking `list_migrations` against
 // supabase/migrations/: the live project may carry migrations your branch does
 // not, and the diff will look like corruption without being it.
+//
+// ── AHEAD OF THE LIVE SCHEMA ───────────────────────────────────────────────
+// This file now LEADS the live project by one migration, which is the one case
+// the paragraph above does not cover. profiles.whatsapp_user_id and
+// workers.whatsapp_user_id are hand-added here from
+// supabase/migrations/0022_whatsapp_bsuid.sql, which is deliberately NOT
+// applied — writing the file is this stage's deliverable and applying it is the
+// maintainer's call (issue #27). Regenerating from the live project right now
+// would therefore DELETE those two columns and break typecheck; regenerate only
+// after 0022 has actually been applied.
+//
+// Nothing reads these columns, and the single writer (the WhatsApp webhook's
+// best-effort BSUID capture) runs inside after() and swallows its own errors,
+// so a deploy that lands before 0022 is applied degrades to a logged
+// whatsapp.bsuid_capture_failed rather than breaking sender resolution. That
+// asymmetry is why the capture does its own write instead of widening the
+// profiles/workers SELECTs the webhook already runs — see AGENTS.md on code
+// that reads ahead of a pending migration.
 export type Json =
   | string
   | number
@@ -486,6 +504,7 @@ export type Database = {
           id: string
           language: string
           phone: string
+          whatsapp_user_id: string | null
         }
         Insert: {
           company_id: string
@@ -494,6 +513,7 @@ export type Database = {
           id: string
           language?: string
           phone: string
+          whatsapp_user_id?: string | null
         }
         Update: {
           company_id?: string
@@ -502,6 +522,7 @@ export type Database = {
           id?: string
           language?: string
           phone?: string
+          whatsapp_user_id?: string | null
         }
         Relationships: [
           {
@@ -1157,6 +1178,7 @@ export type Database = {
           name: string
           phone: string | null
           trade: string | null
+          whatsapp_user_id: string | null
         }
         Insert: {
           active?: boolean
@@ -1167,6 +1189,7 @@ export type Database = {
           name: string
           phone?: string | null
           trade?: string | null
+          whatsapp_user_id?: string | null
         }
         Update: {
           active?: boolean
@@ -1177,6 +1200,7 @@ export type Database = {
           name?: string
           phone?: string | null
           trade?: string | null
+          whatsapp_user_id?: string | null
         }
         Relationships: [
           {
