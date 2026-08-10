@@ -15,6 +15,12 @@
 // matters more than it looks: the RPC is SECURITY DEFINER, so RLS does NOT
 // cover it and its internal auth.uid() check is the entire tenant boundary.
 //
+// There is also a THIRD actor: an authenticated user with a confirmed email and
+// no profiles row, for whom private.current_company_id() returns NULL. Two
+// tenants structurally cannot catch a guard that fails open on a NULL company —
+// every ordinary attacker has one — which is how 0015's `<>` tenant check
+// stayed broken under a green matrix until 0020 fixed it. See seedOrphanUser.
+//
 // Runs against the live Supabase project using apps/web/.env.local:
 //   pnpm rls-matrix        (root: node scripts/rls-isolation-matrix.mjs)
 //
@@ -181,6 +187,47 @@ async function seedTenant(label) {
     workerId: worker.id, jobId: job.id, taskIds: [task1.id, task2.id],
     conversationId: conversation.id, batchId: batch.id, originalTitle,
   };
+}
+
+// A third actor, deliberately thinner than seedTenant: an authenticated user
+// with a confirmed email and NO profiles row — Capo's real
+// signup-before-onboarding state (apps/web/app/(public)/registar/actions.ts;
+// signup and onboarding are separate steps, and the profiles row is written
+// only by complete_onboarding). private.current_company_id() returns NULL for
+// this user, and that NULL is what made revert_translation_batch's original
+// `<>` tenant guard fail OPEN before 0020 (three-valued logic: `company_id <>
+// NULL` is NULL, `true and NULL` is NULL, and `if NULL` does not fire).
+//
+// No two-tenant attack can reach that path. Every ordinary attacker has a
+// company, so the comparison always yields a real boolean for them and the
+// guard fires correctly — which is precisely why this bug survived a green
+// matrix for as long as it did. The class of defect needs a third actor.
+async function seedOrphanUser() {
+  const email = `rls-matrix-orphan-${run}@example.com`;
+  const password = randomBytes(16).toString('hex');
+
+  const { data: userData, error: userErr } = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+    user_metadata: { rls_matrix_run: run },
+  });
+  if (userErr) throw new Error(`createUser(orphan): ${userErr.message}`);
+  const userId = userData.user.id;
+
+  const client = createClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
+    auth: { persistSession: false },
+  });
+  const { error: signInErr } = await client.auth.signInWithPassword({ email, password });
+  if (signInErr) throw new Error(`signIn(orphan): ${signInErr.message}`);
+
+  return { userId, client };
+}
+
+async function cleanupOrphanUser(o) {
+  if (!o) return;
+  // No company, no profile, no seeded rows — just the auth user.
+  await admin.auth.admin.deleteUser(o.userId);
 }
 
 async function cleanupTenant(t) {
@@ -364,16 +411,60 @@ async function runAdversarial(attacker, victim) {
   }
 }
 
+// The third actor's attacks: an authenticated user with a confirmed email and
+// NO profiles row (see seedOrphanUser above). Runs LAST on purpose. If the
+// boundary is broken these calls genuinely mutate the victim's rows, and every
+// earlier check has already read the state it needed by then — so a failure
+// here reports one clean defect instead of cascading into unrelated noise.
+async function runOrphanAttack(orphan, victim) {
+  const db = orphan.client;
+
+  // Attack 7 (0015 + 0020): revert_translation_batch is SECURITY DEFINER, so
+  // RLS does not cover it and its auth.uid() clause is the entire tenant
+  // boundary. Before 0020 that clause used `<>`, which three-valued logic
+  // turned into a no-op for exactly this caller — the RPC did not merely allow
+  // the write, it returned {"reverted": 1} and looked like a success.
+  //
+  // Asserting on the error alone would therefore be weak: assert the victim's
+  // row too. The seeded batch is 'completed' with one 'applied' item whose
+  // old_value is victim.originalTitle, so a leak is directly observable as the
+  // victim's task title reverting to that string.
+  //
+  // Note the batch's other side-effect (companies.language back to from_locale)
+  // is NOT assertable here: companies.language defaults to 'pt-PT' (0014) and
+  // the seeded batch is pt-PT → en-US, so that UPDATE's `and language =
+  // to_locale` guard never matches a seeded company. A check on it could not
+  // fail, which is worse than no check.
+  {
+    const { error } = await db.rpc('revert_translation_batch', { p_batch: victim.batchId });
+    const { data: victimTask } = await admin
+      .from('tasks').select('title').eq('id', victim.taskIds[0]).maybeSingle();
+    const untouched = victimTask?.title !== victim.originalTitle;
+    check(
+      'adversarial: orphan (no profiles row) revert of foreign batch blocked',
+      error != null && untouched,
+      error == null
+        ? 'RPC SUCCEEDED (cross-tenant write!)'
+        : !untouched
+          ? 'victim task title was reverted (leak!)'
+          : `rejected (${error.code ?? 'err'})`,
+    );
+  }
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
-let tenantA, tenantB;
+let tenantA, tenantB, orphan;
 try {
   console.log(`Seeding two throwaway tenants (run ${run})…`);
   tenantA = await seedTenant('a');
   tenantB = await seedTenant('b');
+  console.log('Seeding the third actor (confirmed email, no profiles row)…');
+  orphan = await seedOrphanUser();
 
   await runMatrix(tenantA, tenantB);
   await runMatrix(tenantB, tenantA);
   await runAdversarial(tenantA, tenantB);
+  await runOrphanAttack(orphan, tenantB);
 
   const matrixChecks = results.filter(r => !r.name.includes('bonus') && !r.name.startsWith('adversarial'));
   const adversarialChecks = results.filter(r => r.name.startsWith('adversarial'));
@@ -391,6 +482,7 @@ try {
   console.log('\nCleaning up seeded tenants…');
   try { await cleanupTenant(tenantA); } catch (e) { console.error(`cleanup A: ${e.message}`); }
   try { await cleanupTenant(tenantB); } catch (e) { console.error(`cleanup B: ${e.message}`); }
+  try { await cleanupOrphanUser(orphan); } catch (e) { console.error(`cleanup orphan: ${e.message}`); }
 }
 
 process.exit(failures === 0 ? 0 : 1);
