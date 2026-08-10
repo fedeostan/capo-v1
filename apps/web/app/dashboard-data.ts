@@ -379,3 +379,78 @@ export async function loadObraDetail(ctx: AuthContext, jobId: string): Promise<O
 
   return { job, tasks: detailTasks };
 }
+
+/** A live completion claim, attached to the board row of the task it is about. */
+export interface PendingReview {
+  id: string;
+  taskId: string;
+  note: string | null;
+  declaredAt: string;
+  /** true when a worker filed this claim, even if their name did not resolve
+   *  (e.g. their crew row is gone or invisible while the review is still
+   *  pending). Carried separately from `declaredByName` so the UI can still
+   *  attribute the note to a worker rather than silently reading as the
+   *  manager's own check — see declaredByName below. */
+  declaredByWorker: boolean;
+  /** null when either the manager opened this check themselves, OR a worker
+   *  did but their name did not resolve. Branch on `declaredByWorker`, not on
+   *  this, to tell those two apart. */
+  declaredByName: string | null;
+}
+
+/**
+ * Pending reviews for a set of board rows, keyed by task id.
+ *
+ * Two reads rather than one PostgREST embed: the worker name comes through a
+ * nullable FK whose embed alias depends on the constraint's generated name,
+ * and a rename would break it silently at runtime. Two explicit queries cannot
+ * drift that way, and the second is skipped entirely when no review names a
+ * worker (the manager-initiated case).
+ *
+ * Empty input short-circuits — `.in('task_id', [])` is a valid but pointless
+ * round trip on a board with no open tasks.
+ */
+export async function loadPendingReviews(
+  { db, companyId }: AuthContext,
+  taskIds: string[],
+): Promise<Map<string, PendingReview>> {
+  if (taskIds.length === 0) return new Map();
+
+  const { data: reviews, error } = await db
+    .from('task_reviews')
+    .select('id, task_id, note, declared_at, declared_by_worker_id')
+    .eq('company_id', companyId)
+    .eq('status', 'pending')
+    .in('task_id', taskIds);
+  if (error) throw new Error(`task_reviews read failed: ${error.message}`);
+
+  const rows = reviews ?? [];
+  const workerIds = [...new Set(rows.map(r => r.declared_by_worker_id).filter((id): id is string => Boolean(id)))];
+
+  const names = new Map<string, string>();
+  if (workerIds.length > 0) {
+    const { data: crew, error: crewError } = await db
+      .from('workers')
+      .select('id, name')
+      .eq('company_id', companyId)
+      .in('id', workerIds);
+    if (crewError) throw new Error(`workers read failed: ${crewError.message}`);
+    for (const w of crew ?? []) names.set(w.id, w.name);
+  }
+
+  // task_reviews_one_pending_idx guarantees at most one pending row per task,
+  // so a plain Map keyed by task id cannot lose anything.
+  return new Map(
+    rows.map(r => [
+      r.task_id,
+      {
+        id: r.id,
+        taskId: r.task_id,
+        note: r.note,
+        declaredAt: r.declared_at,
+        declaredByWorker: Boolean(r.declared_by_worker_id),
+        declaredByName: r.declared_by_worker_id ? (names.get(r.declared_by_worker_id) ?? null) : null,
+      },
+    ]),
+  );
+}

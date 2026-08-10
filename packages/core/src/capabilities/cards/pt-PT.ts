@@ -10,6 +10,7 @@ export const cards: CardStrings = {
   taskStatus: {
     pending: 'pendente',
     in_progress: 'em curso',
+    pending_review: 'a aguardar controlo',
     blocked: 'bloqueada',
     done: 'concluída',
     cancelled: 'cancelada',

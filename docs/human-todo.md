@@ -64,12 +64,23 @@ any pushed branch:
 
 Two consequences worth knowing before either stream continues:
 
-- **Two migration files are both numbered `0017`** — `0017_worker_checkins.sql`
-  (merged to `main` in #29) and `0017_task_reviews.sql` (unpushed). Git will not
-  flag this: the filenames differ and the contents do not overlap, so the merge
-  is silently clean and the directory ends up with two `0017_*` files. The
-  `task_reviews` ones are the cheap side to renumber to `0018`+, since they are
-  not published yet.
+- **~~Two migration files are both numbered `0017`~~ — RESOLVED on the #19
+  branch.** `0017_worker_checkins.sql` reached `main` first and kept `0017`;
+  the task-review stream renumbered upward to `0018_task_reviews.sql`,
+  `0019_task_reviews_hardening.sql` and `0020_task_review_supersede.sql`, with
+  every cross-reference updated. Worth recording *why* it needed a human: git
+  does not flag it, because the filenames differ and the contents do not
+  overlap, so the merge is silently clean and you simply end up with two
+  `0017_*` files. **File numbers no longer match application order** —
+  `task_reviews` was applied ~90 minutes before `worker_checkins` — and that is
+  fine: the live ledger keys on the timestamps above, and the two streams are
+  independent (`0017_worker_checkins` deliberately never touches `tasks.status`).
+- **`0020` is now taken.** The `revert_translation_batch` null-guard fix on
+  branch `claude/strange-gagarin-53bb5b` was written as
+  `0020_revert_translation_batch_null_guard.sql` and must move to `0021` before
+  it merges — otherwise this exact collision happens a second time. That branch
+  also ports its own `seedOrphanUser` into `scripts/rls-isolation-matrix.mjs`,
+  which #19 already adds, so expect a conflict there too.
 - **Whichever stream regenerates `types.ts` second sees a diff that looks like
   corruption and is not.** Regenerating today pulls in `task_reviews`; doing it
   from the #19 branch pulls in `worker_checkins`. One regeneration after both

@@ -4,6 +4,7 @@ export const cards: CardStrings = {
   taskStatus: {
     pending: 'pendiente',
     in_progress: 'en curso',
+    pending_review: 'pendiente de control',
     blocked: 'bloqueada',
     done: 'terminada',
     cancelled: 'cancelada',

@@ -79,7 +79,7 @@ export interface Catalog {
   };
 
   dashboard: {
-    taskStatus: Record<'pending' | 'in_progress' | 'blocked' | 'done' | 'cancelled', string>;
+    taskStatus: Record<'pending' | 'in_progress' | 'pending_review' | 'blocked' | 'done' | 'cancelled', string>;
     /** Full phrase, e.g. "Prazo passou há 3 dias" / "3 days past due". */
     overdueBy(days: number): string;
     noAssignee: string;
@@ -128,6 +128,28 @@ export interface Catalog {
     jobs: { title: string; subtitle: string; empty: string };
     jobDetail: { fallbackTitle: string; empty: string };
     taskActions: { complete: string; reopen: string; failed: string };
+    /** The pending-review control on a board row. Separate from taskActions
+     *  because these three buttons resolve a REVIEW, not a task. */
+    taskReview: {
+      /** Attributes the note to its author. The worker's own words are quoted
+       *  BELOW this line, never merged into it — see the note handling rule in
+       *  0018_task_reviews.sql. */
+      declaredBy(name: string): string;
+      /** Header when declared_by_worker_id is null (manager opened the check). */
+      declaredByManager: string;
+      /** Header when a worker filed the claim but their name did not resolve
+       *  (e.g. their crew row is gone or invisible while the review is still
+       *  pending). Still attributes to a worker, not the manager — never fall
+       *  back to declaredByManager here. */
+      declaredByUnknownWorker: string;
+      approve: string;
+      reject: string;
+      /** "No check needed" — the manager closing it without a site visit. */
+      dismiss: string;
+      /** Opens a review from the task detail screen. */
+      request: string;
+      failed: string;
+    };
     taskDetail: {
       /** Page title when the task cannot be named (metadata runs before the row loads). */
       fallbackTitle: string;

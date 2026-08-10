@@ -85,6 +85,7 @@ const dict: Catalog = {
     taskStatus: {
       pending: 'Pendiente',
       in_progress: 'En curso',
+      pending_review: 'Pendiente de control',
       blocked: 'Bloqueada',
       done: 'Terminada',
       cancelled: 'Cancelada',
@@ -143,6 +144,16 @@ const dict: Catalog = {
       empty: 'Todavía no hay tareas en esta obra — pídele al Capo que haga el plan.',
     },
     taskActions: { complete: 'Terminar', reopen: 'Reabrir', failed: 'Ha fallado, inténtalo otra vez.' },
+    taskReview: {
+      declaredBy: name => `${name} dice que está hecha:`,
+      declaredByManager: 'Pendiente de control:',
+      declaredByUnknownWorker: 'Un trabajador dice que está hecha:',
+      approve: 'Aprobar',
+      reject: 'Rechazar',
+      dismiss: 'No necesita control',
+      request: 'Pedir control',
+      failed: 'No se pudo resolver el control',
+    },
     taskDetail: {
       fallbackTitle: 'Tarea',
       backToTasks: '← Tareas',
