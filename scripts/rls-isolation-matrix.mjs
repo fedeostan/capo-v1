@@ -20,15 +20,20 @@
 // column revoke, the 0015 revert_translation_batch RPC, the 0017
 // worker_checkins answers a tenant must not be able to forge or rewrite, the
 // two 0018 task-review RPCs plus that table's absent INSERT/UPDATE grants,
-// and — run separately, as the no-profiles-row actor — the same two RPCs
-// again against a real tenant's task/review.
+// and — run separately, as the no-profiles-row actor — those same two RPCs
+// again against a real tenant's task/review, plus revert_translation_batch
+// against a real tenant's batch.
 //
 // The SECURITY DEFINER ones matter more than they look: RLS does NOT cover
 // them, so their internal auth.uid() checks are the entire tenant boundary —
 // which is exactly what the no-profiles-row actor is seeded to probe. Two
 // ordinary tenants structurally cannot: every ordinary attacker has a
 // company, so private.current_company_id() never returns NULL for them, and
-// a guard that fails open only on NULL stays invisible.
+// a guard that fails open only on NULL stays invisible. That is not
+// hypothetical twice over: open_task_review (fixed in 0019) and
+// revert_translation_batch (fixed in 0021, and confirmed exploitable against
+// production before the fix) both shipped with exactly that hole while this
+// matrix reported green.
 //
 // Runs against the live Supabase project using apps/web/.env.local:
 //   pnpm rls-matrix        (root: node scripts/rls-isolation-matrix.mjs)
@@ -215,12 +220,24 @@ async function seedTenant(label) {
 // A third actor, deliberately thinner than seedTenant: an authenticated user
 // with a confirmed email and NO profiles row — Capo's real
 // signup-before-onboarding state (apps/web/app/(public)/registar/actions.ts;
-// signup and onboarding are separate steps). private.current_company_id()
-// returns NULL for this user. That NULL is exactly what made
-// open_task_review's original `<>` tenant guard fail OPEN before the 0019
-// hardening fix (three-valued logic: `v_company <> NULL` is NULL, not true),
-// and no ordinary two-tenant attack can reach that code path, because every
-// ordinary attacker has a company.
+// signup and onboarding are separate steps, and the profiles row is written
+// only by complete_onboarding). private.current_company_id() returns NULL for
+// this user, and that NULL has now made the SAME guard fail OPEN twice:
+//
+//   open_task_review        — `v_company <> NULL` is NULL, fixed in 0019.
+//   revert_translation_batch — the original of that pattern, which
+//                              open_task_review was copied from. Fixed in 0021,
+//                              and confirmed exploitable against production
+//                              first: the RPC did not error, it returned
+//                              {"reverted": 1} and looked like a success.
+//
+// Three-valued logic in both cases: `x <> NULL` is NULL, `true and NULL` is
+// NULL, and `if NULL` does not fire, so the guard is skipped entirely.
+//
+// No ordinary two-tenant attack can reach that path. Every ordinary attacker
+// has a company, so the comparison always yields a real boolean for them and
+// the guard fires correctly — which is precisely why both bugs survived a green
+// matrix. The class of defect needs this third actor.
 async function seedOrphanUser() {
   const email = `rls-matrix-orphan-${run}@example.com`;
   const password = randomBytes(16).toString('hex');
@@ -521,7 +538,14 @@ async function runAdversarial(attacker, victim) {
 // actor that would have caught the fail-open bug fix round 1 found in
 // open_task_review (0019): before that fix, `v_company <> NULL` evaluated to
 // NULL under three-valued logic, the guard silently did not fire, and this
-// exact user could write to any tenant's tasks/task_reviews.
+// exact user could write to any tenant's tasks/task_reviews. Attack 14 is the
+// same defect in revert_translation_batch, which is where open_task_review
+// inherited it from.
+//
+// Runs LAST on purpose. If a boundary is broken these calls genuinely mutate
+// the victim's rows, and every earlier check has already read the state it
+// needed by then — so a failure here reports one clean defect instead of
+// cascading into unrelated noise.
 async function runOrphanAttack(orphan, victim) {
   const db = orphan.client;
 
@@ -565,6 +589,38 @@ async function runOrphanAttack(orphan, victim) {
       'adversarial: orphan (no profiles row) resolve_task_review blocked',
       error != null && after?.status === 'pending',
       error ? `rejected (${error.code ?? 'err'}), victim review still ${after?.status}` : 'ACCEPTED — boundary broken',
+    );
+  }
+
+  // Attack 14 (0015 + 0021): revert_translation_batch is SECURITY DEFINER, so
+  // RLS does not cover it and its auth.uid() clause is the entire tenant
+  // boundary. Before 0021 that clause used `<>`, which three-valued logic
+  // turned into a no-op for exactly this caller — the RPC did not merely allow
+  // the write, it returned {"reverted": 1} and looked like a success.
+  //
+  // Asserting on the error alone would therefore be weak: assert the victim's
+  // row too. The seeded batch is 'completed' with one 'applied' item whose
+  // old_value is victim.originalTitle, so a leak is directly observable as the
+  // victim's task title reverting to that string.
+  //
+  // Note the batch's other side-effect (companies.language back to from_locale)
+  // is NOT assertable here: companies.language defaults to 'pt-PT' (0014) and
+  // the seeded batch is pt-PT → en-US, so that UPDATE's `and language =
+  // to_locale` guard never matches a seeded company. A check on it could not
+  // fail, which is worse than no check.
+  {
+    const { error } = await db.rpc('revert_translation_batch', { p_batch: victim.batchId });
+    const { data: victimTask } = await admin
+      .from('tasks').select('title').eq('id', victim.taskIds[0]).maybeSingle();
+    const untouched = victimTask?.title !== victim.originalTitle;
+    check(
+      'adversarial: orphan (no profiles row) revert of foreign batch blocked',
+      error != null && untouched,
+      error == null
+        ? 'RPC SUCCEEDED (cross-tenant write!)'
+        : !untouched
+          ? 'victim task title was reverted (leak!)'
+          : `rejected (${error.code ?? 'err'})`,
     );
   }
 }

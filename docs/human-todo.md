@@ -75,12 +75,19 @@ Two consequences worth knowing before either stream continues:
   `task_reviews` was applied ~90 minutes before `worker_checkins` — and that is
   fine: the live ledger keys on the timestamps above, and the two streams are
   independent (`0017_worker_checkins` deliberately never touches `tasks.status`).
-- **`0020` is now taken.** The `revert_translation_batch` null-guard fix on
-  branch `claude/strange-gagarin-53bb5b` was written as
-  `0020_revert_translation_batch_null_guard.sql` and must move to `0021` before
-  it merges — otherwise this exact collision happens a second time. That branch
-  also ports its own `seedOrphanUser` into `scripts/rls-isolation-matrix.mjs`,
-  which #19 already adds, so expect a conflict there too.
+- ~~**`0020` is now taken.**~~ **DONE** (PR #32). The `revert_translation_batch`
+  null-guard fix moved to `0021_revert_translation_batch_null_guard.sql` when
+  main was merged into `claude/strange-gagarin-53bb5b`, with its internal
+  references to #19's migrations renumbered `0018`→`0019` to match.
+  The predicted `seedOrphanUser` conflict happened, and git flagged it — but the
+  *dangerous* part of that same merge did not conflict at all: both branches had
+  added a `runOrphanAttack` function, and git kept **both declarations**. In
+  JavaScript the second one silently replaces the first, so #19's two orphan
+  checks (`open_task_review`, `resolve_task_review`) would have been dead code
+  and the suite would have reported green while running two fewer attacks than
+  its own totals implied. The two bodies are now merged into one function
+  carrying attacks 12, 13 and 14. Same lesson as the `0017` collision above:
+  what git flags is not what hurts you.
 - **Whichever stream regenerates `types.ts` second sees a diff that looks like
   corruption and is not.** Regenerating today pulls in `task_reviews`; doing it
   from the #19 branch pulls in `worker_checkins`. One regeneration after both
