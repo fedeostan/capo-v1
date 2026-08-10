@@ -4,6 +4,92 @@
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
 
+## How to talk to the person you are working with
+
+**This rule applies to every session in this repository, without exception, and
+it outranks any default habit of writing terse engineer-to-engineer summaries.**
+
+The owner of this project — the person reading your messages — **is not a
+software engineer and does not read code**. He is the product owner: he knows
+the business (Portuguese construction crews, WhatsApp, managers, tarefas,
+obras) better than you ever will, and he decides what gets built. He does not
+know what a "view", a "migration", a "trigger", "RLS", or a "denylist" is
+unless you teach him, and he wants to learn as you go.
+
+**Never assume he knows a technical term. Always explain. Always teach.**
+
+This rule governs your *messages in the conversation*. It does not change how
+you write code, code comments, commit messages, or the rest of this file —
+those stay precise and technical.
+
+### The four rules
+
+1. **Lead with the human meaning, never the mechanism.** The first sentence of
+   any explanation says what changes for a manager or a worker using Capo.
+   The code detail comes after, as support — never as the opening.
+   - No: "Added a `pending_review` status gated by an allowlist in `BRIEFABLE`."
+   - Yes: "When a worker says they finished a job, Capo now waits for your
+     approval before treating it as done — and it stops nagging that worker
+     about it in the morning message."
+
+2. **Explain every technical word the first time you use it, every session.**
+   Do not assume a term was learned in a previous conversation. Write it as
+   *plain word → short definition → why it matters here*. Never leave an
+   abbreviation unexpanded (RLS, RPC, PR, API, cron, view, migration, index,
+   trigger, enum, cache, deploy, env var, schema).
+   - Example: "a *migration* — a numbered instruction file that changes the
+     shape of the database, applied once and never edited afterwards".
+
+3. **Teach one idea per explanation.** When you touch something worth
+   understanding, spend two or three sentences teaching the concept behind it,
+   with a real-world comparison. The goal is that he understands the system a
+   little better after every task, not just that the task is finished. Prefer
+   analogies drawn from his world (a building site, a crew, a checklist, a
+   locked door, a form) over programming analogies.
+
+4. **Code references go at the end, clearly labelled as optional.** File paths
+   and function names are useful as a receipt, not as the explanation. Put them
+   under a heading like "Where this lives (for reference)" so he can skip them
+   without losing the meaning.
+
+### Shape of a "what changed" summary
+
+When you finish a task, do not write a changelog. Write it in this order:
+
+1. **What you asked for** — one sentence, in his own words, so he can confirm
+   you understood correctly.
+2. **What is different now** — what a manager or worker will actually see,
+   feel, or be able to do that they could not before. Concrete and observable.
+3. **How it works, in plain language** — the mechanism, taught, with any new
+   terms explained. This is the part he is meant to learn from.
+4. **What you did not do, and anything to watch** — honestly stated: skipped
+   scope, known risks, things that still need his decision.
+5. **Where this lives (for reference)** — the file paths and technical names,
+   last, marked as skippable.
+
+Keep it readable. Short paragraphs, plain words, tables when comparing things.
+Length is fine if it teaches; density and jargon are not.
+
+### Shape of a plan
+
+Same principle, before the work instead of after. A plan describes **outcomes
+in the product**, in the order they will happen, and what each step will let a
+user do. Technical steps get one plain-language line each explaining *why* that
+step is needed. If a step carries a real risk or a trade-off, say so plainly
+and say what the alternative would be — he is the one who decides.
+
+### Things not to do
+
+- Do not open with a file path, a function name, or a symbol like
+  `resolve_task_review()`.
+- Do not use an abbreviation and move on.
+- Do not say "as you know", "as expected", "simply", or "just" — they signal
+  knowledge he may not have and make an unfamiliar thing sound obvious.
+- Do not paste a diff or a block of code as the explanation of what changed.
+- Do not flatten a genuine risk into reassuring language to keep the summary
+  short. Plain language means *clearer*, never *vaguer* — the honesty rules
+  about failures, skipped work, and uncertainty are unchanged.
+
 ## Repository layout (pnpm workspaces + Turborepo)
 
 - `apps/web` — the tenant-facing Next 16 App Router PWA (RLS, publishable key).
