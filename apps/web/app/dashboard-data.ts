@@ -483,7 +483,7 @@ export interface TaskPhoto {
  * 403s while they are still looking at the page is a bug they cannot explain.
  *
  * createSignedUrls runs on the RLS-scoped client, so the storage.objects
- * SELECT policy (0022) is what decides whether a URL can be minted at all — a
+ * SELECT policy (0023) is what decides whether a URL can be minted at all — a
  * session from another company gets an error, not a working link. That is the
  * boundary; the company_id filter below is belt-and-braces on top of it.
  */

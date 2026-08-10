@@ -20,12 +20,12 @@
 // column revoke, the 0015 revert_translation_batch RPC, the 0017
 // worker_checkins answers a tenant must not be able to forge or rewrite, the
 // two 0018 task-review RPCs plus that table's absent INSERT/UPDATE grants,
-// the 0022 STORAGE surface (see below), and — run separately, as the
+// the 0023 STORAGE surface (see below), and — run separately, as the
 // no-profiles-row actor — those same two RPCs again against a real tenant's
 // task/review, plus revert_translation_batch against a real tenant's batch,
 // plus signing and downloading a real tenant's photo.
 //
-// 0022 is the first surface here that is not only Postgres. task_photos is an
+// 0023 is the first surface here that is not only Postgres. task_photos is an
 // ordinary RLS table and rides in the visibility matrix like any other, but
 // the PHOTOS THEMSELVES live in Storage, behind policies on storage.objects
 // that a different service consults over a different endpoint. Table checks
@@ -230,7 +230,7 @@ async function seedTenant(label) {
   );
 
   // A real object in the task-photos bucket, plus the task_photos row that
-  // points at it (0022). Both are needed: the row is what the visibility
+  // points at it (0023). Both are needed: the row is what the visibility
   // matrix reads, and the OBJECT is what the storage.objects policies guard —
   // and those two boundaries are enforced by completely different machinery
   // (Postgres RLS on a public table vs. RLS on storage.objects, consulted by
@@ -593,7 +593,7 @@ async function runAdversarial(attacker, victim) {
     );
   }
 
-  // ── 0022: Supabase Storage ───────────────────────────────────────────────
+  // ── 0023: Supabase Storage ───────────────────────────────────────────────
   // The first storage surface in this project, and the reason this section is
   // longer than it looks like it needs to be: photos are guarded by TWO
   // independent mechanisms that can fail independently. The task_photos table
@@ -822,7 +822,7 @@ async function runOrphanAttack(orphan, victim) {
     );
   }
 
-  // Attack 22 (0022): the storage boundary, seen by the actor it is most
+  // Attack 22 (0023): the storage boundary, seen by the actor it is most
   // likely to fail open for. The storage.objects policies read
   // `(storage.foldername(name))[1] = (select private.current_company_id())::text`,
   // and for this user that function returns NULL — the exact input that turned

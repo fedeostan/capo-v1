@@ -224,7 +224,7 @@ Structural invariants (do not regress):
   `task_reviews.note` is the one place worker-authored text reaches the
   manager. Render it as an attributed quote, never as UI copy.
 - **Task photos are the project's only Storage use, and the object path IS
-  the tenant boundary.** Migration `0022_task_photos.sql` adds a private
+  the tenant boundary.** Migration `0023_task_photos.sql` adds a private
   bucket `task-photos`, the `task_photos` table, and one column,
   `tasks.completion_proof`. Everything about it keys on the path convention
   `{company_id}/{task_id}/{uuid}.{ext}` — build one only through
@@ -261,7 +261,7 @@ Structural invariants (do not regress):
     front of it. The agent neither reads the bucket nor reads `task_photos`.
   - `tasks.completion_proof` is `'photos' | 'skipped' | NULL`, written only by
     the completion sheet. **NULL means "closed some other way" (chat, agent,
-    pre-0022) — unknown, never "skipped".** Do not conflate them when counting.
+    pre-0023) — unknown, never "skipped".** Do not conflate them when counting.
 - **One clock, one definition of "today".** The active-window rule
   (`lisbon_today() BETWEEN coalesce(start_date, created_at) AND
   coalesce(due_date, 'infinity')`) and every schedule-risk signal live in SQL,

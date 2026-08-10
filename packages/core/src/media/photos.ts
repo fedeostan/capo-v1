@@ -14,7 +14,7 @@
 //
 // These constants are the INNERMOST of three statements of the same two rules.
 // The Storage bucket's file_size_limit/allowed_mime_types and the CHECK
-// constraints on task_photos (both in 0022_task_photos.sql) restate them, and
+// constraints on task_photos (both in 0023_task_photos.sql) restate them, and
 // those two bind even if this file is bypassed entirely. Change a value here
 // and you MUST write a migration; nothing in CI will notice if you do not.
 //

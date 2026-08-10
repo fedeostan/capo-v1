@@ -23,7 +23,7 @@
 // `string` rather than a literal union, so widening its check constraint is
 // invisible here.
 //
-//   0022_task_photos (version 20260810074738) — task_photos, plus one new column,
+//   0023_task_photos (version 20260810074738) — task_photos, plus one new column,
 //                          tasks.completion_proof. Applied to the live project
 //                          from this branch after confirming its migration
 //                          ledger was IDENTICAL to supabase/migrations/ (21
@@ -31,7 +31,7 @@
 //                          — which is the precondition the warning below is
 //                          about, not a blanket ban.
 //
-// Note what 0022 does NOT appear as. The bucket, the two storage.objects
+// Note what 0023 does NOT appear as. The bucket, the two storage.objects
 // policies and every grant/RLS/CHECK are invisible here: this file types the
 // `public` schema's shape only. `storage` is a different schema, and nothing
 // about a column's WRITABILITY survives into TypeScript. task_photos'

@@ -16,7 +16,7 @@ import {
 //
 // Read on the RLS-scoped client from AuthContext, never getDb(): the Storage
 // upload has to run under the manager's own session or the storage.objects
-// INSERT policy (0022) has no identity to check the path segment against.
+// INSERT policy (0023) has no identity to check the path segment against.
 
 /**
  * Reasons a photo or a batch is refused, in the same machine-readable shape as
@@ -95,7 +95,7 @@ export async function uploadTaskPhotos(
   if (files.length > TASK_PHOTO_MAX_PER_UPLOAD) throw new TaskPhotoError('too_many');
 
   // Confirm the task is ours BEFORE writing objects. The task_photos insert
-  // would catch a foreign or missing task anyway (RLS, the FK, and the 0022
+  // would catch a foreign or missing task anyway (RLS, the FK, and the 0023
   // trigger all would), but only after the bytes are already in the bucket —
   // and the storage.objects policy alone would happily accept
   // {own company}/{a uuid that is not a task}/… as a place to park files.
@@ -147,7 +147,7 @@ export async function uploadTaskPhotos(
   // One insert for the batch: either every photo is recorded or none is, so
   // the manager never sees half a proof set. `source`, `worker_id` and
   // `uploaded_by` are omitted on purpose — the column-scoped INSERT grant in
-  // 0022 does not include them, and PostgREST rejects (42501) a request that
+  // 0023 does not include them, and PostgREST rejects (42501) a request that
   // names them. Their defaults ('manager', auth.uid(), NULL) are the honest
   // values and cannot be talked out of.
   const { error: insertError } = await db.from('task_photos').insert(

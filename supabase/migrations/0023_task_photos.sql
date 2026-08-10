@@ -221,4 +221,4 @@ alter table tasks add column completion_proof text
   check (completion_proof is null or completion_proof in ('photos', 'skipped'));
 
 comment on column tasks.completion_proof is
-  'How the manager closed this task through the completion sheet: photos attached, or proof declined. NULL = closed some other way (chat, agent, pre-0022) — unknown, not skipped.';
+  'How the manager closed this task through the completion sheet: photos attached, or proof declined. NULL = closed some other way (chat, agent, pre-0023) — unknown, not skipped.';
