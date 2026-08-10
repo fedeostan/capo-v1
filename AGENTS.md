@@ -234,7 +234,63 @@ Structural invariants (do not regress):
 - **Plan durations are working days, not calendar days.** The scheduler
   advances through `packages/core/src/capabilities/workdays.ts`, which skips
   weekends and the thirteen Portuguese national holidays. Anything that
-  computes a due date from a duration goes through `addWorkdays`.
+  computes a due date from a duration goes through `addWorkdays`. Measuring an
+  existing span (rather than walking one) goes through `countWorkdays` /
+  `workdayDelta` in the same file — they are the exact inverse of `addWorkdays`
+  and `scheduler-check` asserts that, because a task with no `duration_days`
+  (nullable since `0010` — every pre-planner task) has its length read back off
+  its dates.
+- **`apply_reschedule` is the third absent-from-roster applier**, alongside
+  `apply_plan` and `apply_company_translation`, and for the identical reason: a
+  *guarded* tool in the roster executes directly whenever the model can quote
+  the manager, and for "a Pintura acabou mais cedo" it always can. The model
+  reaches rescheduling only through `reschedule_job`, which is unguarded
+  because it never writes — it only ever produces a card.
+
+  The cascade splits across four files on purpose, and the split is load-bearing:
+  - `capabilities/reschedule.ts` — **pure**. No `Db`, no `Date.now()`, no locale,
+    no `createProposal`. This is the only part of the task-completion work
+    `pnpm scheduler-check` can cover, and it is the highest-risk pure function
+    in the repo because it proposes moving dates on a live job. Keep it
+    importable with no credentials and no network.
+  - `capabilities/reschedule-load.ts` — reads **base `tasks`**, not `task_board`
+    (the view's `lisbon_today()` window would drop exactly the future rows a
+    cascade exists to move), but takes `today` from `lisbon_today()`: one clock.
+    It loads one hop of **cross-job predecessors**, because `task_dependencies`
+    only requires both ends be same-*company* (`0007:127-140`), never same-job —
+    an unloaded outside predecessor is a silently *missing* constraint.
+  - `capabilities/reschedule-propose.ts` — orchestration plus the `reschedule_job`
+    roster tool.
+  - `capabilities/reschedule-apply.ts` — the applier.
+
+  Four things inside it that look like details and are not:
+  - **Nothing outside `movable` is ever written.** `scheduleTasks` (`plan.ts`)
+    cannot be reused precisely because it rewrites *every* task from one global
+    start floor; on a live job that is catastrophic.
+  - **`from_start_date`/`from_due_date` are in the payload as a compare-and-set
+    predicate**, not as documentation. `resolveProposal` re-validates and
+    re-renders but cannot know a *row* changed underneath, so without them
+    approving a card left open overnight silently stomps a manual edit. Same
+    role as `apply_company_translation`'s `languageMoved` re-check
+    (`render.ts:169-178`). The applier reads every target row and verifies the
+    whole set **before** the first write, so a stale card changes nothing.
+  - **A cycle throws.** `task_dependencies` has no anti-cycle constraint in SQL
+    and `scheduleTasks` silently drops back-edges — safe for model output, which
+    zod-validates as a DAG first, never checked for DB edges.
+  - **`pending_review` counts as finished for the cascade floor and as immovable
+    for movement.** The cascade therefore fires on an *unverified* claim, which
+    is exactly why it can only ever produce a card — and why the card says so
+    out loud (`cards/types.ts`'s `reschedule.header({ unverified })`).
+
+  An **empty result creates no proposal at all**: a job whose tasks were made
+  one at a time by `create_task` has zero edges, so a completion cascades to
+  nothing. That is the dominant case, not an error — an empty approval card is
+  worse than silence. The skip is logged (`dashboard.reschedule_skipped`) so
+  "no card appeared" stays falsifiable.
+
+  Known and accepted: a manually pinned date gets stomped, defensible **only
+  because** the card shows `from → to` per row and the CAS refuses stale rows.
+  The long-term fix is a `schedule_locked boolean` on `tasks`.
 - Views may only be extended with `create or replace view` **appending**
   columns (Postgres forbids reorder/retype). Code reading a view that a
   pending migration extends should `select('*')` and treat the new fields as
