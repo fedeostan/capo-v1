@@ -34,16 +34,20 @@ function isValidPushEndpoint(url: string): boolean {
     const hostname = parsed.hostname;
     if (!hostname) return false;
 
+    // A trailing dot is valid FQDN syntax and resolves identically, so
+    // "localhost." would otherwise walk straight past an exact-match check.
+    const host = hostname.replace(/\.$/, '').toLowerCase();
+
     // Reject localhost.
-    if (hostname === 'localhost') return false;
+    if (host === 'localhost') return false;
 
     // Reject .local and .internal domains.
-    if (hostname.endsWith('.local') || hostname.endsWith('.internal')) return false;
+    if (host.endsWith('.local') || host.endsWith('.internal')) return false;
 
     // Reject IPv4 and IPv6 literals. IPv6 in a URL is bracket-wrapped,
     // e.g. https://[::1]/x. A bare IPv4 shows up as a dotted quad.
     // Both are invalid for a legitimate push service endpoint.
-    if (hostname.includes(':') || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) return false;
+    if (host.includes(':') || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return false;
 
     return true;
   } catch {
