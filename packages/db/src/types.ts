@@ -528,6 +528,8 @@ export type Database = {
           id: string
           kind: string
           profile_id: string
+          push_attempts: number
+          pushed_at: string | null
           read_at: string | null
           subject_id: string | null
           subject_type: string | null
@@ -540,6 +542,8 @@ export type Database = {
           id?: string
           kind: string
           profile_id: string
+          push_attempts?: number
+          pushed_at?: string | null
           read_at?: string | null
           subject_id?: string | null
           subject_type?: string | null
@@ -552,6 +556,8 @@ export type Database = {
           id?: string
           kind?: string
           profile_id?: string
+          push_attempts?: number
+          pushed_at?: string | null
           read_at?: string | null
           subject_id?: string | null
           subject_type?: string | null
@@ -665,6 +671,59 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      // Hand-written ahead of migration 0026 being applied to the live project.
+      // Regenerate from the database (supabase gen types) once it is applied.
+      push_subscriptions: {
+        Row: {
+          auth: string
+          company_id: string
+          created_at: string
+          endpoint: string
+          id: string
+          last_failed_at: string | null
+          p256dh: string
+          profile_id: string
+          user_agent: string | null
+        }
+        Insert: {
+          auth: string
+          company_id: string
+          created_at?: string
+          endpoint: string
+          id?: string
+          last_failed_at?: string | null
+          p256dh: string
+          profile_id: string
+          user_agent?: string | null
+        }
+        Update: {
+          auth?: string
+          company_id?: string
+          created_at?: string
+          endpoint?: string
+          id?: string
+          last_failed_at?: string | null
+          p256dh?: string
+          profile_id?: string
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_subscriptions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "push_subscriptions_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

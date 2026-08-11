@@ -1,0 +1,228 @@
+// The push dispatcher: the one place a notifications row becomes a lock-screen
+// alert. Called from exactly two places — immediately, via after(), from the
+// request that caused the row (_tasks/actions.ts), and every 10 minutes from
+// api/cron/push. ONE function, two triggers, so the two cannot drift.
+//
+// Sits beside inbox.ts and briefing.ts: the same subject matter — what Capo
+// tells the manager — arriving through a third channel. briefing.ts is the
+// 07:00 WhatsApp push, inbox.ts is the pull, this is the phone alert.
+//
+// THE ROW IS THE QUEUE. There is no push-specific producer and no outbound
+// ledger: a notifications row with pushed_at null is an undelivered parcel.
+// That is what makes "no push without an inbox entry" structural rather than a
+// rule someone has to remember, and it is why #22's and #23's future
+// notification kinds ride this file with no edit.
+//
+// SERVICE ROLE, and it is forced rather than convenient. The rows this needs
+// belong to OTHER profiles — 0024's trigger specifically excludes the actor —
+// so the caller's own user client structurally cannot see a single row it must
+// send. The guardrails that make that acceptable: companyId only ever arrives
+// from an already-authenticated requireAuth() context, never from a request
+// body; and this returns void, so there is no data path back to a caller.
+import { getDb } from '@capo/db/client';
+import { getCatalog } from '@capo/i18n/catalog';
+import { coerceLocale } from '@capo/i18n/locale';
+import {
+  buildPushPayload,
+  decideRowState,
+  PUSH_MAX_ATTEMPTS,
+  type PushOutcome,
+} from '@capo/core/channels/push-rules';
+import { pushConfigured, sendPush, type StoredSubscription } from '@/lib/push';
+import { logEvent } from '@/lib/log';
+
+interface PendingRow {
+  id: string;
+  company_id: string;
+  profile_id: string;
+  kind: string;
+  subject_type: string | null;
+  subject_id: string | null;
+  title: string | null;
+  push_attempts: number;
+}
+
+export async function dispatchPushes(
+  opts: { companyId?: string; limit?: number } = {},
+): Promise<void> {
+  // An unconfigured deploy is "push is off", never an error. Every preview
+  // deployment is in this state.
+  if (!pushConfigured()) return;
+
+  const db = getDb();
+  const limit = opts.limit ?? 200;
+
+  let query = db
+    .from('notifications')
+    .select('id, company_id, profile_id, kind, subject_type, subject_id, title, push_attempts')
+    .is('pushed_at', null)
+    .lt('push_attempts', PUSH_MAX_ATTEMPTS)
+    // Oldest first: after an outage the backlog drains in the order things
+    // actually happened.
+    .order('created_at', { ascending: true })
+    .limit(limit);
+  if (opts.companyId) query = query.eq('company_id', opts.companyId);
+
+  const { data, error } = await query;
+  if (error) {
+    logEvent('notifications.push_read_failed', { error: error.message });
+    return;
+  }
+  const rows = (data ?? []) as PendingRow[];
+  if (rows.length === 0) return;
+
+  const [taskByReview, localeByProfile, subsByProfile] = await Promise.all([
+    resolveTasks(db, rows),
+    resolveLocales(db, rows),
+    resolveSubscriptions(db, rows),
+  ]);
+
+  let sent = 0;
+  let gone = 0;
+  let retried = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const t = getCatalog(coerceLocale(localeByProfile.get(row.profile_id)));
+    // The SAME catalog entry and the SAME null-title fallback the inbox
+    // renders (see notificacoes/page.tsx `headline`), so push and inbox
+    // structurally cannot say different things.
+    const line = t.notifications.kind[row.kind as keyof typeof t.notifications.kind];
+    const headline = line ? line(row.title ?? t.notifications.noSubject) : null;
+
+    const taskId =
+      row.subject_type === 'task_review' && row.subject_id
+        ? (taskByReview.get(row.subject_id) ?? null)
+        : null;
+
+    const payload = buildPushPayload({
+      notificationId: row.id,
+      appName: t.meta.appName,
+      headline,
+      taskId,
+    });
+
+    // An unrenderable kind — a row from a newer deploy reaching an older
+    // bundle. Stamped rather than left pending: it will never become
+    // renderable to THIS bundle, so retrying is pointless, and the inbox
+    // already degrades gracefully on screen.
+    if (!payload) {
+      skipped += 1;
+      await stamp(db, row.id);
+      continue;
+    }
+
+    const subs = subsByProfile.get(row.profile_id) ?? [];
+    const outcomes: PushOutcome[] = [];
+    for (const sub of subs) {
+      const outcome = await sendPush(sub, payload);
+      outcomes.push(outcome);
+      if (outcome === 'ok') sent += 1;
+      if (outcome === 'gone') {
+        gone += 1;
+        // Believe it the first time. A registration the push service calls
+        // dead will never deliver again, and retrying it forever is how this
+        // table stops being small.
+        await db.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+      }
+      if (outcome === 'retry') {
+        await db
+          .from('push_subscriptions')
+          .update({ last_failed_at: new Date().toISOString() })
+          .eq('endpoint', sub.endpoint);
+      }
+    }
+
+    if (decideRowState(outcomes) === 'stamp') {
+      await stamp(db, row.id);
+    } else {
+      retried += 1;
+      const attempts = row.push_attempts + 1;
+      await db.from('notifications').update({ push_attempts: attempts }).eq('id', row.id);
+      // Deliberately left UNstamped even once attempts hits PUSH_MAX_ATTEMPTS:
+      // 0026's own comment defines an unstamped row as "an undelivered
+      // parcel", and this row genuinely was never delivered — stamping it here
+      // would make that comment a lie about a row that just happened to run
+      // out of tries. The cost is that abandoned rows stay in
+      // notifications_push_pending_idx and get re-read (then filtered out by
+      // the `lt('push_attempts', PUSH_MAX_ATTEMPTS)` above) on every future
+      // sweep. Reaching PUSH_MAX_ATTEMPTS needs three consecutive transient
+      // failures for one recipient, so that population stays tiny — the inbox
+      // and the unread strip still carry the notification either way, so the
+      // manager is un-buzzed, never uninformed.
+      if (attempts >= PUSH_MAX_ATTEMPTS) {
+        logEvent('notifications.push_abandoned', { id: row.id, companyId: row.company_id });
+      }
+    }
+  }
+
+  // A run that sends nothing writes no rows and raises no error — the same
+  // shape of silent failure AGENTS.md flags on the two cron send routes, where
+  // it is exactly how the check-in shipped and then never sent a message.
+  logEvent('notifications.push_dispatched', {
+    considered: rows.length,
+    sent,
+    gone,
+    retried,
+    skipped,
+    companyId: opts.companyId ?? null,
+  });
+}
+
+async function stamp(db: ReturnType<typeof getDb>, id: string): Promise<void> {
+  await db.from('notifications').update({ pushed_at: new Date().toISOString() }).eq('id', id);
+}
+
+/** Review id → task id, so the tap lands where approve/reject actually render.
+ *  A second query rather than a PostgREST embed, for the same reason loadInbox
+ *  avoids one: the embed alias depends on the FK constraint's generated name
+ *  and a rename would break it silently. */
+async function resolveTasks(
+  db: ReturnType<typeof getDb>,
+  rows: PendingRow[],
+): Promise<Map<string, string>> {
+  const ids = [
+    ...new Set(
+      rows
+        .filter(r => r.subject_type === 'task_review')
+        .map(r => r.subject_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const map = new Map<string, string>();
+  if (ids.length === 0) return map;
+  const { data } = await db.from('task_reviews').select('id, task_id').in('id', ids);
+  for (const r of data ?? []) map.set(r.id, r.task_id);
+  return map;
+}
+
+/** Each recipient reads their own alert in their own profiles.language — the
+ *  row carries data, never copy (0024). */
+async function resolveLocales(
+  db: ReturnType<typeof getDb>,
+  rows: PendingRow[],
+): Promise<Map<string, string | null>> {
+  const ids = [...new Set(rows.map(r => r.profile_id))];
+  const map = new Map<string, string | null>();
+  const { data } = await db.from('profiles').select('id, language').in('id', ids);
+  for (const p of data ?? []) map.set(p.id, p.language);
+  return map;
+}
+
+async function resolveSubscriptions(
+  db: ReturnType<typeof getDb>,
+  rows: PendingRow[],
+): Promise<Map<string, StoredSubscription[]>> {
+  const ids = [...new Set(rows.map(r => r.profile_id))];
+  const map = new Map<string, StoredSubscription[]>();
+  const { data } = await db
+    .from('push_subscriptions')
+    .select('profile_id, endpoint, p256dh, auth')
+    .in('profile_id', ids);
+  for (const s of data ?? []) {
+    const list = map.get(s.profile_id) ?? [];
+    list.push({ endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth });
+    map.set(s.profile_id, list);
+  }
+  return map;
+}
