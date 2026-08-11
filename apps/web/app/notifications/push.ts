@@ -43,7 +43,7 @@ interface PendingRow {
 }
 
 export async function dispatchPushes(
-  opts: { companyId?: string; limit?: number } = {},
+  opts: { companyId?: string; limit?: number; olderThanSeconds?: number } = {},
 ): Promise<void> {
   // An unconfigured deploy is "push is off", never an error. Every preview
   // deployment is in this state.
@@ -62,6 +62,20 @@ export async function dispatchPushes(
     .order('created_at', { ascending: true })
     .limit(limit);
   if (opts.companyId) query = query.eq('company_id', opts.companyId);
+  // Unset (the immediate-path call from _tasks/actions.ts) means "consider
+  // everything pending" — the immediate path must never skip a row it exists
+  // to send right away. Set (the cron sweep) means "leave the newest rows
+  // alone": this is how the sweep stays a backstop rather than a competitor —
+  // a fresh row still belongs to the immediate path that just created it, and
+  // the sweep only picks up what that path did not manage to deliver. There
+  // is no claim protocol here; this window is what keeps the two triggers
+  // from routinely double-sending the same row.
+  if (opts.olderThanSeconds !== undefined) {
+    query = query.lt(
+      'created_at',
+      new Date(Date.now() - opts.olderThanSeconds * 1000).toISOString(),
+    );
+  }
 
   const { data, error } = await query;
   if (error) {
@@ -76,6 +90,17 @@ export async function dispatchPushes(
     resolveLocales(db, rows),
     resolveSubscriptions(db, rows),
   ]);
+  // resolveSubscriptions returns null only when its own query failed. That
+  // failure is indistinguishable, downstream, from "nobody in this batch has
+  // registered a device" — every row would get subs = [], decideRowState([])
+  // stamps every one of them, and up to `limit` notifications would be marked
+  // delivered having never been sent, with no way to tell afterwards that it
+  // happened. So this is the one resolver that aborts the whole run rather
+  // than degrading: the rows stay pending and the next sweep (or the next
+  // immediate call) tries again. resolveTasks and resolveLocales fail softer
+  // — see the comments at their call sites below — because their failure
+  // modes are merely lossy, not silently destructive.
+  if (subsByProfile === null) return;
 
   let sent = 0;
   let gone = 0;
@@ -90,10 +115,19 @@ export async function dispatchPushes(
     const line = t.notifications.kind[row.kind as keyof typeof t.notifications.kind];
     const headline = line ? line(row.title ?? t.notifications.noSubject) : null;
 
-    const taskId =
+    // Belt-and-braces, same posture inbox.ts and dashboard-data.ts take on
+    // this identical lookup: task_reviews.company_id must match the
+    // notification row's OWN company_id before the resolved task id is
+    // trusted. A per-row check rather than a batch-level filter on the
+    // resolveTasks query, because one dispatcher run — unlike loadInbox,
+    // which is scoped to a single tenant by RLS — can span every company at
+    // once. Nothing else constrains this lookup: it runs on the service role.
+    const resolvedReview =
       row.subject_type === 'task_review' && row.subject_id
-        ? (taskByReview.get(row.subject_id) ?? null)
-        : null;
+        ? taskByReview.get(row.subject_id)
+        : undefined;
+    const taskId =
+      resolvedReview && resolvedReview.companyId === row.company_id ? resolvedReview.taskId : null;
 
     const payload = buildPushPayload({
       notificationId: row.id,
@@ -173,14 +207,19 @@ async function stamp(db: ReturnType<typeof getDb>, id: string): Promise<void> {
   await db.from('notifications').update({ pushed_at: new Date().toISOString() }).eq('id', id);
 }
 
-/** Review id → task id, so the tap lands where approve/reject actually render.
- *  A second query rather than a PostgREST embed, for the same reason loadInbox
- *  avoids one: the embed alias depends on the FK constraint's generated name
- *  and a rename would break it silently. */
+/** Review id → (task id, company id), so the tap lands where approve/reject
+ *  actually render. A second query rather than a PostgREST embed, for the
+ *  same reason loadInbox avoids one: the embed alias depends on the FK
+ *  constraint's generated name and a rename would break it silently.
+ *
+ *  company_id rides along so the call site can check it per row before
+ *  trusting the resolved task id (see the belt-and-braces comment in
+ *  dispatchPushes) — this query itself is deliberately NOT filtered to a
+ *  single company, because one dispatcher run can span every tenant. */
 async function resolveTasks(
   db: ReturnType<typeof getDb>,
   rows: PendingRow[],
-): Promise<Map<string, string>> {
+): Promise<Map<string, { taskId: string; companyId: string }>> {
   const ids = [
     ...new Set(
       rows
@@ -189,10 +228,23 @@ async function resolveTasks(
         .filter((id): id is string => Boolean(id)),
     ),
   ];
-  const map = new Map<string, string>();
+  const map = new Map<string, { taskId: string; companyId: string }>();
   if (ids.length === 0) return map;
-  const { data } = await db.from('task_reviews').select('id, task_id').in('id', ids);
-  for (const r of data ?? []) map.set(r.id, r.task_id);
+  const { data, error } = await db
+    .from('task_reviews')
+    .select('id, task_id, company_id')
+    .in('id', ids);
+  // Soft failure: every deep link in this batch degrades to pushTargetUrl's
+  // fallback (/notificacoes), which is the CORRECT behaviour for a subject
+  // that genuinely does not resolve, and merely a worse tap target — never a
+  // wrong or forged one — when the cause was actually a failed query. Logged
+  // so the difference is at least visible after the fact; not worth aborting
+  // the run over, unlike resolveSubscriptions above.
+  if (error) {
+    logEvent('notifications.push_tasks_read_failed', { error: error.message });
+    return map;
+  }
+  for (const r of data ?? []) map.set(r.id, { taskId: r.task_id, companyId: r.company_id });
   return map;
 }
 
@@ -204,21 +256,46 @@ async function resolveLocales(
 ): Promise<Map<string, string | null>> {
   const ids = [...new Set(rows.map(r => r.profile_id))];
   const map = new Map<string, string | null>();
-  const { data } = await db.from('profiles').select('id, language').in('id', ids);
+  const { data, error } = await db.from('profiles').select('id, language').in('id', ids);
+  // Soft failure: coerceLocale falls back to pt-PT when a profile is missing
+  // from the map, so a Spanish or English manager silently gets a Portuguese
+  // alert instead of none at all. A wrong-language alert still beats no
+  // alert, so this does not abort the run the way resolveSubscriptions'
+  // failure does — but it is worth its own log line, since nothing else
+  // would otherwise record why the language was wrong.
+  if (error) {
+    logEvent('notifications.push_locales_read_failed', { error: error.message });
+    return map;
+  }
   for (const p of data ?? []) map.set(p.id, p.language);
   return map;
 }
 
+/**
+ * Returns null — never an empty map — when the query itself failed. The
+ * caller MUST tell those two apart: an empty map legitimately means "nobody
+ * in this batch has a registered device", which is a normal, common state and
+ * correctly stamps every row (0 outcomes -> decideRowState -> 'stamp'). A
+ * failed query would produce the exact same empty map by accident, and
+ * dispatchPushes would then stamp every row as delivered having sent
+ * nothing at all — irreversibly, since pushed_at is not undone. So a failure
+ * here is reported as null and dispatchPushes aborts the whole run on it,
+ * rather than silently treating "the query broke" as "nobody opted in".
+ */
 async function resolveSubscriptions(
   db: ReturnType<typeof getDb>,
   rows: PendingRow[],
-): Promise<Map<string, StoredSubscription[]>> {
+): Promise<Map<string, StoredSubscription[]> | null> {
   const ids = [...new Set(rows.map(r => r.profile_id))];
   const map = new Map<string, StoredSubscription[]>();
-  const { data } = await db
+  const { data, error } = await db
     .from('push_subscriptions')
     .select('profile_id, endpoint, p256dh, auth')
     .in('profile_id', ids);
+  if (error) {
+    logEvent('notifications.push_subscriptions_read_failed', { error: error.message });
+    return null;
+  }
   for (const s of data ?? []) {
     const list = map.get(s.profile_id) ?? [];
     list.push({ endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth });
