@@ -21,6 +21,7 @@ import {
 import PullToRefresh from '@/app/pull-to-refresh';
 import { AccountForm, CompanyForm } from './profile-forms';
 import PushCard from './push-card';
+import SignOutButton from './sign-out-button';
 import { TranslationProgress } from './translation-progress';
 
 export const dynamic = 'force-dynamic';
@@ -441,15 +442,7 @@ export default async function PerfilPage({
           </Link>
         </Card>
 
-        {/* Plain form POST: sign-out works even before client JS hydrates. */}
-        <form method="post" action="/auth/signout">
-          <button
-            type="submit"
-            className="w-full rounded-xl border border-zinc-500/20 py-2.5 text-sm font-medium text-red-600 hover:bg-red-600/5"
-          >
-            {t.common.signOut}
-          </button>
-        </form>
+        <SignOutButton locale={locale} />
       </PullToRefresh>
     </ScreenShell>
   );

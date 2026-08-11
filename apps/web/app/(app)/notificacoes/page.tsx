@@ -113,6 +113,17 @@ export default async function NotificacoesPage() {
             </div>
           </>
         )}
+
+        {/* Points at the opt-in without triggering anything. The permission
+            prompt is one-shot, so it must stay behind a deliberate press on
+            /perfil — a prompt raised from here would spend that one chance
+            on someone who only came to read their notifications. */}
+        <p className="mt-6 text-center text-xs text-zinc-500">
+          {t.notifications.pushNudge}{' '}
+          <Link href="/perfil" className="text-orange-600 underline">
+            {t.notifications.pushNudgeLink}
+          </Link>
+        </p>
       </PullToRefresh>
     </ScreenShell>
   );
