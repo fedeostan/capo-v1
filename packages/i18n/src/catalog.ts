@@ -140,6 +140,33 @@ export interface Catalog {
     /** Sends the manager where the decision actually gets made — the board,
      *  not the inbox. */
     openSubject: string;
+    /** The inbox's one-line pointer at the /perfil opt-in card. Triggers no
+     *  permission prompt itself — the prompt is one-shot and must stay behind
+     *  a deliberate press. */
+    pushNudge: string;
+    pushNudgeLink: string;
+  };
+
+  /** The /perfil opt-in card for lock-screen alerts. Every state is spelled
+   *  out because the failure modes here are all SILENT: an iPhone that was
+   *  never installed, and a permission that was denied once and can never be
+   *  asked for again, both look identical to "it just doesn't work". */
+  push: {
+    title: string;
+    subtitle: string;
+    enable: string;
+    enabled: string;
+    disable: string;
+    working: string;
+    failed: string;
+    /** Shown when the permission prompt was refused. No button follows it:
+     *  JavaScript cannot re-ask, ever. */
+    deniedTitle: string;
+    deniedHelp: string;
+    /** iOS delivers push only to a home-screen-installed PWA. */
+    iosTitle: string;
+    iosHelp: string;
+    iosLink: string;
   };
 
   screens: {

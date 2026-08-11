@@ -127,6 +127,23 @@ const dict: Catalog = {
     noSubject: 'A task',
     noteLabel: 'What they wrote:',
     openSubject: 'Open in tasks',
+    pushNudge: 'Want these on your phone?',
+    pushNudgeLink: 'Turn on alerts',
+  },
+
+  push: {
+    title: 'Phone alerts',
+    subtitle: 'Get an alert the moment someone says a task is finished — even with the app closed.',
+    enable: 'Get alerts',
+    enabled: 'Alerts are on for this phone.',
+    disable: 'Turn off',
+    working: 'One moment…',
+    failed: "Couldn't change your alerts. Try again.",
+    deniedTitle: 'You blocked alerts on this phone.',
+    deniedHelp: "To get them again you'll have to allow them in your phone's settings — Capo can't ask a second time.",
+    iosTitle: 'On iPhone, only with Capo installed.',
+    iosHelp: 'iPhone alerts only work with Capo on your home screen.',
+    iosLink: 'See how to install it',
   },
 
   screens: {
