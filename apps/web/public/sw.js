@@ -49,6 +49,10 @@ self.addEventListener('push', (event) => {
   } catch {
     data = {};
   }
+  // JSON.parse('null') returns null WITHOUT throwing, so the catch above does
+  // not cover it — and reading .title off null would throw here, in a listener
+  // whose entire job is to guarantee something is shown.
+  if (!data || typeof data !== 'object') data = {};
   const title = typeof data.title === 'string' && data.title ? data.title : 'Capo';
   const options = {
     body: typeof data.body === 'string' ? data.body : '',
@@ -90,6 +94,20 @@ self.addEventListener('pushsubscriptionchange', (event) => {
   // re-registering on every app open, which is idempotent.
   event.waitUntil(
     (async () => {
+      const existing = event.newSubscription;
+      if (existing) {
+        // The browser already re-subscribed for us; just tell the server.
+        try {
+          await fetch('/api/push', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(existing.toJSON()),
+          });
+        } catch {
+          // Nothing useful to do here — the next app open re-registers.
+        }
+        return;
+      }
       const applicationServerKey =
         event.oldSubscription && event.oldSubscription.options
           ? event.oldSubscription.options.applicationServerKey
