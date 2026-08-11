@@ -288,6 +288,13 @@ export interface Catalog {
     workerLoad(today: number, tomorrow: number, open: number): string;
     /** An active worker with no phone silently receives nothing at 07:00. */
     noWhatsAppWarning: string;
+    /**
+     * The second way to be silently unreachable, since 0025: a number on file
+     * but no recorded WhatsApp consent. Must read as an ACTION for the manager
+     * ("ask them"), not as an error — the fix is a conversation on site, and
+     * then telling Capo about it.
+     */
+    noConsentWarning: string;
     receivesWhatsApp: string;
     teamHint: string;
     teamHintLink: string;
@@ -385,6 +392,25 @@ export interface Catalog {
     companyLanguageWarning: string;
     appearance: string;
     appearanceHint: string;
+
+    /**
+     * The manager's own WhatsApp consent card. Meta's business-messaging policy
+     * requires a recorded opt-in before any proactive template send, and the
+     * manager gets the same daily briefing the crew does — being the account
+     * holder is not itself agreement to be messaged on WhatsApp.
+     *
+     * `whatsappConsentHint` must say plainly what they are agreeing to receive
+     * and that it can be withdrawn; a consent control that hides either is not
+     * one. The crew's consent is recorded through chat instead, because the
+     * manager is attesting on someone else's behalf there.
+     */
+    whatsappConsent: string;
+    whatsappConsentHint: string;
+    whatsappConsentOption: { yes: string; no: string };
+    /** Shown when consent is on record, so the state is legible without a form. */
+    whatsappConsentOn: string;
+    /** Shown when it is not — the reason the daily messages are not arriving. */
+    whatsappConsentOff: string;
     // Keys must match Theme in apps/web/lib/theme.ts — tsc catches drift at
     // the call site, where the index is typed as Theme. Duplicated rather than
     // imported: @capo/i18n is a zero-dependency leaf and must never reach into
@@ -509,7 +535,19 @@ export interface Catalog {
     /** Sent after a worker switches language — always in the NEW language. */
     workerLanguageChanged: string;
 
-    // ── The 16:30 check-in ──────────────────────────────────────────────
+    /**
+     * Sent after a worker replies STOP, confirming they have been unsubscribed
+     * from the proactive sends (the 07:00 briefing and the late-afternoon
+     * check-in). Meta requires opt-outs to be honoured and this is the receipt.
+     *
+     * It must name the way back — a worker who cannot rejoin without asking
+     * their manager will simply ask their manager to stop using Capo.
+     */
+    workerOptedOut: string;
+    /** Sent after a worker replies START, confirming they will hear from Capo again. */
+    workerOptedIn: string;
+
+    // ── The late-afternoon check-in ──────────────────────────────────────────────
     /**
      * The two QUICK_REPLY labels on the capo_task_checkin template. Meta caps a
      * TEMPLATE quick-reply button at 25 chars — not the 20 an interactive reply
@@ -546,7 +584,7 @@ export interface Catalog {
    * never retranslated — so these must read acceptably around foreign text.
    *
    * `renderWorkerBriefing` renders BOTH daily messages — the 07:00 briefing and
-   * the 16:30 check-in — from these strings, deliberately, so the two can never
+   * the late-afternoon check-in — from these strings, deliberately, so the two can never
    * drift about what "your tasks today" means. Changing the voice here changes
    * both.
    */

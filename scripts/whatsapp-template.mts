@@ -10,6 +10,7 @@
 // Needs a real WHATSAPP_ACCESS_TOKEN and network access, so — like agent-smoke
 // and unlike whatsapp-check — this is a MANUAL gate. It is never run in CI.
 //
+//   pnpm whatsapp-template numbers  every phone number + its Phone number ID
 //   pnpm whatsapp-template list     every template on the WABA, with status
 //   pnpm whatsapp-template status   the ones we manage: PASS/FAIL + exit code
 //   pnpm whatsapp-template create   submit scripts/whatsapp-templates.ts
@@ -144,11 +145,48 @@ async function listLive(waba: string): Promise<LiveTemplate[]> {
 const buttonTextsOf = (components: { type: string; buttons?: { text: string }[] }[] | undefined) =>
   components?.find(c => c.type.toUpperCase() === 'BUTTONS')?.buttons?.map(b => b.text) ?? [];
 
+const bodyTextOf = (components: { type: string; text?: string }[] | undefined) =>
+  components?.find(c => c.type.toUpperCase() === 'BODY')?.text ?? '';
+
 const command = process.argv[2] ?? 'status';
 const waba = await discoverWabaId();
 console.log(
   `WABA ${waba} (${process.env.WHATSAPP_WABA_ID ? 'from WHATSAPP_WABA_ID' : 'discovered from token'})\n`,
 );
+
+// `numbers` answers the one question the Meta dashboard is worst at: what is
+// the Phone number ID for this number? It is the only per-number env var
+// (WHATSAPP_PHONE_NUMBER_ID) and it is NOT the phone number — it is an opaque
+// ~15-digit id sitting next to a WhatsApp Business Account ID of identical
+// shape, which is exactly the pair you do not want to confuse at 9pm.
+//
+// The dashboard has moved it twice (it was "API Setup", it is now "Step 1: Try
+// it out" inside the Quickstart flow, and the labels are localized on top of
+// that), so this asks the WABA instead. Same discovery path as everything else
+// here: the token knows which account it is for.
+if (command === 'numbers') {
+  const page = (await graph(
+    `${GRAPH}/${waba}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status`,
+  )) as {
+    data?: {
+      id: string;
+      display_phone_number?: string;
+      verified_name?: string;
+      quality_rating?: string;
+      code_verification_status?: string;
+    }[];
+  };
+  const numbers = page.data ?? [];
+  if (numbers.length === 0) console.log('(no phone numbers on this WABA)');
+  for (const n of numbers) {
+    console.log(`\n${n.display_phone_number ?? '(no number)'}   ${n.verified_name ?? ''}`);
+    console.log(`  WHATSAPP_PHONE_NUMBER_ID = ${n.id}`);
+    console.log(`  quality=${n.quality_rating ?? '?'}  verification=${n.code_verification_status ?? '?'}`);
+  }
+  console.log(`\nSet the id above as WHATSAPP_PHONE_NUMBER_ID in Vercel (Production + Preview), then redeploy.`);
+  console.log(`It is NOT the WABA id (${waba}) — that one is discovered from the token and needs no env var.`);
+  process.exit(0);
+}
 
 if (command === 'list') {
   const live = await listLive(waba);
@@ -181,7 +219,7 @@ if (command === 'create') {
 }
 
 if (command !== 'status') {
-  console.error(`Unknown command '${command}'. Use: list | status | create`);
+  console.error(`Unknown command '${command}'. Use: numbers | list | status | create`);
   process.exit(1);
 }
 
@@ -202,6 +240,19 @@ const say = (ok: boolean, line: string) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${line}`);
 };
 
+// WARN, not FAIL, and deliberately so. Body drift is real information — the
+// repo definition is not authoritative for a name+language Meta already
+// approved, and capo_daily_briefing pt_PT was hand-made long before this file
+// existed. But an approved template still delivers correctly while its wording
+// differs from ours, so this must not block a go-live gate. The fix is to edit
+// the live template in WhatsApp Manager: Meta has no API to rewrite an approved
+// pair, and `create` answers 2388023 for one that exists.
+let warnings = 0;
+const warn = (ok: boolean, line: string) => {
+  if (!ok) warnings += 1;
+  console.log(`${ok ? 'PASS' : 'WARN'}  ${line}`);
+};
+
 for (const name of MANAGED_TEMPLATE_NAMES) {
   for (const language of TEMPLATE_LANGUAGES) {
     const found = live.find(t => t.name === name && t.language === language);
@@ -218,7 +269,12 @@ for (const def of allTemplates()) {
     JSON.stringify(liveButtons) === JSON.stringify(repoButtons),
     `${def.name} ${def.language} buttons — live ${JSON.stringify(liveButtons)}, repo ${JSON.stringify(repoButtons)}`,
   );
+
+  const liveBody = bodyTextOf(found.components);
+  const repoBody = bodyTextOf(def.components as { type: string; text?: string }[]);
+  warn(liveBody === repoBody, `${def.name} ${def.language} body\n        live: ${liveBody}\n        repo: ${repoBody}`);
 }
 
 console.log(`\nTemplate status: ${failures === 0 ? 'all green' : `${failures} failure(s)`}`);
+if (warnings > 0) console.log(`${warnings} body-text warning(s) — see WARN lines above; these do not block.`);
 process.exit(failures === 0 ? 0 : 1);

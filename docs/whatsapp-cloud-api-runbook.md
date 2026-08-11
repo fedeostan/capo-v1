@@ -10,19 +10,78 @@ phone (`profiles.phone`, unique E.164) → `company_id` → that company's
 perpetual thread with `channel='whatsapp'`. Unknown numbers are silently
 ignored.
 
+> **Status: production.** Meta business verification is complete and the
+> production number is **+351 911 097 383** (registered on the WABA 2026-08-11).
+> The free test tier — its test number, its five-recipient allow-list, and its
+> zero bill — is gone, and three things follow that are easy to miss:
+>
+> - **The allow-list was the de-facto consent gate.** Nothing stops a send now
+>   except the opt-in record — see "Opt-in and opt-out" below. That section is
+>   not optional reading.
+> - **Sends are billed.** Roughly €0.04 per Portuguese utility template.
+> - **The business number can never message itself.** Any `workers.phone` or
+>   `profiles.phone` equal to the business number is permanently undeliverable
+>   (**131021**), and a duplicate `workers.phone` additionally makes inbound
+>   replies from that handset silent, via the ambiguity guard. Check any
+>   candidate against both columns *before* registering it — the first pick,
+>   +351913621087, was already on two `workers` rows and was the manager's own
+>   Portuguese handset.
+>
+> Registering a number requires it to have **no existing WhatsApp account** —
+> not consumer, not the Business app. Portuguese mobile numbers get recycled, so
+> a number you have never used can still carry the previous holder's
+> registration; the fix is to put the SIM in a phone, register it in the normal
+> WhatsApp app (possession of the SIM *is* ownership), then **Settings → Account
+> → Delete my account**. Uninstalling the app is not enough and leaves the
+> registration alive.
+
 ## 1. Meta app + WhatsApp product
 
 1. https://developers.facebook.com → **Create App** → type *Business*.
 2. Add the **WhatsApp** product to the app.
-3. On the WhatsApp → API Setup page you get:
-   - a free **test number** (this is the pilot's shared Capo number),
-   - its **Phone number ID** → `WHATSAPP_PHONE_NUMBER_ID`,
-   - the **WhatsApp Business Account ID** (note it down),
-   - a *temporary* access token — ignore it; see step 3.
-4. **Add test recipients** (up to 5): WhatsApp → API Setup → "To" → manage
-   phone number list. Every pilot manager's phone must be added here and must
-   confirm the opt-in code on their WhatsApp. Their number must equal
-   `profiles.phone` (same E.164 digits).
+3. **Get the Phone number ID** → `WHATSAPP_PHONE_NUMBER_ID`. This is the only
+   env var that is per-number; everything else is per-app or derived.
+
+   **Ask the API, not the dashboard:**
+
+   ```
+   pnpm whatsapp-template numbers
+   ```
+
+   Meta has renamed and restructured this page twice — it was **API Setup**, it
+   is now **Step 1: Try it out** inside a Quickstart flow (*"Paso 1. Pruébalo"*
+   in Spanish), and the sidebar is localized on top of that. The command above
+   asks the WABA directly and prints each number with its id, so it does not
+   care what the page is called this quarter.
+
+   > ⚠ The Phone number ID is **not** the phone number, and it is **not** the
+   > WhatsApp Business Account ID — those last two are both opaque ~15-digit
+   > strings shown side by side in the dashboard. Pasting the WABA id gives a
+   > 404 on every send and no other symptom. Nothing needs the WABA id in an env
+   > var; it is discovered from the token.
+
+   If you do want the dashboard: WhatsApp → **Step 1: Try it out** → the **From**
+   dropdown → select the production number → **Phone number ID** underneath.
+   Registering a new number and the webhook both live under **Step 2: Production
+   setup**.
+4. **Templates live on the WABA, not on the number**, and there is very likely
+   more than one WABA. Registering a production number through the Quickstart
+   flow creates a *separate* WhatsApp Business Account from the sandbox one that
+   came with the app — that is what happened here, and it caught us out.
+
+   Consequences, all of which look like unrelated bugs:
+   - The approved templates on the old WABA **do not come with the number**.
+     Both must be submitted again on the new account.
+   - The System User token must have the **new** WABA added as an asset
+     (Business Settings → System users → *Add assets* → WhatsApp accounts →
+     Full control), or sends fail on permissions with a correct Phone number ID.
+   - `discoverWabaId()` reads the token's granular scope, so it returns whichever
+     account the token is granted — pass `WHATSAPP_WABA_ID` to point the script
+     at the other one.
+
+   `pnpm whatsapp-template numbers` on each WABA id is how you tell them apart:
+   the sandbox one answers with a `+1 555…` "Test Number", the real one with your
+   number and its verified display name.
 
 ## 2. Webhook
 
@@ -89,7 +148,7 @@ WHATSAPP_PHONE_NUMBER_ID=<phone number id>
 
 ## 5. Verify end-to-end
 
-1. From a registered test recipient's WhatsApp, message the test number
+1. From the manager's own WhatsApp, message the production number
    (e.g. "que tarefas tenho hoje?").
 2. Expect: agent reply from the shared number within ~10–30s; the exchange
    appears in that company's thread (operator app → Conversations) with
@@ -112,6 +171,7 @@ window.
 `pnpm whatsapp-template` manages them from the repo:
 
 ```
+pnpm whatsapp-template numbers  every phone number + its Phone number ID (§1)
 pnpm whatsapp-template list     every template on the WABA, with status
 pnpm whatsapp-template status   the ones we manage: PASS/FAIL + exit code
 pnpm whatsapp-template create   submit scripts/whatsapp-templates.ts
@@ -154,10 +214,27 @@ Needed by the 07:00 reminder cron (`apps/web/app/api/cron/reminders`), which
 messages workers who have never written to Capo and so is always outside the
 24-hour window.
 
-Created by hand before `pnpm whatsapp-template` existed, so it has **no
-definition in the repo** — only its parameter contract is recorded here, and
-`allTemplates()` deliberately omits it rather than shipping a definition nobody
-has verified against the live template. `status` still checks it by name.
+It **now has a definition in the repo** (`capoDailyBriefing()` in
+`scripts/whatsapp-templates.ts`), added after its pt_PT-only, hand-made approval
+turned into a daily failure: every 07:00 run wrote a `notification_log` row
+reading `template name (capo_daily_briefing) does not exist in en_US`, because
+the manager's `profiles.language` is `en-US` and only Portuguese was ever
+created. es_ES was missing too.
+
+Because pt_PT was approved before that definition existed, the live pt_PT body
+may not match the repo's. `status` prints a **WARN** (not a FAIL — an approved
+template still delivers) when they differ. Meta has no API to rewrite an
+approved name+language pair and `create` answers **2388023** for one that
+exists, so the fix is to edit the live template in WhatsApp Manager to match.
+
+Submitting the missing languages:
+
+```
+pnpm whatsapp-template create   # fills es_ES + en_US; pt_PT answers 2388023
+pnpm whatsapp-template status   # until every line is PASS
+```
+
+If you are creating it from scratch instead:
 
 1. WhatsApp Manager → **Message templates** → Create template.
    - Name: `capo_daily_briefing` (must match `TEMPLATE_NAME` in the route).
@@ -177,10 +254,28 @@ has verified against the live template. `status` still checks it by name.
 
 ### 6b. `capo_task_checkin`
 
-The 16:30 check-in (`apps/web/app/api/cron/checkin`): "did you finish today's
-tasks?", answered by tapping one of two quick-reply buttons. Submit it with
-`pnpm whatsapp-template create`; the definition is
+The late-afternoon check-in (`apps/web/app/api/cron/checkin`): "did you finish
+today's tasks?", answered by tapping one of two quick-reply buttons. Submit it
+with `pnpm whatsapp-template create`; the definition is
 `capoTaskCheckin()` in `scripts/whatsapp-templates.ts`.
+
+> ⚠ **This send used to fire at 16:30 and never once ran.** `worker_checkins`
+> was empty and `notification_log` held zero `task_checkin` rows, while
+> `daily_briefing` rows existed for the same workers on the same days.
+>
+> The cause was thirty minutes. **Vercel's cron dispatch drifts** — every
+> briefing row was stamped 06:45 UTC for an entry scheduled at 06:00, about 45
+> minutes late, reproducibly. Both routes gate on `lisbon_hour()` being exactly
+> the send hour. A `:00` schedule has a full hour of headroom before the Lisbon
+> hour rolls over; the check-in's `:30` schedule had thirty minutes, so both its
+> entries drifted past the boundary and were rejected. The 07:00 briefing
+> survived the identical drift purely because it was scheduled at `:00`.
+>
+> `apps/web/vercel.json` now uses `0 15` / `0 16` UTC, and the send lands
+> somewhere in **16:00–16:59 Lisbon**. Do not "tidy" it back to a nicer
+> wall-clock time. Both routes now also `logEvent` when the gate rejects them —
+> before that, a rejection wrote no row and raised no error, which is exactly
+> why this was invisible for days.
 
 - Name `capo_task_checkin`, category **Utility**, `parameter_format`
   **POSITIONAL**, three languages.
@@ -228,8 +323,8 @@ Four things that fail silently or confusingly:
   is why the webhook acknowledges worker replies (`handleWorkerReply`): the ack
   is what converts them into free session messages.
   Be honest about the arithmetic for workers, though: a worker who never taps
-  costs **two** paid templates a day (07:00 and 16:30), and a worker who *does*
-  tap at 16:30 opens a window that has closed again by the next morning's
+  costs **two** paid templates a day (07:00 and late afternoon), and a worker who *does*
+  tap in the afternoon opens a window that has closed again by the next morning's
   briefing 14½ hours later. The check-in acks are worth sending for the UX and
   because a tap is what makes PRD 4's conversational reply legal — not because
   they save money on the briefing.
@@ -243,16 +338,110 @@ Four things that fail silently or confusingly:
   `companies.language` and nothing retranslates existing rows, so a worker on
   `es-ES` gets a Spanish sentence around Portuguese titles. Deliberate.
 
+## Opt-in and opt-out (migration `0025`)
+
+**Nothing proactive is sent to anyone without a recorded opt-in.** Meta's
+business-messaging policy requires one before a template send, and requires
+opt-outs to be honoured. On the test tier Meta's five-number allow-list enforced
+this by accident — an unconfirmed number simply could not be reached. The
+production number has no allow-list, so the record is the gate.
+
+Two nullable timestamps on **both** `workers` and `profiles`:
+`whatsapp_opt_in_at` and `whatsapp_opt_out_at`. **Latest wins** —
+
+```
+opted in  ⟺  opt_in_at is not null and (opt_out_at is null or opt_out_at < opt_in_at)
+```
+
+Nothing is ever cleared, matching the schema's no-DELETE posture: a withdrawal
+marks, and the pair stays readable as the audit trail.
+
+`hasWhatsAppConsent()` in `packages/core/src/channels/whatsapp.ts` is the single
+implementation. It **fails closed** on a missing opt-in, an unparseable
+timestamp, a tie, or a row from a deploy that landed before its migration.
+`scripts/whatsapp-check.mts` pins the whole truth table in CI — that assertion
+already caught one fail-open branch.
+
+The gate itself is applied in exactly one place, `loadCompanyBriefing()` in
+`apps/web/app/notifications/briefing.ts`, which **both** proactive sends read.
+The manager's own briefing is gated separately in `/api/cron/reminders`, because
+managers come from `profiles` rather than that function.
+
+How consent is recorded:
+
+| Who | Where | Notes |
+|---|---|---|
+| Manager, for themselves | `/perfil` → **Mensagens no WhatsApp** | Radio pair + save, never a bare checkbox — a mis-tap must not withdraw consent |
+| Manager, for a worker | chat → `add_worker` / `update_worker` (`whatsapp_opt_in`) | Both **guarded**, so it needs their verbatim instruction, never a model inference |
+| Worker, for themselves | replying **STOP** / **START** | Deterministic, no model — see "Worker replies" |
+
+> ⚠ **Existing rows were deliberately NOT backfilled.** Every worker and profile
+> starts with a null `opt_in_at`, so after this migration lands *all proactive
+> sends stop* until consent is actually recorded. That is the correct behaviour
+> and the whole reason the requirement exists — writing a consent record nobody
+> gave would be a lie told in SQL. Expect "Capo has gone quiet" to be the first
+> symptom; `reminders.workers_no_consent` in the logs is what explains it.
+>
+> Once the crew has genuinely been asked:
+> `update workers set whatsapp_opt_in_at = now() where company_id = '…' and active and phone is not null;`
+
+A manager *can* supersede a worker's STOP by re-attesting consent, because
+`whatsapp_opt_in_at` is grantable to `authenticated` and latest wins. That is
+deliberate — on a six-person crew "põe o Zé outra vez a receber" runs through the
+manager, not a self-service portal the crew does not have — and it is why both
+timestamps are kept and why the tools are guarded. Withholding the opt-out column
+from the grant would *not* have prevented it, since a fresh opt-in supersedes
+anyway; it would only have stopped a manager from recording a withdrawal a worker
+told them about in person.
+
+## Phone formats, and the Argentine trap that is now gone
+
+Storage is E.164 with the `+` (`profiles.phone`, `workers.phone`). Meta's
+`wa_id` is the same digits without it, so `toSendTarget()` is a `+` strip and
+nothing more.
+
+It used to be more. Meta's **test-tier** allow-list stored Buenos Aires mobiles
+in the legacy domestic form (`54 11 15 XXXXXXXX`) rather than the wa_id's modern
+form (`549 11 XXXXXXXX`), and sending to the wa_id was rejected as **131030**.
+`testTierArSendTarget()` rewrote every `+549…` number into the legacy shape to
+compensate.
+
+Older notes in this repo said that helper "becomes a no-op once verified — leave
+the code". **That was wrong**, and it is worth knowing why, because the same
+mistake is easy to repeat: the regex matched the *modern* format and converted it
+*to* the legacy one, so it fired on every send to an Argentine number, and the
+only manager on the system has one. Off the test tier there is no allow-list to
+accept the legacy form, so keeping it would have addressed every reply to the
+manager to a string that is not a valid wa_id. The helper is deleted. If a
+**131030** ever appears again, it means something else entirely.
+
 ### Worker replies
 
 Inbound senders are matched against `profiles.phone` first (the manager, full
 agent loop) and then `workers.phone` (a worker). A worker's text **never**
 reaches the model and is never persisted to `messages` — it is answered
-deterministically: a lone `PT`/`ES`/`EN` (or `português`/`español`/`english`)
-switches `workers.language`, anything else gets a canned ack. `workers.phone`
-has no unique constraint, so a number on two companies' crews is logged as
-`whatsapp.worker_ambiguous` and answered with silence rather than a guessed
-tenant.
+deterministically. Three whole-message keyword families, in this order:
+
+1. **`STOP` / `PARAR` / `BAJA` / `SAIR` / `CANCELAR` / `UNSUBSCRIBE`** → records
+   `whatsapp_opt_out_at` and confirms. **`START` / `COMEÇAR` / `ALTA` /
+   `SUBSCRIBE`** → records a fresh `whatsapp_opt_in_at`. A withdrawal that fails
+   to save is **not** acked — an "you're unsubscribed" followed by tomorrow's
+   briefing is worse than silence, and Meta redelivers the webhook on a non-200.
+2. **`PT` / `ES` / `EN`** (or `português`/`español`/`english`) → switches
+   `workers.language`.
+3. Anything else → the canned ack.
+
+All three match the **whole message**, never a substring: "stop, o Zé não vem
+hoje" is a sentence, not a withdrawal of consent, and "es que não percebi" must
+not be read as "switch to Spanish".
+
+The opt-out ack is free-form text and that is legal — the worker's own message
+opened the 24-hour window a moment earlier. It is also why opting out does not
+suppress its own confirmation.
+
+`workers.phone` has no unique constraint, so a number on two companies' crews is
+logged as `whatsapp.worker_ambiguous` and answered with silence rather than a
+guessed tenant.
 
 A **check-in button tap** (§6b) is handled on this same path, in
 `handleCheckinTap`, above the language check and below the ambiguity guard.
@@ -261,7 +450,7 @@ Three consequences of that placement, all deliberate:
 - **A shared phone number can never check in.** The ambiguity guard returns
   first, so the tap is dropped in silence. Better than recording an answer
   against a guessed tenant, but invisible unless someone reads the logs.
-- **A worker deactivated between 16:30 and their tap** no longer matches
+- **A worker deactivated between the ask and their tap** no longer matches
   `.eq('active', true)`, so they become `whatsapp.unknown_sender` — total
   silence, by design, though it looks like the button is broken.
 - **A malformed or unowned payload falls through to the ordinary ack** rather
@@ -279,9 +468,16 @@ same locale the card itself was sent in.
   and are equally free-form inside the window — **no template needed**.
   Proactive sends (outside 24h) go through `sendWhatsAppTemplate` and the
   approved `capo_daily_briefing` template above.
-- **Test number limits**: 5 recipients, unverified business. Post-pilot:
-  Meta **Business Verification** → register a production number → higher
-  messaging tier. No code changes needed.
+- **Production limits and cost**: the business is verified and the number is
+  live. A newly registered number starts on the **250 unique recipients / 24h**
+  messaging tier and climbs with volume and quality rating — far above what a
+  six-person crew needs. Sends are **billed**: about €0.04 per Portuguese
+  utility template, so two sends a day to six workers is roughly €0.50/day.
+  `NOTIFY_IDLE_WORKERS` in `/api/cron/reminders` is the dial that decides
+  whether workers with nothing on today cost anything at all.
+  (The old note here said graduating needed "no code changes". That turned out
+  to be wrong twice over — see the Argentine wa_id note under "Phone formats"
+  and the consent gate below.)
 - **Retries/dedupe**: Meta redelivers on non-200 or timeout. The webhook acks
   fast (agent runs via `after()`), which makes duplicates rare; a
   provider-message-id dedupe store is a follow-up if duplicates are observed.
@@ -357,7 +553,7 @@ message-id bookkeeping.
 > above.
 >
 > `messages[].type === 'button'` with `button: { payload, text }` is a
-> **template quick reply** — the 16:30 check-in (§6b) — and only ever comes from
+> **template quick reply** — the late-afternoon check-in (§6b) — and only ever comes from
 > a WORKER. It is handled in `handleWorkerReply` → `handleCheckinTap`, never on
 > the manager path, where a `type: 'button'` still correctly falls to
 > `whatsapp.unsupported_message`.

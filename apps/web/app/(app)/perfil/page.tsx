@@ -7,6 +7,7 @@ import { loadTeam, loadTeamLoad } from '@/app/dashboard-data';
 import { getBillingState } from '@/lib/billing';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { countTranslatable } from '@capo/core/translation';
+import { hasWhatsAppConsent } from '@capo/core/channels/whatsapp';
 import { resolveTheme, THEMES, type Theme } from '@/lib/theme';
 import {
   revertTranslation,
@@ -14,6 +15,7 @@ import {
   setCompanyLanguage,
   setTheme,
   setUserLanguage,
+  setWhatsAppConsent,
 } from './actions';
 import PullToRefresh from '@/app/pull-to-refresh';
 import { AccountForm, CompanyForm } from './profile-forms';
@@ -85,6 +87,34 @@ function LanguagePills({
   );
 }
 
+// Same shape again — two options, no client JS, works before hydration on a
+// cold PWA. A radio pair rather than a checkbox on purpose: a checkbox that
+// submits on change can be toggled by a mis-tap and would silently withdraw
+// consent, whereas this needs an explicit choice AND an explicit save.
+function WhatsAppConsentPills({ consenting, t }: { consenting: boolean; t: Catalog }) {
+  return (
+    <form action={setWhatsAppConsent} className="space-y-2">
+      <div className="flex gap-2">
+        {([true, false] as const).map(option => (
+          <label key={String(option)} className="flex-1">
+            <input
+              type="radio"
+              name="consentimento"
+              value={option ? '1' : '0'}
+              defaultChecked={option === consenting}
+              className="peer sr-only"
+            />
+            <span className="block cursor-pointer rounded-lg border border-zinc-500/30 py-2 text-center text-sm peer-checked:border-orange-600 peer-checked:bg-orange-600/10 peer-checked:font-semibold">
+              {option ? t.settings.whatsappConsentOption.yes : t.settings.whatsappConsentOption.no}
+            </span>
+          </label>
+        ))}
+      </div>
+      <SubmitButton label={t.common.save} />
+    </form>
+  );
+}
+
 // Deliberately the same shape as LanguagePills: three options, no client JS,
 // works before hydration on a cold PWA. Indexing themeOption with a Theme is
 // the tripwire that keeps @capo/i18n and lib/theme.ts from drifting apart —
@@ -140,7 +170,10 @@ export default async function PerfilPage({
     theme,
   ] = await Promise.all([
     db.from('companies').select('name').eq('id', companyId).maybeSingle(),
-    db.from('profiles').select('full_name, phone').eq('id', userId).maybeSingle(),
+    // select('*') for the deploy-ordering reason in AGENTS.md: 0025 adds the two
+    // consent columns, and a bundle served before its migration should degrade
+    // to "no consent on record" rather than fail the whole page.
+    db.from('profiles').select('*').eq('id', userId).maybeSingle(),
     db.auth.getClaims(),
     loadTeam(ctx),
     getBillingState(ctx),
@@ -161,6 +194,7 @@ export default async function PerfilPage({
   const teamLoad = await loadTeamLoad(ctx);
 
   const email = typeof claims?.claims?.email === 'string' ? claims.claims.email : null;
+  const whatsappConsenting = profile ? hasWhatsAppConsent(profile) : false;
 
   const batchInFlight = batch?.status === 'pending' || batch?.status === 'running' || batch?.status === 'failed';
   const canRevert = batch?.status === 'completed' && new Date(batch.expires_at) > new Date();
@@ -188,6 +222,17 @@ export default async function PerfilPage({
               confirmation round trip — out of scope here, so it is read-only. */}
           {email && <p className="text-xs text-zinc-500">{email}</p>}
           <AccountForm fullName={profile?.full_name ?? ''} phone={profile?.phone ?? ''} locale={locale} />
+        </Card>
+
+        {/* Directly under the account card, because it is about the phone number
+            immediately above it. Nothing proactive is sent without this — see
+            hasWhatsAppConsent and 0025_whatsapp_optin.sql. */}
+        <Card title={t.settings.whatsappConsent}>
+          <p className="text-xs text-zinc-500">{t.settings.whatsappConsentHint}</p>
+          <p className={`text-xs ${whatsappConsenting ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
+            {whatsappConsenting ? t.settings.whatsappConsentOn : t.settings.whatsappConsentOff}
+          </p>
+          <WhatsAppConsentPills consenting={whatsappConsenting} t={t} />
         </Card>
 
         {/* Above the language dials on purpose: appearance is personal and
@@ -309,19 +354,27 @@ export default async function PerfilPage({
                             {t.profile.workerLoad(load.today, load.tomorrow, load.open)}
                           </p>
                         )}
-                        {/* An ACTIVE worker with no number is the silent failure
-                            worth shouting about: the 07:00 WhatsApp briefing is
-                            addressed to workers.phone, so without one it reaches
-                            them never, and nothing else in the product says so. */}
-                        {worker.active && !worker.phone ? (
-                          <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                            {t.profile.noWhatsAppWarning}
-                          </p>
-                        ) : (
-                          worker.active && (
+                        {/* THREE states, not two, and the middle one is new.
+                            An active worker with no number was always the silent
+                            failure worth shouting about — the daily WhatsApp
+                            messages are addressed to workers.phone, so without
+                            one they reach nobody. Since 0025 there is a second
+                            way to be unreachable while looking fine: a number on
+                            file but no recorded consent. Reporting that as
+                            "receives WhatsApp" would be the product lying about
+                            the very thing the manager needs to act on. */}
+                        {worker.active &&
+                          (!worker.phone ? (
+                            <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                              {t.profile.noWhatsAppWarning}
+                            </p>
+                          ) : !hasWhatsAppConsent(worker) ? (
+                            <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                              {t.profile.noConsentWarning}
+                            </p>
+                          ) : (
                             <p className="mt-0.5 text-[11px] text-zinc-500">{t.profile.receivesWhatsApp}</p>
-                          )
-                        )}
+                          ))}
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1">
                         {!worker.active && (

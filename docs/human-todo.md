@@ -28,7 +28,7 @@ confirmed to reproduce the committed file exactly.
 
 ### 0017 — ✅ APPLIED (2026-08-08)
 
-`0017_worker_checkins.sql` ships with the 16:30 check-in (§12), applied as
+`0017_worker_checkins.sql` ships with the late-afternoon check-in (§12), applied as
 version `20260808140249`. It adds `worker_checkins` (one row per worker per day
 holding their answer), one SELECT-only RLS policy plus `grant select`, and the
 `worker_checkins_fks_same_company` trigger.
@@ -93,6 +93,19 @@ Two consequences worth knowing before either stream continues:
   from the #19 branch pulls in `worker_checkins`. One regeneration after both
   have landed, not two before.
 
+### 0025 — ✅ APPLIED (2026-08-10)
+
+`0025_whatsapp_optin.sql` adds `whatsapp_opt_in_at` / `whatsapp_opt_out_at` to
+**both** `workers` and `profiles`, and re-states the column grants on each (they
+REPLACE rather than add — `workers` has never had a column grant at all, so this
+is its first, and every writable column had to be re-listed). The same two chores
+apply: regenerate `packages/db/src/types.ts` and confirm byte-equality — both
+blocks were hand-written ahead of the migration, so until then the file describes
+columns the live project does not have — and re-run `pnpm rls-matrix`.
+
+⚠ **Applying it stops every proactive send** until consent is recorded. That is
+the intended behaviour, not a regression. See §13.
+
 Still outstanding, because neither runs in CI and both need credentials:
 `pnpm rls-matrix` (#11 adds two adversarial checks against the new
 `SECURITY DEFINER` `revert_translation_batch`) and a `pnpm agent-smoke` pass
@@ -138,17 +151,88 @@ than degrade into an approval card.
    Until this env var is set, the "Entrar com Google" button simply doesn't
    render.
 
-## 3. Meta (WhatsApp)
+## 3. Meta (WhatsApp) — ✅ VERIFIED (2026-08-10), production number live
 
-1. Complete Meta Business Verification to leave the WhatsApp free test tier
-   — the `testTierArSendTarget` AR allow-list workaround in
-   `api/whatsapp/route.ts` becomes a no-op once verified (leave the code, it
-   only fires for that one legacy-format case).
-2. Add a payment method for the Cloud API once off the test tier.
-3. Confirmed live: `capo-v1` production env already has
-   `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN`,
-   and `WHATSAPP_PHONE_NUMBER_ID` set (checked via `vercel env ls`) — the
-   webhook is live and configured, not just deployed.
+1. ✅ **Business Verification complete.** Meta shows verification *Verified* and
+   account status *Approved*. The production number is **+351 911 097 383**,
+   registered on the WABA 2026-08-11.
+
+   The first pick, `+351913621087`, was abandoned: it was already the manager's
+   own Portuguese handset and sat on two `workers` rows, so it would have been a
+   permanent self-send (**131021**). Registering the replacement also needed one
+   detour — the number carried a recycled WhatsApp registration from a previous
+   holder and had to be claimed on a handset and deleted from inside the app
+   first. Both traps are written up in `docs/whatsapp-cloud-api-runbook.md` §1.
+2. ✅ **Payment method added** (VISA). Sends are billed now — roughly €0.04 per
+   Portuguese utility template, so two sends/day × 6 workers ≈ €0.50/day.
+3. ✅ Confirmed live: `capo-v1` production env has `WHATSAPP_VERIFY_TOKEN`,
+   `WHATSAPP_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN` and
+   `WHATSAPP_PHONE_NUMBER_ID` set — the webhook is live and configured. The
+   first three are per-app and survive the number change; **only
+   `WHATSAPP_PHONE_NUMBER_ID` is per-number and still points at the old test
+   number** until step 1 below is done.
+
+⚠ The old item 1 here said the `testTierArSendTarget` AR workaround "becomes a
+no-op once verified (leave the code)". **That was wrong** and it is now deleted:
+the regex matched the *modern* Argentine wa_id and rewrote it into the legacy
+allow-list form, so it fired on every send to the only manager on the system
+(`+5491…`). Off the test tier there is no allow-list to accept that form. See
+"Phone formats" in `docs/whatsapp-cloud-api-runbook.md`.
+
+### Still outstanding for this milestone
+
+1. **Set `WHATSAPP_PHONE_NUMBER_ID`** in Vercel (`capo-v1`, Production +
+   Preview), then redeploy. This is the *only* per-number env var.
+
+   **There are two WhatsApp Business Accounts**, which is the thing to remember:
+
+   | WABA | Holds | Phone number ID |
+   |---|---|---|
+   | `2042479536344006` | sandbox `+1 555-176-7609` "Test Number" | `1301175446407795` |
+   | `715247827972608` | production `+351 911 097 383` "Capo", VERIFIED | `1271622762699292` |
+
+   Vercel was pointing at the sandbox id, so production had been sending *as the
+   test number* — no error, just the wrong identity. The value to set is
+   `1271622762699292`.
+
+   Because the production number is on a **different** WABA, two things follow:
+   the System User token needs that account added as an asset (Business Settings
+   → System users → Add assets → WhatsApp accounts → Full control), or sends fail
+   on permissions; and no template approved on the old account carries over.
+
+   `pnpm whatsapp-template numbers` prints these; the dashboard shows the Phone
+   number ID next to an identically-shaped WABA id, which is easy to confuse.
+2. ✅ **Crew rows cleaned up (2026-08-10/11).** `Zé` → `+351900000000` (a
+   deliberately unroutable placeholder: `90` is not an allocated Portuguese
+   mobile prefix, so it cannot reach a stranger). `Pepe` → `+351913621077`.
+   `João`, `Manel` and `Rui` deactivated (`active = false`, not deleted — the
+   `tasks.assignee_worker_id` FK forbids the delete, and their three open tasks
+   stay attributable). `Federico Ostan Bazan`'s row keeps `+351913621087`, which
+   is fine now that it is no longer the business number.
+
+   Three overdue tasks are consequently assigned to inactive workers, so nobody
+   is briefed about them. They remain on the Tarefas board under **Atrasadas**.
+3. **Submit BOTH templates on the new WABA.** This is no longer "add the two
+   missing languages" — templates belong to a WABA, so the pt_PT
+   `capo_daily_briefing` approved on the sandbox account does not exist on
+   `715247827972608`. All six name+language pairs start from nothing.
+
+   That incidentally clears two older problems: the daily **132001**
+   `does not exist in en_US` failure, and the body-text drift between the
+   hand-made pt_PT template and the repo definition — everything is now created
+   from `scripts/whatsapp-templates.ts`, so `status` should come back clean with
+   no WARN.
+
+   ```
+   WHATSAPP_WABA_ID=715247827972608 pnpm whatsapp-template create
+   WHATSAPP_WABA_ID=715247827972608 pnpm whatsapp-template status
+   ```
+
+   No 2388023 this time — nothing exists yet, so every pair should submit. Repeat
+   `status` until all PASS; approval is usually minutes.
+4. **Record consent for the crew.** Migration `0025` gates every proactive send
+   on an opt-in record and existing rows were deliberately not backfilled, so
+   nothing is sent until you do. See §13.
 
 ## 4. Domain
 
@@ -327,15 +411,15 @@ finds no approved template, and writes `failed` rows to `notification_log`.
    pt_PT + es_ES + en_US, category Utility, two body parameters. Full
    instructions in `docs/whatsapp-cloud-api-runbook.md` §6. Until it is
    approved every send fails with Meta code **132001**.
-4. **Add every pilot worker's number to the WhatsApp test recipient
-   allow-list** (5 max on the free test tier) and have each confirm the opt-in
-   on their phone. The number must equal `workers.phone` exactly, in E.164.
-   A number that is not on the list fails with **131030** — expect to see this
-   in the operator Briefing log while you work through the list.
-5. **Set `CRON_SECRET`** in the Vercel `capo-v1` project (Production +
-   Preview) and in `apps/web/.env.local`. Vercel injects it automatically as
-   `Authorization: Bearer …` on scheduled invocations; without it the route
-   answers 503 and nothing is sent.
+4. ~~**Add every pilot worker's number to the WhatsApp test recipient
+   allow-list**~~ — **MOOT (2026-08-10).** The business is verified and the
+   production number has no allow-list, so **131030** should never appear again.
+   The allow-list was also the de-facto consent gate, and losing it is exactly
+   why §13 exists; that is now the step to do instead of this one.
+5. ✅ **`CRON_SECRET` is set.** This said "still outstanding" as of 2026-08-08,
+   but the live `notification_log` shows both crons firing and writing rows, so
+   the bearer is in place. (Vercel injects it as `Authorization: Bearer …` on
+   scheduled invocations; without it the route answers 503 and nothing is sent.)
 6. **Confirm the Vercel Root Directory for `capo-v1`.** `vercel.json` was
    written to `apps/web/vercel.json` on the assumption that the project root
    is `apps/web` (which is what having two separate projects implies). If the
@@ -384,11 +468,11 @@ Two dials worth a look once it runs, both single constants:
 Known and accepted: **briefings are bilingual.** Task titles and materials are
 stored in `companies.language` and nothing retranslates existing rows, so a
 worker who picks `es-ES` gets a Spanish sentence wrapping Portuguese titles.
-Also, no consent column was added — Meta's 5-number allow-list is the gate in
-test mode, but a real opt-in record is required before production under Meta's
-business-messaging policy.
+~~Also, no consent column was added~~ — **closed by migration `0025`
+(2026-08-10).** That debt came due the moment the allow-list stopped being the
+gate; see §13.
 
-## 12. 16:30 worker check-in (2026-08-08)
+## 12. late-afternoon worker check-in (2026-08-08)
 
 The end-of-day "did you finish today's tasks?" nudge, answered by two template
 quick-reply buttons and recorded in `worker_checkins`. Deterministic end to end —
@@ -410,14 +494,29 @@ same pre-launch state as §11, not a bug.
    — `vercel env pull` returns the literal `[SENSITIVE]`. You need the System
    User token from your own records, or a freshly generated one (runbook §3),
    which must then also be updated in Vercel.
-3. **Set `CRON_SECRET`** — still outstanding from §11 step 5, and confirmed
-   absent from the `capo-v1` production env on 2026-08-08. Without it *both*
-   cron routes answer 503 and nothing is ever sent.
-4. **The allow-list is the same as §11 step 4.** Same numbers, so this is a
-   no-op if that is done.
-5. **Confirm the two new cron entries deployed.** `apps/web/vercel.json` now has
-   four, two per route. This depends on being on **Pro** — see the note in §11
-   step 6.
+3. ✅ **`CRON_SECRET` is set.** This said "confirmed absent on 2026-08-08"; the
+   live `notification_log` shows both crons firing, so it is in place.
+4. ~~**The allow-list**~~ — moot, see §11 step 4. Replaced by §13.
+5. ⚠ **The two check-in cron entries were rescheduled, because this send had
+   NEVER FIRED.** `worker_checkins` was empty and `notification_log` held zero
+   `task_checkin` rows, while `daily_briefing` rows existed for the same workers
+   on the same days.
+
+   The cause was thirty minutes. **Vercel's cron dispatch drifts** — every
+   briefing row is stamped 06:45 UTC for an entry scheduled at 06:00, about 45
+   minutes late, reproducibly on both observed days. Both routes gate on
+   `lisbon_hour()` matching exactly. The `:30` entries drifted past the hour
+   boundary (16:15 UTC = Lisbon 17, not 16) and were rejected every single time;
+   the 07:00 briefing survived the identical drift only because `:00` leaves a
+   full hour of headroom. `apps/web/vercel.json` now uses `0 15` / `0 16` UTC and
+   the send lands in 16:00–16:59 Lisbon.
+
+   Both routes now also `logEvent` on the rejection. Before that it wrote no row
+   and raised no error, which is the whole reason this went unnoticed.
+
+   Note this also means the drift is larger than "fires at the stated minute", so
+   the §11 step 6 note about Pro scheduling is optimistic. It does not matter now
+   that both schedules are on the hour.
 
 Then verify, in this order:
 
@@ -447,6 +546,46 @@ One dial worth a look, and it is a single line in
 `NOTIFY_IDLE_WORKERS` equivalent — a worker with nothing on today is skipped
 before any claim is written, because asking them whether they finished it is not
 a product decision with two defensible answers.
+
+## 13. WhatsApp opt-in record (2026-08-10) — the allow-list's replacement
+
+Meta's five-number test allow-list was doing consent work nobody designed it to
+do: a number that had not confirmed an opt-in code simply could not be reached.
+Business verification removed it. Meta's business-messaging policy still requires
+a recorded opt-in before any proactive template send, and requires opt-outs to be
+honoured, so migration `0025` makes that explicit and the send path enforces it.
+
+**Nothing proactive is sent to anyone without a record.** Existing rows were
+deliberately not backfilled — writing a consent record nobody gave would be a lie
+told in SQL — so with `0025` applied, Capo stays quiet until you act.
+
+1. ✅ **`0025_whatsapp_optin.sql` is applied** (2026-08-10). The two standing chores in §0 — regenerate `types.ts` byte-for-byte, re-run `pnpm rls-matrix` — are done: rls-matrix came back 32/32 visibility and 7/7 adversarial blocked.
+2. **Tick your own consent** on `/perfil` → **Mensagens no WhatsApp**. Until you
+   do, your own 07:00 briefing stops (logged as `reminders.manager_no_consent`).
+3. **Ask the crew, in person, then tell Capo** — *"o Zé aceita receber mensagens
+   no WhatsApp"*. That routes through the guarded `update_worker` tool, so it
+   needs your words, not an inference. `/perfil` shows **Falta autorização** on
+   any worker who has a number but no record, and `list_workers` reports
+   `falta_consentimento`, so neither surface can claim someone is covered when
+   they are not.
+   If you would rather do all five at once after actually asking them:
+   `update workers set whatsapp_opt_in_at = now() where company_id = '…' and active and phone is not null;`
+4. **Tell the crew how to leave.** Replying **STOP** unsubscribes them and
+   **START** brings them back, deterministically and with no model involved. The
+   `capo_daily_briefing` template copy in `scripts/whatsapp-templates.ts` says so
+   in every message — but the live pt_PT template predates that copy, so it will
+   not say it until you edit it in WhatsApp Manager to match (`status` prints a
+   WARN showing the diff).
+
+Watch `reminders.workers_no_consent` / `checkin.workers_no_consent` in the logs:
+they carry the count of people dropped for want of a record, and they are what
+explains a quiet morning.
+
+One judgement call worth knowing about: you *can* supersede a worker's STOP by
+re-attesting consent, because latest-wins and `whatsapp_opt_in_at` is writable by
+the tenant. That is deliberate — "põe o Zé outra vez a receber" runs through you
+on a crew this size — and both timestamps are kept, so the sequence stays
+readable. It is also why the tools are guarded.
 
 ## 10. Backlog (deliberately cut from this upgrade)
 

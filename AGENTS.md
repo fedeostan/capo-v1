@@ -207,7 +207,23 @@ Structural invariants (do not regress):
   else. Proactive sends need an approved Meta **template** — free-form text is
   only allowed inside the 24h window a recipient's own reply opens, which is
   why the webhook acknowledges worker replies.
-- **There is a second daily send: the 16:30 check-in**, from
+- **No proactive send goes out without a recorded opt-in** (migration `0025`).
+  `whatsapp_opt_in_at` / `whatsapp_opt_out_at` on `workers` and `profiles`,
+  latest-wins, evaluated by `hasWhatsAppConsent()` in
+  `packages/core/src/channels/whatsapp.ts` and applied in exactly one place —
+  `loadCompanyBriefing()`, which both sends read. It **fails closed** on a
+  missing opt-in, an unparseable timestamp or a tie; do not add a branch that
+  defaults either side. Meta's free test tier used to enforce this by accident
+  through its five-number allow-list, and the production number has no
+  allow-list, so this is now the only gate. Existing rows were deliberately not
+  backfilled.
+- **Cron schedules must fire at `:00`, never `:30`.** Vercel's cron dispatch
+  drifts — ~45 minutes, reproducibly, on this project — and both send routes gate
+  on `lisbon_hour()` matching exactly. A `:30` entry crosses the hour boundary
+  and is rejected, which is precisely how the check-in shipped and then never
+  sent a single message. Both routes now `logEvent` when the gate rejects them,
+  because a rejection writes no row and raises no error.
+- **There is a second daily send: the late-afternoon check-in**, from
   `apps/web/app/api/cron/checkin`, same two-entry/`lisbon_hour()` shape. It asks
   "did you finish today's tasks?" as a template with two quick-reply buttons and
   records the tap in `worker_checkins`. Three things about it are load-bearing:

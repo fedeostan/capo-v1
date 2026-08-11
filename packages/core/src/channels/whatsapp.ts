@@ -98,6 +98,50 @@ export function splitForWhatsApp(text: string): string[] {
   return chunks;
 }
 
+// ── proactive-send consent ──────────────────────────────────────────────────
+
+/**
+ * May Capo send this person a PROACTIVE message?
+ *
+ * Meta's business-messaging policy requires a recorded opt-in before a template
+ * send, and requires opt-outs to be honoured. On the free test tier Meta's
+ * five-number allow-list did this job by accident — a number nobody had
+ * confirmed simply could not be reached. The production number has no
+ * allow-list, so this predicate is the gate. See 0025_whatsapp_optin.sql.
+ *
+ * LATEST WINS. A withdrawal never deletes the original consent, it supersedes
+ * it (no-DELETE posture, and the pair is the audit trail), so the timestamps
+ * have to be COMPARED rather than merely tested for presence. Testing presence
+ * would leave anyone who ever opted out permanently unreachable, including after
+ * they asked to come back.
+ *
+ * Fails CLOSED on anything it cannot read — a missing opt-in, an unparseable
+ * timestamp, or a row from a deploy that landed before its migration. Silence is
+ * a recoverable mistake; messaging someone who never agreed is not.
+ *
+ * This governs PROACTIVE sends only. Replying inside the 24-hour window that a
+ * person's own inbound message opens is a response to them, not an unsolicited
+ * send, and is deliberately not gated — otherwise a worker who replies STOP
+ * would never receive the confirmation that they had been unsubscribed.
+ */
+export function hasWhatsAppConsent(row: {
+  whatsapp_opt_in_at?: string | null;
+  whatsapp_opt_out_at?: string | null;
+}): boolean {
+  // PARSE the opt-in before trusting it, rather than merely testing that a
+  // string is there. An earlier version returned true for any truthy opt_in_at
+  // whenever opt_out_at was absent, so an unreadable timestamp read as consent —
+  // the one direction this function must never fail in. scripts/whatsapp-check.mts
+  // pins it.
+  const optIn = row.whatsapp_opt_in_at ? Date.parse(row.whatsapp_opt_in_at) : Number.NaN;
+  if (Number.isNaN(optIn)) return false;
+  if (!row.whatsapp_opt_out_at) return true;
+  // NaN from an unparseable opt-out makes this comparison false too, which is
+  // again the fail-closed direction. A tie counts as withdrawal for the same
+  // reason. Do not "fix" either by defaulting a side.
+  return Date.parse(row.whatsapp_opt_out_at) < optIn;
+}
+
 // ── approval button ids ─────────────────────────────────────────────────────
 // The proposal id travels in the button id and is the ONLY thing carrying the
 // manager's decision back — no model, no message-id bookkeeping. ~52 chars,
@@ -122,7 +166,7 @@ export function parseProposalButtonId(
 }
 
 // ── check-in quick-reply payloads ───────────────────────────────────────────
-// The 16:30 check-in's two template buttons. Same shape and the same reasoning
+// The late-afternoon check-in's two template buttons. Same shape and the same reasoning
 // as the approval button ids above, on a tighter budget: a TEMPLATE quick-reply
 // payload gets far less room than an interactive reply id's 256 chars, so this
 // is capped at 128. `capo:checkin:not_done:<uuid>` is 58.

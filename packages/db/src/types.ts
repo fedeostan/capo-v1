@@ -71,6 +71,22 @@
 // asymmetry is why the capture does its own write instead of widening the
 // profiles/workers SELECTs the webhook already runs — see AGENTS.md on code
 // that reads ahead of a pending migration.
+//
+// ── whatsapp opt-in (0025), APPLIED ────────────────────────────────────────
+// profiles/workers.whatsapp_opt_in_at and .whatsapp_opt_out_at come from
+// 0025_whatsapp_optin.sql, which IS applied to the live project. They were
+// hand-added here too, but for the opposite reason to the BSUID pair above:
+// not because the migration is pending, but because regenerating would have
+// DELETED whatsapp_user_id, which is not in the live schema. So this file now
+// leads the live project in one direction and matches it in the other, and a
+// clean regeneration is impossible until 0022 is applied.
+//
+// Both were verified column-for-column against a real generate_typescript_types
+// run at merge time. Do the byte-equality check on main once 0022 lands.
+//
+// Note the three columns sit adjacent and alphabetical — opt_in_at, opt_out_at,
+// user_id — which is exactly where git put both sides of the merge conflict.
+// They are unrelated features: consent (0025) and identity (0022).
 export type Json =
   | string
   | number
@@ -566,6 +582,8 @@ export type Database = {
           id: string
           language: string
           phone: string
+          whatsapp_opt_in_at: string | null
+          whatsapp_opt_out_at: string | null
           whatsapp_user_id: string | null
         }
         Insert: {
@@ -575,6 +593,8 @@ export type Database = {
           id: string
           language?: string
           phone: string
+          whatsapp_opt_in_at?: string | null
+          whatsapp_opt_out_at?: string | null
           whatsapp_user_id?: string | null
         }
         Update: {
@@ -584,6 +604,8 @@ export type Database = {
           id?: string
           language?: string
           phone?: string
+          whatsapp_opt_in_at?: string | null
+          whatsapp_opt_out_at?: string | null
           whatsapp_user_id?: string | null
         }
         Relationships: [
@@ -1240,6 +1262,8 @@ export type Database = {
           name: string
           phone: string | null
           trade: string | null
+          whatsapp_opt_in_at: string | null
+          whatsapp_opt_out_at: string | null
           whatsapp_user_id: string | null
         }
         Insert: {
@@ -1251,6 +1275,8 @@ export type Database = {
           name: string
           phone?: string | null
           trade?: string | null
+          whatsapp_opt_in_at?: string | null
+          whatsapp_opt_out_at?: string | null
           whatsapp_user_id?: string | null
         }
         Update: {
@@ -1262,6 +1288,8 @@ export type Database = {
           name?: string
           phone?: string | null
           trade?: string | null
+          whatsapp_opt_in_at?: string | null
+          whatsapp_opt_out_at?: string | null
           whatsapp_user_id?: string | null
         }
         Relationships: [

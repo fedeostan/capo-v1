@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LOCALES } from '@capo/i18n/locale';
+import { hasWhatsAppConsent } from '../channels/whatsapp';
 import type { CapoTool } from './types';
 
 // E.164 — this is the number the daily WhatsApp briefing is sent to, and the
@@ -13,6 +14,22 @@ const e164Phone = z
     'Phone in E.164 international format, e.g. +351912345678. If the manager gives a local number, ask them to confirm the full international format — never guess the country prefix.',
   );
 
+// The consent attestation, exposed to the model as a boolean because that is
+// what the manager can actually answer; the timestamp is minted server-side, so
+// the model never states WHEN consent was given, only that it was.
+//
+// Both worker tools are GUARDED, which matters more here than anywhere else in
+// the roster: recording consent on someone else's behalf must carry the
+// manager's verbatim instruction, never a model inference from context. Capo
+// must not decide that a worker "probably agreed" because their phone number
+// was mentioned.
+const whatsappOptIn = z
+  .boolean()
+  .optional()
+  .describe(
+    'Set true ONLY when the manager states that this worker has agreed to receive WhatsApp messages from Capo. Required before Capo sends them anything — without it they get no briefing and no check-in. Never infer it: if the manager has not said so, ask. Set false to record that they no longer want them.',
+  );
+
 export const addWorkerInput = z.object({
   name: z.string().min(1),
   trade: z
@@ -22,7 +39,26 @@ export const addWorkerInput = z.object({
       "The worker's trade (bricklayer, electrician, plumber…), written in the company's domain language (see the Language policy in your instructions).",
     ),
   phone: e164Phone.optional(),
+  whatsapp_opt_in: whatsappOptIn,
 });
+
+/**
+ * A consent boolean → the pair of timestamps 0025 stores.
+ *
+ * `false` writes an opt-out rather than clearing the opt-in, because the schema
+ * marks and never deletes, and because hasWhatsAppConsent() compares the two.
+ * `undefined` writes NOTHING — an update that does not mention consent must
+ * leave whatever is on record untouched, which is why this returns an empty
+ * object rather than nulls.
+ */
+function consentPatch(optIn: boolean | undefined): {
+  whatsapp_opt_in_at?: string;
+  whatsapp_opt_out_at?: string;
+} {
+  if (optIn === undefined) return {};
+  const now = new Date().toISOString();
+  return optIn ? { whatsapp_opt_in_at: now } : { whatsapp_opt_out_at: now };
+}
 
 export const addWorker: CapoTool<z.infer<typeof addWorkerInput>> = {
   name: 'add_worker',
@@ -38,6 +74,7 @@ export const addWorker: CapoTool<z.infer<typeof addWorkerInput>> = {
         name: input.name,
         trade: input.trade ?? null,
         phone: input.phone ?? null,
+        ...consentPatch(input.whatsapp_opt_in),
       })
       .select()
       .single();
@@ -51,6 +88,7 @@ export const updateWorkerInput = z.object({
   name: z.string().min(1).optional(),
   trade: z.string().optional(),
   phone: e164Phone.optional(),
+  whatsapp_opt_in: whatsappOptIn,
   language: z
     .enum(LOCALES)
     .optional()
@@ -62,14 +100,17 @@ export const updateWorkerInput = z.object({
 export const updateWorker: CapoTool<z.infer<typeof updateWorkerInput>> = {
   name: 'update_worker',
   description:
-    'Update an existing worker (name, trade, phone, briefing language). This is a write: only call it directly for an explicit manager command; otherwise use propose.',
+    'Update an existing worker (name, trade, phone, briefing language, WhatsApp consent). This is a write: only call it directly for an explicit manager command; otherwise use propose.',
   inputSchema: updateWorkerInput,
   guarded: true,
   async execute(input, ctx) {
-    const { worker_id, ...fields } = input;
+    // whatsapp_opt_in is a tool-level boolean, not a column, so it must be
+    // pulled OUT of the spread — passing it through would send Postgres a column
+    // that does not exist and fail the whole update.
+    const { worker_id, whatsapp_opt_in, ...fields } = input;
     const { data, error } = await ctx.db
       .from('workers')
-      .update(fields)
+      .update({ ...fields, ...consentPatch(whatsapp_opt_in) })
       .eq('id', worker_id)
       .eq('company_id', ctx.companyId)
       .select()
@@ -82,7 +123,7 @@ export const updateWorker: CapoTool<z.infer<typeof updateWorkerInput>> = {
 export const listWorkers: CapoTool<Record<string, never>> = {
   name: 'list_workers',
   description:
-    "List the team: trade, whether they are reachable by the 07:00 WhatsApp briefing, and how loaded they are today/tomorrow. Use it to answer 'quem está livre?' and before assigning work. Read-only.",
+    "List the team: trade, whether they are reachable by the daily WhatsApp messages (recebe_whatsapp — needs both a phone and recorded consent; falta_consentimento flags the ones who have a number but have not agreed yet), and how loaded they are today/tomorrow. Use it to answer 'quem está livre?' and before assigning work. Read-only.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     const { data, error } = await ctx.db
@@ -117,9 +158,13 @@ export const listWorkers: CapoTool<Record<string, never>> = {
     return {
       workers: (data ?? []).map(w => ({
         ...w,
-        // The 07:00 briefing is addressed to workers.phone; without one the
-        // manager has to relay the day's tasks by hand.
-        recebe_whatsapp: Boolean(w.phone),
+        // Reachability is phone AND consent, and it has to be both or Capo tells
+        // the manager someone is covered when the crons will skip them. This is
+        // the same predicate the crons gate on — see hasWhatsAppConsent.
+        recebe_whatsapp: Boolean(w.phone) && hasWhatsAppConsent(w),
+        // Split out so the manager can be told WHICH of the two is missing:
+        // "add a number" and "ask them if they agree" are different jobs.
+        falta_consentimento: Boolean(w.phone) && !hasWhatsAppConsent(w),
         tarefas: load.get(w.id) ?? { hoje: 0, amanha: 0, atrasadas: 0, abertas: 0 },
       })),
     };

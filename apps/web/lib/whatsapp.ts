@@ -18,32 +18,33 @@ export function whatsappSendEnv(): WhatsAppEnv | null {
   return accessToken && phoneNumberId ? { accessToken, phoneNumberId } : null;
 }
 
-// Meta's free test-tier "allowed recipients" list stores Buenos Aires
-// (area code 11) mobile numbers in the legacy domestic format (54 + area
-// code + 15 + local number) rather than the wa_id's modern format
-// (54 + 9 + area code + local number). Sending to the wa_id directly is
-// rejected with "(#131030) Recipient phone number not in allowed list"
-// even though it's the same number and inbound matching works fine. This is a
-// test-tier-only quirk — a verified production number has no allow-list, so
-// this becomes a no-op once the pilot graduates. Buenos Aires only for now;
-// extend the regex if a non-11 area code joins.
-export function testTierArSendTarget(waId: string): string {
-  const match = /^549(\d{2})(\d{8})$/.exec(waId);
-  return match ? `54${match[1]}15${match[2]}` : waId;
-}
-
 /**
  * E.164 (as stored in profiles.phone / workers.phone) → Meta's wa_id format
- * (digits, no '+'), with the test-tier fixup applied.
+ * (digits, no '+').
  *
  * The inbound webhook receives a wa_id and adds the '+' to match the DB; the
  * cron starts from the DB and has to go the other way. Getting this backwards
- * fails as a 131030, which looks exactly like "number not allow-listed".
+ * fails as a 131026 ("message undeliverable"), which reads like a recipient
+ * problem rather than a formatting one.
+ *
+ * This used to also rewrite Argentine numbers from the wa_id's modern
+ * `549 <area> <local>` form into the legacy `54 <area> 15 <local>` form, which
+ * is how Meta's free test-tier allow-list stored them — sending to the wa_id
+ * directly was rejected with a 131030. That rewrite is gone with the test tier:
+ * a verified production number has no allow-list, and the legacy form is not a
+ * valid wa_id, so keeping it would have broken every send to a `+549…` manager.
+ * Do not reintroduce it; if a 131030 ever reappears it means something else.
  */
 export function toSendTarget(e164: string): string {
-  return testTierArSendTarget(e164.replace(/^\+/, ''));
+  return e164.replace(/^\+/, '');
 }
 
 export function sendConfigFor(env: WhatsAppEnv, to: string): WhatsAppSendConfig {
   return { accessToken: env.accessToken, phoneNumberId: env.phoneNumberId, to };
 }
+
+// The consent predicate lives in @capo/core because BOTH sides need it and they
+// must never disagree: the crons decide whether to send with it, and
+// list_workers reports `recebe_whatsapp` with it. Re-exported here so the web
+// app's WhatsApp callers keep one import.
+export { hasWhatsAppConsent } from '@capo/core/channels/whatsapp';

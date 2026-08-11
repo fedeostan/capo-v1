@@ -394,7 +394,7 @@ export async function loadHealth(): Promise<HealthReport> {
 
   const dispatchingCompanies = activation.filter(r => r.stage === 'dispatching').length;
   // Filtered by KIND, not just by date. notification_log now carries two daily
-  // sends — the 07:00 'daily_briefing' and the 16:30 'task_checkin' — and this
+  // sends — the 07:00 'daily_briefing' and the late-afternoon 'task_checkin' — and this
   // alert is about the briefing only. Counting every kind would mean a working
   // check-in permanently holds this number above zero, so the briefing could
   // fail every single morning and this alert would never fire again.
