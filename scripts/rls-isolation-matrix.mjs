@@ -23,8 +23,11 @@
 // two 0018 task-review RPCs plus that table's absent INSERT/UPDATE grants,
 // the 0023 STORAGE surface (see below), the 0024 notifications table (no
 // INSERT grant, read_at-only UPDATE grant, and its two-predicate policy —
-// company AND profile), and — run separately, as the no-profiles-row actor —
-// those same two RPCs again against a real tenant's task/review, plus
+// company AND profile), the 0026 push_subscriptions table (the same
+// two-predicate policy, no UPDATE grant at all, and the schema's first
+// DELETE policy — attacked directly rather than riding on SELECT being
+// right), and — run separately, as the no-profiles-row actor — those same
+// two RPCs again against a real tenant's task/review, plus
 // revert_translation_batch against a real tenant's batch, plus signing and
 // downloading a real tenant's photo.
 //
@@ -312,6 +315,20 @@ async function seedTenant(label) {
     `task_photo(${label})`,
   );
 
+  // Two registrations per tenant (0026): the owner's and the COLLEAGUE's. The
+  // colleague's is what proves per-profile scoping — with only one row per
+  // company, a policy that dropped `profile_id = auth.uid()` would still
+  // report green here, exactly as it would for notifications.
+  const pushEndpoint = `https://push.example/${label}-owner-${randomBytes(16).toString('hex')}`;
+  const colleaguePushEndpoint = `https://push.example/${label}-colleague-${randomBytes(16).toString('hex')}`;
+  await must(
+    admin.from('push_subscriptions').insert([
+      { company_id: companyId, profile_id: userId, endpoint: pushEndpoint, p256dh: 'k', auth: 'a' },
+      { company_id: companyId, profile_id: colleagueId, endpoint: colleaguePushEndpoint, p256dh: 'k', auth: 'a' },
+    ]).select(),
+    `push_subscriptions(${label})`,
+  );
+
   const client = createClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: false },
   });
@@ -324,6 +341,7 @@ async function seedTenant(label) {
     conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
     photoPath,
     colleagueId, ownNotificationId, colleagueNotificationId,
+    pushEndpoint, colleaguePushEndpoint,
   };
 }
 
@@ -389,10 +407,11 @@ async function cleanupTenant(t) {
   // Reverse dependency order; every delete is scoped to this run's rows only.
   const companyEq = (q) => q.eq('company_id', t.companyId);
   await companyEq(admin.from('task_photos').delete());
-  // Before profiles: notifications.profile_id is a FK (on delete cascade, but
-  // the delete is explicit here so a leftover row is never mistaken for one
-  // the app wrote).
+  // Before profiles: notifications.profile_id and push_subscriptions.profile_id
+  // are both FKs (on delete cascade, but the deletes are explicit here so a
+  // leftover row is never mistaken for one the app wrote).
   await companyEq(admin.from('notifications').delete());
+  await companyEq(admin.from('push_subscriptions').delete());
   await companyEq(admin.from('translation_items').delete());
   await companyEq(admin.from('translation_batches').delete());
   await companyEq(admin.from('proposals').delete());
@@ -456,6 +475,24 @@ async function runMatrix(self, other) {
     const foreignCompany = rows.filter(r => r.company_id !== self.companyId);
     const foreignProfile = rows.filter(r => r.profile_id !== self.userId);
     check(`${L}: notifications`,
+      !error && rows.length === 1 && foreignCompany.length === 0 && foreignProfile.length === 0,
+      error ? error.message : `${rows.length} rows, ${foreignCompany.length} foreign company, ${foreignProfile.length} foreign profile`);
+  }
+
+  // push_subscriptions (0026): company AND profile, same shape as
+  // notifications above and checked the same way rather than folded into the
+  // generic per-company loop. The seed put TWO rows in this company — the
+  // owner's and the colleague's — so `foreignProfile` is the assertion the
+  // generic loop structurally cannot make: a policy missing its
+  // `profile_id = auth.uid()` clause returns both rows, every one of them
+  // with the right company_id, and the generic loop's company-only check
+  // would report green.
+  {
+    const { data, error } = await db.from('push_subscriptions').select('*');
+    const rows = data ?? [];
+    const foreignCompany = rows.filter(r => r.company_id !== self.companyId);
+    const foreignProfile = rows.filter(r => r.profile_id !== self.userId);
+    check(`${L}: push_subscriptions`,
       !error && rows.length === 1 && foreignCompany.length === 0 && foreignProfile.length === 0,
       error ? error.message : `${rows.length} rows, ${foreignCompany.length} foreign company, ${foreignProfile.length} foreign profile`);
   }
@@ -886,6 +923,94 @@ async function runAdversarial(attacker, victim) {
         : 'ACCEPTED — boundary broken',
     );
   }
+
+  // ── 0026 push_subscriptions ──────────────────────────────────────────────
+  // The endpoint IS a capability: anyone holding one can ask the push service
+  // to buzz that device. And this is the first table in the schema a tenant
+  // can DELETE from, so the delete policy earns its own attacks rather than
+  // riding on the select policy being right.
+
+  // Attack 23 (policy, cross-tenant): read another tenant's registration.
+  {
+    const { data, error } = await db
+      .from('push_subscriptions')
+      .select('id')
+      .eq('endpoint', victim.pushEndpoint);
+    check(
+      "adversarial: read another tenant's push registration blocked",
+      !error && (data ?? []).length === 0,
+      error ? error.message : `${(data ?? []).length} rows (leak!)`,
+    );
+  }
+
+  // Attack 24 (policy, same company): read a COLLEAGUE's registration inside
+  // the attacker's OWN company. Without this, dropping
+  // `profile_id = auth.uid()` from the policies still passes every other
+  // check here — the same blind spot notifications needed a second profile
+  // to close.
+  {
+    const { data, error } = await db
+      .from('push_subscriptions')
+      .select('id')
+      .eq('endpoint', attacker.colleaguePushEndpoint);
+    check(
+      "adversarial: read a same-company colleague's push registration blocked",
+      !error && (data ?? []).length === 0,
+      error ? error.message : `${(data ?? []).length} rows (leak!)`,
+    );
+  }
+
+  // Attack 25 (delete policy, cross-tenant): delete another tenant's
+  // registration — silencing their alerts. RLS filters rows rather than
+  // raising, so a blocked DELETE matches nothing and returns no error; the
+  // victim's row surviving is the only truthful signal.
+  {
+    await db.from('push_subscriptions').delete().eq('endpoint', victim.pushEndpoint);
+    const { data: survivor } = await admin
+      .from('push_subscriptions')
+      .select('id')
+      .eq('endpoint', victim.pushEndpoint);
+    check(
+      "adversarial: delete another tenant's push registration blocked",
+      (survivor ?? []).length === 1,
+      (survivor ?? []).length === 1 ? 'row survives' : 'ACCEPTED — foreign registration deleted (leak!)',
+    );
+  }
+
+  // Attack 26 (FK guard trigger): register a phone against another tenant's
+  // profile — company_id is honest (the attacker's own, so RLS passes) but
+  // profile_id names the victim's user. The 0026 cross-company FK guard
+  // (same shape as 0009's) is the only thing standing between an honest
+  // company_id and a row naming someone else's user.
+  {
+    const { error } = await db.from('push_subscriptions').insert({
+      company_id: attacker.companyId,
+      profile_id: victim.userId,
+      endpoint: `https://push.example/forged-${randomBytes(16).toString('hex')}`,
+      p256dh: 'k',
+      auth: 'a',
+    });
+    check(
+      "adversarial: register a phone against another tenant's profile blocked",
+      error?.code === '23514',
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — cross-tenant FK guard missing!',
+    );
+  }
+
+  // POSITIVE CONTROL. Every check above asserts a REFUSAL, so a policy that
+  // denied everyone would pass all four (AGENTS.md). The owner must still be
+  // able to read their OWN registration.
+  {
+    const { data, error } = await db
+      .from('push_subscriptions')
+      .select('id')
+      .eq('endpoint', attacker.pushEndpoint);
+    check(
+      "adversarial: owner can still read their OWN push registration (positive control)",
+      !error && (data ?? []).length === 1,
+      error ? error.message : `${(data ?? []).length} rows`,
+    );
+  }
 }
 
 // A third actor's attacks: an authenticated user with a confirmed email and
@@ -895,7 +1020,7 @@ async function runAdversarial(attacker, victim) {
 // actor that would have caught the fail-open bug fix round 1 found in
 // open_task_review (0019): before that fix, `v_company <> NULL` evaluated to
 // NULL under three-valued logic, the guard silently did not fire, and this
-// exact user could write to any tenant's tasks/task_reviews. Attack 25 is the
+// exact user could write to any tenant's tasks/task_reviews. Attack 29 is the
 // same defect in revert_translation_batch, which is where open_task_review
 // inherited it from.
 //
@@ -906,7 +1031,7 @@ async function runAdversarial(attacker, victim) {
 async function runOrphanAttack(orphan, victim) {
   const db = orphan.client;
 
-  // Attack 23: filing a claim on a real tenant's real task. Targets
+  // Attack 27: filing a claim on a real tenant's real task. Targets
   // taskIds[1] for the same reason as attack 9 — task1 already carries the
   // seeded pending review, so aiming there would risk tripping
   // task_reviews_one_pending_idx instead of exercising the tenant guard.
@@ -925,7 +1050,7 @@ async function runOrphanAttack(orphan, victim) {
     );
   }
 
-  // Attack 24: resolving a real tenant's real review. Note this one was
+  // Attack 28: resolving a real tenant's real review. Note this one was
   // already safe even before the 0019 fix — the guard lives inside the
   // UPDATE's WHERE clause (`company_id = private.current_company_id()`),
   // and `real_uuid = NULL` is NULL, which WHERE treats as no match, not as
@@ -949,7 +1074,7 @@ async function runOrphanAttack(orphan, victim) {
     );
   }
 
-  // Attack 25 (0015 + 0021): revert_translation_batch is SECURITY DEFINER, so
+  // Attack 29 (0015 + 0021): revert_translation_batch is SECURITY DEFINER, so
   // RLS does not cover it and its auth.uid() clause is the entire tenant
   // boundary. Before 0021 that clause used `<>`, which three-valued logic
   // turned into a no-op for exactly this caller — the RPC did not merely allow
@@ -981,7 +1106,7 @@ async function runOrphanAttack(orphan, victim) {
     );
   }
 
-  // Attack 26 (0023): the storage boundary, seen by the actor it is most
+  // Attack 30 (0023): the storage boundary, seen by the actor it is most
   // likely to fail open for. The storage.objects policies read
   // `(storage.foldername(name))[1] = (select private.current_company_id())::text`,
   // and for this user that function returns NULL — the exact input that turned
