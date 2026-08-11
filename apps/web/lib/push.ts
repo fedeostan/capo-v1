@@ -4,6 +4,7 @@ import {
   type PushOutcome,
   type PushPayload,
 } from '@capo/core/channels/push-rules';
+import { logEvent } from '@/lib/log';
 
 // The Web Push transport. Sibling of lib/whatsapp.ts, which does the same job
 // for the two routes that talk to Meta: this file owns config and the wire,
@@ -57,8 +58,12 @@ export function vapidPublicKey(): string | null {
  * Hand one message to one registration's push service.
  *
  * Never throws: the caller is a loop over other people's phones and one dead
- * handset must not cost the rest their alert. Everything is folded into a
- * PushOutcome, which is the only thing the dispatcher branches on.
+ * handset — or one malformed VAPID key — must not cost the rest their alert.
+ * Both `setVapidDetails` (synchronous, throws a plain `Error` on a malformed
+ * subject/key) and `sendNotification` (throws `WebPushError` from the push
+ * service) are individually caught below, so neither can escape this
+ * function. Everything is folded into a PushOutcome, which is the only thing
+ * the dispatcher branches on.
  */
 export async function sendPush(
   sub: StoredSubscription,
@@ -67,7 +72,17 @@ export async function sendPush(
   const config = vapid();
   if (!config) return 'retry';
 
-  webpush.setVapidDetails(config.subject, config.publicKey, config.privateKey);
+  try {
+    webpush.setVapidDetails(config.subject, config.publicKey, config.privateKey);
+  } catch (err) {
+    // A malformed VAPID value is an OPERATOR error, not a transient fault: it
+    // fails identically on every send, for every recipient, forever. Without
+    // its own log line it is indistinguishable from the push service having a
+    // bad minute — and the keys are hand-pasted into Vercel exactly once,
+    // which is when a truncated or wrongly-encoded value gets in.
+    logEvent('push.vapid_invalid', { error: err instanceof Error ? err.message : String(err) });
+    return 'retry';
+  }
 
   try {
     await webpush.sendNotification(
