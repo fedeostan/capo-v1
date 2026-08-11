@@ -34,9 +34,15 @@ function isValidPushEndpoint(url: string): boolean {
     const hostname = parsed.hostname;
     if (!hostname) return false;
 
-    // A trailing dot is valid FQDN syntax and resolves identically, so
-    // "localhost." would otherwise walk straight past an exact-match check.
-    const host = hostname.replace(/\.$/, '').toLowerCase();
+    // A real push service never sends a trailing dot. Reject any hostname that
+    // does, as it is either a mistake or an attempt to bypass other checks. This
+    // is also why we normalise: a trailing dot is valid FQDN syntax and resolves
+    // identically, so "localhost." would otherwise walk straight past an
+    // exact-match check. The + is load-bearing: strip all trailing dots
+    // exhaustively, not just one.
+    if (hostname.endsWith('.')) return false;
+
+    const host = hostname.toLowerCase();
 
     // Reject localhost.
     if (host === 'localhost') return false;
