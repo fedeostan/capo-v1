@@ -11,6 +11,7 @@
     "rls-matrix": "node scripts/rls-isolation-matrix.mjs",
     "scheduler-check": "tsx scripts/scheduler-check.mts",
     "whatsapp-check": "tsx scripts/whatsapp-check.mts",
+    "push-check": "tsx scripts/push-check.mts",
     "whatsapp-template": "tsx scripts/whatsapp-template.mts",
     "agent-smoke": "tsx scripts/agent-smoke.mts",
     "knowledge-ingest": "tsx scripts/knowledge-ingest.mts"
