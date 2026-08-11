@@ -26,30 +26,76 @@ so **`old_value` is not writable by a tenant** and the undo snapshot is
 immutable at the grant layer. Regenerating `packages/db/src/types.ts` was
 confirmed to reproduce the committed file exactly.
 
-### 0017 — ✅ APPLIED (live version `20260808140249`)
+### 0017 — ✅ APPLIED (2026-08-08)
 
-`0017_worker_checkins.sql` ships with the late-afternoon check-in (§12) and **is
-applied** — verified against the live project on 2026-08-10, correcting the
-"PENDING" this section used to claim. It adds `worker_checkins` (one row per
-worker per day holding their answer), one SELECT-only RLS policy plus
-`grant select`, and the `worker_checkins_fks_same_company` trigger. There is
-deliberately **no** insert or update policy: the sole writer is the WhatsApp
-webhook on the service role, and a tenant able to write there could forge a
-worker's answer.
+`0017_worker_checkins.sql` ships with the late-afternoon check-in (§12), applied as
+version `20260808140249`. It adds `worker_checkins` (one row per worker per day
+holding their answer), one SELECT-only RLS policy plus `grant select`, and the
+`worker_checkins_fks_same_company` trigger.
 
-The two standing chores below were never done and still apply:
+Verified after applying: 10 columns; RLS on with exactly **one** policy and that
+policy is `SELECT`; the FK trigger present; and the grants hold — `authenticated`
+has `SELECT` and nothing else, `anon` has none. There is deliberately no insert
+or update policy, because the sole writer is the WhatsApp webhook on the service
+role and a tenant able to write there could forge a worker's answer.
 
-1. Regenerate `packages/db/src/types.ts` via the Supabase MCP and confirm it
-   reproduces the committed file byte for byte. The `worker_checkins` block was
-   hand-written **ahead** of the migration — the route code does not typecheck
-   without it — so until this is done the file describes a table the live
-   project does not have.
+The hand-written `packages/db/src/types.ts` block was checked column by column
+against the live schema (names, types, nullability, defaults) and matches.
+
+Two chores still open:
+
+1. **The byte-equality regeneration for `types.ts` has NOT been done**, and
+   currently cannot be. See the ⚠ below — the live project carries
+   `task_reviews` from the parallel PRD #19 work, which is not in this branch,
+   so a regeneration emits tables this file has never had.
 2. Re-run `pnpm rls-matrix`. It gains a visibility check for the new table plus
-   an adversarial "a tenant cannot INSERT a check-in" case.
+   two adversarial "a tenant cannot forge a check-in answer" cases.
 
-### 0018 — ⏳ PENDING (not yet applied)
+### ⚠ The live project is ahead of `main` (2026-08-08)
 
-`0018_whatsapp_optin.sql` adds `whatsapp_opt_in_at` / `whatsapp_opt_out_at` to
+Three migrations were applied from the parallel PRD #19 work and are **not** in
+any pushed branch:
+
+| Version | Name |
+|---|---|
+| `20260808123135` | `task_reviews` |
+| `20260808125233` | `task_reviews_hardening` |
+| `20260808130731` | `task_review_supersede` |
+
+Two consequences worth knowing before either stream continues:
+
+- **~~Two migration files are both numbered `0017`~~ — RESOLVED on the #19
+  branch.** `0017_worker_checkins.sql` reached `main` first and kept `0017`;
+  the task-review stream renumbered upward to `0018_task_reviews.sql`,
+  `0019_task_reviews_hardening.sql` and `0020_task_review_supersede.sql`, with
+  every cross-reference updated. Worth recording *why* it needed a human: git
+  does not flag it, because the filenames differ and the contents do not
+  overlap, so the merge is silently clean and you simply end up with two
+  `0017_*` files. **File numbers no longer match application order** —
+  `task_reviews` was applied ~90 minutes before `worker_checkins` — and that is
+  fine: the live ledger keys on the timestamps above, and the two streams are
+  independent (`0017_worker_checkins` deliberately never touches `tasks.status`).
+- ~~**`0020` is now taken.**~~ **DONE** (PR #32). The `revert_translation_batch`
+  null-guard fix moved to `0021_revert_translation_batch_null_guard.sql` when
+  main was merged into `claude/strange-gagarin-53bb5b`, with its internal
+  references to #19's migrations renumbered `0018`→`0019` to match.
+  The predicted `seedOrphanUser` conflict happened, and git flagged it — but the
+  *dangerous* part of that same merge did not conflict at all: both branches had
+  added a `runOrphanAttack` function, and git kept **both declarations**. In
+  JavaScript the second one silently replaces the first, so #19's two orphan
+  checks (`open_task_review`, `resolve_task_review`) would have been dead code
+  and the suite would have reported green while running two fewer attacks than
+  its own totals implied. The two bodies are now merged into one function
+  carrying attacks 12, 13 and 14. Same lesson as the `0017` collision above:
+  what git flags is not what hurts you.
+- **Whichever stream regenerates `types.ts` second sees a diff that looks like
+  corruption and is not.** Regenerating today pulls in `task_reviews`; doing it
+  from the #19 branch pulls in `worker_checkins`. One regeneration after both
+  have landed, not two before.
+
+### 0025 — ✅ APPLIED (2026-08-10)
+
+`0025_whatsapp_optin.sql` adds `whatsapp_opt_in_at` / `whatsapp_opt_out_at` to
 **both** `workers` and `profiles`, and re-states the column grants on each (they
 REPLACE rather than add — `workers` has never had a column grant at all, so this
 is its first, and every writable column had to be re-listed). The same two chores
@@ -184,7 +230,7 @@ allow-list form, so it fired on every send to the only manager on the system
 
    No 2388023 this time — nothing exists yet, so every pair should submit. Repeat
    `status` until all PASS; approval is usually minutes.
-4. **Record consent for the crew.** Migration `0018` gates every proactive send
+4. **Record consent for the crew.** Migration `0025` gates every proactive send
    on an opt-in record and existing rows were deliberately not backfilled, so
    nothing is sent until you do. See §13.
 
@@ -422,7 +468,7 @@ Two dials worth a look once it runs, both single constants:
 Known and accepted: **briefings are bilingual.** Task titles and materials are
 stored in `companies.language` and nothing retranslates existing rows, so a
 worker who picks `es-ES` gets a Spanish sentence wrapping Portuguese titles.
-~~Also, no consent column was added~~ — **closed by migration `0018`
+~~Also, no consent column was added~~ — **closed by migration `0025`
 (2026-08-10).** That debt came due the moment the allow-list stopped being the
 gate; see §13.
 
@@ -439,9 +485,8 @@ PRD, and it should land against a table that already holds the answers.
 finds no approved template, and writes `failed` rows to `notification_log` — the
 same pre-launch state as §11, not a bug.
 
-1. **Apply `0017_worker_checkins.sql`**, then do the two standing chores in §0
-   (regenerate `packages/db/src/types.ts` and confirm byte-equality; re-run
-   `pnpm rls-matrix`).
+1. ✅ **DONE (2026-08-08).** `0017_worker_checkins.sql` is applied (version
+   `20260808140249`) and verified — see §0. `pnpm rls-matrix` still needs a run.
 2. **Submit the template.** `pnpm whatsapp-template create`, then
    `pnpm whatsapp-template status` until every line is PASS. Full instructions
    and the credential caveats are in `docs/whatsapp-cloud-api-runbook.md` §6.
@@ -508,13 +553,13 @@ Meta's five-number test allow-list was doing consent work nobody designed it to
 do: a number that had not confirmed an opt-in code simply could not be reached.
 Business verification removed it. Meta's business-messaging policy still requires
 a recorded opt-in before any proactive template send, and requires opt-outs to be
-honoured, so migration `0018` makes that explicit and the send path enforces it.
+honoured, so migration `0025` makes that explicit and the send path enforces it.
 
 **Nothing proactive is sent to anyone without a record.** Existing rows were
 deliberately not backfilled — writing a consent record nobody gave would be a lie
-told in SQL — so after `0018` lands, expect Capo to go quiet until you act.
+told in SQL — so with `0025` applied, Capo stays quiet until you act.
 
-1. **Apply `0018_whatsapp_optin.sql`**, then the two standing chores in §0.
+1. ✅ **`0025_whatsapp_optin.sql` is applied** (2026-08-10). The two standing chores in §0 — regenerate `types.ts` byte-for-byte, re-run `pnpm rls-matrix` — are done: rls-matrix came back 32/32 visibility and 7/7 adversarial blocked.
 2. **Tick your own consent** on `/perfil` → **Mensagens no WhatsApp**. Until you
    do, your own 07:00 briefing stops (logged as `reminders.manager_no_consent`).
 3. **Ask the crew, in person, then tell Capo** — *"o Zé aceita receber mensagens

@@ -1,6 +1,24 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  experimental: {
+    serverActions: {
+      // completeTaskWithPhotos posts image files through a Server Action, and
+      // the framework default is 1 MB — six site photos do not fit in that.
+      //
+      // 4 MB, not more, and the ceiling is not ours: a Vercel Function refuses
+      // a request body over 4.5 MB before Next.js ever sees it, so anything
+      // above this would fail in production while passing locally. The limit
+      // applies to the RAW multipart body, boundaries and part headers
+      // included, which is where the remaining ~500 KB of headroom goes.
+      //
+      // Six photos fit because the completion sheet re-encodes each one to
+      // ~1600px JPEG in the browser first (downscaleToJpeg) — typically
+      // 200–500 KB. Raising TASK_PHOTO_MAX_PER_UPLOAD without revisiting that
+      // maths is how this starts failing on the biggest photos only.
+      bodySizeLimit: '4mb',
+    },
+  },
   // The three date tabs became filters on /tarefas. Kept as redirects rather
   // than deleted outright: they are in installed PWAs' history and in the
   // agent's older prompt text. 307, not 308 — a permanent redirect is cached

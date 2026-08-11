@@ -43,7 +43,7 @@ export const addWorkerInput = z.object({
 });
 
 /**
- * A consent boolean → the pair of timestamps 0018 stores.
+ * A consent boolean → the pair of timestamps 0025 stores.
  *
  * `false` writes an opt-out rather than clearing the opt-in, because the schema
  * marks and never deletes, and because hasWhatsAppConsent() compares the two.

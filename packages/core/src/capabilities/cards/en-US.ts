@@ -4,6 +4,7 @@ export const cards: CardStrings = {
   taskStatus: {
     pending: 'pending',
     in_progress: 'in progress',
+    pending_review: 'awaiting review',
     blocked: 'blocked',
     done: 'done',
     cancelled: 'cancelled',
@@ -97,6 +98,36 @@ export const cards: CardStrings = {
       `The crew's morning WhatsApp briefing will switch to ${p.toLanguage} too.`,
       `Reversible for ${p.undoDays} days.`,
     ].join(' ');
+  },
+
+  reschedule: {
+    header: p => {
+      const bits: string[] = [];
+      const shift = p.triggerShiftDays == null ? 0 : Math.abs(p.triggerShiftDays);
+      const days = `${shift} working day${shift === 1 ? '' : 's'}`;
+      if (p.triggerTitle) {
+        if (p.reason === 'early_completion' && shift > 0) {
+          bits.push(`"${p.triggerTitle}" finished ${days} early.`);
+        } else if (p.reason === 'late_completion' && shift > 0) {
+          bits.push(`"${p.triggerTitle}" finished ${days} late.`);
+        } else {
+          bits.push(`"${p.triggerTitle}" is finished.`);
+        }
+        // Said out loud, never implied: the manager is being asked to move real
+        // dates on the strength of somebody's word.
+        if (p.unverified) bits.push('It was declared finished and has not been checked yet.');
+      }
+      bits.push(`Proposed reschedule of ${p.count} task${p.count === 1 ? '' : 's'} on the "${p.jobName}" job:`);
+      return bits.join(' ');
+    },
+    row: p => {
+      const before = p.fromStart && p.fromDue ? `${p.fromStart}-${p.fromDue}` : (p.fromDue ?? p.fromStart ?? 'no dates');
+      const n = Math.abs(p.shiftDays);
+      const delta = n === 0 ? '' : ` (${p.shiftDays < 0 ? '-' : '+'}${n} working day${n === 1 ? '' : 's'})`;
+      return `• ${p.title}: ${before} → ${p.toStart}-${p.toDue}${delta}`;
+    },
+    more: n => `… and ${n} more task${n === 1 ? '' : 's'}.`,
+    jobEnd: p => (p.from ? `Job end: ${p.from} → ${p.to}.` : `Job end: ${p.to}.`),
   },
 
   plan: {

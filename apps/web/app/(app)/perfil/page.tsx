@@ -170,7 +170,7 @@ export default async function PerfilPage({
     theme,
   ] = await Promise.all([
     db.from('companies').select('name').eq('id', companyId).maybeSingle(),
-    // select('*') for the deploy-ordering reason in AGENTS.md: 0018 adds the two
+    // select('*') for the deploy-ordering reason in AGENTS.md: 0025 adds the two
     // consent columns, and a bundle served before its migration should degrade
     // to "no consent on record" rather than fail the whole page.
     db.from('profiles').select('*').eq('id', userId).maybeSingle(),
@@ -226,7 +226,7 @@ export default async function PerfilPage({
 
         {/* Directly under the account card, because it is about the phone number
             immediately above it. Nothing proactive is sent without this — see
-            hasWhatsAppConsent and 0018_whatsapp_optin.sql. */}
+            hasWhatsAppConsent and 0025_whatsapp_optin.sql. */}
         <Card title={t.settings.whatsappConsent}>
           <p className="text-xs text-zinc-500">{t.settings.whatsappConsentHint}</p>
           <p className={`text-xs ${whatsappConsenting ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
@@ -358,7 +358,7 @@ export default async function PerfilPage({
                             An active worker with no number was always the silent
                             failure worth shouting about — the daily WhatsApp
                             messages are addressed to workers.phone, so without
-                            one they reach nobody. Since 0018 there is a second
+                            one they reach nobody. Since 0025 there is a second
                             way to be unreachable while looking fine: a number on
                             file but no recorded consent. Reporting that as
                             "receives WhatsApp" would be the product lying about
@@ -401,6 +401,15 @@ export default async function PerfilPage({
               </p>
             </>
           )}
+        </Card>
+
+        {/* The inbox has no tab of its own (see (app)/layout.tsx). The shell
+            strip is the way in while something is unread; this row is the way
+            in the rest of the time, so the history stays reachable. */}
+        <Card title={t.notifications.title}>
+          <Link href="/notificacoes" className="inline-block text-sm text-orange-600 underline">
+            {t.notifications.profileLink}
+          </Link>
         </Card>
 
         <Card title={t.profile.subscription}>

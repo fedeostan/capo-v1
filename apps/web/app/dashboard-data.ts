@@ -8,6 +8,7 @@
 // kept on top as belt-and-braces.
 import type { AuthContext } from '@capo/db/session';
 import type { Tables } from '@capo/db/types';
+import { TASK_PHOTO_BUCKET } from '@capo/core/media/photos';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { BoardTask, DashboardObra, MaterialsGroup } from '@capo/ui/dashboard-ui';
 // Type-only: keeps the 'use client' markdown renderer inside task-detail.tsx
@@ -378,4 +379,149 @@ export async function loadObraDetail(ctx: AuthContext, jobId: string): Promise<O
   }));
 
   return { job, tasks: detailTasks };
+}
+
+/** A live completion claim, attached to the board row of the task it is about. */
+export interface PendingReview {
+  id: string;
+  taskId: string;
+  note: string | null;
+  declaredAt: string;
+  /** true when a worker filed this claim, even if their name did not resolve
+   *  (e.g. their crew row is gone or invisible while the review is still
+   *  pending). Carried separately from `declaredByName` so the UI can still
+   *  attribute the note to a worker rather than silently reading as the
+   *  manager's own check — see declaredByName below. */
+  declaredByWorker: boolean;
+  /** null when either the manager opened this check themselves, OR a worker
+   *  did but their name did not resolve. Branch on `declaredByWorker`, not on
+   *  this, to tell those two apart. */
+  declaredByName: string | null;
+}
+
+/**
+ * Pending reviews for a set of board rows, keyed by task id.
+ *
+ * Two reads rather than one PostgREST embed: the worker name comes through a
+ * nullable FK whose embed alias depends on the constraint's generated name,
+ * and a rename would break it silently at runtime. Two explicit queries cannot
+ * drift that way, and the second is skipped entirely when no review names a
+ * worker (the manager-initiated case).
+ *
+ * Empty input short-circuits — `.in('task_id', [])` is a valid but pointless
+ * round trip on a board with no open tasks.
+ */
+export async function loadPendingReviews(
+  { db, companyId }: AuthContext,
+  taskIds: string[],
+): Promise<Map<string, PendingReview>> {
+  if (taskIds.length === 0) return new Map();
+
+  const { data: reviews, error } = await db
+    .from('task_reviews')
+    .select('id, task_id, note, declared_at, declared_by_worker_id')
+    .eq('company_id', companyId)
+    .eq('status', 'pending')
+    .in('task_id', taskIds);
+  if (error) throw new Error(`task_reviews read failed: ${error.message}`);
+
+  const rows = reviews ?? [];
+  const workerIds = [...new Set(rows.map(r => r.declared_by_worker_id).filter((id): id is string => Boolean(id)))];
+
+  const names = new Map<string, string>();
+  if (workerIds.length > 0) {
+    const { data: crew, error: crewError } = await db
+      .from('workers')
+      .select('id, name')
+      .eq('company_id', companyId)
+      .in('id', workerIds);
+    if (crewError) throw new Error(`workers read failed: ${crewError.message}`);
+    for (const w of crew ?? []) names.set(w.id, w.name);
+  }
+
+  // task_reviews_one_pending_idx guarantees at most one pending row per task,
+  // so a plain Map keyed by task id cannot lose anything.
+  return new Map(
+    rows.map(r => [
+      r.task_id,
+      {
+        id: r.id,
+        taskId: r.task_id,
+        note: r.note,
+        declaredAt: r.declared_at,
+        declaredByWorker: Boolean(r.declared_by_worker_id),
+        declaredByName: r.declared_by_worker_id ? (names.get(r.declared_by_worker_id) ?? null) : null,
+      },
+    ]),
+  );
+}
+
+/** One photo attached to a task, with a URL that works for the next few minutes. */
+export interface TaskPhoto {
+  id: string;
+  /** A freshly minted signed URL. Never store or cache this — see below. */
+  url: string;
+  /** 'worker' (PRD 4, via WhatsApp) or 'manager' (the completion sheet). The
+   *  detail screen says which, because "the crew sent this" and "I took this"
+   *  are different claims. */
+  source: string;
+  createdAt: string;
+}
+
+/**
+ * The photos on one task, newest first, each with a signed URL.
+ *
+ * SIGNED URLS ARE MINTED PER REQUEST AND MUST STAY THAT WAY. A signed URL is a
+ * bearer token in a query string: anyone holding it can read the object for as
+ * long as it lasts, with no session. Baked into a statically rendered page it
+ * would be served to whoever asked, and it would expire long before the page
+ * did — leaking briefly and then rendering broken frames forever. The only
+ * caller, /tarefas/[id], is `export const dynamic = 'force-dynamic'`; keep it
+ * that way, and do not add a cached wrapper around this function.
+ *
+ * The expiry is minutes, not seconds: the manager scrolls, and an image that
+ * 403s while they are still looking at the page is a bug they cannot explain.
+ *
+ * createSignedUrls runs on the RLS-scoped client, so the storage.objects
+ * SELECT policy (0023) is what decides whether a URL can be minted at all — a
+ * session from another company gets an error, not a working link. That is the
+ * boundary; the company_id filter below is belt-and-braces on top of it.
+ */
+const SIGNED_URL_TTL_SECONDS = 300;
+
+export async function loadTaskPhotos(
+  { db, companyId }: AuthContext,
+  taskId: string,
+): Promise<TaskPhoto[]> {
+  const { data: rows, error } = await db
+    .from('task_photos')
+    .select('id, storage_path, source, created_at')
+    .eq('company_id', companyId)
+    .eq('task_id', taskId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`task_photos read failed: ${error.message}`);
+  if (!rows || rows.length === 0) return [];
+
+  const { data: signed, error: signError } = await db.storage
+    .from(TASK_PHOTO_BUCKET)
+    .createSignedUrls(
+      rows.map(r => r.storage_path),
+      SIGNED_URL_TTL_SECONDS,
+    );
+  if (signError) throw new Error(`task_photos signing failed: ${signError.message}`);
+
+  // Match on path, never by position: createSignedUrls reports per-object
+  // failures inline (an `error` field and a null url) rather than throwing, so
+  // one unsignable object would shift every later row onto the wrong image if
+  // the two lists were zipped. Same rule the translation applier follows for
+  // exactly the same reason (AGENTS.md).
+  const urls = new Map((signed ?? []).map(s => [s.path, s.signedUrl]));
+
+  return rows.flatMap(r => {
+    const url = urls.get(r.storage_path);
+    // A row whose object cannot be signed is dropped rather than rendered as a
+    // broken frame the manager can neither open nor clear.
+    if (!url) return [];
+    return [{ id: r.id, url, source: r.source, createdAt: r.created_at }];
+  });
 }

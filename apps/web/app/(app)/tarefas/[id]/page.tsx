@@ -2,8 +2,9 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { ScreenShell } from '@capo/ui/dashboard-ui';
 import { TaskDetail } from '@capo/ui/task-detail';
-import { loadTaskDetail } from '@/app/dashboard-data';
+import { loadPendingReviews, loadTaskDetail, loadTaskPhotos } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
+import ReviewActions from '@/app/(app)/_tasks/review-actions';
 import TaskActions from '@/app/(app)/_tasks/task-actions';
 import PullToRefresh from '@/app/pull-to-refresh';
 import { isUuid } from '../filters';
@@ -33,6 +34,21 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
   const detail = await loadTaskDetail(ctx, id);
   if (!detail) notFound();
 
+  // The board's per-row review lookup, narrowed to this one task. Needed here
+  // too: a pending_review task with an active window outside "today" (not
+  // overdue, and at_risk only if risk_late_dependency or risk_paused_job
+  // fires — risk_late_start/risk_due_soon are pending-only allowlists that
+  // never do) shows the resolution buttons ONLY under the Todas chip or an
+  // exact-date filter — the manager who just requested the check from THIS
+  // screen would otherwise have no way back to resolve it from here.
+  // Both reads are per-request and neither may be cached: loadTaskPhotos mints
+  // signed URLs, which is the reason `export const dynamic = 'force-dynamic'`
+  // above is now load-bearing rather than merely tidy.
+  const [review, photos] = await Promise.all([
+    loadPendingReviews(ctx, [detail.task.id]).then(m => m.get(detail.task.id) ?? null),
+    loadTaskPhotos(ctx, detail.task.id),
+  ]);
+
   const subtitle = [detail.job?.name, detail.job?.address].filter(Boolean).join(' · ') || undefined;
 
   return (
@@ -45,9 +61,21 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
           task={detail.task}
           job={detail.job}
           worker={detail.worker}
+          photos={photos}
           locale={locale}
           renderActions={() => (
-            <TaskActions taskId={detail.task.id} status={detail.task.status} locale={locale} />
+            <>
+              <TaskActions taskId={detail.task.id} status={detail.task.status} locale={locale} allowRequestReview />
+              {review && (
+                <ReviewActions
+                  reviewId={review.id}
+                  note={review.note}
+                  declaredByWorker={review.declaredByWorker}
+                  declaredByName={review.declaredByName}
+                  locale={locale}
+                />
+              )}
+            </>
           )}
         />
       </PullToRefresh>

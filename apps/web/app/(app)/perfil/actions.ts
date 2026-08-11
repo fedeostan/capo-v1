@@ -242,7 +242,7 @@ export async function setWhatsAppConsent(formData: FormData): Promise<void> {
   const { db, userId, companyId } = await requireAuth();
   // Marks, never clears — hasWhatsAppConsent() compares the two timestamps and
   // the later one wins, so withdrawing does not erase the record that consent
-  // was once given. See 0018_whatsapp_optin.sql.
+  // was once given. See 0025_whatsapp_optin.sql.
   const now = new Date().toISOString();
   const patch = consent ? { whatsapp_opt_in_at: now } : { whatsapp_opt_out_at: now };
 

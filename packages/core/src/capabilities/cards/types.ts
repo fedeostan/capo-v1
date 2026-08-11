@@ -10,7 +10,7 @@
 
 import type { Locale } from '@capo/i18n/locale';
 
-export type TaskStatus = 'pending' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
+export type TaskStatus = 'pending' | 'in_progress' | 'pending_review' | 'blocked' | 'done' | 'cancelled';
 export type JobStatus = 'active' | 'paused' | 'done';
 
 export interface CardStrings {
@@ -94,6 +94,40 @@ export interface CardStrings {
     memories: number;
     undoDays: number;
   }): string;
+
+  /** The cascade diff (apply_reschedule).
+   *
+   *  A manager can only judge a schedule change as a BEFORE and an AFTER, so
+   *  every row carries both sides. `fromStart`/`fromDue` are absent for a task
+   *  that had no dates at all (start_date null means "unscheduled" — the board
+   *  falls back to created_at), and each locale writes its own word for that.
+   *
+   *  `unverified` says the trigger was DECLARED finished and not yet checked.
+   *  It has to be on the card because that is the whole shape of the feature:
+   *  the cascade fires on a claim, which is why it can only ever propose. */
+  reschedule: {
+    header(p: {
+      reason: 'early_completion' | 'late_completion' | 'manual';
+      jobName: string;
+      count: number;
+      unverified: boolean;
+      triggerTitle?: string;
+      /** Working days the trigger beat (negative) or missed (positive) its due date. */
+      triggerShiftDays?: number;
+    }): string;
+    row(p: {
+      title: string;
+      fromStart?: string;
+      fromDue?: string;
+      toStart: string;
+      toDue: string;
+      shiftDays: number;
+    }): string;
+    /** Long cascades are truncated; the count must be exact — rendered_text is
+     *  the persisted audit artifact, quoted byte-identically on resolution. */
+    more(n: number): string;
+    jobEnd(p: { from?: string; to: string }): string;
+  };
 
   plan: {
     header(p: { jobName: string; count: number; from: string; to: string }): string;

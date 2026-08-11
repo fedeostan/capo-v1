@@ -1,6 +1,7 @@
 import type { Db } from '@capo/db/client';
 import type { Locale } from '@capo/i18n/locale';
 import { countTranslatable } from '../translation';
+import { shiftDaysBetween } from './reschedule';
 import { cards, type CardStrings, type JobStatus, type TaskStatus } from './cards';
 
 // Deterministic proposal card templates. The card text is ALWAYS a pure
@@ -36,10 +37,19 @@ async function workerName(db: Db, companyId: string, id: string, t: CardStrings)
   return data.name;
 }
 
-async function taskTitle(db: Db, companyId: string, id: string, t: CardStrings): Promise<string> {
-  const { data } = await db.from('tasks').select('title').eq('id', id).eq('company_id', companyId).maybeSingle();
+async function taskRow(
+  db: Db,
+  companyId: string,
+  id: string,
+  t: CardStrings,
+): Promise<{ title: string; status: string }> {
+  const { data } = await db.from('tasks').select('title, status').eq('id', id).eq('company_id', companyId).maybeSingle();
   if (!data) throw new RenderError(t.errors.taskNotFound(id));
-  return data.title;
+  return data;
+}
+
+async function taskTitle(db: Db, companyId: string, id: string, t: CardStrings): Promise<string> {
+  return (await taskRow(db, companyId, id, t)).title;
 }
 
 export async function renderProposal(
@@ -164,6 +174,92 @@ export async function renderProposal(
         to: fmt(allDates[allDates.length - 1]),
       });
       return `${header}\n${lines.join('\n')}`;
+    }
+
+    case 'apply_reschedule': {
+      const jn = await jobName(db, companyId, args.job_id, t);
+      const changes: {
+        task_id: string;
+        from_start_date: string | null;
+        from_due_date: string | null;
+        to_start_date: string;
+        to_due_date: string;
+      }[] = args.changes;
+      if (changes.length === 0) throw new RenderError(t.errors.emptyChange);
+
+      let triggerTitle: string | undefined;
+      let unverified = false;
+      if (args.trigger_task_id) {
+        const trigger = await taskRow(db, companyId, args.trigger_task_id, t);
+        triggerTitle = trigger.title;
+        // A task sitting in pending_review has been DECLARED finished and not
+        // yet checked. Read here rather than carried in action_args so the
+        // card cannot claim a verification that never happened — and read on
+        // the trigger's status rather than on task_reviews.declared_by_worker_id
+        // because the property that matters to the manager is "nobody has
+        // looked yet", which is equally true of a check he opened himself.
+        unverified = trigger.status === 'pending_review';
+      }
+
+      // Truncation must be honest and the "+N" exact: rendered_text is the
+      // persisted audit artifact, quoted byte-identically in the resolution
+      // event when the manager approves or rejects.
+      const MAX_ROWS = 12;
+      const rows = await Promise.all(
+        changes.slice(0, MAX_ROWS).map(async change =>
+          t.reschedule.row({
+            // One referential re-check per row, same as plan's worker lookups.
+            title: await taskTitle(db, companyId, change.task_id, t),
+            fromStart: change.from_start_date ? fmt(change.from_start_date) : undefined,
+            fromDue: change.from_due_date ? fmt(change.from_due_date) : undefined,
+            toStart: fmt(change.to_start_date),
+            toDue: fmt(change.to_due_date),
+            shiftDays: shiftDaysBetween(
+              { start_date: change.from_start_date, due_date: change.from_due_date },
+              { start_date: change.to_start_date, due_date: change.to_due_date },
+            ),
+          }),
+        ),
+      );
+      if (changes.length > MAX_ROWS) rows.push(t.reschedule.more(changes.length - MAX_ROWS));
+
+      // The job's end date, before and after — the one number that tells the
+      // manager whether this cascade actually bought him anything. Recomputed
+      // from the live rows plus this payload's overrides rather than carried in
+      // action_args, so it can never disagree with what approving would do.
+      const { data: jobTasks } = await db
+        .from('tasks')
+        .select('id, due_date, status')
+        .eq('company_id', companyId)
+        .eq('job_id', args.job_id)
+        .limit(500);
+      const overrides = new Map(changes.map(c => [c.task_id, c.to_due_date]));
+      let endBefore: string | undefined;
+      let endAfter: string | undefined;
+      for (const row of jobTasks ?? []) {
+        if (row.status === 'cancelled') continue;
+        if (row.due_date && (!endBefore || row.due_date > endBefore)) endBefore = row.due_date;
+        const after = overrides.get(row.id) ?? row.due_date;
+        if (after && (!endAfter || after > endAfter)) endAfter = after;
+      }
+      if (endAfter) {
+        rows.push(
+          t.reschedule.jobEnd({
+            from: endBefore && endBefore !== endAfter ? fmt(endBefore) : undefined,
+            to: fmt(endAfter),
+          }),
+        );
+      }
+
+      const header = t.reschedule.header({
+        reason: args.reason,
+        jobName: jn,
+        count: changes.length,
+        unverified,
+        triggerTitle,
+        triggerShiftDays: args.trigger_shift_days,
+      });
+      return `${header}\n${rows.join('\n')}`;
     }
 
     case 'apply_company_translation': {

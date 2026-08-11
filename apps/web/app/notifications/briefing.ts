@@ -46,7 +46,7 @@ export interface CompanyBriefing {
   counts: ManagerCounts;
   /**
    * Active workers with a phone who were dropped for want of a recorded
-   * WhatsApp opt-in. Reported rather than silently swallowed: after 0018 every
+   * WhatsApp opt-in. Reported rather than silently swallowed: after 0025 every
    * pre-existing worker starts without consent, so "Capo has gone quiet" is the
    * expected first symptom and this is the number that explains it. Each route
    * logs it.
@@ -78,7 +78,7 @@ export async function loadCompanyBriefing(
   const [{ data: rows, error: boardError }, { data: crew, error: crewError }] = await Promise.all([
     db.from('task_board').select('*').eq('company_id', companyId).eq('is_open', true),
     // select('*') rather than a column list, for the same reason the task_board
-    // read above uses it: 0018 adds the two consent columns, and a deploy that
+    // read above uses it: 0025 adds the two consent columns, and a deploy that
     // lands before its migration would otherwise fail the whole read with an
     // unknown-column error instead of degrading. Degrading here means every
     // worker reads as "no consent on record" and nothing is sent — the
@@ -113,7 +113,7 @@ export async function loadCompanyBriefing(
   // briefing and the late-afternoon check-in — reach their recipients through
   // this function, so a worker filtered out here cannot be messaged by either.
   // Putting it in the routes instead would mean two copies of a rule that must
-  // never disagree. See hasWhatsAppConsent() and 0018_whatsapp_optin.sql.
+  // never disagree. See hasWhatsAppConsent() and 0025_whatsapp_optin.sql.
   const consenting = reachable.filter(hasWhatsAppConsent);
 
   const workers: WorkerBriefing[] = consenting

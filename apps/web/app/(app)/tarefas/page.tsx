@@ -2,9 +2,10 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { Catalog } from '@capo/i18n/catalog';
 import { ScreenShell, TaskBoardList } from '@capo/ui/dashboard-ui';
-import { loadBoardTasks, loadDayLabel, loadMaterials, loadObraOptions, type GroupBy } from '@/app/dashboard-data';
+import { loadBoardTasks, loadDayLabel, loadMaterials, loadObraOptions, loadPendingReviews, type GroupBy } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import TaskActions from '@/app/(app)/_tasks/task-actions';
+import ReviewActions from '@/app/(app)/_tasks/review-actions';
 import PullToRefresh from '@/app/pull-to-refresh';
 import FilterChips from './filter-chips';
 import FilterControls from './filter-controls';
@@ -49,6 +50,12 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
   ]);
   const materialCount = tomorrowMaterials.reduce((n, group) => n + group.items.length, 0);
 
+  // Sequential on purpose: this is keyed by the ids the board actually
+  // returned, so it cannot be hoisted into the Promise.all above. One extra
+  // round trip, scoped to the visible page, and it short-circuits to an empty
+  // Map when the board is empty.
+  const reviews = await loadPendingReviews(ctx, tasks.map(task => task.id));
+
   const subtitle =
     dayLabel ??
     (filters.quando.kind === 'date'
@@ -87,6 +94,18 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
           locale={locale}
           empty={emptyText(filters, t)}
           renderExtra={task => <TaskActions taskId={task.id} status={task.status} locale={locale} />}
+          renderBelow={task => {
+            const review = reviews.get(task.id);
+            return review ? (
+              <ReviewActions
+                reviewId={review.id}
+                note={review.note}
+                declaredByWorker={review.declaredByWorker}
+                declaredByName={review.declaredByName}
+                locale={locale}
+              />
+            ) : null;
+          }}
         />
       </PullToRefresh>
     </ScreenShell>

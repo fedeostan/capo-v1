@@ -79,7 +79,7 @@ export interface Catalog {
   };
 
   dashboard: {
-    taskStatus: Record<'pending' | 'in_progress' | 'blocked' | 'done' | 'cancelled', string>;
+    taskStatus: Record<'pending' | 'in_progress' | 'pending_review' | 'blocked' | 'done' | 'cancelled', string>;
     /** Full phrase, e.g. "Prazo passou há 3 dias" / "3 days past due". */
     overdueBy(days: number): string;
     noAssignee: string;
@@ -108,6 +108,40 @@ export interface Catalog {
     dependsOn(titles: string[]): string;
   };
 
+  /** The in-app inbox, plus the strip in the app shell that leads to it.
+   *  Top-level rather than under `screens` because it spans two surfaces —
+   *  the strip renders on every authenticated screen. */
+  notifications: {
+    title: string;
+    subtitle: string;
+    empty: string;
+    /** The shell strip. COUNTED on purpose: "you have news" is not
+     *  actionable and "3 novidades" is. */
+    banner(n: number): string;
+    markAllRead: string;
+    failed: string;
+    /** Accessible name for the unread dot, which is otherwise colour alone. */
+    unread: string;
+    /** The row on /perfil — the way in when nothing is unread and the strip
+     *  is therefore absent. */
+    profileLink: string;
+    /** One line per kind, given the subject's OWN NAME (a task title, stored
+     *  in companies.language). The name is data: interpolated, never
+     *  translated. Keyed by the `kind` check constraint in
+     *  0023_notifications.sql, so widening that constraint without adding
+     *  copy in all three dictionaries is a tsc error. */
+    kind: Record<'review_pending', (subject: string) => string>;
+    /** Stand-in when the row carries no title — an unnamed task. */
+    noSubject: string;
+    /** Label above the worker's quoted note. Sits ABOVE it and is never
+     *  merged into it: same attribution rule as the review control, because
+     *  it is the same worker-authored text. */
+    noteLabel: string;
+    /** Sends the manager where the decision actually gets made — the board,
+     *  not the inbox. */
+    openSubject: string;
+  };
+
   screens: {
     tasks: {
       title: string;
@@ -128,6 +162,28 @@ export interface Catalog {
     jobs: { title: string; subtitle: string; empty: string };
     jobDetail: { fallbackTitle: string; empty: string };
     taskActions: { complete: string; reopen: string; failed: string };
+    /** The pending-review control on a board row. Separate from taskActions
+     *  because these three buttons resolve a REVIEW, not a task. */
+    taskReview: {
+      /** Attributes the note to its author. The worker's own words are quoted
+       *  BELOW this line, never merged into it — see the note handling rule in
+       *  0018_task_reviews.sql. */
+      declaredBy(name: string): string;
+      /** Header when declared_by_worker_id is null (manager opened the check). */
+      declaredByManager: string;
+      /** Header when a worker filed the claim but their name did not resolve
+       *  (e.g. their crew row is gone or invisible while the review is still
+       *  pending). Still attributes to a worker, not the manager — never fall
+       *  back to declaredByManager here. */
+      declaredByUnknownWorker: string;
+      approve: string;
+      reject: string;
+      /** "No check needed" — the manager closing it without a site visit. */
+      dismiss: string;
+      /** Opens a review from the task detail screen. */
+      request: string;
+      failed: string;
+    };
     taskDetail: {
       /** Page title when the task cannot be named (metadata runs before the row loads). */
       fallbackTitle: string;
@@ -151,6 +207,47 @@ export interface Catalog {
       askCapoPrompt(title: string): string;
       knowledge: string;
       knowledgeHint: string;
+    };
+    /** The completion sheet ("Concluir" now asks for proof first), plus the
+     *  photo strip the same photos land in on the task detail screen. One key
+     *  for both: the section heading and the two source labels must agree
+     *  across the screen that produces photos and the screen that shows them. */
+    taskPhotos: {
+      sheetTitle: string;
+      /** Says what a useful photo IS, in one line. A manager who has to guess
+       *  photographs the sky. */
+      sheetIntro: string;
+      addPhotos: string;
+      /** While the browser is re-encoding what was just picked. Can take a
+       *  second or two for six photos on an old phone — silence there reads as
+       *  a frozen app. */
+      preparing: string;
+      /** e.g. "Up to 6 photos, 5 MB each." Both numbers come from
+       *  @capo/core/media/photos so the copy cannot drift from the limit. */
+      limitHint(max: number, megabytes: number): string;
+      remove: string;
+      /** Primary button, e.g. "Complete with 3 photos". */
+      confirm(n: number): string;
+      /** The escape hatch. Plain and unhidden on purpose — see the note in
+       *  completion-sheet.tsx. */
+      skip: string;
+      cancel: string;
+      sending: string;
+      /** Heading of the photo strip on the task detail screen. */
+      sectionTitle: string;
+      /** Attribution under each photo. A photo the crew sent and one the
+       *  manager took are different claims about the same work. */
+      sourceWorker: string;
+      sourceManager: string;
+      /** Keyed by TaskPhotoFailure (apps/web/lib/task-photos.ts) plus a
+       *  generic fallback. The server action translates the machine-readable
+       *  reason through this map — the client renders whatever it catches
+       *  verbatim, so anything missing here would reach the manager in
+       *  English, or as raw Postgres. */
+      errors: Record<
+        'mime' | 'too_large' | 'empty' | 'too_many' | 'unknown_task' | 'upload_failed' | 'generic',
+        string
+      >;
     };
     taskHelp: {
       title: string;
@@ -192,7 +289,7 @@ export interface Catalog {
     /** An active worker with no phone silently receives nothing at 07:00. */
     noWhatsAppWarning: string;
     /**
-     * The second way to be silently unreachable, since 0018: a number on file
+     * The second way to be silently unreachable, since 0025: a number on file
      * but no recorded WhatsApp consent. Must read as an ACTION for the manager
      * ("ask them"), not as an error — the fix is a conversation on site, and
      * then telling Capo about it.

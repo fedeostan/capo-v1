@@ -10,6 +10,7 @@ export const cards: CardStrings = {
   taskStatus: {
     pending: 'pendente',
     in_progress: 'em curso',
+    pending_review: 'a aguardar controlo',
     blocked: 'bloqueada',
     done: 'concluída',
     cancelled: 'cancelada',
@@ -102,6 +103,36 @@ export const cards: CardStrings = {
       `As mensagens da equipa no WhatsApp também passam a ser em ${p.toLanguage}.`,
       `Reversível durante ${p.undoDays} dias.`,
     ].join(' ');
+  },
+
+  reschedule: {
+    header: p => {
+      const bits: string[] = [];
+      const shift = p.triggerShiftDays == null ? 0 : Math.abs(p.triggerShiftDays);
+      const uteis = `${shift} dia${shift === 1 ? ' útil' : 's úteis'}`;
+      if (p.triggerTitle) {
+        if (p.reason === 'early_completion' && shift > 0) {
+          bits.push(`«${p.triggerTitle}» terminou ${uteis} mais cedo.`);
+        } else if (p.reason === 'late_completion' && shift > 0) {
+          bits.push(`«${p.triggerTitle}» terminou ${uteis} mais tarde.`);
+        } else {
+          bits.push(`«${p.triggerTitle}» está terminada.`);
+        }
+        // Said out loud, never implied: the manager is being asked to move real
+        // dates on the strength of somebody's word.
+        if (p.unverified) bits.push('Foi dada como concluída e ainda não foi controlada.');
+      }
+      bits.push(`Reagendamento proposto de ${p.count} tarefa${p.count === 1 ? '' : 's'} na obra «${p.jobName}»:`);
+      return bits.join(' ');
+    },
+    row: p => {
+      const before = p.fromStart && p.fromDue ? `${p.fromStart}-${p.fromDue}` : (p.fromDue ?? p.fromStart ?? 'sem datas');
+      const n = Math.abs(p.shiftDays);
+      const delta = n === 0 ? '' : ` (${p.shiftDays < 0 ? '-' : '+'}${n} dia${n === 1 ? ' útil' : 's úteis'})`;
+      return `• ${p.title}: ${before} → ${p.toStart}-${p.toDue}${delta}`;
+    },
+    more: n => `… e mais ${n} tarefa${n === 1 ? '' : 's'}.`,
+    jobEnd: p => (p.from ? `Fim da obra: ${p.from} → ${p.to}.` : `Fim da obra: ${p.to}.`),
   },
 
   plan: {

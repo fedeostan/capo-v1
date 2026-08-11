@@ -169,7 +169,7 @@ export async function GET(request: NextRequest) {
       // stop briefing the one person who would notice.
       //
       // select('*') for the same deploy-ordering reason as the workers read in
-      // loadCompanyBriefing: 0018 adds the two consent columns.
+      // loadCompanyBriefing: 0025 adds the two consent columns.
       const { data: managers, error: managersError } = await db
         .from('profiles')
         .select('*')

@@ -24,10 +24,12 @@ import {
   buildTemplatePayload,
   checkinPayload,
   hasWhatsAppConsent,
+  isBsuid,
   parseCheckinPayload,
   parseProposalButtonId,
   planAssistantMessages,
   proposalButtonId,
+  senderLabel,
   splitForWhatsApp,
   toTemplateParam,
   toWhatsAppMarkdown,
@@ -154,6 +156,54 @@ eq('done and not_done payloads differ', doneP === notDoneP, false);
 // approval could be recorded as a worker's check-in.
 eq('a proposal id is not a check-in payload', parseCheckinPayload(approveId), null);
 eq('a check-in payload is not a proposal id', parseProposalButtonId(doneP), null);
+
+// ── bsuid ───────────────────────────────────────────────────────────────────
+// isBsuid is the TS half of a rule enforced twice — the other half is the CHECK
+// constraint in supabase/migrations/0022_whatsapp_bsuid.sql. Nothing keeps the
+// two regexes in step automatically, so these assertions are also the record of
+// what the constraint is supposed to say.
+const bsuid = 'PT.13491208655302741918';
+check('a real BSUID is accepted', isBsuid(bsuid));
+check('a one-character tail is accepted', isBsuid('US.1'));
+check('a 128-character tail is the limit', isBsuid(`US.${'x'.repeat(128)}`));
+// THE rejection that matters. A parent BSUID is issued to a multi-portfolio
+// business; Capo is a single portfolio, so one stored here would look like an
+// identity while belonging to nobody in particular. The single dot is what
+// refuses it — this is the assertion that catches a "helpful" regex loosening.
+eq('a PARENT BSUID is rejected', isBsuid('US.ENT.11815799212886844830'), false);
+eq('a phone number is not a BSUID', isBsuid('+351912345678'), false);
+eq('a bare wa_id is not a BSUID', isBsuid('351912345678'), false);
+eq('an empty string is rejected', isBsuid(''), false);
+eq('a missing tail is rejected', isBsuid('PT.'), false);
+eq('a missing dot is rejected', isBsuid('PT13491208655302741918'), false);
+eq('a lowercase country code is rejected', isBsuid('pt.13491208655302741918'), false);
+eq('a one-letter country code is rejected', isBsuid('P.123'), false);
+eq('a 129-character tail is rejected', isBsuid(`US.${'x'.repeat(129)}`), false);
+// Anchoring, both ends. An unanchored pattern would accept a BSUID with junk
+// welded on and hand the DB something its CHECK constraint then rejects.
+eq('a trailing newline is rejected', isBsuid(`${bsuid}\n`), false);
+eq('a leading space is rejected', isBsuid(` ${bsuid}`), false);
+eq('an embedded BSUID is rejected', isBsuid(`x${bsuid}x`), false);
+
+// senderLabel runs inside after() callbacks, where a throw is an unhandled
+// rejection that bypasses the very logEvent it was reaching for. All three
+// shapes must produce a value, and none may leak a whole identifier.
+eq('a phone sender is labelled by its last four', senderLabel({ from: '351912345678' }), '…5678');
+eq('a BSUID-only sender is labelled and marked', senderLabel({ from_user_id: bsuid }), 'id:…1918');
+eq('neither identifier is still a label', senderLabel({}), 'unknown');
+eq('the phone wins when both are present', senderLabel({ from: '351912345678', from_user_id: bsuid }), '…5678');
+check(
+  'no label contains a whole identifier',
+  [senderLabel({ from: '351912345678' }), senderLabel({ from_user_id: bsuid }), senderLabel({})].every(
+    label => !label.includes('351912345678') && !label.includes(bsuid),
+  ),
+);
+// The two shapes must be distinguishable in a log drain, or triage cannot tell
+// "we do not know this number" from "this person has a username now".
+check(
+  'a phone label and a BSUID label are distinguishable',
+  senderLabel({ from: '351911111918' }) !== senderLabel({ from_user_id: bsuid }),
+);
 
 // ── template parameters ─────────────────────────────────────────────────────
 // toTemplateParam is the single easiest way to earn a 132000 and was asserted
