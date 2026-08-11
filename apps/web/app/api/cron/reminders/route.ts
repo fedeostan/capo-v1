@@ -4,7 +4,13 @@ import { appendEventMessage, ensureConversation } from '@capo/core/conversation'
 import { sendWhatsAppTemplate } from '@capo/core/channels/whatsapp';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
-import { hasWhatsAppConsent, sendConfigFor, toSendTarget, whatsappSendEnv } from '../../../../lib/whatsapp';
+import {
+  describeRecipient,
+  hasWhatsAppConsent,
+  recipientFor,
+  sendConfigFor,
+  whatsappSendEnv,
+} from '../../../../lib/whatsapp';
 import { logEvent } from '../../../../lib/log';
 import {
   authorizeCron,
@@ -110,6 +116,12 @@ export async function GET(request: NextRequest) {
           excluded: briefing.excludedNoConsent,
         });
       }
+      if (briefing.excludedUnreachable > 0) {
+        logEvent('reminders.workers_unreachable', {
+          companyId: company.id,
+          excluded: briefing.excludedUnreachable,
+        });
+      }
 
       // ── workers ──────────────────────────────────────────────────────────
       for (const worker of briefing.workers) {
@@ -118,7 +130,19 @@ export async function GET(request: NextRequest) {
         const idle = worker.tasks.length === 0;
 
         if (dryRun) {
-          sends.push({ audience: 'worker', to: toSendTarget(worker.phone), locale: worker.locale, name, summary, idle });
+          // `to` keeps its old meaning — the address as sent — and `address`
+          // adds which KIND it is. That kind is the operator's only pre-flight
+          // way to tell a send that will go to a phone from one that will go to
+          // a BSUID; without it the two are indistinguishable in this output.
+          sends.push({
+            audience: 'worker',
+            to: worker.recipient.kind === 'phone' ? worker.recipient.waId : worker.recipient.userId,
+            address: describeRecipient(worker.recipient),
+            locale: worker.locale,
+            name,
+            summary,
+            idle,
+          });
           continue;
         }
 
@@ -144,7 +168,7 @@ export async function GET(request: NextRequest) {
               languageCode: getCatalog(worker.locale).reminders.templateLanguage,
               bodyParams: [name, summary],
             },
-            sendConfigFor(env!, toSendTarget(worker.phone)),
+            sendConfigFor(env!, worker.recipient),
           );
           await resolveNotification(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
           notified += 1;
@@ -189,8 +213,23 @@ export async function GET(request: NextRequest) {
         const locale: Locale = coerceLocale(manager.language);
         const [name, summary] = renderManagerBriefing(manager.full_name, briefing.counts, locale);
 
+        // Phone, then the BSUID captured from their own inbound messages.
+        // profiles.phone is `not null` (0007:17), so null here means an empty
+        // string and a manager nobody could ever have reached — but the branch
+        // is real rather than defensive: it is the same code path a future
+        // BSUID-only manager takes, and leaving it out would make that person a
+        // throw instead of a skip.
+        const recipient = recipientFor(manager);
+
         if (dryRun) {
-          sends.push({ audience: 'manager', to: toSendTarget(manager.phone), locale, name, summary });
+          sends.push({
+            audience: 'manager',
+            to: recipient?.kind === 'phone' ? recipient.waId : recipient?.userId,
+            address: recipient ? describeRecipient(recipient) : 'unreachable',
+            locale,
+            name,
+            summary,
+          });
           continue;
         }
 
@@ -204,6 +243,18 @@ export async function GET(request: NextRequest) {
         });
         if (!claimed) continue;
 
+        // Claimed FIRST, then skipped — the same order the idle-worker branch
+        // uses above. A 'skipped' row is what makes an unreachable manager
+        // visible in notification_log; returning before the claim would leave
+        // the day looking as though nothing had been attempted. And it is a
+        // skip, never a throw: one unreachable recipient must not abort the run
+        // for every other company.
+        if (!recipient) {
+          await resolveNotification(db, claimed.id, 'skipped');
+          logEvent('reminders.manager_unreachable', { companyId: company.id });
+          continue;
+        }
+
         try {
           const { providerMessageId } = await sendWhatsAppTemplate(
             {
@@ -211,7 +262,7 @@ export async function GET(request: NextRequest) {
               languageCode: getCatalog(locale).reminders.templateLanguage,
               bodyParams: [name, summary],
             },
-            sendConfigFor(env!, toSendTarget(manager.phone)),
+            sendConfigFor(env!, recipient),
           );
           await resolveNotification(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
         } catch (err) {

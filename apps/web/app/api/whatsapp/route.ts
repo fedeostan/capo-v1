@@ -9,10 +9,15 @@ import {
   isBsuid,
   parseCheckinPayload,
   parseProposalButtonId,
+  readSender,
+  routeWebhookChanges,
   senderLabel,
   sendWhatsAppText,
   whatsappSink,
+  type BsuidRotation,
   type WhatsAppSendConfig,
+  type WhatsAppSender,
+  type WhatsAppWebhookEnvelope,
 } from '@capo/core/channels/whatsapp';
 import { resolveProposal } from '@capo/core/capabilities/propose';
 import { downloadMedia } from '@capo/core/channels/whatsapp-media';
@@ -25,22 +30,45 @@ import { type WhatsAppEnv } from '../../../lib/whatsapp';
 //
 // This is a SYSTEM path: there is no user session. The structural boundary is
 // the X-Hub-Signature-256 HMAC (app secret) on every POST; tenant resolution
-// is sender phone → profiles.phone (unique E.164) → company_id, never
-// anything from the message body. Unknown senders are a silent no-op — no
-// reply, no error detail, nothing persisted.
+// reads ONLY identifiers Meta put on the envelope, matched against rows we
+// already hold, and never anything from the message body. Unknown senders are a
+// silent no-op — no reply, no error detail, nothing persisted.
 //
 // Two kinds of sender, and only one of them reaches the agent:
-//   profiles.phone → a MANAGER. Full agent loop, persisted to the thread.
-//   workers.phone  → a WORKER replying to their 07:00 briefing. Acknowledged
-//                    deterministically, never persisted, never given to the
-//                    model. See handleWorkerReply.
+//   profiles → a MANAGER. Full agent loop, persisted to the thread.
+//   workers  → a WORKER replying to their 07:00 briefing. Acknowledged
+//              deterministically, never persisted, never given to the model.
+//              See handleWorkerReply.
 //
-// The phone is on its way out as the name badge. Once a sender adopts a
-// WhatsApp username Meta omits `from` entirely and sends only `from_user_id`
-// (a BSUID). This route already RECORDS that id against whoever the phone
-// resolved to — see captureBsuid — but it still resolves on phone alone, so a
-// message with no phone is an unknown sender. Reading the BSUID as a
-// resolution key is Stage 2 (issue #28).
+// ── TWO RESOLUTION KEYS, IN A FIXED ORDER ──────────────────────────────────
+// Since Stage 2 (issue #28) each of those tables is tried on the PHONE first
+// and on the BSUID (`from_user_id`, present since April 2026) only as a
+// fallback — four lookups, stopping at the first hit:
+//
+//   1. profiles.phone            3. workers.phone
+//   2. profiles.whatsapp_user_id 4. workers.whatsapp_user_id
+//
+// The ordering is not cosmetic. Steps 1 and 3 are byte-identical to what this
+// route has always run, so nothing added here can regress the traffic that
+// already works. And steps 2 and 4 are SEPARATE QUERIES rather than a widened
+// column list on 1 and 3: adding whatsapp_user_id to the working lookup would
+// couple sender resolution to migration 0022, and a deploy landing first would
+// 42703 and turn EVERY MANAGER into an unknown sender. As their own queries the
+// same failure costs the fallback and nothing else.
+//
+// A BSUID is NOT a tenant boundary. It is scoped to our business portfolio, not
+// to a customer company, which makes it exactly as tenant-ambiguous as the
+// phone number it replaces — no better, no worse. company_id still comes from
+// the matched row, and RLS is still the boundary. workers.whatsapp_user_id is
+// non-unique for the same reason workers.phone is, so its lookup carries the
+// same .limit(2) ambiguity guard: two companies matching means silence, never a
+// guess.
+//
+// BSUIDs also ROTATE — changing your phone number regenerates yours — which is
+// why the `user_id_update` webhook field is load-bearing rather than optional.
+// See applyBsuidRotation, and note the app must be SUBSCRIBED to that field in
+// the Meta App Dashboard or none of it ever fires
+// (docs/whatsapp-cloud-api-runbook.md).
 //
 // All secrets are read lazily inside the handlers (never at module scope):
 //   WHATSAPP_VERIFY_TOKEN   — GET verification challenge
@@ -79,8 +107,8 @@ interface WhatsAppMessage {
   from?: string;
   // The BSUID Meta has sent on every message since April 2026 — a per-person,
   // portfolio-scoped id (PT.13491208655302741918) that survives username
-  // changes. Stage 1 only RECORDS it (see captureBsuid); phone is still the
-  // sole resolution key. Resolving by BSUID is Stage 2 (issue #28).
+  // changes. Recorded by captureBsuid on every message, and used as the
+  // FALLBACK resolution key when `from` is absent or matches nothing.
   //
   // Deliberately read from the MESSAGE and not from the sibling `contacts[]`
   // array: from_user_id is per-message and unambiguous, while `contacts` lives
@@ -111,16 +139,19 @@ interface WhatsAppMessage {
   // with buttons, so a manager-side `type: 'button'` still falls to the
   // unsupported-message triage, which is correct.
   button?: { payload?: string; text?: string };
-}
-
-interface WhatsAppWebhookBody {
-  entry?: {
-    changes?: {
-      value?: {
-        messages?: WhatsAppMessage[];
-      };
-    }[];
-  }[];
+  // `type: 'system'` — Meta narrating a change about the sender rather than the
+  // sender saying anything. `user_changed_number` has existed for years;
+  // `user_changed_user_id` is the BSUID rotation announcement, and is the
+  // SECONDARY signal for it. The primary one is the `user_id_update` webhook
+  // FIELD, which is a different shape entirely and carries no messages at all.
+  //
+  // Typed as an open record on purpose: the exact member names for the
+  // user_changed_user_id variant are documented only in Meta's changelog and
+  // are quoted verbatim by no public source, so handleSystemMessage logs the
+  // KEYS it actually received rather than guessing at them. Keys are not
+  // identifiers, so logging them leaks nothing and makes the real shape
+  // discoverable from a log drain the first time one arrives.
+  system?: { type?: string } & Record<string, unknown>;
 }
 
 // The whole worker-facing command surface: reply one of these, alone, and your
@@ -293,6 +324,171 @@ async function captureBsuid(db: Db, message: WhatsAppMessage, target: BsuidTarge
   }
 }
 
+// ── sender identity ─────────────────────────────────────────────────────────
+// readSender and WhatsAppSender live in @capo/core/channels/whatsapp: deciding
+// WHICH identifier wins and WHICH envelope a reply travels in is the highest-
+// risk logic in this change, and there it can be pinned by
+// scripts/whatsapp-check.mts with no credentials and no network.
+
+// The same list on both tables, and deliberately two constants rather than one:
+// they answer different questions (who is the manager / who is the crew member)
+// and are free to diverge without either lookup silently acquiring a column.
+const MANAGER_COLUMNS = 'id, company_id, language, company:companies(language)';
+const WORKER_COLUMNS = 'id, company_id, language, company:companies(language)';
+
+/** One resolved crew row, as both worker lookups return it. */
+interface WorkerMatch {
+  id: string;
+  company_id: string;
+  language: string | null;
+  company: { language: string | null } | null;
+}
+
+/**
+ * Phone first, BSUID second — see the ordering note in this file's header.
+ *
+ * The BSUID query runs only when the phone one has genuinely missed, so it costs
+ * a round trip on unknown senders only. profiles.whatsapp_user_id is `unique`
+ * (0022) AND absent from the tenant's column UPDATE grant, so a match here is a
+ * globally unambiguous identity that only this route could ever have written —
+ * the strongest of the four lookups, and deliberately so.
+ */
+async function resolveManager(db: Db, sender: WhatsAppSender) {
+  if (sender.from) {
+    const { data } = await db
+      .from('profiles')
+      .select(MANAGER_COLUMNS)
+      .eq('phone', `+${sender.from}`)
+      .maybeSingle();
+    if (data) return data;
+  }
+  if (!sender.bsuid) return null;
+  const { data } = await db
+    .from('profiles')
+    .select(MANAGER_COLUMNS)
+    .eq('whatsapp_user_id', sender.bsuid)
+    .maybeSingle();
+  return data ?? null;
+}
+
+// ── rotation ────────────────────────────────────────────────────────────────
+
+/**
+ * A person changed their phone number, so Meta regenerated their BSUID and told
+ * us. Rewrite the stored id from `previous` to `current`.
+ *
+ * THIS IS THE PART THAT WOULD OTHERWISE ROT SILENTLY. Without it a stored BSUID
+ * quietly stops pointing at anybody: no error, no failed send, just a person who
+ * gradually stops being recognised, months after the change, with nothing in any
+ * log to connect the symptom to the cause. That is why the "matched nothing"
+ * branch below gets its own event name — it is the alarm for exactly that.
+ *
+ * Blind UPDATE, no read first: the `.eq('whatsapp_user_id', previous)` filter is
+ * itself the search, so there is no TOCTOU window and a redelivered webhook is
+ * free (the second run matches nothing, because the first already moved the row).
+ *
+ * NOT scoped by company, and it cannot be — a rotation arrives with no tenant
+ * context at all. That is safe because it is a pure key REWRITE: the row it
+ * touches is the row that already held `previous`, so no row changes hands and
+ * no company_id is read from the payload. Refusing to scope it is the point;
+ * inventing a scope would mean guessing.
+ */
+async function applyBsuidRotation(db: Db, rotation: BsuidRotation): Promise<void> {
+  const { previous, current } = rotation;
+  // Both ends validated. `current` because it is about to be written into a
+  // column with a CHECK constraint, where an invalid value is a 23514 rather
+  // than a clean refusal; `previous` because a malformed value cannot match a
+  // stored one and the attempt would look like an orphan, which is an alarm that
+  // must not cry wolf.
+  if (!isBsuid(previous) || !isBsuid(current)) {
+    logEvent('whatsapp.bsuid_rotation_invalid', {
+      previousValid: isBsuid(previous),
+      currentValid: isBsuid(current),
+    });
+    return;
+  }
+
+  try {
+    const [managers, workers] = await Promise.all([
+      db.from('profiles').update({ whatsapp_user_id: current }).eq('whatsapp_user_id', previous).select('id'),
+      db.from('workers').update({ whatsapp_user_id: current }).eq('whatsapp_user_id', previous).select('id'),
+    ]);
+
+    const movedManagers = managers.data?.length ?? 0;
+    const movedWorkers = workers.data?.length ?? 0;
+
+    // Both errors, and both counts alongside them. The two updates are
+    // independent, so one can fail while the other succeeds — reporting only the
+    // error would hide a rotation that DID land, and the follow-up question
+    // after a failure here is always "so who moved and who didn't".
+    const failures: string[] = [];
+    if (managers.error) failures.push(`profiles: ${managers.error.message}`);
+    if (workers.error) failures.push(`workers: ${workers.error.message}`);
+    if (failures.length > 0) {
+      // The realistic one is a unique violation on profiles: `current` is
+      // already stored against a different row, which means our picture of who
+      // is who is wrong and guessing would make it worse.
+      logEvent('whatsapp.bsuid_rotation_failed', {
+        error: failures.join('; '),
+        managers: movedManagers,
+        workers: movedWorkers,
+      });
+      return;
+    }
+
+    const moved = movedManagers + movedWorkers;
+    if (moved === 0) {
+      // THE SIGNAL THAT WE LOST SOMEBODY. Either we never captured this person,
+      // or a rotation was missed earlier and the stored id is already stale. The
+      // truncated suffix identifies nobody but is enough to correlate two
+      // rotations for the same person in a log drain.
+      logEvent('whatsapp.bsuid_rotation_orphan', { previous: `…${previous.slice(-4)}` });
+      return;
+    }
+    logEvent('whatsapp.bsuid_rotated', { managers: movedManagers, workers: movedWorkers });
+  } catch (err) {
+    logEvent('whatsapp.bsuid_rotation_failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * `type: 'system'` — Meta narrating something about the sender. Belt and
+ * braces: the authoritative rotation signal is the `user_id_update` webhook
+ * field, which arrives on its own change and is handled above.
+ *
+ * Handled BEFORE sender resolution, unlike every other message type, because a
+ * system message is not a person writing to us and may well carry no identifier
+ * we can still resolve — a rotation announcement is precisely the case where the
+ * old identity is on its way out. The cost is that this log has no companyId
+ * where the old unsupported-type triage would have had one; the benefit is that
+ * `user_changed_number` and `user_changed_user_id` stop being invisible.
+ *
+ * The keys are logged, the values are not. Meta's member names for this variant
+ * are quoted verbatim by no public source, so this makes the real shape
+ * discoverable the first time one arrives instead of requiring a guess now. If
+ * the payload happens to carry the same `{ user_id: { previous, current } }`
+ * shape the webhook field uses, the rotation is applied too.
+ */
+function handleSystemMessage(db: Db, message: WhatsAppMessage): void {
+  const system = message.system ?? {};
+  logEvent('whatsapp.system_message', {
+    messageId: message.id,
+    systemType: system.type,
+    keys: Object.keys(system).sort().join(','),
+  });
+
+  if (system.type !== 'user_changed_user_id') return;
+
+  const userId = system.user_id;
+  if (typeof userId !== 'object' || userId === null) return;
+  const { previous, current } = userId as { previous?: unknown; current?: unknown };
+  if (typeof previous !== 'string' || typeof current !== 'string') return;
+
+  after(() => applyBsuidRotation(db, { previous, current }));
+}
+
 /**
  * A check-in button tap: the worker answering the late-afternoon check-in template.
  *
@@ -448,28 +644,63 @@ async function handleCheckinTap(
 async function handleWorkerReply(
   db: Db,
   message: WhatsAppMessage,
-  // Passed in already narrowed rather than re-read from the message: the POST
-  // loop has to guard on it anyway, and taking it as a parameter makes "there
-  // is a phone here" structural instead of a defensive branch that can never
-  // run. A worker with no phone on the wire is unresolvable in Stage 1.
-  from: string,
+  // Passed in already resolved rather than re-read from the message: the POST
+  // loop has to establish it anyway, and taking it as a parameter makes "there
+  // is at least one usable identifier here" structural instead of a defensive
+  // branch that can never run.
+  sender: WhatsAppSender,
   env: WhatsAppEnv,
 ): Promise<boolean> {
-  const { data: matches, error } = await db
-    .from('workers')
-    .select('id, company_id, language, company:companies(language)')
-    .eq('phone', `+${from}`)
-    .eq('active', true)
-    .limit(2);
+  // Phone first, then BSUID — the same order and the same reasoning as
+  // resolveManager. `.limit(2)` on BOTH, which is the part that matters:
+  //
+  // workers.whatsapp_user_id is non-unique by design (0022 takes each table's
+  // existing uniqueness posture, and workers.phone has none because two
+  // companies may legitimately share a crew member). It is also the one BSUID
+  // column a tenant can populate — `authenticated` cannot UPDATE it after 0025,
+  // but still holds a table-wide INSERT on workers, and workers_insert_company
+  // constrains only company_id. So a tenant CAN create a crew row carrying
+  // somebody else's BSUID.
+  //
+  // This guard is what makes that harmless: two matches means we answer
+  // NEITHER. A forged row therefore costs its owner nothing and buys them
+  // nothing except silencing one worker's acknowledgements — never an answer
+  // recorded against a guessed tenant, and never a reply that reveals which one
+  // we picked. Do not "improve" this into a tie-break.
+  let matches: WorkerMatch[] | null = null;
 
-  if (error) {
-    console.error('whatsapp: worker lookup failed:', error.message);
-    return false;
+  if (sender.from) {
+    const { data, error } = await db
+      .from('workers')
+      .select(WORKER_COLUMNS)
+      .eq('phone', `+${sender.from}`)
+      .eq('active', true)
+      .limit(2);
+    if (error) {
+      console.error('whatsapp: worker lookup failed:', error.message);
+      return false;
+    }
+    matches = data;
   }
+
+  if (!matches?.length && sender.bsuid) {
+    const { data, error } = await db
+      .from('workers')
+      .select(WORKER_COLUMNS)
+      .eq('whatsapp_user_id', sender.bsuid)
+      .eq('active', true)
+      .limit(2);
+    if (error) {
+      console.error('whatsapp: worker BSUID lookup failed:', error.message);
+      return false;
+    }
+    matches = data;
+  }
+
   if (!matches || matches.length === 0) return false;
   if (matches.length > 1) {
-    // Same number on two companies' crews. Answering either would leak which
-    // tenant we picked, and picking is guesswork.
+    // Same identifier on two companies' crews. Answering either would leak
+    // which tenant we picked, and picking is guesswork.
     logEvent('whatsapp.worker_ambiguous', { sender: senderLabel(message), matches: matches.length });
     return true;
   }
@@ -500,12 +731,14 @@ async function handleWorkerReply(
 
   // Send-, not sink-config: a worker ack carries no approval buttons, and
   // WhatsAppSinkConfig now requires the ApprovalLabels the cards need.
-  // `from` is already a wa_id (digits, no '+'), which is exactly what the send
-  // API wants — replying is the one direction that needs no conversion.
+  //
+  // The reply goes back on whichever identifier they wrote with — see
+  // readSender. A worker who has adopted a username is answered on their BSUID,
+  // in Meta's `recipient` field rather than `to`.
   const sendConfig: WhatsAppSendConfig = {
     accessToken: env.accessToken,
     phoneNumberId: env.phoneNumberId,
-    to: from,
+    recipient: sender.replyTo,
   };
 
   // The check-in answer. Sits here — inside the WORKER path — and not
@@ -596,54 +829,79 @@ export async function POST(request: NextRequest) {
     return new NextResponse('invalid signature', { status: 401 });
   }
 
-  let body: WhatsAppWebhookBody;
+  let body: WhatsAppWebhookEnvelope<WhatsAppMessage>;
   try {
     body = JSON.parse(raw);
   } catch {
     return new NextResponse('invalid payload', { status: 400 });
   }
 
-  // Meta batches. Everything is collected here and triaged per message AFTER
-  // sender resolution, so an unsupported type can be logged against a real
-  // companyId. Previously this was a .filter() that dropped every non-text
-  // message with no log line at all — a manager sending a voice note produced
-  // literally zero observability.
-  const inbound = (body.entry ?? [])
-    .flatMap(entry => entry.changes ?? [])
-    .flatMap(change => change.value?.messages ?? []);
-
   const db = getDb();
-  for (const message of inbound) {
-    const from = message.from;
 
-    // No phone on the wire: the sender has adopted a WhatsApp username and Meta
-    // has stopped telling us their number. Stage 1 resolves by phone ONLY, so
-    // there is nothing to look up and this is genuinely an unknown sender — the
-    // same silent no-op an unrecognised number gets, reached without throwing.
-    // Binding a BSUID to a person needs a message that still carries both, and
-    // this one does not. Stage 2 (issue #28) is what turns this branch into a
-    // resolution.
-    //
-    // It is also what narrows `from` to a string for every use below.
-    if (!from) {
+  // Meta batches, and not everything in a batch is a message. This used to
+  // flat-map straight to `change.value?.messages` and ignore `change.field`
+  // entirely, which meant a `user_id_update` — a change carrying no messages at
+  // all — was dropped without a trace. routeWebhookChanges sorts a batch into
+  // messages, rotations, and everything else; see @capo/core/channels/whatsapp,
+  // where it lives so scripts/whatsapp-check.mts can assert it offline.
+  const routed = routeWebhookChanges<WhatsAppMessage>(body);
+
+  // One line each, deliberately. Today an unrecognised field vanishes entirely,
+  // which is what would make Meta's NEXT addition invisible rather than merely
+  // unhandled — the same class of silence this whole issue exists to end.
+  for (const field of routed.unhandledFields) {
+    logEvent('whatsapp.unhandled_field', { field });
+  }
+  if (routed.unreadableRotations > 0) {
+    logEvent('whatsapp.bsuid_rotation_unreadable', { count: routed.unreadableRotations });
+  }
+
+  // Registered before the message loop so rotations are applied first where the
+  // runtime allows it. after() gives no hard ordering guarantee, so a batch
+  // containing BOTH a rotation and a message from the new BSUID could still
+  // resolve that message against the old value. In practice the two arrive as
+  // separate webhook deliveries, and the case self-heals on the next message —
+  // stated rather than pretended away.
+  if (routed.rotations.length > 0) {
+    after(async () => {
+      for (const rotation of routed.rotations) await applyBsuidRotation(db, rotation);
+    });
+  }
+
+  for (const message of routed.messages) {
+    // FIRST, above even the sender guard below, and the order is load-bearing.
+    // A system message is Meta narrating a change, not a person writing — and a
+    // BSUID rotation announcement is precisely the case where the identity on
+    // the envelope may be one we can no longer resolve, or may be missing
+    // altogether. Handled after the guard, it would be discarded as an unknown
+    // sender: the rotation signal thrown away by the very branch that exists
+    // because identities change. See handleSystemMessage.
+    if (message.type === 'system') {
+      handleSystemMessage(db, message);
+      continue;
+    }
+
+    // Neither identifier on the wire: nothing to look up AND nothing to reply
+    // to. The same silent no-op an unrecognised number gets, reached without
+    // throwing — and the step that narrows both identifiers for everything
+    // below.
+    const sender = readSender(message);
+    if (!sender) {
       logUnknownSender(message);
       continue;
     }
 
-    // wa_id is digits-only; profiles.phone is E.164 with '+'.
-    const { data: profile } = await db
-      .from('profiles')
-      .select('id, company_id, language, company:companies(language)')
-      .eq('phone', `+${from}`)
-      .maybeSingle();
+    // wa_id is digits-only; profiles.phone is E.164 with '+'. Phone first, then
+    // BSUID — see resolveManager and this file's header.
+    const profile = await resolveManager(db, sender);
 
     if (!profile) {
       // Not a manager — but it may be a worker replying to their 07:00
-      // briefing, which is the one other number we know. Runs after the ack so
+      // briefing, which is the one other identity we know. Runs after the ack so
       // the lookup and the ack send add no latency to Meta's webhook call.
       after(async () => {
-        const handled = await handleWorkerReply(db, message, from, { accessToken, phoneNumberId });
-        // Safe no-op: don't reveal whether a number is known, don't reply.
+        const handled = await handleWorkerReply(db, message, sender, { accessToken, phoneNumberId });
+        // Safe no-op: don't reveal whether a sender is known, don't reply.
         if (!handled) logUnknownSender(message);
       });
       continue;
@@ -667,10 +925,13 @@ export async function POST(request: NextRequest) {
     };
 
     const t = getCatalog(locales.user);
+    // Replies go back on whichever identifier the manager wrote with, in the
+    // envelope field that identifier requires — `to` for a phone, `recipient`
+    // for a BSUID. See readSender.
     const sendConfig: WhatsAppSendConfig = {
       accessToken,
       phoneNumberId,
-      to: from,
+      recipient: sender.replyTo,
     };
 
     // ── Approval card button tap ────────────────────────────────────────────

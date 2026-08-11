@@ -91,7 +91,45 @@ ignored.
 2. Click **Verify and save** — Meta calls `GET /api/whatsapp` with the
    challenge; the route answers it once the env var is deployed, so set the
    env vars (step 4) *before* verifying.
-3. Webhook fields: subscribe to **messages** (only).
+3. Webhook fields: subscribe to **messages** *and* **user_id_update**.
+
+### ⚠ `user_id_update` — the subscription with no symptom when it is missing
+
+This one is not optional and it is not verifiable from the code. **It is a
+manual tick in the Meta App Dashboard**, and if it is not ticked, nothing in
+this repository will ever tell you.
+
+What it carries: WhatsApp usernames mean a person's identifier with us is no
+longer their phone number but a business-scoped user ID (BSUID). **Changing
+their phone number regenerates that BSUID**, and this webhook field is how Meta
+announces the change — old id and new id together, which is exactly what is
+needed to update the right row.
+
+Without the subscription the announcement never arrives, the stored id quietly
+stops pointing at anybody, and that person stops being recognised. No error, no
+failed send, no log line, months after the change. It is the slowest-rotting
+failure in the whole channel, which is why it gets its own heading.
+
+The code side is done (`routeWebhookChanges` → `applyBsuidRotation` in
+`apps/web/app/api/whatsapp/route.ts`). Confirm the subscription in
+**App Dashboard → Use cases → Connect with customers through WhatsApp →
+Customize → Configuration → Webhook fields**, and check that
+`whatsapp.bsuid_rotated` or `whatsapp.bsuid_rotation_orphan` appears in the logs
+the first time one fires.
+
+Deliberately NOT subscribed: `statuses` and anything else. We do not process
+delivery statuses at all, and an unrecognised field now logs
+`whatsapp.unhandled_field` once rather than vanishing — so if a subscription is
+added here later, the code becomes discoverable rather than silently ignoring it.
+
+### Testing it without waiting for the rollout
+
+Meta's webhook test tool fires synthetic payloads at the live endpoint on
+demand: **App Dashboard → Use cases → Connect with customers through WhatsApp →
+Customize → Configuration → Test**, beside the field list. The scenario that
+matters is *"user has adopted a username and phone number is unavailable"* — it
+sends a message with `from` omitted and only `from_user_id` present, which is
+the whole case BSUID support exists for.
 
 ## 3. Permanent token (System User) — solves token expiry
 
@@ -400,6 +438,12 @@ Storage is E.164 with the `+` (`profiles.phone`, `workers.phone`). Meta's
 `wa_id` is the same digits without it, so `toSendTarget()` is a `+` strip and
 nothing more.
 
+It is no longer exported. A recipient is now a labelled choice —
+`phoneRecipient(e164)` or `bsuidRecipient(userId)` — and only the first calls it,
+so a business-scoped user ID (`PT.13491208655302741918`) has no code path to
+phone-digit surgery at all. Stripping a `+` from one would be meaningless, and
+the result would then be posted in `to`, where Meta rejects it.
+
 It used to be more. Meta's **test-tier** allow-list stored Buenos Aires mobiles
 in the legacy domestic form (`54 11 15 XXXXXXXX`) rather than the wa_id's modern
 form (`549 11 XXXXXXXX`), and sending to the wa_id was rejected as **131030**.
@@ -503,7 +547,7 @@ the manager was told a card had appeared and handed nothing. Cards now travel
 as native WhatsApp interactive reply buttons.
 
 **No Meta dashboard change is required.** Button replies arrive on the
-`messages` webhook field, which is already the only subscription (§2 step 3).
+`messages` webhook field, which is already subscribed (§2 step 3).
 
 **Outbound** (`sendInteractive`, `packages/core/src/channels/whatsapp.ts`):
 

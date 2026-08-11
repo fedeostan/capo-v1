@@ -32,11 +32,33 @@ import { toWhatsAppMarkdown } from './whatsapp-markdown';
 // that ack is what converts them to free session messages.
 // (See docs/whatsapp-cloud-api-runbook.md.)
 
+/**
+ * WHO a message is addressed to — and, structurally, WHICH ENVELOPE FIELD it
+ * travels in. The two are not interchangeable on Meta's side.
+ *
+ * A phone goes in `to`. A BSUID goes in a separate sibling property `recipient`.
+ * Put a BSUID in `to` and the send is simply rejected. Sending BOTH is legal and
+ * `to` silently wins, which is exactly why post() emits one XOR the other: with
+ * only one on the wire, the response tells us unambiguously which identity Meta
+ * actually used.
+ *
+ * A discriminated union rather than a bare string ON PURPOSE. It makes the wrong
+ * envelope unrepresentable at compile time, and `tsc --noEmit` runs per package
+ * under "strict": true — which, in a repo with no test suite, is one of the few
+ * places a mistake can be caught before production. The same shape is what keeps
+ * apps/web/lib/whatsapp.ts's E.164 → wa_id digit surgery unreachable from the
+ * BSUID branch: it is applied when CONSTRUCTING a `phone` recipient and there is
+ * no code path from a `bsuid` one to it.
+ */
+export type WhatsAppRecipient =
+  | { kind: 'phone'; waId: string }
+  | { kind: 'bsuid'; userId: string };
+
 export interface WhatsAppSendConfig {
   accessToken: string;
   phoneNumberId: string;
-  /** Recipient phone in Meta's wa_id format (digits, no '+'). */
-  to: string;
+  /** Who to send to, and which envelope field carries them. */
+  recipient: WhatsAppRecipient;
   /** Overridable for tests; defaults to the live Graph API. */
   graphApiBase?: string;
 }
@@ -247,6 +269,168 @@ export function senderLabel(message: { from?: string; from_user_id?: string }): 
   return 'unknown';
 }
 
+/**
+ * Everything the webhook knows about who sent a message, decided once.
+ *
+ * Both identifiers are optional on the wire and BOTH can be absent, so this is
+ * also the narrowing step: a message with neither is unresolvable AND
+ * unanswerable.
+ */
+export interface WhatsAppSender {
+  /** wa_id — digits, no '+'. Absent once the sender has adopted a username. */
+  from?: string;
+  /** A VALIDATED BSUID. Undefined when absent, malformed, or a parent BSUID. */
+  bsuid?: string;
+  /** Where a reply goes, and which envelope field carries it. */
+  replyTo: WhatsAppRecipient;
+}
+
+/**
+ * PHONE WINS. This one-line preference is the safety property of the whole
+ * BSUID change: it is what makes today's payloads take today's path, byte for
+ * byte, so nothing about reading a second identifier can regress the traffic
+ * that already works. It lives here rather than in the route precisely so
+ * scripts/whatsapp-check.mts can pin it with no credentials and no network —
+ * the same reason parseProposalButtonId and isBsuid do.
+ *
+ * BSUID validation happens HERE, once, rather than at each lookup. A
+ * `from_user_id` that fails isBsuid is treated as absent: it cannot match a
+ * stored value anyway (the same regex is a CHECK constraint on both columns),
+ * and refusing it at the boundary is what stops a PARENT BSUID ever being used
+ * as a key.
+ *
+ * `replyTo` is built from `from` directly rather than through any E.164
+ * conversion: `from` is already a wa_id. Replying is the one direction that
+ * needs no conversion.
+ *
+ * Returns null when neither identifier is usable — the caller's silent no-op,
+ * reached without a throw.
+ */
+export function readSender(message: { from?: string; from_user_id?: string }): WhatsAppSender | null {
+  const bsuid =
+    message.from_user_id && isBsuid(message.from_user_id) ? message.from_user_id : undefined;
+  if (message.from) {
+    return { from: message.from, bsuid, replyTo: { kind: 'phone', waId: message.from } };
+  }
+  if (bsuid) return { bsuid, replyTo: { kind: 'bsuid', userId: bsuid } };
+  return null;
+}
+
+// ── the webhook change router ───────────────────────────────────────────────
+// One person's BSUID is NOT permanent. Changing their phone number regenerates
+// it, and Meta announces that on a webhook change whose `field` is
+// 'user_id_update' — a change that carries NO `messages` array at all.
+//
+// The webhook route used to flat-map `change.value?.messages` and ignore
+// `change.field` entirely, so a rotation was dropped without a trace: no error,
+// no log, just a stored id that had quietly stopped pointing at anybody. That
+// is the degradation this router exists to prevent, and the reason it lives in
+// @capo/core rather than in the route — here scripts/whatsapp-check.mts can
+// assert it with no credentials and no network, the same reason
+// parseProposalButtonId and isBsuid live here.
+//
+// Generic in M so the WhatsAppMessage interface (and the substantial
+// documentation attached to it) stays in the route that consumes it. This
+// function's job is SORTING, not validating: `previous`/`current` are checked
+// against isBsuid by the applier, so an invalid value produces a distinct log
+// line instead of vanishing inside a sorter.
+
+/** One announced BSUID rotation: this person's id changed from → to. */
+export interface BsuidRotation {
+  previous: string;
+  current: string;
+  /**
+   * The phone Meta happens to include. Recorded for logs only and NEVER used as
+   * a lookup key — the whole point of a rotation is that the phone changed, so
+   * it is the one identifier guaranteed to be stale here.
+   */
+  waId?: string;
+}
+
+export interface WhatsAppWebhookEnvelope<M> {
+  entry?: {
+    changes?: {
+      field?: string;
+      value?: {
+        messages?: M[];
+        user_id_update?: unknown[];
+      };
+    }[];
+  }[];
+}
+
+export interface RoutedWebhook<M> {
+  messages: M[];
+  rotations: BsuidRotation[];
+  /**
+   * Field names this router does not handle, in arrival order. A change with no
+   * `field` at all and no messages is reported as '(missing)'. Duplicates are
+   * kept: the caller logs one event per occurrence, and collapsing them would
+   * hide a batch that is mostly one unknown thing.
+   */
+  unhandledFields: string[];
+  /**
+   * user_id_update entries whose shape we could not read. Counted rather than
+   * dropped, because this payload is documented only in Meta's changelog — no
+   * public source quotes it verbatim — so a shape surprise has to be findable.
+   */
+  unreadableRotations: number;
+}
+
+// parent_user_id is deliberately never read, here or anywhere. Meta issues a
+// parent BSUID (US.ENT.11815799212886844830) to businesses running several
+// portfolios who want one shared id across them; Capo is a single portfolio.
+// Storing one would look like an identity while pointing at nobody in
+// particular, which is also why isBsuid's single-dot rule rejects the shape
+// outright. Parse-and-drop, on purpose — do not add support speculatively.
+function readRotation(value: unknown): BsuidRotation | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const entry = value as { wa_id?: unknown; user_id?: unknown };
+  if (typeof entry.user_id !== 'object' || entry.user_id === null) return null;
+  const { previous, current } = entry.user_id as { previous?: unknown; current?: unknown };
+  if (typeof previous !== 'string' || !previous) return null;
+  if (typeof current !== 'string' || !current) return null;
+  return {
+    previous,
+    current,
+    waId: typeof entry.wa_id === 'string' ? entry.wa_id : undefined,
+  };
+}
+
+export function routeWebhookChanges<M>(body: WhatsAppWebhookEnvelope<M>): RoutedWebhook<M> {
+  const messages: M[] = [];
+  const rotations: BsuidRotation[] = [];
+  const unhandledFields: string[] = [];
+  let unreadableRotations = 0;
+
+  for (const entry of body.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      // The field-absent branch is a COMPATIBILITY guard, not tidiness. Meta
+      // always sets `field`, but the route this replaces never read it, so any
+      // payload that works today must keep working — including one from a test
+      // harness that omits it. Dispatching on a missing field alone would drop
+      // real messages, which is the one regression this change must not have.
+      if (change.field === 'messages' || (change.field === undefined && change.value?.messages)) {
+        messages.push(...(change.value?.messages ?? []));
+        continue;
+      }
+
+      if (change.field === 'user_id_update') {
+        for (const raw of change.value?.user_id_update ?? []) {
+          const rotation = readRotation(raw);
+          if (rotation) rotations.push(rotation);
+          else unreadableRotations += 1;
+        }
+        continue;
+      }
+
+      unhandledFields.push(change.field ?? '(missing)');
+    }
+  }
+
+  return { messages, rotations, unhandledFields, unreadableRotations };
+}
+
 // ── outbound planning ───────────────────────────────────────────────────────
 
 // Recognises the shape returned identically by propose.ts, guard.ts and
@@ -344,6 +528,12 @@ export function planAssistantMessages(
 //   132001  template name/language does not exist or is not approved yet
 //   131047  re-engagement required — a free-form send outside the 24h window
 //   131026  message undeliverable (recipient has no WhatsApp, or blocked us)
+//   131062  BSUID recipients are not supported for THIS message. Narrower than
+//           it sounds and worth knowing before it scares anyone off the BSUID
+//           send path: it is raised only for one-tap / zero-tap / copy-code
+//           AUTHENTICATION templates. Both of Capo's templates
+//           (capo_daily_briefing, capo_task_checkin) are UTILITY, so a BSUID
+//           recipient is eligible for everything this codebase sends.
 export class WhatsAppSendError extends Error {
   readonly status: number;
   readonly code: number | null;
@@ -480,6 +670,25 @@ export async function sendWhatsAppTemplate(
   return await post(buildTemplatePayload(template), config);
 }
 
+// Pure: recipient + message payload in, Graph request body out. Split out of
+// post() for the same reason buildTemplatePayload is split out of
+// sendWhatsAppTemplate — scripts/whatsapp-check.mts can then assert the ONE
+// thing about this body that cannot be checked any other way without a live
+// Meta account: that exactly one addressing field is present.
+//
+// `to` XOR `recipient`, never both and never neither. Meta accepts both and
+// lets `to` win; that silent precedence is the failure this shape exists to
+// prevent, because a BSUID send that quietly went to a stale phone number would
+// look like a success in every log we keep.
+export function buildSendBody(
+  payload: Record<string, unknown>,
+  recipient: WhatsAppRecipient,
+): Record<string, unknown> {
+  const address =
+    recipient.kind === 'phone' ? { to: recipient.waId } : { recipient: recipient.userId };
+  return { messaging_product: 'whatsapp', ...address, ...payload };
+}
+
 // Returns the provider message id so the reminder cron can record it in
 // notification_log; the sink's own sends ignore it.
 async function post(
@@ -493,7 +702,7 @@ async function post(
       Authorization: `Bearer ${config.accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ messaging_product: 'whatsapp', to: config.to, ...payload }),
+    body: JSON.stringify(buildSendBody(payload, config.recipient)),
   });
   if (!res.ok) {
     throw new WhatsAppSendError(res.status, await res.text());

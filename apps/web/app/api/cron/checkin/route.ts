@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getDb } from '@capo/db/client';
 import { checkinPayload, sendWhatsAppTemplate } from '@capo/core/channels/whatsapp';
 import { getCatalog } from '@capo/i18n/catalog';
-import { sendConfigFor, toSendTarget, whatsappSendEnv } from '../../../../lib/whatsapp';
+import { describeRecipient, sendConfigFor, whatsappSendEnv } from '../../../../lib/whatsapp';
 import { logEvent } from '../../../../lib/log';
 import {
   authorizeCron,
@@ -132,6 +132,12 @@ export async function GET(request: NextRequest) {
           excluded: briefing.excludedNoConsent,
         });
       }
+      if (briefing.excludedUnreachable > 0) {
+        logEvent('checkin.workers_unreachable', {
+          companyId: company.id,
+          excluded: briefing.excludedUnreachable,
+        });
+      }
 
       for (const worker of briefing.workers) {
         // Note there is deliberately no NOTIFY_IDLE_WORKERS dial here, unlike
@@ -147,7 +153,8 @@ export async function GET(request: NextRequest) {
         if (dryRun) {
           sends.push({
             audience: 'worker',
-            to: toSendTarget(worker.phone),
+            to: worker.recipient.kind === 'phone' ? worker.recipient.waId : worker.recipient.userId,
+            address: describeRecipient(worker.recipient),
             locale: worker.locale,
             name,
             taskList,
@@ -181,7 +188,7 @@ export async function GET(request: NextRequest) {
                 { payload: checkinPayload('not_done', claimed.id) },
               ],
             },
-            sendConfigFor(env!, toSendTarget(worker.phone)),
+            sendConfigFor(env!, worker.recipient),
           );
           await resolveNotification(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
           asked += 1;

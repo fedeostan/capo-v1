@@ -1,7 +1,8 @@
 import type { Db } from '@capo/db/client';
+import type { WhatsAppRecipient } from '@capo/core/channels/whatsapp';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
-import { hasWhatsAppConsent } from '../../lib/whatsapp';
+import { hasWhatsAppConsent, recipientFor } from '../../lib/whatsapp';
 
 // The 07:00 briefing, rendered.
 //
@@ -27,8 +28,13 @@ export interface BriefingTask {
 export interface WorkerBriefing {
   workerId: string;
   name: string;
-  /** E.164, with the '+'. */
-  phone: string;
+  /**
+   * Where to send, and in which envelope field — the phone when we have one,
+   * otherwise the stored BSUID. Resolved HERE rather than in each cron because
+   * both proactive sends read this function, and two copies of the preference
+   * would eventually disagree about who is reachable.
+   */
+  recipient: WhatsAppRecipient;
   locale: Locale;
   tasks: BriefingTask[];
 }
@@ -45,13 +51,21 @@ export interface CompanyBriefing {
   workers: WorkerBriefing[];
   counts: ManagerCounts;
   /**
-   * Active workers with a phone who were dropped for want of a recorded
+   * Active workers we could address who were dropped for want of a recorded
    * WhatsApp opt-in. Reported rather than silently swallowed: after 0025 every
    * pre-existing worker starts without consent, so "Capo has gone quiet" is the
    * expected first symptom and this is the number that explains it. Each route
    * logs it.
    */
   excludedNoConsent: number;
+  /**
+   * Active workers with NO usable address at all — neither a phone nor a stored
+   * BSUID. Counted for the same reason excludedNoConsent is: a worker dropped
+   * before the send loop can even see them is otherwise indistinguishable from
+   * a worker who had nothing to do, and "Capo never messages João" needs a
+   * number somewhere that explains it.
+   */
+  excludedUnreachable: number;
 }
 
 // Tasks a worker should be told about. `blocked` is excluded on purpose: the
@@ -105,33 +119,42 @@ export async function loadCompanyBriefing(
     byWorker.set(row.assignee_worker_id, list);
   }
 
-  // A worker with no phone cannot be reached at all — /perfil already warns
-  // the manager about exactly this, so it is not a silent drop.
-  const reachable = (crew ?? []).filter((w): w is typeof w & { phone: string } => Boolean(w.phone));
+  // A worker with NEITHER a phone nor a stored BSUID cannot be reached at all —
+  // /perfil already warns the manager about a missing phone, so it is not a
+  // silent drop.
+  //
+  // The BSUID half only ever fills in for someone Meta has stopped giving us a
+  // number for. It cannot be populated out of thin air: a BSUID is revealed only
+  // on an inbound message, so a worker reaches this branch only after having
+  // written to us at least once (see captureBsuid in the webhook route).
+  const reachable = (crew ?? []).flatMap(w => {
+    const recipient = recipientFor(w);
+    return recipient ? [{ worker: w, recipient }] : [];
+  });
 
   // THE CONSENT GATE, and the only one. Both proactive sends — the 07:00
   // briefing and the late-afternoon check-in — reach their recipients through
   // this function, so a worker filtered out here cannot be messaged by either.
   // Putting it in the routes instead would mean two copies of a rule that must
   // never disagree. See hasWhatsAppConsent() and 0025_whatsapp_optin.sql.
-  const consenting = reachable.filter(hasWhatsAppConsent);
+  const consenting = reachable.filter(({ worker }) => hasWhatsAppConsent(worker));
 
-  const workers: WorkerBriefing[] = consenting
-    .map(w => ({
-      workerId: w.id,
-      name: w.name,
-      phone: w.phone,
-      // NULL means "inherit the company"; the worker sets this themselves by
-      // replying a keyword to their briefing.
-      locale: w.language ? coerceLocale(w.language) : companyLocale,
-      tasks: byWorker.get(w.id) ?? [],
-    }));
+  const workers: WorkerBriefing[] = consenting.map(({ worker, recipient }) => ({
+    workerId: worker.id,
+    name: worker.name,
+    recipient,
+    // NULL means "inherit the company"; the worker sets this themselves by
+    // replying a keyword to their briefing.
+    locale: worker.language ? coerceLocale(worker.language) : companyLocale,
+    tasks: byWorker.get(worker.id) ?? [],
+  }));
 
   return {
     companyId,
     companyLocale,
     workers,
     excludedNoConsent: reachable.length - consenting.length,
+    excludedUnreachable: (crew ?? []).length - reachable.length,
     counts: {
       today: todayRows.length,
       unassigned: todayRows.filter(r => !r.assignee_worker_id).length,

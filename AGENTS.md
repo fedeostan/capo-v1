@@ -238,6 +238,57 @@ Structural invariants (do not regress):
   button** (`type: 'interactive'`, from a manager). They are handled on
   different paths and their payload codecs are deliberately non-overlapping;
   conflating them is the mistake to watch for.
+- **Sender identity is the PHONE, with the BSUID as a fallback — in that order,
+  and the order is the safety property.** WhatsApp usernames mean Meta omits
+  `from` entirely for anyone who has adopted one and sends only `from_user_id`,
+  a business-scoped user id (`PT.13491208655302741918`). The webhook therefore
+  runs four lookups, stopping at the first hit: `profiles.phone`,
+  `profiles.whatsapp_user_id`, `workers.phone`, `workers.whatsapp_user_id`
+  (0022, migrations #27/#28). Phone-first is what makes steps 1 and 3
+  byte-identical to what the route has always run, so nothing about reading a
+  second key can regress traffic that already works. `readSender` in
+  `packages/core/src/channels/whatsapp.ts` is where that preference lives —
+  there rather than in the route so `pnpm whatsapp-check` can pin it, which is
+  the only place it is checked at all. Four things follow:
+  - **The BSUID lookups are SEPARATE QUERIES, never widened column lists on the
+    phone lookups.** Adding `whatsapp_user_id` to the working `select` couples
+    sender resolution to the migration: a deploy landing first 42703s and every
+    manager becomes an unknown sender. As their own queries the same failure
+    costs only the fallback. Same reasoning as `captureBsuid`.
+  - **A BSUID is NOT a tenant boundary and does not weaken one.** It is scoped
+    to our business PORTFOLIO, not to a customer company, so it is exactly as
+    tenant-ambiguous as the phone it replaces. `company_id` still comes from the
+    matched row; RLS is still the boundary. `workers.whatsapp_user_id` is
+    non-unique for the same reason `workers.phone` is, so its lookup carries the
+    same `.limit(2)` → `whatsapp.worker_ambiguous` → stay-silent guard.
+    **That guard is load-bearing, not defensive.** 0025 revoked the table-wide
+    UPDATE on `workers` and re-granted a column list excluding this one, but
+    `authenticated` still holds a table-wide INSERT and `workers_insert_company`
+    constrains only `company_id` — so a tenant CAN create a crew row carrying
+    another company's worker's BSUID. Two matches means answering neither, which
+    turns that into silence rather than a wrong tenant. Do not tie-break it.
+    `profiles.whatsapp_user_id` has no equivalent hole: `unique`, and absent
+    from the tenant's column UPDATE grant.
+  - **BSUIDs ROTATE.** Changing a phone number regenerates one, and Meta
+    announces it on a webhook change whose `field` is `user_id_update` and which
+    carries NO `messages` array — so the pre-#28 parser dropped every rotation
+    without a trace. `routeWebhookChanges` splits a batch into messages,
+    rotations and unhandled fields; `applyBsuidRotation` rewrites `previous` →
+    `current` on both tables and logs `whatsapp.bsuid_rotation_orphan` when it
+    matches nothing, which is the only signal that we just lost somebody.
+    **The app must be SUBSCRIBED to `user_id_update` in the Meta App
+    Dashboard** — code alone makes none of these arrive
+    (`docs/whatsapp-cloud-api-runbook.md`).
+  - **Outbound, a BSUID goes in `recipient`, never in `to`.** Sending both is
+    legal and `to` silently wins, so the wrong shape does not fail — it delivers
+    to a stale number and reports success. `WhatsAppRecipient` is a discriminated
+    union for that reason, `buildSendBody` emits one field xor the other, and
+    `toSendTarget`'s phone-digit surgery is unexported so no BSUID can reach it.
+  - **Parent BSUIDs (`US.ENT.…`) are deliberately unsupported.** They belong to
+    multi-portfolio businesses; Capo is one portfolio. `isBsuid`'s single-dot
+    rule rejects the shape, the same rule is a CHECK constraint on both columns,
+    and `parent_user_id` is parsed and dropped wherever it appears. Storing one
+    would look like an identity while belonging to nobody in particular.
 - **`workers.language` is the third dial** (see the top of this file).
   Nullable, and the null means "inherit `companies.language`" — do not give it
   a default. A worker sets it themselves by replying `PT`/`ES`/`EN` to their
