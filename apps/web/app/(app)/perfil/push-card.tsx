@@ -129,12 +129,19 @@ export default function PushCard({
       if (sub) {
         // Both halves, always. Cancelling only in the browser leaves a row we
         // would keep sending to; deleting only our row leaves a phone the push
-        // service still considers subscribed.
-        await fetch('/api/push', {
+        // service still considers subscribed. The server DELETE runs first and
+        // is checked before touching the browser side: if it fails, we throw
+        // here and never reach unsubscribe(), so the phone stays subscribed
+        // and our row stays too — a consistent state the manager can press
+        // "Desligar" again to retry, rather than a half-applied one where the
+        // browser thinks it's off but the server still has the row (or the
+        // reverse). Same shape as register()'s res.ok check in enable().
+        const res = await fetch('/api/push', {
           method: 'DELETE',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ endpoint: sub.endpoint }),
         });
+        if (!res.ok) throw new Error('unregister failed');
         await sub.unsubscribe();
       }
       setState('off');
