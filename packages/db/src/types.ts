@@ -54,35 +54,25 @@
 // against a real `generate_typescript_types` run: byte-identical, FK
 // Relationships included. It is not a transcription any more; it is confirmed.
 //
-// ── AHEAD OF THE LIVE SCHEMA ───────────────────────────────────────────────
-// This file now LEADS the live project by one migration, which is the one case
-// the paragraph above does not cover. profiles.whatsapp_user_id and
-// workers.whatsapp_user_id are hand-added here from
-// supabase/migrations/0022_whatsapp_bsuid.sql, which is deliberately NOT
-// applied — writing the file is this stage's deliverable and applying it is the
-// maintainer's call (issue #27). Regenerating from the live project right now
-// would therefore DELETE those two columns and break typecheck; regenerate only
-// after 0022 has actually been applied.
+// ── whatsapp BSUID (0022) + opt-in (0025), BOTH APPLIED ────────────────────
+// profiles/workers.whatsapp_user_id come from 0022_whatsapp_bsuid.sql, and
+// .whatsapp_opt_in_at / .whatsapp_opt_out_at from 0025_whatsapp_optin.sql. All
+// four were hand-added to this file ahead of time and are now backed by the
+// live schema: 0022 was applied on 2026-08-11 (issue #28 needs to READ that
+// column, and until then Stage 1's capture had been failing on every message
+// with "column does not exist", swallowed by design and recording nothing).
 //
-// Nothing reads these columns, and the single writer (the WhatsApp webhook's
-// best-effort BSUID capture) runs inside after() and swallows its own errors,
-// so a deploy that lands before 0022 is applied degrades to a logged
-// whatsapp.bsuid_capture_failed rather than breaking sender resolution. That
-// asymmetry is why the capture does its own write instead of widening the
-// profiles/workers SELECTs the webhook already runs — see AGENTS.md on code
-// that reads ahead of a pending migration.
+// This file therefore no longer leads the live project in either direction, and
+// a clean regeneration is possible again for the first time since 0022 was
+// written. Both pairs were verified column-for-column against a real
+// generate_typescript_types run at merge time; the byte-equality check on main
+// is now unblocked.
 //
-// ── whatsapp opt-in (0025), APPLIED ────────────────────────────────────────
-// profiles/workers.whatsapp_opt_in_at and .whatsapp_opt_out_at come from
-// 0025_whatsapp_optin.sql, which IS applied to the live project. They were
-// hand-added here too, but for the opposite reason to the BSUID pair above:
-// not because the migration is pending, but because regenerating would have
-// DELETED whatsapp_user_id, which is not in the live schema. So this file now
-// leads the live project in one direction and matches it in the other, and a
-// clean regeneration is impossible until 0022 is applied.
-//
-// Both were verified column-for-column against a real generate_typescript_types
-// run at merge time. Do the byte-equality check on main once 0022 lands.
+// The capture still does its own isolated write rather than widening the
+// profiles/workers SELECTs the webhook runs, and Stage 2's BSUID lookups are
+// likewise separate queries. That is not obsolete now the migration is applied:
+// it is what keeps sender resolution decoupled from schema-vs-deploy ordering
+// in general — see AGENTS.md on code that reads ahead of a pending migration.
 //
 // Note the three columns sit adjacent and alphabetical — opt_in_at, opt_out_at,
 // user_id — which is exactly where git put both sides of the merge conflict.

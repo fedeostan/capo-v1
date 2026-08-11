@@ -16,11 +16,22 @@
 //   5. A template body parameter containing a newline, a tab or a run of 4+
 //      spaces is rejected wholesale with Meta's 132000, and the natural way to
 //      render a task list is one per line.
+//   6. Sender resolution must prefer the PHONE over the BSUID. Inverting that
+//      preference would silently route every known manager through a second,
+//      weaker key, and nothing else in this repo would notice.
+//   7. A BSUID recipient goes in Meta's `recipient` field, never in `to`.
+//      Sending both is legal and `to` wins — so the wrong shape does not fail,
+//      it delivers to a stale phone number and reports success.
+//   8. A `user_id_update` webhook change carries NO messages array, so the old
+//      parser dropped every BSUID rotation without a trace. That is the one
+//      defect here with no symptom at all: a stored id quietly stops pointing
+//      at anybody, months after the change.
 //
 // Run with `pnpm whatsapp-check`. Exit 0 = green, 1 = at least one failure.
 
 import type { UIMessage } from 'ai';
 import {
+  buildSendBody,
   buildTemplatePayload,
   checkinPayload,
   hasWhatsAppConsent,
@@ -29,6 +40,8 @@ import {
   parseProposalButtonId,
   planAssistantMessages,
   proposalButtonId,
+  readSender,
+  routeWebhookChanges,
   senderLabel,
   splitForWhatsApp,
   toTemplateParam,
@@ -204,6 +217,164 @@ check(
   'a phone label and a BSUID label are distinguishable',
   senderLabel({ from: '351911111918' }) !== senderLabel({ from_user_id: bsuid }),
 );
+
+// ── sender resolution: which identifier wins ────────────────────────────────
+// THE safety property of the whole BSUID change. Phone-first is what guarantees
+// today's payloads take today's path; if this preference ever inverted, every
+// message from someone we know by phone would start being resolved against a
+// second, weaker key, and nothing else in the repo would notice.
+const waId = '351912345678';
+eq('a phone-only sender is answered on the phone', readSender({ from: waId })?.replyTo.kind, 'phone');
+eq('and carries no BSUID', readSender({ from: waId })?.bsuid, undefined);
+eq(
+  'a BSUID-only sender is answered on the BSUID',
+  readSender({ from_user_id: bsuid })?.replyTo.kind,
+  'bsuid',
+);
+eq('and has no phone to fall back to', readSender({ from_user_id: bsuid })?.from, undefined);
+const bothIds = readSender({ from: waId, from_user_id: bsuid });
+eq('WITH BOTH PRESENT, THE PHONE WINS', bothIds?.replyTo.kind, 'phone');
+eq('and the reply goes to that exact wa_id', bothIds?.replyTo.kind === 'phone' ? bothIds.replyTo.waId : null, waId);
+// Still carried, because captureBsuid needs it: the 30-day overlap in which
+// both identifiers arrive together is the only chance to bind them.
+eq('but the BSUID is still carried, for capture', bothIds?.bsuid, bsuid);
+eq('neither identifier yields no sender at all', readSender({}), null);
+// A parent BSUID must never become a lookup key — it belongs to a portfolio,
+// not a person. isBsuid rejects it, and readSender is where that takes effect.
+eq(
+  'a parent BSUID alone is not a usable sender',
+  readSender({ from_user_id: 'US.ENT.11815799212886844830' }),
+  null,
+);
+eq(
+  'and it never shadows a perfectly good phone',
+  readSender({ from: waId, from_user_id: 'US.ENT.11815799212886844830' })?.bsuid,
+  undefined,
+);
+eq('a malformed BSUID is treated as absent', readSender({ from_user_id: 'not-an-id' }), null);
+
+// ── outbound addressing: `to` XOR `recipient` ───────────────────────────────
+// Meta will not accept a BSUID in `to`, and if BOTH fields are sent it silently
+// prefers `to`. That silent precedence is the failure this asserts against: a
+// BSUID send that quietly went to a stale phone number looks like a success in
+// every log we keep.
+const message = { type: 'text', text: { body: 'olá' } };
+const phoneBody = buildSendBody(message, { kind: 'phone', waId });
+const bsuidBody = buildSendBody(message, { kind: 'bsuid', userId: bsuid });
+eq('a phone recipient is addressed in `to`', phoneBody.to, waId);
+eq('and emits no `recipient`', 'recipient' in phoneBody, false);
+eq('a BSUID recipient is addressed in `recipient`', bsuidBody.recipient, bsuid);
+eq('and emits no `to`', 'to' in bsuidBody, false);
+check(
+  'exactly one addressing field on every body',
+  [phoneBody, bsuidBody].every(b => Number('to' in b) + Number('recipient' in b) === 1),
+);
+check(
+  'messaging_product survives both branches',
+  [phoneBody, bsuidBody].every(b => b.messaging_product === 'whatsapp'),
+);
+check(
+  'and so does the message payload itself',
+  [phoneBody, bsuidBody].every(b => b.type === 'text'),
+);
+
+// ── the webhook change router ───────────────────────────────────────────────
+// Before this existed the route flat-mapped `change.value.messages` and ignored
+// `change.field`, so a user_id_update — a change with no messages array at all —
+// was dropped without a trace. These fixtures are the record of what each field
+// is supposed to produce.
+interface Fixture {
+  id: string;
+}
+function changes(...list: unknown[]) {
+  return { entry: [{ changes: list as never[] }] };
+}
+
+const onlyMessages = routeWebhookChanges<Fixture>(
+  changes({ field: 'messages', value: { messages: [{ id: 'wamid.1' }, { id: 'wamid.2' }] } }),
+);
+eq('a messages change yields its messages', onlyMessages.messages.length, 2);
+eq('and no rotations', onlyMessages.rotations.length, 0);
+eq('and nothing unhandled', onlyMessages.unhandledFields.length, 0);
+eq('message objects pass through untouched', onlyMessages.messages[0]?.id, 'wamid.1');
+
+// The compatibility branch. Meta always sets `field`, but the route this
+// replaces never read it — so any payload that worked before must still work,
+// including a test harness that omits it. Dispatching on the field alone would
+// silently drop real messages, the one regression this change must not have.
+const fieldless = routeWebhookChanges<Fixture>(changes({ value: { messages: [{ id: 'wamid.3' }] } }));
+eq('a field-less change still yields its messages', fieldless.messages.length, 1);
+eq('and is not reported as unhandled', fieldless.unhandledFields.length, 0);
+
+const rotated = routeWebhookChanges<Fixture>(
+  changes({
+    field: 'user_id_update',
+    value: {
+      user_id_update: [
+        {
+          wa_id: waId,
+          user_id: { previous: 'PT.111', current: 'PT.222' },
+          // Present on the wire for multi-portfolio businesses; we are one
+          // portfolio, so it must be parsed and DROPPED, never carried forward.
+          parent_user_id: 'US.ENT.11815799212886844830',
+        },
+      ],
+    },
+  }),
+);
+eq('a rotation yields ZERO messages', rotated.messages.length, 0);
+eq('and one rotation', rotated.rotations.length, 1);
+eq('the old id', rotated.rotations[0]?.previous, 'PT.111');
+eq('the new id', rotated.rotations[0]?.current, 'PT.222');
+eq('the phone is carried for logs only', rotated.rotations[0]?.waId, waId);
+eq(
+  'the parent BSUID is dropped, not carried',
+  Object.keys(rotated.rotations[0] ?? {}).sort().join(','),
+  'current,previous,waId',
+);
+eq('a rotation is never reported as an unhandled field', rotated.unhandledFields.length, 0);
+
+// The payload shape is documented only in Meta's changelog and quoted verbatim
+// by no public source, so an entry we cannot read must be COUNTED rather than
+// dropped — otherwise a shape surprise is indistinguishable from no rotations.
+const unreadable = routeWebhookChanges<Fixture>(
+  changes({
+    field: 'user_id_update',
+    value: { user_id_update: [{ user_id: { current: 'PT.222' } }, { nonsense: true }, null] },
+  }),
+);
+eq('an entry missing `previous` is not a rotation', unreadable.rotations.length, 0);
+eq('and all three are counted as unreadable', unreadable.unreadableRotations, 3);
+
+const unknownField = routeWebhookChanges<Fixture>(
+  changes({ field: 'message_template_status_update', value: {} }),
+);
+eq('an unknown field yields no messages', unknownField.messages.length, 0);
+eq('and no rotations', unknownField.rotations.length, 0);
+eq('and is named once, so it is discoverable', unknownField.unhandledFields.join(','), 'message_template_status_update');
+
+// A batch really can mix all three, and the router must not let one spoil the
+// others — a rotation arriving beside a manager's question cannot cost them
+// their reply.
+const mixed = routeWebhookChanges<Fixture>(
+  changes(
+    { field: 'messages', value: { messages: [{ id: 'wamid.4' }] } },
+    { field: 'user_id_update', value: { user_id_update: [{ user_id: { previous: 'PT.1', current: 'PT.2' } }] } },
+    { field: 'statuses', value: {} },
+  ),
+);
+eq('a mixed batch keeps its message', mixed.messages.length, 1);
+eq('its rotation', mixed.rotations.length, 1);
+eq('and its unknown field', mixed.unhandledFields.join(','), 'statuses');
+
+// Nothing about an empty or malformed envelope may throw: this runs before the
+// 200 that stops Meta retrying, so a throw here becomes a redelivery storm.
+const empty = routeWebhookChanges<Fixture>({});
+eq('an empty body yields no messages', empty.messages.length, 0);
+eq('no rotations', empty.rotations.length, 0);
+eq('and nothing unhandled', empty.unhandledFields.length, 0);
+const noField = routeWebhookChanges<Fixture>(changes({ value: {} }));
+eq('a change with neither field nor messages is reported, not dropped', noField.unhandledFields.join(','), '(missing)');
 
 // ── template parameters ─────────────────────────────────────────────────────
 // toTemplateParam is the single easiest way to earn a 132000 and was asserted
