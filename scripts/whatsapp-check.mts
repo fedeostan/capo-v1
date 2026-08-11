@@ -23,6 +23,7 @@ import type { UIMessage } from 'ai';
 import {
   buildTemplatePayload,
   checkinPayload,
+  hasWhatsAppConsent,
   parseCheckinPayload,
   parseProposalButtonId,
   planAssistantMessages,
@@ -34,7 +35,7 @@ import {
 } from '@capo/core/channels/whatsapp';
 import { getCatalog } from '@capo/i18n/catalog';
 import { LOCALES } from '@capo/i18n/locale';
-import { allTemplates } from './whatsapp-templates.ts';
+import { allTemplates, MANAGED_TEMPLATE_NAMES, TEMPLATE_LANGUAGES } from './whatsapp-templates.ts';
 
 let failures = 0;
 const lines: string[] = [];
@@ -208,11 +209,43 @@ try {
 }
 check('an over-long payload throws rather than truncating', threw);
 
+// ── proactive-send consent ──────────────────────────────────────────────────
+// The gate on every proactive send. It has no test suite behind it and one
+// wrong branch messages someone who never agreed, so the truth table is pinned
+// here — this is the closest thing the repo has to a policy assertion.
+const T1 = '2026-08-01T09:00:00.000Z'; // earlier
+const T2 = '2026-08-09T09:00:00.000Z'; // later
+check('no record at all → no consent', !hasWhatsAppConsent({}));
+check('nulls → no consent', !hasWhatsAppConsent({ whatsapp_opt_in_at: null, whatsapp_opt_out_at: null }));
+check('opted in, never out → consent', hasWhatsAppConsent({ whatsapp_opt_in_at: T1 }));
+check('opted out after opting in → no consent', !hasWhatsAppConsent({ whatsapp_opt_in_at: T1, whatsapp_opt_out_at: T2 }));
+// The case a presence-only test would get wrong, leaving anyone who ever left
+// permanently unreachable even after they asked to come back.
+check('opted back in after opting out → consent', hasWhatsAppConsent({ whatsapp_opt_in_at: T2, whatsapp_opt_out_at: T1 }));
+check('opted out with no opt-in → no consent', !hasWhatsAppConsent({ whatsapp_opt_out_at: T1 }));
+// Same instant is a tie, and a tie must not be read as consent.
+check('a simultaneous pair → no consent', !hasWhatsAppConsent({ whatsapp_opt_in_at: T1, whatsapp_opt_out_at: T1 }));
+// Garbage in a timestamp column must fail CLOSED, never open.
+check('an unparseable opt-out → no consent', !hasWhatsAppConsent({ whatsapp_opt_in_at: T1, whatsapp_opt_out_at: 'não sei' }));
+check('an unparseable opt-in → no consent', !hasWhatsAppConsent({ whatsapp_opt_in_at: 'ontem' }));
+
 // ── committed template definitions ──────────────────────────────────────────
 // These are the mistakes that would otherwise surface as a Meta rejection days
 // later, or as an approved template that silently means the wrong thing.
 const defs = allTemplates();
-eq('one definition per locale', defs.length, LOCALES.length);
+
+// Every managed name must be defined in every locale. This is the assertion
+// that would have caught capo_daily_briefing's missing es_ES and en_US before
+// they became a daily 132001 in notification_log — the template existed, just
+// not in the language the recipient was on, and nothing in CI could see that
+// while the definition lived only in WhatsApp Manager.
+eq('a definition per managed template per locale', defs.length, MANAGED_TEMPLATE_NAMES.length * LOCALES.length);
+for (const name of MANAGED_TEMPLATE_NAMES) {
+  for (const language of TEMPLATE_LANGUAGES) {
+    check(`${name} is defined in ${language}`, defs.some(d => d.name === name && d.language === language));
+  }
+}
+
 for (const def of defs) {
   const locale = LOCALES.find(l => getCatalog(l).reminders.templateLanguage === def.language)!;
   const label = `${def.name} ${def.language}`;
@@ -231,7 +264,20 @@ for (const def of defs) {
   // Sample count is validated against parameter count on submit.
   eq(`${label} — supplies two example values`, body.example.body_text[0]?.length, 2);
 
-  const buttons = (def.components.find(c => c.type === 'BUTTONS') as { buttons: { type: string; text: string }[] }).buttons;
+  // Buttons are asymmetric ON PURPOSE and the asymmetry is load-bearing.
+  // capo_task_checkin is answered by tapping; capo_daily_briefing is answered
+  // with free text (PT/ES/EN/STOP). Declaring a button component on a send
+  // whose approved template has none earns a 132000 on every send, so a stray
+  // BUTTONS block here would take the whole 07:00 briefing down.
+  const buttonComponent = def.components.find(c => c.type === 'BUTTONS') as
+    | { buttons: { type: string; text: string }[] }
+    | undefined;
+  if (def.name !== 'capo_task_checkin') {
+    check(`${label} — declares no buttons`, buttonComponent === undefined);
+    continue;
+  }
+
+  const buttons = buttonComponent!.buttons;
   eq(`${label} — exactly two buttons`, buttons.length, 2);
   check(`${label} — both are quick replies`, buttons.every(b => b.type === 'QUICK_REPLY'));
   // The labels must be the catalog's, in done-then-notDone order — the same

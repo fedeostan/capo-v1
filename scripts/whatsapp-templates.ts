@@ -4,8 +4,8 @@
 // asynchronously, and the approved text is what a worker actually reads. Doing
 // this by hand in WhatsApp Manager means "what exactly did we submit, and in
 // which language" is a question you answer by squinting at a dashboard — which
-// is the state capo_daily_briefing is in today: docs/whatsapp-cloud-api-runbook.md
-// §6 records only a Portuguese example, prefixed "For example".
+// is the state capo_daily_briefing was in until its pt_PT-only, hand-made
+// approval turned into a daily 132001 for every recipient on another locale.
 //
 // Consumed by scripts/whatsapp-template.mts (submits them, diffs them against
 // what Meta holds) and scripts/whatsapp-check.mts (asserts their shape in CI,
@@ -55,8 +55,65 @@ const CHECKIN_EXAMPLE: Record<Locale, [name: string, taskList: string]> = {
   'en-US': ['Miguel', 'Paint the walls (Casa de Paco) · Tile the bathroom'],
 };
 
+// The 07:00 briefing body, same shape: {{1}} the recipient's name, {{2}} the
+// one-line summary. One template serves BOTH audiences — renderWorkerBriefing
+// for a worker and renderManagerBriefing for the manager — so the wording has
+// to read correctly for either.
+//
+// The trailing sentence is the self-service control surface: it is the only
+// place a worker is ever told that PT/ES/EN switches their language and that
+// STOP opts them out. Both are handled deterministically in handleWorkerReply,
+// and Meta expects a utility template to state its opt-out.
+const BRIEFING_BODY: Record<Locale, string> = {
+  'pt-PT': 'Bom dia {{1}}. Hoje tens: {{2}}. Responde PT, ES ou EN para mudar de idioma, ou STOP para deixar de receber.',
+  'es-ES': 'Buenos días {{1}}. Hoy tienes: {{2}}. Responde PT, ES o EN para cambiar de idioma, o STOP para dejar de recibir.',
+  'en-US': 'Good morning {{1}}. Today you have: {{2}}. Reply PT, ES or EN to change language, or STOP to unsubscribe.',
+};
+
+const BRIEFING_EXAMPLE: Record<Locale, [name: string, summary: string]> = {
+  'pt-PT': ['Miguel', 'Pintar paredes (Casa de Paco) · Assentar azulejos'],
+  'es-ES': ['Miguel', 'Pintar paredes (Casa de Paco) · Alicatar el baño'],
+  'en-US': ['Miguel', 'Paint the walls (Casa de Paco) · Tile the bathroom'],
+};
+
 /**
- * capo_task_checkin — the 16:30 "did you finish today's tasks?" template.
+ * capo_daily_briefing — the 07:00 briefing template.
+ *
+ * ⚠ This definition was written AFTER the pt_PT template was already approved.
+ * pt_PT was created by hand in WhatsApp Manager before this script existed, so
+ * the live pt_PT body may not match BRIEFING_BODY above; `pnpm whatsapp-template
+ * status` prints a WARN when it doesn't, and the fix is to edit the live
+ * template in WhatsApp Manager to match — Meta has no API to rewrite an
+ * approved name+language pair, and `create` answers 2388023 for one that
+ * already exists.
+ *
+ * It is defined here now because es_ES and en_US were never created at all,
+ * which is a live failure: every 07:00 run writes a `failed` notification_log
+ * row reading `template name (capo_daily_briefing) does not exist in en_US` for
+ * any recipient on that locale.
+ *
+ * No BUTTONS component — replies to the briefing are free text (PT/ES/EN/STOP),
+ * not quick replies. Only capo_task_checkin declares buttons, and
+ * scripts/whatsapp-check.mts pins that asymmetry.
+ */
+export function capoDailyBriefing(): TemplateDefinition[] {
+  return LOCALES.map(locale => ({
+    name: 'capo_daily_briefing',
+    language: getCatalog(locale).reminders.templateLanguage,
+    category: 'UTILITY' as const,
+    parameter_format: 'POSITIONAL' as const,
+    components: [
+      {
+        type: 'BODY',
+        text: BRIEFING_BODY[locale],
+        example: { body_text: [BRIEFING_EXAMPLE[locale]] },
+      },
+    ],
+  }));
+}
+
+/**
+ * capo_task_checkin — the late-afternoon "did you finish today's tasks?" template.
  *
  * BUTTON ORDER IS A CONTRACT. Index 0 is "done", index 1 is "not_done", and
  * /api/cron/checkin mints checkinPayload('done', …) at index 0. Swapping them
@@ -93,12 +150,7 @@ export function capoTaskCheckin(): TemplateDefinition[] {
 
 /** Every template this repo knows how to submit. */
 export function allTemplates(): TemplateDefinition[] {
-  // capo_daily_briefing is deliberately absent. It was created by hand in
-  // WhatsApp Manager before this script existed and is already approved, so a
-  // definition for it here would be one nobody has verified against the live
-  // template — worse than no definition, because it would look authoritative.
-  // `status` still reports on it by name.
-  return capoTaskCheckin();
+  return [...capoDailyBriefing(), ...capoTaskCheckin()];
 }
 
 /** Templates `status` checks for existence and approval, definition or not. */

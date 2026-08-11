@@ -14,8 +14,10 @@ import {
 } from '../../../../lib/cron';
 import { loadCompanyBriefing, renderWorkerBriefing } from '../../../notifications/briefing';
 
-// The 16:30 Europe/Lisbon check-in: "did you finish today's tasks?", asked as a
-// template with two quick-reply buttons and answered by tapping one.
+// The late-afternoon Europe/Lisbon check-in: "did you finish today's tasks?",
+// asked as a template with two quick-reply buttons and answered by tapping one.
+// It goes out inside the 16:00–16:59 Lisbon hour — see SEND_HOUR below for why
+// the schedule is deliberately not pinned to a prettier minute.
 //
 // DETERMINISTIC END TO END, in both directions. The message is rendered by
 // renderWorkerBriefing — the same function the 07:00 briefing uses, so the two
@@ -40,11 +42,23 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 /**
- * 16:30 in Lisbon. Vercel schedules in UTC and Lisbon is UTC+0 in winter and
- * UTC+1 in summer, so apps/web/vercel.json registers TWO entries — 15:30 and
- * 16:30 UTC — and this gate lets exactly one of them through, year round. The
- * hour is all that is compared because both entries fire at :30, which is the
- * same mechanism the 07:00 job uses.
+ * The late-afternoon check-in hour in Lisbon. Vercel schedules in UTC and
+ * Lisbon is UTC+0 in winter and UTC+1 in summer, so apps/web/vercel.json
+ * registers TWO entries — 15:00 and 16:00 UTC — and this gate lets exactly one
+ * of them through, year round: in summer 15:00 UTC is Lisbon 16 and 16:00 UTC
+ * is Lisbon 17; in winter it is 15 and 16. Only the hour is compared.
+ *
+ * ⚠ BOTH ENTRIES MUST FIRE AT :00, and this is the whole reason the feature was
+ * dead on arrival. They used to be 15:30/16:30, and Vercel's cron dispatch
+ * drifts — observed at ~45 minutes on this project, with every daily_briefing
+ * row stamped 06:45 UTC for an entry scheduled at 06:00. A :00 schedule has a
+ * full hour of headroom before the Lisbon hour rolls over; a :30 schedule has
+ * thirty minutes, so both check-in entries drifted past the boundary, this gate
+ * rejected them, and not one check-in was ever sent. The 07:00 briefing
+ * survived the identical drift purely because it was scheduled at :00.
+ *
+ * So: do not "tidy" these back to a nicer-looking wall-clock time. The send
+ * lands somewhere in 16:00–16:59 Lisbon by design.
  */
 const SEND_HOUR = 16;
 
@@ -64,7 +78,7 @@ const TEMPLATE_NAME = 'capo_task_checkin';
  * Separate from the briefing's 'daily_briefing' — and that separation is the
  * only reason both can be sent on the same day. notification_log is unique on
  * (kind, audience, worker_id, profile_id, notification_date), so collapsing the
- * two kinds gives a 16:30 run that claims nothing, skips everyone, and reports
+ * two kinds gives a late-afternoon run that claims nothing, skips everyone, and reports
  * success with no error anywhere.
  */
 const KIND = 'task_checkin';
@@ -83,6 +97,10 @@ export async function GET(request: NextRequest) {
   if (!clock) return new NextResponse('clock unavailable', { status: 500 });
   const { hour, today } = clock;
   if (!dryRun && hour !== SEND_HOUR) {
+    // Logged, not just returned. A rejection here writes no notification_log
+    // row and raises no error, so before this line the only symptom of the
+    // schedule bug above was an empty table.
+    logEvent('checkin.outside_send_hour', { lisbonHour: hour, sendHour: SEND_HOUR });
     return NextResponse.json({ skipped: 'outside the send hour', lisbonHour: hour });
   }
 
@@ -104,6 +122,16 @@ export async function GET(request: NextRequest) {
       const briefing = await loadCompanyBriefing(db, company.id, company.language);
       const sends: unknown[] = [];
       let asked = 0;
+
+      // The consent gate lives inside loadCompanyBriefing, so it applies to this
+      // send without this route implementing anything. All that is left to do is
+      // say so out loud — see the same block in cron/reminders.
+      if (briefing.excludedNoConsent > 0) {
+        logEvent('checkin.workers_no_consent', {
+          companyId: company.id,
+          excluded: briefing.excludedNoConsent,
+        });
+      }
 
       for (const worker of briefing.workers) {
         // Note there is deliberately no NOTIFY_IDLE_WORKERS dial here, unlike
@@ -158,9 +186,11 @@ export async function GET(request: NextRequest) {
           await resolveNotification(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
           asked += 1;
         } catch (err) {
-          // One unreachable worker must never abort the run — on the test tier
-          // a 131030 for a not-yet-allow-listed number is the expected case,
-          // and a 132001 is the expected case until the template is approved.
+          // One unreachable worker must never abort the run. A 132001 is the
+          // expected case until the template is approved; a 131026 means the
+          // number is not on WhatsApp; a 131021 means we tried to message the
+          // business number itself. The allow-list 131030 belonged to the test
+          // tier and should no longer appear.
           await resolveNotification(db, claimed.id, 'failed', { error: describeSendError(err) });
           logEvent('checkin.worker_send_failed', {
             companyId: company.id,
@@ -172,7 +202,7 @@ export async function GET(request: NextRequest) {
 
       // No manager audience and no chat-thread note, both deliberately. The
       // manager's surface for this is worker_checkins; a per-company thread
-      // message at 16:30, before anyone has answered, would say nothing.
+      // message at that hour, before anyone has answered, would say nothing.
       report.push({ company: company.name, asked, sends });
     } catch (err) {
       // One broken company must not cost every other company its check-in.

@@ -4,7 +4,7 @@ import { appendEventMessage, ensureConversation } from '@capo/core/conversation'
 import { sendWhatsAppTemplate } from '@capo/core/channels/whatsapp';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
-import { sendConfigFor, toSendTarget, whatsappSendEnv } from '../../../../lib/whatsapp';
+import { hasWhatsAppConsent, sendConfigFor, toSendTarget, whatsappSendEnv } from '../../../../lib/whatsapp';
 import { logEvent } from '../../../../lib/log';
 import {
   authorizeCron,
@@ -50,7 +50,8 @@ const TEMPLATE_NAME = 'capo_daily_briefing';
 /**
  * ── FEDERICO: message a worker who has nothing scheduled today?
  * false  — stay quiet, and record a 'skipped' row. Saves a paid template send
- *          per idle worker per day, which on the test tier is the whole cost.
+ *          per idle worker per day — a real cost now that the number is off the
+ *          free test tier and conversations are billed.
  * true   — Capo is never silent; an idle worker gets `reminders.workerNothing`,
  *          so silence never has to be interpreted.
  */
@@ -72,6 +73,11 @@ export async function GET(request: NextRequest) {
   if (!clock) return new NextResponse('clock unavailable', { status: 500 });
   const { hour, today } = clock;
   if (!dryRun && hour !== SEND_HOUR) {
+    // Logged, not just returned. A cron that fires and is then rejected by this
+    // gate leaves no trace anywhere else — no notification_log row, no error —
+    // which is exactly how the check-in's schedule bug stayed invisible for two
+    // days. See the header of apps/web/vercel.json's sibling route.
+    logEvent('reminders.outside_send_hour', { lisbonHour: hour, sendHour: SEND_HOUR });
     return NextResponse.json({ skipped: 'outside the send hour', lisbonHour: hour });
   }
 
@@ -93,6 +99,17 @@ export async function GET(request: NextRequest) {
       const briefing = await loadCompanyBriefing(db, company.id, company.language);
       const sends: unknown[] = [];
       let notified = 0;
+
+      // Not a per-worker log line: this is the count of people the consent gate
+      // removed before the loop below could see them, and without it a company
+      // whose crew has not opted in is indistinguishable from a company with no
+      // crew at all.
+      if (briefing.excludedNoConsent > 0) {
+        logEvent('reminders.workers_no_consent', {
+          companyId: company.id,
+          excluded: briefing.excludedNoConsent,
+        });
+      }
 
       // ── workers ──────────────────────────────────────────────────────────
       for (const worker of briefing.workers) {
@@ -132,8 +149,11 @@ export async function GET(request: NextRequest) {
           await resolveNotification(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
           notified += 1;
         } catch (err) {
-          // One unreachable worker must never abort the run — on the test tier
-          // a 131030 for a not-yet-allow-listed number is the expected case.
+          // One unreachable worker must never abort the run. A 132001 means the
+          // template is not approved for that locale; a 131026 means the number
+          // is not on WhatsApp; a 131021 means we tried to message the business
+          // number itself. The allow-list 131030 belonged to the test tier and
+          // should no longer appear.
           await resolveNotification(db, claimed.id, 'failed', { error: describeSendError(err) });
           logEvent('reminders.worker_send_failed', {
             companyId: company.id,
@@ -147,13 +167,25 @@ export async function GET(request: NextRequest) {
       // Throw rather than fall through to `?? []`: a failed read here would
       // otherwise look identical to a company with no managers, and silently
       // stop briefing the one person who would notice.
+      //
+      // select('*') for the same deploy-ordering reason as the workers read in
+      // loadCompanyBriefing: 0018 adds the two consent columns.
       const { data: managers, error: managersError } = await db
         .from('profiles')
-        .select('id, full_name, phone, language')
+        .select('*')
         .eq('company_id', company.id);
       if (managersError) throw new Error(`profiles read failed: ${managersError.message}`);
 
       for (const manager of managers ?? []) {
+        // The manager's own consent. Their briefing is as proactive a template
+        // send as the crew's, so it needs the same recorded opt-in — the fact
+        // that they are the account holder is not itself consent to be messaged
+        // on WhatsApp. They tick this for themselves on /perfil.
+        if (!hasWhatsAppConsent(manager)) {
+          logEvent('reminders.manager_no_consent', { companyId: company.id });
+          continue;
+        }
+
         const locale: Locale = coerceLocale(manager.language);
         const [name, summary] = renderManagerBriefing(manager.full_name, briefing.counts, locale);
 

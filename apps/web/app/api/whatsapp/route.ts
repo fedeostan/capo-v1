@@ -16,7 +16,7 @@ import { resolveProposal } from '@capo/core/capabilities/propose';
 import { downloadMedia } from '@capo/core/channels/whatsapp-media';
 import { getBillingState } from '../../../lib/billing';
 import { logEvent } from '../../../lib/log';
-import { testTierArSendTarget, type WhatsAppEnv } from '../../../lib/whatsapp';
+import { type WhatsAppEnv } from '../../../lib/whatsapp';
 
 // WhatsApp manager channel — Meta Cloud API webhook (see
 // docs/whatsapp-cloud-api-runbook.md for the one-time Meta setup).
@@ -78,7 +78,7 @@ interface WhatsAppMessage {
     type: string;
     button_reply?: { id: string; title: string };
   };
-  // A tap on a TEMPLATE quick-reply button — the 16:30 check-in. A DIFFERENT
+  // A tap on a TEMPLATE quick-reply button — the late-afternoon check-in. A DIFFERENT
   // shape from `interactive` above and easy to conflate: `payload` is the string
   // we set when sending (see checkinPayload), `text` is the label the worker
   // actually saw.
@@ -128,11 +128,38 @@ function languageCommand(text: string | undefined): Locale | null {
   return LANGUAGE_KEYWORDS[text.trim().toLowerCase()] ?? null;
 }
 
-/** notification_log.kind for the 16:30 ask. Must match /api/cron/checkin. */
+/**
+ * Unsubscribe keywords, matched with the SAME whole-message discipline as the
+ * language keywords above and for the same reason: "stop, o Zé não vem hoje" is
+ * a sentence, not a withdrawal of consent, and a substring match would read it
+ * as one. Someone who means it sends the word alone — that is the convention
+ * every WhatsApp business number has trained them on.
+ *
+ * Meta's business-messaging policy requires honouring opt-outs, and after 0018
+ * this is the mechanism. `start` is the counterpart, so a worker who leaves can
+ * come back without going through their manager.
+ *
+ * Deliberately no Portuguese "pare"/"parar" beyond the two below: the more
+ * ordinary the word, the likelier a real sentence collides with it.
+ */
+const OPT_OUT_KEYWORDS = new Set(['stop', 'parar', 'baja', 'sair', 'cancelar', 'unsubscribe']);
+const OPT_IN_KEYWORDS = new Set(['start', 'comecar', 'começar', 'alta', 'subscribe']);
+
+type ConsentCommand = 'opt_out' | 'opt_in';
+
+function consentCommand(text: string | undefined): ConsentCommand | null {
+  if (!text) return null;
+  const word = text.trim().toLowerCase();
+  if (OPT_OUT_KEYWORDS.has(word)) return 'opt_out';
+  if (OPT_IN_KEYWORDS.has(word)) return 'opt_in';
+  return null;
+}
+
+/** notification_log.kind for the late-afternoon ask. Must match /api/cron/checkin. */
 const CHECKIN_KIND = 'task_checkin';
 
 /**
- * A check-in button tap: the worker answering the 16:30 template.
+ * A check-in button tap: the worker answering the late-afternoon check-in template.
  *
  * Returns true when it was one AND the worker has been answered; false to fall
  * through to the ordinary ack path, which is where a malformed or unowned
@@ -307,6 +334,7 @@ async function handleWorkerReply(db: Db, message: WhatsAppMessage, env: WhatsApp
   const worker = matches[0];
   const current = worker.language ? coerceLocale(worker.language) : coerceLocale(worker.company?.language);
   const requested = message.type === 'text' ? languageCommand(message.text?.body) : null;
+  const consent = message.type === 'text' ? consentCommand(message.text?.body) : null;
 
   logEvent('whatsapp.worker_reply', {
     companyId: worker.company_id,
@@ -314,18 +342,22 @@ async function handleWorkerReply(db: Db, message: WhatsAppMessage, env: WhatsApp
     messageId: message.id,
     type: message.type,
     // The message body is deliberately NOT logged — it is third-party content.
+    // These two are the recognised keywords, not the text, so they are safe.
     languageCommand: requested ?? undefined,
+    consentCommand: consent ?? undefined,
   });
 
   // Send-, not sink-config: a worker ack carries no approval buttons, and
   // WhatsAppSinkConfig now requires the ApprovalLabels the cards need.
+  // `message.from` is already a wa_id (digits, no '+'), which is exactly what
+  // the send API wants — replying is the one direction that needs no conversion.
   const sendConfig: WhatsAppSendConfig = {
     accessToken: env.accessToken,
     phoneNumberId: env.phoneNumberId,
-    to: testTierArSendTarget(message.from),
+    to: message.from,
   };
 
-  // The 16:30 check-in answer. Sits here — inside the WORKER path — and not
+  // The check-in answer. Sits here — inside the WORKER path — and not
   // beside the manager's `interactive` branch below, because a check-in tap
   // comes from a workers.phone sender: sender resolution diverts it here and
   // `continue`s, so it never reaches that branch or the triage after it. Before
@@ -335,6 +367,37 @@ async function handleWorkerReply(db: Db, message: WhatsAppMessage, env: WhatsApp
   // on two companies' crews still gets silence rather than an answer recorded
   // against a guessed tenant.
   if (message.type === 'button' && (await handleCheckinTap(db, message, worker, current, sendConfig))) {
+    return true;
+  }
+
+  // STOP / START. Sits beside the language switch because it is the same kind
+  // of thing — a whole-message keyword answered deterministically, with no model
+  // and nothing persisted to `messages` — and ABOVE it because the two keyword
+  // sets are disjoint, so the order only decides which check pays for the miss.
+  //
+  // Meta requires opt-outs to be honoured; hasWhatsAppConsent() is where that
+  // takes effect, and the write below is its only worker-side input. The ack is
+  // legal free-form text: this worker's own message opened the 24-hour window a
+  // moment ago, which is also why the opt-out itself does not suppress it.
+  if (consent) {
+    const now = new Date().toISOString();
+    const patch = consent === 'opt_out' ? { whatsapp_opt_out_at: now } : { whatsapp_opt_in_at: now };
+    const { error: consentError } = await db.from('workers').update(patch).eq('id', worker.id);
+    if (consentError) {
+      // Do NOT ack a withdrawal we failed to record — an "you're unsubscribed"
+      // followed by tomorrow's briefing is worse than silence, and Meta will
+      // redeliver this webhook on a non-200 anyway.
+      console.error('whatsapp: worker consent update failed:', consentError.message);
+      return true;
+    }
+    const tc = getCatalog(current).whatsapp;
+    await sendWhatsAppText(consent === 'opt_out' ? tc.workerOptedOut : tc.workerOptedIn, sendConfig).catch(err => {
+      logEvent('whatsapp.worker_consent_ack_failed', {
+        companyId: worker.company_id,
+        workerId: worker.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
     return true;
   }
 
@@ -435,7 +498,7 @@ export async function POST(request: NextRequest) {
     const sendConfig: WhatsAppSendConfig = {
       accessToken,
       phoneNumberId,
-      to: testTierArSendTarget(message.from),
+      to: message.from,
     };
 
     // ── Approval card button tap ────────────────────────────────────────────

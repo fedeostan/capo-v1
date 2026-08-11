@@ -11,7 +11,7 @@ function formatWhen(iso: string): string {
 // rather than teaching the reader to translate.
 const KIND_LABEL: Record<string, string> = {
   daily_briefing: '07:00 briefing',
-  task_checkin: '16:30 check-in',
+  task_checkin: 'Afternoon check-in',
 };
 
 const STATUS_STYLE: Record<string, string> = {
@@ -32,7 +32,7 @@ export default async function DispatchPage() {
         <h1 className="text-lg font-semibold">Daily briefing log</h1>
         <p className="text-xs text-zinc-500">
           Both Europe/Lisbon WhatsApp sends, written by the Vercel crons on <code>capo-v1</code> —
-          the 07:00 briefing (<code>/api/cron/reminders</code>) and the 16:30 check-in (
+          the 07:00 briefing (<code>/api/cron/reminders</code>) and the late-afternoon check-in (
           <code>/api/cron/checkin</code>) — read-only here. Last {briefings.length} rows, failures
           included.
         </p>
@@ -55,7 +55,7 @@ export default async function DispatchPage() {
                 <tr key={row.id}>
                   <td className="py-2 pr-4 whitespace-nowrap">{formatWhen(row.created_at)}</td>
                   {/* Two daily sends land in this table now — the 07:00
-                      briefing and the 16:30 check-in. Without this column they
+                      briefing and the late-afternoon check-in. Without this column they
                       are indistinguishable, and "did the briefing go out?"
                       becomes unanswerable by looking. */}
                   <td className="py-2 pr-4 whitespace-nowrap text-xs">{KIND_LABEL[row.kind] ?? row.kind}</td>

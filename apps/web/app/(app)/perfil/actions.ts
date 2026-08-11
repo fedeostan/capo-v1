@@ -227,6 +227,36 @@ export async function setCompanyLanguage(formData: FormData): Promise<void> {
   redirect('/perfil?guardado=idioma');
 }
 
+// ── WhatsApp consent ────────────────────────────────────────────────────────
+// The manager's own opt-in for the daily WhatsApp messages, and the only place
+// they can record it for themselves. Their crew's consent is recorded through
+// chat (`update_worker`), because a manager attesting on a worker's behalf is a
+// different act and belongs on a guarded tool.
+//
+// Not gated on a subscription, same reasoning as updateProfile above: consent
+// and its withdrawal must always be reachable. Withdrawing it is the one thing
+// on this page it would be worst to block.
+export async function setWhatsAppConsent(formData: FormData): Promise<void> {
+  const consent = String(formData.get('consentimento') ?? '') === '1';
+
+  const { db, userId, companyId } = await requireAuth();
+  // Marks, never clears — hasWhatsAppConsent() compares the two timestamps and
+  // the later one wins, so withdrawing does not erase the record that consent
+  // was once given. See 0018_whatsapp_optin.sql.
+  const now = new Date().toISOString();
+  const patch = consent ? { whatsapp_opt_in_at: now } : { whatsapp_opt_out_at: now };
+
+  const { error } = await db.from('profiles').update(patch).eq('id', userId);
+  if (error) {
+    console.error('setWhatsAppConsent failed:', error.message);
+    redirect('/perfil?erro=whatsapp');
+  }
+
+  logEvent('profile.whatsapp_consent_changed', { companyId, userId, consent });
+  revalidatePath('/perfil');
+  redirect('/perfil?guardado=whatsapp');
+}
+
 // ── appearance ──────────────────────────────────────────────────────────────
 // A third dial, and the odd one out: per DEVICE, not per user or per tenant.
 // Cookie only, no DB write, so dark on the van tablet and light on the office

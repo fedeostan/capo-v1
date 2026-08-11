@@ -31,6 +31,7 @@ The founder's research corpus establishes: the differentiator is **quote → AI 
 ## Global constraints (violating any of these = failure)
 
 - **NEVER break the live WhatsApp path**: `apps/web/app/api/whatsapp/route.ts` — do not modify `testTierArSendTarget`, HMAC verification, or its session exemption in `apps/web/proxy.ts`. Federico's phone is the only live user; this must keep working after every deploy.
+  > **Superseded 2026-08-10.** `testTierArSendTarget` is **deleted**. This instruction was scoped to the free test tier, and business verification is the condition it was implicitly waiting on — off the test tier the helper rewrote valid wa_ids into a form no allow-list existed to accept, so keeping it would have broken exactly the path this bullet was protecting. HMAC verification and the proxy exemption still stand. See "Phone formats" in `docs/whatsapp-cloud-api-runbook.md`.
 - **NEVER change `dispatch_tasks_today` / `dispatch_log` semantics** (external n8n+Twilio contract). After every migration: `select pg_get_viewdef('dispatch_tasks_today'::regclass);` via Supabase MCP `execute_sql` and diff against the pre-upgrade snapshot (capture it in Phase 0) — must be identical.
 - **RLS is the tenant boundary**: `pnpm rls-matrix` must be green after every phase that touches DB or auth. All migrations additive, mirroring `supabase/migrations/0007_auth_multitenancy.sql` patterns.
 - **Lazy env reads**: every new secret (`STRIPE_*`, etc.) is read inside function bodies, never at module scope (module-scope reads break `next build`).
@@ -227,6 +228,7 @@ Only-Federico items, each with exact steps:
 2. **Supabase dashboard**: Auth → enable "Allow new users to sign up"; configure production SMTP + EU-PT email templates (confirmação + recuperação); set Site URL + additional redirect URLs (`https://<prod>/auth/confirm`, `/auth/callback`).
 3. **Google OAuth**: GCP consent screen + OAuth client (redirect: Supabase callback URL) → paste client id/secret into Supabase Google provider → set `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=1` in Vercel → redeploy.
 4. **Meta**: complete Business Verification to leave the WhatsApp test tier (the AR allow-list workaround becomes a no-op — leave the code); then add payment method for Cloud API.
+   > **Done 2026-08-10, and the parenthesis was wrong.** The workaround did *not* become a no-op: its regex matched the modern Argentine wa_id and converted it *to* the legacy allow-list form, so it fired on every send to the only manager on the system. It is deleted. See `docs/human-todo.md` §3.
 5. **Domain**: buy domain → add to Vercel project → set `NEXT_PUBLIC_SITE_URL` → update Supabase Site URL + Meta webhook URL if it changes.
 6. **Twilio**: upgrade from trial so worker SMS reaches real numbers; confirm the n8n 07:00 Lisbon cron.
 7. **Visual QA on a phone**: landing, /registar full signup, onboarding, chat first-run guidance, generate a plan on a real orçamento, obra detail timeline, /subscricao checkout.

@@ -455,6 +455,8 @@ export type Database = {
           id: string
           language: string
           phone: string
+          whatsapp_opt_in_at: string | null
+          whatsapp_opt_out_at: string | null
         }
         Insert: {
           company_id: string
@@ -463,6 +465,8 @@ export type Database = {
           id: string
           language?: string
           phone: string
+          whatsapp_opt_in_at?: string | null
+          whatsapp_opt_out_at?: string | null
         }
         Update: {
           company_id?: string
@@ -471,6 +475,8 @@ export type Database = {
           id?: string
           language?: string
           phone?: string
+          whatsapp_opt_in_at?: string | null
+          whatsapp_opt_out_at?: string | null
         }
         Relationships: [
           {
@@ -917,6 +923,8 @@ export type Database = {
           name: string
           phone: string | null
           trade: string | null
+          whatsapp_opt_in_at: string | null
+          whatsapp_opt_out_at: string | null
         }
         Insert: {
           active?: boolean
@@ -927,6 +935,8 @@ export type Database = {
           name: string
           phone?: string | null
           trade?: string | null
+          whatsapp_opt_in_at?: string | null
+          whatsapp_opt_out_at?: string | null
         }
         Update: {
           active?: boolean
@@ -937,6 +947,8 @@ export type Database = {
           name?: string
           phone?: string | null
           trade?: string | null
+          whatsapp_opt_in_at?: string | null
+          whatsapp_opt_out_at?: string | null
         }
         Relationships: [
           {

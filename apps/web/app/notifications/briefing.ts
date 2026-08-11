@@ -1,6 +1,7 @@
 import type { Db } from '@capo/db/client';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
+import { hasWhatsAppConsent } from '../../lib/whatsapp';
 
 // The 07:00 briefing, rendered.
 //
@@ -43,6 +44,14 @@ export interface CompanyBriefing {
   companyLocale: Locale;
   workers: WorkerBriefing[];
   counts: ManagerCounts;
+  /**
+   * Active workers with a phone who were dropped for want of a recorded
+   * WhatsApp opt-in. Reported rather than silently swallowed: after 0018 every
+   * pre-existing worker starts without consent, so "Capo has gone quiet" is the
+   * expected first symptom and this is the number that explains it. Each route
+   * logs it.
+   */
+  excludedNoConsent: number;
 }
 
 // Tasks a worker should be told about. `blocked` is excluded on purpose: the
@@ -68,7 +77,13 @@ export async function loadCompanyBriefing(
 
   const [{ data: rows, error: boardError }, { data: crew, error: crewError }] = await Promise.all([
     db.from('task_board').select('*').eq('company_id', companyId).eq('is_open', true),
-    db.from('workers').select('id, name, phone, language').eq('company_id', companyId).eq('active', true),
+    // select('*') rather than a column list, for the same reason the task_board
+    // read above uses it: 0018 adds the two consent columns, and a deploy that
+    // lands before its migration would otherwise fail the whole read with an
+    // unknown-column error instead of degrading. Degrading here means every
+    // worker reads as "no consent on record" and nothing is sent — the
+    // fail-closed direction, and a loud one.
+    db.from('workers').select('*').eq('company_id', companyId).eq('active', true),
   ]);
   if (boardError) throw new Error(`task_board read failed: ${boardError.message}`);
   if (crewError) throw new Error(`workers read failed: ${crewError.message}`);
@@ -92,8 +107,16 @@ export async function loadCompanyBriefing(
 
   // A worker with no phone cannot be reached at all — /perfil already warns
   // the manager about exactly this, so it is not a silent drop.
-  const workers: WorkerBriefing[] = (crew ?? [])
-    .filter((w): w is typeof w & { phone: string } => Boolean(w.phone))
+  const reachable = (crew ?? []).filter((w): w is typeof w & { phone: string } => Boolean(w.phone));
+
+  // THE CONSENT GATE, and the only one. Both proactive sends — the 07:00
+  // briefing and the late-afternoon check-in — reach their recipients through
+  // this function, so a worker filtered out here cannot be messaged by either.
+  // Putting it in the routes instead would mean two copies of a rule that must
+  // never disagree. See hasWhatsAppConsent() and 0018_whatsapp_optin.sql.
+  const consenting = reachable.filter(hasWhatsAppConsent);
+
+  const workers: WorkerBriefing[] = consenting
     .map(w => ({
       workerId: w.id,
       name: w.name,
@@ -108,6 +131,7 @@ export async function loadCompanyBriefing(
     companyId,
     companyLocale,
     workers,
+    excludedNoConsent: reachable.length - consenting.length,
     counts: {
       today: todayRows.length,
       unassigned: todayRows.filter(r => !r.assignee_worker_id).length,

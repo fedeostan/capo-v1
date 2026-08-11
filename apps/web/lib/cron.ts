@@ -4,7 +4,7 @@ import type { Db } from '@capo/db/client';
 import { WhatsAppSendError } from '@capo/core/channels/whatsapp';
 
 // Shared wiring for the two SCHEDULED routes: the 07:00 briefing
-// (api/cron/reminders) and the 16:30 check-in (api/cron/checkin).
+// (api/cron/reminders) and the late-afternoon check-in (api/cron/checkin).
 //
 // Sibling of lib/whatsapp.ts, which does the same job for the two routes that
 // talk to Meta. The split is deliberate: these two routes have almost no BODY
