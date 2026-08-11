@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useState } from 'react';
 import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
+import { useDetectedPlatform } from '@/app/platform';
 
 // Chrome/Edge fire beforeinstallprompt; capturing it lets us show a real
 // install button. iOS Safari has NO programmatic install path — the manual
@@ -13,20 +14,6 @@ import type { Locale } from '@capo/i18n/locale';
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
-
-type Platform = 'detecting' | 'standalone' | 'ios' | 'other';
-
-// Browser facts, read via useSyncExternalStore: 'detecting' on the server
-// pass, the real platform after hydration. None of this changes while the
-// page is open, so the subscription is a no-op.
-function detectPlatform(): Platform {
-  const standalone =
-    window.matchMedia('(display-mode: standalone)').matches ||
-    ('standalone' in navigator && (navigator as { standalone?: boolean }).standalone === true);
-  if (standalone) return 'standalone';
-  if (/iPad|iPhone|iPod/.test(navigator.userAgent)) return 'ios';
-  return 'other';
 }
 
 // The steps are split into before/action/after fragments rather than one string
@@ -79,11 +66,7 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
 
 export default function InstallGuide({ locale }: { locale: Locale }) {
   const t = getCatalog(locale);
-  const platform = useSyncExternalStore(
-    () => () => {},
-    detectPlatform,
-    () => 'detecting' as Platform,
-  );
+  const platform = useDetectedPlatform();
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
 
