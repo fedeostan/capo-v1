@@ -97,6 +97,12 @@ and say what the alternative would be — he is the one who decides.
   cross-tenant, separate deploy; must never be reachable by tenants).
 - `packages/core` (`@capo/core`) — agent core, capabilities, guard/render,
   models, channels, persona/prompts (bundled TS modules, not files on disk).
+  Two agents live here, not one: the manager's (`agent/core.ts` +
+  `capabilities/`) and the restricted worker one (`agent/worker-core.ts` +
+  `capabilities/worker/`). They share a model provider and the knowledge-base
+  retrieval function; everything else — tool type, context type, conversation
+  store, persona, policy — is deliberately separate. See the worker invariants
+  below before touching either.
 - `packages/db` (`@capo/db`) — Supabase clients (system + user), generated
   types, session helpers, proxy session.
 - `packages/ui` (`@capo/ui`) — shared presentational components.
@@ -113,7 +119,11 @@ and say what the alternative would be — he is the one who decides.
   attacks (cross-company FKs, billing self-upgrade, forging a translation undo
   snapshot, forging a worker check-in answer, the two task-review RPCs, and the
   Supabase Storage surface — signing, downloading, listing and writing another
-  tenant's task photos). Run with `pnpm rls-matrix` after any change that
+  tenant's task photos, and the worker thread a tenant may read but never
+  write). Since #22 it also carries `checkWorkerTextIsolation`, the one check in
+  the file that is not about tenants at all: a service-role sweep proving
+  worker-authored text never lands in `messages`, `conversation_summaries`,
+  `memories` or `proposals`. Run with `pnpm rls-matrix` after any change that
   touches auth, RLS, Storage, or the DB clients; it must stay green.
   Needs credentials, so it does not run in CI.
   Note what it does NOT prove: every check asserts a REFUSAL, so a policy that
@@ -289,10 +299,71 @@ Structural invariants (do not regress):
     rule rejects the shape, the same rule is a CHECK constraint on both columns,
     and `parent_user_id` is parsed and dropped wherever it appears. Storing one
     would look like an identity while belonging to nobody in particular.
+- **Worker text NEVER reaches the MANAGER's agent context** (migration `0027`,
+  issue #22). This REPLACES the older and stronger promise that a worker's text
+  never reached a model at all. It does now: crew members talk to a second,
+  restricted agent (`packages/core/src/agent/worker-core.ts`), which is the
+  first place untrusted text enters a model in this codebase — and there is no
+  `auth.uid()` on that path, so RLS backstops nothing.
+
+  The mechanism is SEPARATE TABLES, not a filter. Worker turns live in
+  `worker_conversations` / `worker_messages`; the manager's live in
+  `conversations` / `messages`. The reason is one specific escalation:
+  `messages` feeds `loadWindow` → `toThread` → `thread.recentUserTexts` (the
+  last three user rows) → `ToolContext.recentUserTexts` → `runGuarded`, which
+  authorizes a DIRECT manager-level write whenever the model can quote the
+  manager. A worker with a row in `messages` would not be persuading the
+  manager's agent of anything — they would be WRITING the evidence its
+  authorization check reads. A nullable `worker_id` column would make that a
+  filter every future read path has to remember; separate tables make it a
+  query that does not exist.
+  `scripts/rls-isolation-matrix.mjs`'s `checkWorkerTextIsolation` sweeps
+  `messages`, `conversation_summaries`, `memories` and `proposals` for a seeded
+  tracer on the service role — the only way to ask whether the text was ever
+  WRITTEN there, rather than merely whether RLS hides it.
+
+  `handleInbound` and the manager `roster` are **not modified** by this feature.
+  If a change needs to touch either, the isolation design has gone wrong.
+- **The worker roster is an ALLOWLIST in its own type system, never a filter
+  over `roster`.** `packages/core/src/capabilities/worker/` holds four tools
+  (`my_tasks`, `search_knowledge`, `declare_task_done`, `set_my_language`) in a
+  separate array in a separate file. `roster.filter(...)` would be a denylist by
+  accident: `capabilities/index.ts` is an array that grows, and the next tool
+  appended there would land in a worker's hands silently, in a commit about
+  something else.
+
+  The separation is enforced by `tsc`, not by review. `WorkerTool` requires
+  `audience: 'worker'` (absent from `CapoTool`) and an `execute` **property**
+  — not a method, because TypeScript checks method parameters bivariantly even
+  under `strictFunctionTypes` — taking a `WorkerContext`. `WorkerContext` and
+  `ToolContext` are MUTUALLY UNASSIGNABLE: each requires fields the other lacks.
+  Both directions have been verified to fail `tsc --noEmit`.
+
+  Three absences carry weight. `WorkerTool` has **no `guarded` field at all**
+  (not `guarded?: never`) — the guard authorizes against the manager's own
+  words, and there is no manager in that loop. `WorkerContext` has **no
+  `userId`, no `actor`, no `recentUserTexts`**, which is precisely why a worker
+  tool cannot call `createProposal`: it cannot construct the `ToolContext` that
+  function's signature demands, so the escalation to "manufacture an approval
+  card for the manager to tap" is closed by the type checker.
+
+  `declare_task_done` requires `photo_ids` with `.min(1)` **at the schema
+  level**, never by prompt instruction: a prompt rule is negotiable by anyone
+  who can write text, and that is exactly who is on the other end. It writes
+  photos BEFORE filing the claim, because a claim with no proof is the state
+  the requirement exists to prevent, while proof with no claim is merely untidy.
+  Photos are **never shown to a model** — the agent learns only how many
+  arrived.
+  Known limit, stated rather than hidden: photos live for ONE turn, because a
+  task photo's object key contains the task id and the task is not known until
+  the tool names it. "Photo, then a separate message saying which task" loses
+  the photo. A staging area keyed on the worker is the fix, and is out of scope.
 - **`workers.language` is the third dial** (see the top of this file).
   Nullable, and the null means "inherit `companies.language`" — do not give it
   a default. A worker sets it themselves by replying `PT`/`ES`/`EN` to their
-  briefing.
+  briefing. Since #22 they can also just ask in words (`set_my_language`), but
+  the deterministic `LANGUAGE_KEYWORDS` lookup stays IN FRONT of the agent: `ES`
+  must keep resolving with zero model calls.
 - **`pending_review` is the completion claim, and the surfaces that see it
   split into denylists and allowlists on purpose.** A worker (PRD 4) or the
   manager declares a task finished; it

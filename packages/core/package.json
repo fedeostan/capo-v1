@@ -5,6 +5,8 @@
   "type": "module",
   "exports": {
     "./agent": "./src/agent/core.ts",
+    "./agent/worker": "./src/agent/worker-core.ts",
+    "./capabilities/worker": "./src/capabilities/worker/index.ts",
     "./models": "./src/agent/models.ts",
     "./embeddings": "./src/agent/embeddings.ts",
     "./knowledge": "./src/knowledge/search.ts",

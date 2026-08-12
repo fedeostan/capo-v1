@@ -60,7 +60,16 @@ async function loadCompanySnapshot(db: Db, companyId: string): Promise<CompanySn
 // The document titles themselves stay in Portuguese whatever the locale: the
 // corpus is Portuguese, and a translated index would name documents the manager
 // cannot find and the tool cannot match.
-async function loadKnowledgeIndex(db: Db, locale: Locale): Promise<string | null> {
+//
+// EXPORTED because the worker agent's prompt (./worker-context.ts) needs the
+// same block and the same reasoning. This is the one thing the two prompts
+// share, and sharing it is safe for a specific reason rather than by luck:
+// `knowledge_documents` is the global, operator-curated corpus with no
+// company_id at all (0012), so this function cannot carry tenant data into a
+// worker's context. Nothing else from this file is reused — buildSystemPrompt
+// injects `memories` and the pending-proposal snapshot, and a worker must see
+// neither.
+export async function loadKnowledgeIndex(db: Db, locale: Locale): Promise<string | null> {
   try {
     const { data, error } = await db
       .from('knowledge_documents')
