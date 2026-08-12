@@ -656,6 +656,14 @@ iPhone with Capo installed to the home screen (the little icon added to your
 home screen, not just a browser tab), and once on Android.
 
 - [ ] `/perfil` shows the "Alertas no telemóvel" ("phone alerts") card
+      — if it does not appear, there are exactly two possible causes and
+      they need different fixes: push is not configured at all (step 2
+      above not done — check whether `/notificacoes` also hides its "want
+      these on your phone?" line, since that is gated on the same switch),
+      or the service worker never registered on this phone (a private/
+      incognito tab, or a very locked-down browser setting) — reload from a
+      normal tab and check the browser's own service-worker debug page
+      before assuming push itself is broken
 - [ ] tapping "Receber alertas" raises the phone's own permission box
 - [ ] on a task's detail screen, tap "Pedir controlo" ("request a check") — a
       *different* manager, in the SAME company as you, should get buzzed
@@ -678,6 +686,24 @@ home screen, not just a browser tab), and once on Android.
 - [ ] on an iPhone, open Capo in a plain Safari tab (not installed to the home
       screen) — the card should explain that it needs to be installed first,
       not show a button that quietly does nothing
+- [ ] **the reclaim path** — the shared-handset case where the previous
+      manager's session expired rather than being signed out properly, so
+      their phone registration is still sitting there when someone else logs
+      in. No box above reaches this: signing out cleanly (the box two above)
+      mints a fresh endpoint on the next opt-in, so the "already registered,
+      reclaim it" branch in `apps/web/app/api/push/route.ts` never runs on
+      that path. To actually exercise it: on a phone already opted in as one
+      manager, either clear that browser's cookies or just wait for the
+      session to expire on its own — **do not** tap sign out — then log in
+      as a second manager in the same company on that same phone and opt in.
+      The second manager should end up receiving alerts on that phone, and
+      the first manager's old registration should be gone
+- [ ] check the Vercel log for `apps/web` for a `dashboard.push_swept` line
+      appearing roughly every 10 minutes — this is the new line that proves
+      the backstop sweep is actually running, as opposed to just silently
+      not, which is otherwise indistinguishable from "nothing pending right
+      now" (see the Risks section of
+      `docs/superpowers/specs/2026-08-11-web-push-design.md`)
 
 ## 10. Backlog (deliberately cut from this upgrade)
 

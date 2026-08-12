@@ -442,3 +442,47 @@ dates). Three gates:
 - **New runtime dependency** (`web-push`).
 - **VAPID keys are permanent once live.** Rotating them silently kills every
   existing registration.
+
+## Amendments after implementation
+
+Recorded, not rewritten into the body above — this section is the diff
+between what was agreed and what shipped, and why. Found during the
+whole-branch review that followed all fourteen tasks.
+
+- **Registration is insert-first, escalate-on-conflict — not reclaim-first.**
+  `registerPush` (design, §Server actions) was written as "reclaim the
+  endpoint on the service role first, then insert on the user client." The
+  code in `apps/web/app/api/push/route.ts` instead tries the plain user-client
+  insert first and only reaches for the service role on `23505`
+  (unique-violation). Same outcome, cheaper path: the overwhelming majority of
+  registrations are a phone's first ever sign-up, which needs no elevated
+  privilege at all, so paying for a service-role round trip on every call to
+  cover the rare shared-handset reclaim was the wrong default.
+- **The sign-out wrapper (`sign-out-button.tsx`) gained a hard ceiling and
+  independent halves**, neither of which the design specified. A
+  `CLEANUP_TIMEOUT_MS` (1500 ms) bounds the *whole* cleanup step so a service
+  worker that never reaches `ready` (private browsing, a dropped `sw.js`
+  fetch, a locked-down Android ROM) cannot hang sign-out itself — a manager
+  must always be able to leave a shared phone. The server DELETE and the
+  browser `unsubscribe()` also run independently (`Promise.allSettled`, not a
+  sequential await), so a device that is offline — where `fetch` rejects
+  outright — still unsubscribes locally instead of the exception skipping it.
+- **An unrenderable `kind` is left unstamped AND its `push_attempts` is
+  bumped**, not just left unstamped as originally designed (§`dispatchPushes`,
+  step 3). The review that found this pointed out the design's own version was
+  unsafe in both directions: stamping it (what the first implementation did)
+  loses the push permanently if a newer bundle serving the same rollout could
+  have rendered it moments later; leaving it alone with no attempt counter, as
+  originally designed, circles it forever after a rollback that never ships
+  the renderer. Bumping the counter alongside leaving it unstamped caps it at
+  `PUSH_MAX_ATTEMPTS` sweeps (about 30 minutes) either way — long enough to
+  outlast a rollout, short enough not to spin indefinitely.
+- **The iOS branch is checked before the capability probe**, the reverse of
+  the state table's listed order (§Client, the states table). WebKit gates
+  `PushManager`/`Notification` behind a home-screen install, so on an iPhone
+  in a plain Safari tab those APIs are likely undefined — checking the
+  capability row first would hit `'unsupported'` (render nothing) before ever
+  reaching the `'ios-needs-install'` row this table exists to describe. Moving
+  the iOS check first fixes that; `'ios'` already implies not-standalone by
+  construction (`apps/web/app/platform.ts`), so no other platform's behaviour
+  changes.
