@@ -658,10 +658,15 @@ home screen, not just a browser tab), and once on Android.
 - [ ] `/perfil` shows the "Alertas no telemóvel" ("phone alerts") card
 - [ ] tapping "Receber alertas" raises the phone's own permission box
 - [ ] on a task's detail screen, tap "Pedir controlo" ("request a check") — a
-      *different* manager's phone should buzz within seconds (the manager who
-      taps it never gets buzzed for their own tap). If you only have one
-      manager account to test with, have a worker declare a task finished over
-      WhatsApp instead — that buzzes every manager
+      *different* manager, in the SAME company as you, should get buzzed
+      within seconds (the manager who taps it is deliberately excluded from
+      their own alert). **This one needs two manager logins under one
+      company, and there is no way today for a second person to join a
+      company you already created** — signing up always starts a brand-new
+      company of its own, not a seat in yours. If you only have one login,
+      leave this box unticked rather than counting it as passed; ask Claude if
+      you would like a second profile added to your company by hand, purely
+      for this test
 - [ ] the alert reads as the app name plus a plain sentence about the task,
       with **no** worker's note shown on the lock screen
 - [ ] tapping it opens that task's page with the approve/reject buttons
