@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { after } from 'next/server';
 import { requireAuth, type AuthContext } from '@capo/db/session';
 import { getCatalog } from '@capo/i18n/catalog';
 import { ensureConversation } from '@capo/core/conversation';
@@ -9,6 +10,7 @@ import { assertNotBlocked } from '@/lib/billing';
 import { logEvent } from '@/lib/log';
 import { TaskPhotoError, uploadTaskPhotos } from '@/lib/task-photos';
 import { isUuid } from '@/app/(app)/tarefas/filters';
+import { dispatchPushes } from '@/app/notifications/push';
 
 // Shared by /tarefas and /obras/[id] — hence the private `_tasks` folder
 // (the underscore keeps App Router from treating it as a route) rather than
@@ -287,4 +289,31 @@ export async function requestReview(taskId: string): Promise<void> {
   // running on an unverified claim, which is exactly why it is a card.
   const { data: task } = await db.from('tasks').select('job_id').eq('id', taskId).eq('company_id', companyId).maybeSingle();
   await cascadeReschedule(ctx, taskId, task?.job_id ?? null);
+
+  // The fast path to the manager's lock screen. after() runs once the response
+  // is already on its way, so a slow or failing push can neither delay this
+  // manager's tap nor fail their action. The 10-minute sweep (api/cron/push) is
+  // what makes this an optimisation rather than the mechanism — if this line is
+  // ever removed or forgotten by a new producer, alerts get late, not lost.
+  //
+  // No olderThanSeconds here — see the comment at that option's call site in
+  // api/cron/push/route.ts. This path exists to catch the row this very
+  // request just created, so it must consider everything pending, not just
+  // what is older than some cutoff.
+  //
+  // dispatchPushes cannot throw from a send (sendPush swallows every error
+  // internally), but it CAN throw earlier, at getDb(), if SUPABASE_URL or
+  // SUPABASE_SERVICE_ROLE_KEY are missing while VAPID is configured. That
+  // would otherwise surface as an unhandled rejection after this server
+  // action has already returned success to the manager — so it is caught and
+  // logged here instead, never allowed to reach them.
+  after(() =>
+    dispatchPushes({ companyId }).catch(err =>
+      logEvent('dashboard.push_dispatch_failed', {
+        companyId,
+        taskId,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    ),
+  );
 }

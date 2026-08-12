@@ -128,6 +128,23 @@ const dict: Catalog = {
     noSubject: 'Uma tarefa',
     noteLabel: 'O que escreveram:',
     openSubject: 'Ver nas tarefas',
+    pushNudge: 'Queres receber estes avisos no telemóvel?',
+    pushNudgeLink: 'Ligar alertas',
+  },
+
+  push: {
+    title: 'Alertas no telemóvel',
+    subtitle: 'Recebe um aviso assim que alguém disser que acabou uma tarefa — mesmo com a app fechada.',
+    enable: 'Receber alertas',
+    enabled: 'Alertas ligados neste telemóvel.',
+    disable: 'Desligar',
+    working: 'Um momento…',
+    failed: 'Não foi possível mudar os alertas. Tenta outra vez.',
+    deniedTitle: 'Bloqueaste os alertas neste telemóvel.',
+    deniedHelp: 'Para voltar a recebê-los, tens de os permitir nas definições do telemóvel — o Capo já não pode voltar a perguntar.',
+    iosTitle: 'No iPhone, só com o Capo instalado.',
+    iosHelp: 'Os alertas no iPhone só funcionam com o Capo no ecrã principal.',
+    iosLink: 'Ver como instalar',
   },
 
   screens: {

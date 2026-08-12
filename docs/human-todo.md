@@ -587,6 +587,124 @@ the tenant. That is deliberate — "põe o Zé outra vez a receber" runs through
 on a crew this size — and both timestamps are kept, so the sequence stays
 readable. It is also why the tools are guarded.
 
+## 14. Web Push (PRD 7, #25) — NOT YET DONE
+
+This is the feature that buzzes a manager's phone the moment something needs
+them — a worker saying a job is finished, another manager asking for a second
+pair of eyes — even with Capo closed and the phone locked. Three environment
+variables (settings the app reads when it starts, kept out of the code itself
+so a secret never ends up committed to it), one database migration (a
+numbered instruction file that changes the shape of the database, applied
+once and never edited afterwards), then a real-phone test. The last part
+genuinely cannot be done by anyone but you, on your own phone — there is no
+way to fake a lock screen buzzing.
+
+### 1. Generate the VAPID key pair
+
+VAPID is a key pair that proves to Apple and Google that a push really came
+from Capo — a stamped company seal. Run this once, anywhere you have a
+terminal (it does not touch the live app):
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+It prints a `Public Key` and a `Private Key`. Keep the window open for the
+next step.
+
+### 2. Add three variables to Vercel (`capo-v1` project only, all environments)
+
+| Name | Value |
+|---|---|
+| `VAPID_PUBLIC_KEY` | the `Public Key` printed above |
+| `VAPID_PRIVATE_KEY` | the `Private Key` printed above — mark **Sensitive** |
+| `VAPID_SUBJECT` | `mailto:` plus your own email, e.g. `mailto:ostanfederico@gmail.com` |
+
+**These keys can never be rotated once managers start subscribing.** Every
+phone that has already turned alerts on is bound to the public key you enter
+here; changing it later kills every one of those registrations at once,
+silently — nobody gets an error, they simply stop being buzzed, and each
+manager would have to turn alerts on again. If the keys ever must change,
+also empty the `push_subscriptions` table in that same deploy, so the app
+visibly asks everyone to opt in again instead of quietly doing nothing.
+
+With the three variables absent, the whole feature is simply switched off:
+the alerts card on `/perfil` does not appear, and nothing tries to send.
+Nothing breaks by leaving this step for later.
+
+### 3. Apply migration `0026_push_subscriptions.sql`
+
+This is the file that creates the table of phone registrations and adds the
+two columns that turn your existing notifications inbox into the delivery
+queue. It has already been tested for real against a throwaway copy of the
+database, so it is ready to run against the live one — ask Claude, in a chat
+session, to apply it for you.
+
+Then run `pnpm rls-matrix` and confirm zero failures. **Order matters here**:
+this check needs migration `0026` applied first, because running it beforehand
+leaves throwaway test rows sitting in the shared live database.
+
+### 4. Device checklist — the only gate that proves this works
+
+Nothing above proves alerts actually reach a phone. Automated testing cannot
+either: browsers refuse the notification-permission prompt automatically
+whenever a robot rather than a person is driving them, on purpose, so no test
+run by an agent has ever exercised the "tap enable → permission granted →
+subscribed" path. This checklist is the real gate, not a formality — treat
+every unticked box as "not yet proven," not "probably fine." Run it once on an
+iPhone with Capo installed to the home screen (the little icon added to your
+home screen, not just a browser tab), and once on Android.
+
+- [ ] `/perfil` shows the "Alertas no telemóvel" ("phone alerts") card
+      — if it does not appear, there are exactly two possible causes and
+      they need different fixes: push is not configured at all (step 2
+      above not done — check whether `/notificacoes` also hides its "want
+      these on your phone?" line, since that is gated on the same switch),
+      or the service worker never registered on this phone (a private/
+      incognito tab, or a very locked-down browser setting) — reload from a
+      normal tab and check the browser's own service-worker debug page
+      before assuming push itself is broken
+- [ ] tapping "Receber alertas" raises the phone's own permission box
+- [ ] on a task's detail screen, tap "Pedir controlo" ("request a check") — a
+      *different* manager, in the SAME company as you, should get buzzed
+      within seconds (the manager who taps it is deliberately excluded from
+      their own alert). **This one needs two manager logins under one
+      company, and there is no way today for a second person to join a
+      company you already created** — signing up always starts a brand-new
+      company of its own, not a seat in yours. If you only have one login,
+      leave this box unticked rather than counting it as passed; ask Claude if
+      you would like a second profile added to your company by hand, purely
+      for this test
+- [ ] the alert reads as the app name plus a plain sentence about the task,
+      with **no** worker's note shown on the lock screen
+- [ ] tapping it opens that task's page with the approve/reject buttons
+- [ ] with Capo already open, tapping focuses that open window instead of
+      opening a second copy
+- [ ] tap "Desligar" ("turn off"), then trigger another completion → silence
+- [ ] sign out, sign in as a different manager on the SAME phone → the first
+      manager's alerts do not arrive on it
+- [ ] on an iPhone, open Capo in a plain Safari tab (not installed to the home
+      screen) — the card should explain that it needs to be installed first,
+      not show a button that quietly does nothing
+- [ ] **the reclaim path** — the shared-handset case where the previous
+      manager's session expired rather than being signed out properly, so
+      their phone registration is still sitting there when someone else logs
+      in. No box above reaches this: signing out cleanly (the box two above)
+      mints a fresh endpoint on the next opt-in, so the "already registered,
+      reclaim it" branch in `apps/web/app/api/push/route.ts` never runs on
+      that path. To actually exercise it: on a phone already opted in as one
+      manager, either clear that browser's cookies or just wait for the
+      session to expire on its own — **do not** tap sign out — then log in
+      as a second manager in the same company on that same phone and opt in.
+      The second manager should end up receiving alerts on that phone, and
+      the first manager's old registration should be gone
+- [ ] check the Vercel log for `apps/web` for a `dashboard.push_swept` line
+      appearing roughly every 10 minutes — this is the new line that proves
+      the backstop sweep is actually running, as opposed to just silently
+      not, which is otherwise indistinguishable from "nothing pending right
+      now" (see the Risks section of
+      `docs/superpowers/specs/2026-08-11-web-push-design.md`)
+
 ## 10. Backlog (deliberately cut from this upgrade)
 
 Moloni/Vendus integration, client progress PDF (Flow 4's read-only share link

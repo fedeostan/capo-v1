@@ -127,6 +127,23 @@ const dict: Catalog = {
     noSubject: 'Una tarea',
     noteLabel: 'Lo que han escrito:',
     openSubject: 'Ver en tareas',
+    pushNudge: '¿Quieres recibir estos avisos en el móvil?',
+    pushNudgeLink: 'Activar alertas',
+  },
+
+  push: {
+    title: 'Alertas en el móvil',
+    subtitle: 'Recibe un aviso en cuanto alguien diga que ha acabado una tarea — incluso con la app cerrada.',
+    enable: 'Recibir alertas',
+    enabled: 'Alertas activadas en este móvil.',
+    disable: 'Desactivar',
+    working: 'Un momento…',
+    failed: 'No se han podido cambiar las alertas. Inténtalo otra vez.',
+    deniedTitle: 'Has bloqueado las alertas en este móvil.',
+    deniedHelp: 'Para volver a recibirlas, tienes que permitirlas en los ajustes del móvil — Capo ya no puede volver a preguntar.',
+    iosTitle: 'En iPhone, solo con Capo instalado.',
+    iosHelp: 'Las alertas en iPhone solo funcionan con Capo en la pantalla de inicio.',
+    iosLink: 'Ver cómo instalarlo',
   },
 
   screens: {

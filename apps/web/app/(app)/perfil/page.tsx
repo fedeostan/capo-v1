@@ -9,6 +9,7 @@ import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { countTranslatable } from '@capo/core/translation';
 import { hasWhatsAppConsent } from '@capo/core/channels/whatsapp';
 import { resolveTheme, THEMES, type Theme } from '@/lib/theme';
+import { vapidPublicKey } from '@/lib/push';
 import {
   revertTranslation,
   saveLanguage,
@@ -19,6 +20,8 @@ import {
 } from './actions';
 import PullToRefresh from '@/app/pull-to-refresh';
 import { AccountForm, CompanyForm } from './profile-forms';
+import PushCard from './push-card';
+import SignOutButton from './sign-out-button';
 import { TranslationProgress } from './translation-progress';
 
 export const dynamic = 'force-dynamic';
@@ -158,6 +161,7 @@ export default async function PerfilPage({
   const { ctx, locale, t } = await requireAuthT();
   const { db, userId, companyId } = ctx;
   const { guardado, erro } = await searchParams;
+  const pushKey = vapidPublicKey();
 
   const [
     { data: company },
@@ -234,6 +238,11 @@ export default async function PerfilPage({
           </p>
           <WhatsAppConsentPills consenting={whatsappConsenting} t={t} />
         </Card>
+
+        {/* Not wrapped in <Card>: this component owns its own container so it
+            can render nothing at all when push is unconfigured or unsupported,
+            rather than leaving an empty bordered box on the screen. */}
+        {pushKey && <PushCard locale={locale} vapidPublicKey={pushKey} />}
 
         {/* Above the language dials on purpose: appearance is personal and
             reversible, while the company language card carries a warning. */}
@@ -433,15 +442,7 @@ export default async function PerfilPage({
           </Link>
         </Card>
 
-        {/* Plain form POST: sign-out works even before client JS hydrates. */}
-        <form method="post" action="/auth/signout">
-          <button
-            type="submit"
-            className="w-full rounded-xl border border-zinc-500/20 py-2.5 text-sm font-medium text-red-600 hover:bg-red-600/5"
-          >
-            {t.common.signOut}
-          </button>
-        </form>
+        <SignOutButton locale={locale} />
       </PullToRefresh>
     </ScreenShell>
   );

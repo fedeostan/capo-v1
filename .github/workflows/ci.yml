@@ -47,3 +47,10 @@ jobs:
       # all pure functions, so they can be asserted without credentials.
       - name: WhatsApp channel check
         run: pnpm whatsapp-check
+
+      # And for Web Push: status classification and the stamp/retry decision
+      # are pure functions, and both failure modes they guard are silent in
+      # production — a dead registration retried forever, or a row that hangs
+      # in the queue and re-sweeps for the rest of its life.
+      - name: Push rules check
+        run: pnpm push-check

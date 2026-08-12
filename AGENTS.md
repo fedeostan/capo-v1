@@ -453,6 +453,37 @@ Structural invariants (do not regress):
   `BillingBanner`, which is also why it cannot be clipped — both strips are
   siblings of the `overflow-hidden` content column, never children of it.
   `/perfil` carries the always-present link for when nothing is unread.
+- **Web Push (0026) rides `notifications`; the row IS the queue.** There is no
+  push producer and no outbound push ledger. `notifications.pushed_at` /
+  `push_attempts` mark delivery, so a push exists if and only if an inbox row
+  does — which is why #22's and #23's future kinds get push with no edit.
+  `dispatchPushes()` (`apps/web/app/notifications/push.ts`) is **one function
+  called from two places**: `after()` in the producer's own request, and
+  `api/cron/push` every 10 minutes. The sweep is not redundancy — it is what
+  makes a producer that forgets the immediate call cost lateness instead of
+  silence. Five things here are load-bearing:
+  - **The `0026` backfill (`update notifications set pushed_at = now()`) was
+    mandatory.** Any future migration adding a delivery-marker column to a
+    populated table needs the same, or its first deploy replays history.
+  - **`410`/`404` means delete, on the first answer.** Classified in
+    `packages/core/src/channels/push-rules.ts`, asserted by `pnpm push-check`.
+    Anything else is retryable and capped at `PUSH_MAX_ATTEMPTS`.
+  - **An all-`'gone'` round stamps the row.** Every registration was just
+    deleted, so there is nothing left to reach; treating it as a retry hangs
+    the row in the queue and re-sweeps it forever.
+  - **The cron route has NO `lisbon_hour()` gate**, unlike the two daily sends.
+    It is meant to run all day; gating it on the hour is the same bug that made
+    the check-in ship and never send. The `:00`-not-`:30` rule likewise does not
+    apply — it exists for hour-gated crons.
+  - **The permission prompt is one-shot and iOS needs a home-screen install.**
+    Both failures are silent, so `/perfil`'s card enumerates every state rather
+    than rendering a button that does nothing. `push_subscriptions` also carries
+    the schema's **first DELETE policy** — deliberate, because a registration is
+    a device and not a business event.
+  Copy never enters `packages/core`: `push-rules.ts` takes an already-rendered
+  headline, and the dispatcher renders it from the recipient's own
+  `profiles.language` using the SAME catalog entry the inbox uses, so the two
+  surfaces cannot say different things.
 - **One clock, one definition of "today".** The active-window rule
   (`lisbon_today() BETWEEN coalesce(start_date, created_at) AND
   coalesce(due_date, 'infinity')`) and every schedule-risk signal live in SQL,

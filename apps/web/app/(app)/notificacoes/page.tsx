@@ -4,6 +4,7 @@ import type { Catalog } from '@capo/i18n/catalog';
 import { EmptyState, ScreenShell } from '@capo/ui/dashboard-ui';
 import { loadInbox, type InboxItem } from '@/app/notifications/inbox';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
+import { vapidPublicKey } from '@/lib/push';
 import PullToRefresh from '@/app/pull-to-refresh';
 import MarkAllRead from './mark-all-read';
 
@@ -97,6 +98,12 @@ export default async function NotificacoesPage() {
   const { ctx, locale, t } = await requireAuthT();
   const items = await loadInbox(ctx);
   const unread = items.filter(item => item.readAt === null).length;
+  // Every preview deploy, and production until the VAPID keys are set (see
+  // docs/human-todo.md §14), has push switched off entirely — the /perfil
+  // card does not even render. Inviting someone to turn on alerts on a
+  // screen where no card exists to receive that tap is worse than saying
+  // nothing.
+  const pushAvailable = vapidPublicKey() !== null;
 
   return (
     <ScreenShell title={t.notifications.title} subtitle={t.notifications.subtitle}>
@@ -112,6 +119,21 @@ export default async function NotificacoesPage() {
               ))}
             </div>
           </>
+        )}
+
+        {/* Points at the opt-in without triggering anything. The permission
+            prompt is one-shot, so it must stay behind a deliberate press on
+            /perfil — a prompt raised from here would spend that one chance
+            on someone who only came to read their notifications. Gated on
+            push being configured at all: without it /perfil's card does not
+            render, so this link would land on nothing. */}
+        {pushAvailable && (
+          <p className="mt-6 text-center text-xs text-zinc-500">
+            {t.notifications.pushNudge}{' '}
+            <Link href="/perfil" className="text-orange-600 underline">
+              {t.notifications.pushNudgeLink}
+            </Link>
+          </p>
         )}
       </PullToRefresh>
     </ScreenShell>
