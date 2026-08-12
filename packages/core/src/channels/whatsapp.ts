@@ -798,4 +798,83 @@ export function whatsappSink(config: WhatsAppSinkConfig): { sink: OutboundSink; 
   return { sink, delivery };
 }
 
+// ── the worker sink ─────────────────────────────────────────────────────────
+//
+// A crew member's turn is prose and nothing else. It cannot produce an approval
+// card, because a worker's roster has no `propose`, no guarded write, and no
+// way to construct the ToolContext createProposal demands — the absence is
+// enforced by the type checker, not by this file.
+//
+// So why does this exist at all, rather than reusing whatsappSink?
+// WhatsAppSinkConfig REQUIRES `approval: ApprovalLabels`, and there is no
+// honest value to pass. Dummy labels would be a lie waiting to be rendered, and
+// the caller would have to import the copy catalog to invent them.
+//
+// And why does it THROW on a proposal part instead of quietly skipping one?
+// Because "the sink silently dropped the card" is the exact bug this file's
+// header documents as already fixed once: the manager was told an approval card
+// had appeared and handed nothing at all. Reintroducing that behaviour on the
+// worker path would be worse, not better — it would be invisible until the day
+// a proposal appeared somewhere it never should have, and the throw is the only
+// thing that would tell us the isolation had been breached.
+
+/**
+ * Pure: parts in, plain-text messages out. Split from the sink for the same
+ * reason planAssistantMessages is — scripts/whatsapp-check.mts asserts the
+ * throw with no credentials and no network.
+ *
+ * @throws if the turn contains a proposal part. See above; this is not
+ *         defensive coding, it is the alarm.
+ */
+export function planWorkerMessages(parts: UIMessage['parts']): WhatsAppOutbound[] {
+  const prose: string[] = [];
+  for (const part of parts) {
+    if (part.type === 'text') {
+      if (part.text) prose.push(part.text);
+      continue;
+    }
+    if (!isToolUIPart(part) || part.state !== 'output-available') continue;
+    if (asProposalOutput(part.output)) {
+      throw new Error(
+        'workerSink: a worker turn produced an approval card. The worker roster cannot create proposals — this means the isolation between the two rosters has been broken.',
+      );
+    }
+    // Every other tool output is ignored, exactly as on the manager path:
+    // WhatsApp has no room for "✓ Tarefas consultadas" chips.
+  }
+
+  const joined = prose.join('\n\n').trim();
+  if (!joined) return [];
+  return splitForWhatsApp(toWhatsAppMarkdown(joined)).map(body => ({ kind: 'text' as const, body }));
+}
+
+async function deliverWorker(stream: ReadableStream<UIMessageChunk>, config: WhatsAppSendConfig): Promise<void> {
+  let final: UIMessage | undefined;
+  for await (const message of readUIMessageStream({ stream })) {
+    final = message;
+  }
+  // Sequential and fail-fast, same as deliver() above: WhatsApp does not
+  // guarantee the ordering of concurrent sends.
+  for (const message of planWorkerMessages(final?.parts ?? [])) {
+    await sendText(message.body, config);
+  }
+}
+
+/**
+ * The worker channel's sink. Takes a plain WhatsAppSendConfig — no approval
+ * labels, because there are no approvals here.
+ */
+export function workerSink(config: WhatsAppSendConfig): { sink: OutboundSink; delivery: Promise<void> } {
+  let settle!: { resolve: () => void; reject: (err: unknown) => void };
+  const delivery = new Promise<void>((resolve, reject) => {
+    settle = { resolve, reject };
+  });
+  const sink: OutboundSink = {
+    mergeAssistantStream(stream) {
+      deliverWorker(stream, config).then(settle.resolve, settle.reject);
+    },
+  };
+  return { sink, delivery };
+}
+
 export { toWhatsAppMarkdown } from './whatsapp-markdown';

@@ -553,10 +553,15 @@ export interface Catalog {
     approvalFallback: string;
 
     /**
-     * Sent to a WORKER who replies to their briefing. Workers have no account
-     * and no conversation with Capo — this ack exists so the reply is not met
-     * with silence, and it carries the language hint because replying a
-     * keyword is the only control a worker has.
+     * Sent to a WORKER whose message the restricted agent cannot take — a
+     * sticker, a document, a video. Workers have no account and no app, so this
+     * ack exists so the reply is not met with silence, and it carries the
+     * language hint because replying a keyword is the only control they have.
+     *
+     * Since PRD 4 this is NOT the answer to an ordinary text message: those go
+     * to the worker agent (packages/core/src/agent/worker-core.ts), which
+     * answers in its own words. This is the fallback for everything it cannot
+     * read.
      */
     workerAck: string;
     /** Sent after a worker switches language — always in the NEW language. */
@@ -573,6 +578,37 @@ export interface Catalog {
     workerOptedOut: string;
     /** Sent after a worker replies START, confirming they will hear from Capo again. */
     workerOptedIn: string;
+
+    // ── The restricted worker agent (PRD 4) ─────────────────────────────────
+    /**
+     * The daily cap is spent — for this crew member, or for the whole company.
+     *
+     * ONE string for both ceilings on purpose. Telling a worker "your company
+     * has used its allowance" invites them to work out whose messages spent it,
+     * and neither version is something they can act on differently. What it
+     * must do is name the way forward that still works: their supervisor.
+     *
+     * Sent with ZERO model calls, which is the entire point of the cap.
+     */
+    workerBudgetReached: string;
+    /**
+     * The agent turn failed — a model timeout, a database error, a deploy that
+     * landed ahead of migration 0027.
+     *
+     * Silence here reads as "Capo is broken", the same failure mode the voice-
+     * note path already guards against. Deliberately says nothing about what
+     * went wrong: a worker cannot act on the difference, and an error surface
+     * that varies with the cause is an oracle.
+     */
+    workerAgentFailed: string;
+    /**
+     * A photo arrived but could not be taken in — too large for the 5 MiB cap,
+     * an unsupported format, or Meta's short-lived media URL expiring first.
+     *
+     * Must be actionable, because the worker is standing there holding the
+     * phone that took it: ask for it again.
+     */
+    workerPhotoFailed: string;
 
     // ── The late-afternoon check-in ──────────────────────────────────────────────
     /**

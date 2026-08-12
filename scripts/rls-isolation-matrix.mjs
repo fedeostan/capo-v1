@@ -31,6 +31,18 @@
 // revert_translation_batch against a real tenant's batch, plus signing and
 // downloading a real tenant's photo.
 //
+// 0027 adds the restricted worker agent's own thread — worker_conversations and
+// worker_messages — and with it the one check in this file that is not about
+// tenant isolation at all. checkWorkerTextIsolation asks whether worker-authored
+// text ever lands in a table the MANAGER'S AGENT reads: `messages` (whose last
+// three user rows ARE the write guard's evidence pool), conversation_summaries,
+// memories and proposals. A worker able to write into any of them would not be
+// persuading the manager's agent of anything — they would be authoring the quote
+// that authorizes a direct manager-level write. That claim cannot be checked by
+// a visibility matrix, so it is checked by a service-role sweep for a seeded
+// tracer string, with a positive control so an empty sweep cannot pass for the
+// wrong reason.
+//
 // 0023 is the first surface here that is not only Postgres. task_photos is an
 // ordinary RLS table and rides in the visibility matrix like any other, but
 // the PHOTOS THEMSELVES live in Storage, behind policies on storage.objects
@@ -249,6 +261,31 @@ async function seedTenant(label) {
     `transcription_vocab(${label})`,
   );
 
+  // The restricted worker agent's OWN thread (0027). Written as the service
+  // role, which is the only writer in production too — the WhatsApp webhook —
+  // so the adversarial pass below can assert that a tenant can neither forge a
+  // worker's words nor rewrite them after the fact.
+  //
+  // `workerSecret` is the tracer for the CENTRAL CLAIM of PRD 4: this exact
+  // string must appear in worker_messages and NOWHERE ELSE. checkWorkerTextIsolation
+  // sweeps the manager's own tables for it on the SERVICE ROLE, which is the
+  // only way to ask the question honestly — an RLS-scoped read that found
+  // nothing would prove only that RLS works, not that the text was never
+  // written there.
+  const workerSecret = `WORKER-TRACER-${label}-${run}`;
+  const workerConversation = await must(
+    admin.from('worker_conversations').insert({ company_id: companyId, worker_id: worker.id }).select().single(),
+    `worker_conversation(${label})`,
+  );
+  const workerMessage = await must(
+    admin.from('worker_messages').insert({
+      conversation_id: workerConversation.id, company_id: companyId, role: 'user',
+      content: { parts: [{ type: 'text', text: workerSecret }] },
+      photo_count: 2,
+    }).select().single(),
+    `worker_message(${label})`,
+  );
+
   // A COMPLETED batch whose single item is APPLIED — i.e. one that
   // revert_translation_batch would genuinely act on. Seeding it 'pending'
   // instead would make the adversarial check below pass for the wrong reason
@@ -355,6 +392,7 @@ async function seedTenant(label) {
     photoPath,
     colleagueId, ownNotificationId, colleagueNotificationId,
     pushEndpoint, colleaguePushEndpoint,
+    workerConversationId: workerConversation.id, workerMessageId: workerMessage.id, workerSecret,
   };
 }
 
@@ -430,6 +468,10 @@ async function cleanupTenant(t) {
   await companyEq(admin.from('proposals').delete());
   await admin.from('conversation_summaries').delete().eq('conversation_id', t.conversationId);
   await admin.from('messages').delete().eq('conversation_id', t.conversationId);
+  // Before workers and before worker_checkins: worker_messages.checkin_id and
+  // worker_conversations.worker_id are both FKs.
+  await companyEq(admin.from('worker_messages').delete());
+  await companyEq(admin.from('worker_conversations').delete());
   await companyEq(admin.from('task_reviews').delete());
   await admin.from('task_dependencies').delete().in('task_id', t.taskIds);
   await companyEq(admin.from('tasks').delete());
@@ -466,7 +508,7 @@ async function runMatrix(self, other) {
   // own, so this check would report green on that exact regression. Both
   // tables get their own dedicated block below instead, asserting on
   // profile_id too. Read those before adding another per-profile table here.
-  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'worker_checkins', 'task_photos']) {
+  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'worker_checkins', 'task_photos', 'worker_conversations', 'worker_messages']) {
     const { data, error } = await db.from(table).select('*');
     const rows = data ?? [];
     const ownKey = table === 'companies' ? 'id' : 'company_id';
@@ -1105,6 +1147,161 @@ async function runAdversarial(attacker, victim) {
         : error ? error.message : `${(after ?? []).length} rows remain`,
     );
   }
+
+  // ── the worker thread (0027) ──────────────────────────────────────────────
+  // Attacks 26-27 and their own-tenant counterparts. worker_conversations and
+  // worker_messages are SELECT-only for tenants: a manager may read their
+  // crew's thread on a screen, and nothing else. The absent policies matter
+  // more here than on most tables, because the rows are worker-authored text
+  // the manager reads as somebody's own words —
+  //
+  //   a tenant able to INSERT could put words in a crew member's mouth,
+  //   a tenant able to UPDATE could rewrite what one of them actually said,
+  //
+  // and both would be invisible: the thread would simply read differently.
+  // The service role is the only writer in production, so nothing legitimate
+  // loses anything by these being refused.
+  {
+    const { error } = await db.from('worker_messages').insert({
+      conversation_id: attacker.workerConversationId,
+      company_id: attacker.companyId,
+      role: 'user',
+      content: { parts: [{ type: 'text', text: 'forged by the manager' }] },
+    });
+    check(
+      'adversarial: tenant cannot INSERT into their OWN worker thread',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — worker words are forgeable',
+    );
+  }
+  {
+    const { error } = await db
+      .from('worker_messages')
+      .update({ content: { parts: [{ type: 'text', text: 'rewritten' }] } })
+      .eq('id', attacker.workerMessageId);
+    const { data: after } = await admin
+      .from('worker_messages')
+      .select('content')
+      .eq('id', attacker.workerMessageId)
+      .single();
+    const intact = JSON.stringify(after?.content ?? {}).includes(attacker.workerSecret);
+    check(
+      'adversarial: tenant cannot REWRITE their own worker thread',
+      error != null || intact,
+      error ? `rejected (${error.code ?? 'err'})` : intact ? 'no-op' : 'REWRITTEN — worker words are mutable',
+    );
+  }
+  {
+    const { error } = await db.from('worker_messages').delete().eq('id', attacker.workerMessageId);
+    const { data: after } = await admin.from('worker_messages').select('id').eq('id', attacker.workerMessageId);
+    check(
+      'adversarial: tenant cannot DELETE from their own worker thread',
+      (after ?? []).length === 1,
+      error ? `rejected (${error.code ?? 'err'})` : `${(after ?? []).length} rows remain`,
+    );
+  }
+  {
+    const { error } = await db
+      .from('worker_conversations')
+      .insert({ company_id: attacker.companyId, worker_id: victim.workerId });
+    check(
+      'adversarial: cross-company worker_conversation blocked by the 0027 FK trigger',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — boundary broken',
+    );
+  }
+}
+
+/**
+ * THE CENTRAL CLAIM OF PRD 4, MACHINE-CHECKED.
+ *
+ * Everything else in this file asks "can tenant A read tenant B's rows". This
+ * asks something different and, for this feature, more important: does worker-
+ * authored text ever land in a table the MANAGER'S AGENT reads?
+ *
+ * The escalation it rules out is specific. `messages` feeds loadWindow →
+ * toThread → thread.recentUserTexts (the last three user rows) →
+ * ToolContext.recentUserTexts → runGuarded, which authorizes a DIRECT
+ * manager-level write whenever the model can quote the manager. A worker who
+ * could write into `messages` would not be persuading the manager's agent of
+ * anything — they would be WRITING the evidence its authorization check reads.
+ * `conversation_summaries` and `memories` are the same hazard one hop removed:
+ * both are injected wholesale into the manager's system prompt.
+ *
+ * Run on the SERVICE ROLE, deliberately. An RLS-scoped read that found nothing
+ * would prove only that RLS works; the claim is that the text was never written
+ * there at all, and only a query that bypasses RLS can say so.
+ *
+ * The tracer is seeded per tenant (workerSecret) and is a string no other seed
+ * writes, so a hit is unambiguous. The positive control at the end is what
+ * stops this whole function passing for the wrong reason: if the tracer were
+ * never written anywhere, every sweep below would come back empty and report
+ * green while asserting nothing.
+ */
+async function checkWorkerTextIsolation(tenant) {
+  const L = tenant.label;
+  const secret = tenant.workerSecret;
+
+  // POSITIVE CONTROL FIRST: the tracer really is in worker_messages.
+  {
+    const { data } = await admin
+      .from('worker_messages')
+      .select('id')
+      .eq('conversation_id', tenant.workerConversationId);
+    const { data: row } = await admin
+      .from('worker_messages')
+      .select('content')
+      .eq('id', tenant.workerMessageId)
+      .single();
+    check(
+      `${L}: worker text IS in worker_messages (positive control)`,
+      (data ?? []).length === 1 && JSON.stringify(row?.content ?? {}).includes(secret),
+      `${(data ?? []).length} rows`,
+    );
+  }
+
+  // `messages` — the one that matters most. Matched on the JSON content cast to
+  // text, so a tracer buried anywhere inside the parts array is still found.
+  {
+    const { data, error } = await admin.from('messages').select('id, content');
+    const hits = (data ?? []).filter(r => JSON.stringify(r.content ?? {}).includes(secret));
+    check(
+      `${L}: worker text NEVER reaches messages (the manager's thread)`,
+      !error && hits.length === 0,
+      error ? error.message : `${hits.length} hits`,
+    );
+  }
+  {
+    const { data, error } = await admin.from('conversation_summaries').select('id, summary');
+    const hits = (data ?? []).filter(r => (r.summary ?? '').includes(secret));
+    check(
+      `${L}: worker text NEVER reaches conversation_summaries`,
+      !error && hits.length === 0,
+      error ? error.message : `${hits.length} hits`,
+    );
+  }
+  {
+    const { data, error } = await admin.from('memories').select('id, content');
+    const hits = (data ?? []).filter(r => (r.content ?? '').includes(secret));
+    check(
+      `${L}: worker text NEVER reaches memories (injected into the manager's prompt)`,
+      !error && hits.length === 0,
+      error ? error.message : `${hits.length} hits`,
+    );
+  }
+  // proposals.rendered_text is the approval artifact the manager taps. Worker
+  // text reaching it would mean a crew phone had authored a card.
+  {
+    const { data, error } = await admin.from('proposals').select('id, rendered_text, action_args');
+    const hits = (data ?? []).filter(
+      r => (r.rendered_text ?? '').includes(secret) || JSON.stringify(r.action_args ?? {}).includes(secret),
+    );
+    check(
+      `${L}: worker text NEVER reaches proposals`,
+      !error && hits.length === 0,
+      error ? error.message : `${hits.length} hits`,
+    );
+  }
 }
 
 // A third actor's attacks: an authenticated user with a confirmed email and
@@ -1244,6 +1441,10 @@ try {
   await runMatrix(tenantA, tenantB);
   await runMatrix(tenantB, tenantA);
   await runAdversarial(tenantA, tenantB);
+  // Before the orphan attacks, which genuinely mutate rows if a boundary is
+  // broken — this sweep wants a clean state to read.
+  await checkWorkerTextIsolation(tenantA);
+  await checkWorkerTextIsolation(tenantB);
   await runOrphanAttack(orphan, tenantB);
 
   // Positive controls are an ALLOW, not a refusal, so they don't belong in

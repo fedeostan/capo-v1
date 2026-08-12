@@ -26,6 +26,11 @@
 //      parser dropped every BSUID rotation without a trace. That is the one
 //      defect here with no symptom at all: a stored id quietly stops pointing
 //      at anybody, months after the change.
+//   9. A worker turn can never produce an approval card — the worker roster has
+//      no way to build one — so if one ever appears, the isolation between the
+//      two rosters has broken. planWorkerMessages must THROW on that rather
+//      than skip it: a dropped card is defect 1 again, and on the worker path
+//      it would be the only signal we would ever get.
 //
 // Run with `pnpm whatsapp-check`. Exit 0 = green, 1 = at least one failure.
 
@@ -39,6 +44,7 @@ import {
   parseCheckinPayload,
   parseProposalButtonId,
   planAssistantMessages,
+  planWorkerMessages,
   proposalButtonId,
   readSender,
   routeWebhookChanges,
@@ -623,6 +629,41 @@ eq('a card with no prose is still delivered', silent.length, 1);
 // Prose is converted on the way out.
 const converted = planAssistantMessages([text('Obra creada: **Casa de Paco**.')], labels);
 eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Paco*.');
+
+// ── the worker sink (PRD 4 / issue #22) ─────────────────────────────────────
+// The crew channel is prose and nothing else. A worker's roster has no
+// `propose`, no guarded write and no way to construct the ToolContext
+// createProposal demands — the absence is enforced by the type checker, and
+// these three checks pin the RUNTIME half of it.
+//
+// The throw is the interesting one. Silently skipping a card here would be the
+// exact defect this file's check 1 exists for, made worse: on the worker path
+// it would be the only signal that the two rosters had stopped being isolated,
+// and it would arrive as nothing at all.
+{
+  const workerParts = [text('Hoje tens a pintura do 2.º andar.')];
+  const out = planWorkerMessages(workerParts);
+  eq('a worker turn is one plain text message', out.length, 1);
+  eq('and it is never interactive', out[0]?.kind, 'text');
+
+  const converted = planWorkerMessages([text('Precisas de **primário** e rolo.')]);
+  eq('worker prose is markdown-converted too', converted[0]?.body, 'Precisas de *primário* e rolo.');
+
+  eq('non-proposal tool outputs are ignored', planWorkerMessages([toolOutput({ status: 'ok', tasks: [] }), text('pronto')]).length, 1);
+
+  eq('a silent turn sends nothing', planWorkerMessages([]).length, 0);
+
+  const long = planWorkerMessages([text('L'.repeat(6000))]);
+  check('a long worker reply is split, never truncated', long.length === 2 && long.every(m => m.body.length <= 4000));
+
+  let threw = false;
+  try {
+    planWorkerMessages([card('Crear tarea: «x».')]);
+  } catch {
+    threw = true;
+  }
+  check('a proposal on the worker path THROWS rather than being dropped', threw);
+}
 
 // ── report ──────────────────────────────────────────────────────────────────
 console.log(lines.join('\n'));

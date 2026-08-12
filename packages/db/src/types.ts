@@ -77,6 +77,28 @@
 // Note the three columns sit adjacent and alphabetical — opt_in_at, opt_out_at,
 // user_id — which is exactly where git put both sides of the merge conflict.
 // They are unrelated features: consent (0025) and identity (0022).
+//
+// ── worker agent (0027), WRITTEN BY HAND, NOT YET APPLIED ──────────────────
+// `worker_conversations`, `worker_messages` and the single appended view column
+// `task_board.job_address` come from 0027_worker_agent.sql, which is
+// deliberately NOT applied to the live project — PRD 4 says applying is the
+// maintainer's call. They are hand-written here for the same reason the
+// `notifications` block once was: generating against a project that lacks the
+// tables would silently DELETE these blocks rather than add them.
+//
+// Two consequences while the migration is unapplied, both of which the code is
+// written to survive:
+//   - any query against worker_conversations / worker_messages answers 42P01
+//     ("relation does not exist"). The worker agent treats that like any other
+//     storage failure: it logs and stays silent, which is the same outcome an
+//     unknown sender already gets.
+//   - task_board.job_address answers as `undefined` rather than erroring,
+//     because every reader of that view uses select('*') (AGENTS.md). Do not
+//     switch a task_board read to an explicit column list containing
+//     job_address; that is the one edit that would turn a graceful degradation
+//     into a 42703 on every worker turn.
+//
+// Regenerate this file after 0027 is applied and diff the three additions.
 export type Json =
   | string
   | number
@@ -1301,6 +1323,116 @@ export type Database = {
           },
         ]
       }
+      worker_conversations: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          updated_at: string
+          worker_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          updated_at?: string
+          worker_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          updated_at?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_conversations_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_conversations_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: true
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["worker_id"]
+          },
+          {
+            foreignKeyName: "worker_conversations_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: true
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      worker_messages: {
+        Row: {
+          channel: string
+          checkin_id: string | null
+          company_id: string
+          content: Json
+          content_format: string
+          conversation_id: string
+          created_at: string
+          id: string
+          photo_count: number
+          role: string
+          usage_date: string
+        }
+        Insert: {
+          channel?: string
+          checkin_id?: string | null
+          company_id: string
+          content: Json
+          content_format?: string
+          conversation_id: string
+          created_at?: string
+          id?: string
+          photo_count?: number
+          role: string
+          usage_date?: string
+        }
+        Update: {
+          channel?: string
+          checkin_id?: string | null
+          company_id?: string
+          content?: Json
+          content_format?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          photo_count?: number
+          role?: string
+          usage_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_messages_checkin_id_fkey"
+            columns: ["checkin_id"]
+            isOneToOne: false
+            referencedRelation: "worker_checkins"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_messages_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "worker_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workers: {
         Row: {
           active: boolean
@@ -1447,6 +1579,7 @@ export type Database = {
           id: string | null
           is_open: boolean | null
           job_active: boolean | null
+          job_address: string | null
           job_id: string | null
           job_name: string | null
           job_status: string | null

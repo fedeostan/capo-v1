@@ -1,7 +1,9 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { after, NextResponse, type NextRequest } from 'next/server';
 import { getDb, type Db } from '@capo/db/client';
 import { handleInbound } from '@capo/core/agent';
+import { handleWorkerInbound } from '@capo/core/agent/worker';
+import type { PendingPhoto } from '@capo/core/capabilities/worker';
 import { MAX_AUDIO_BYTES, transcribeAudio } from '@capo/core/transcription';
 import { coerceLocale, type Locale, type LocaleContext } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
@@ -14,6 +16,8 @@ import {
   senderLabel,
   sendWhatsAppText,
   whatsappSink,
+  workerSink,
+  WhatsAppSendError,
   type BsuidRotation,
   type WhatsAppSendConfig,
   type WhatsAppSender,
@@ -21,6 +25,7 @@ import {
 } from '@capo/core/channels/whatsapp';
 import { resolveProposal } from '@capo/core/capabilities/propose';
 import { downloadMedia } from '@capo/core/channels/whatsapp-media';
+import { TASK_PHOTO_MAX_BYTES, isTaskPhotoMime } from '@capo/core/media/photos';
 import { getBillingState } from '../../../lib/billing';
 import { logEvent } from '../../../lib/log';
 import { type WhatsAppEnv } from '../../../lib/whatsapp';
@@ -34,11 +39,36 @@ import { type WhatsAppEnv } from '../../../lib/whatsapp';
 // already hold, and never anything from the message body. Unknown senders are a
 // silent no-op — no reply, no error detail, nothing persisted.
 //
-// Two kinds of sender, and only one of them reaches the agent:
-//   profiles → a MANAGER. Full agent loop, persisted to the thread.
-//   workers  → a WORKER replying to their 07:00 briefing. Acknowledged
-//              deterministically, never persisted, never given to the model.
-//              See handleWorkerReply.
+// Two kinds of sender, and they reach TWO DIFFERENT AGENTS:
+//   profiles → a MANAGER. The full agent loop (handleInbound), the full roster,
+//              the write guard, approval cards, persisted to `messages`.
+//   workers  → a WORKER. Since PRD 4 (issue #22) their text DOES reach a model
+//              — a second, restricted one (handleWorkerInbound) with four tools
+//              and its own conversation tables. See handleWorkerReply.
+//
+// ── THE INVARIANT THAT CHANGED, AND THE ONE THAT REPLACED IT ────────────────
+// This file used to say "a worker's text never reaches the model". That is no
+// longer true and was replaced ON PURPOSE with a narrower promise that is still
+// structural rather than hoped-for:
+//
+//     WORKER TEXT NEVER REACHES THE *MANAGER'S* AGENT CONTEXT.
+//
+// The mechanism is not a filter on this path. It is that worker turns are
+// stored in `worker_conversations` / `worker_messages` (0027) — different
+// tables, read by different code — so nothing a worker writes can ever appear
+// in `messages`, and therefore never in thread.recentUserTexts, which is the
+// evidence pool the manager-side write guard authorizes against
+// (packages/core/src/capabilities/guard.ts). Without that separation a worker
+// could author the quote that authorizes a direct manager-level write: a
+// one-line privilege escalation with no error and no log.
+//
+// handleInbound and the manager roster are NOT modified by that PRD. If a
+// change here ever needs to touch either, the isolation design has gone wrong.
+//
+// Three things on the worker path are deliberately still deterministic and
+// still involve no model at all, because each is free, instant, and already
+// correct: the check-in button tap, STOP/START, and the PT/ES/EN language
+// keyword. All three sit IN FRONT of the agent.
 //
 // ── TWO RESOLUTION KEYS, IN A FIXED ORDER ──────────────────────────────────
 // Since Stage 2 (issue #28) each of those tables is tried on the PHONE first
@@ -122,6 +152,19 @@ interface WhatsAppMessage {
   // file. Both are accepted — refusing a manager's own m4a of himself talking
   // would be user-hostile — but `voice` is logged so the split stays visible.
   audio?: { id: string; mime_type?: string; voice?: boolean };
+  // An inbound photo. Only ever taken in on the WORKER path, where it is
+  // completion proof; a manager's image still falls to the unsupported-message
+  // triage, unchanged.
+  //
+  // `caption` is the one place WhatsApp lets text and an image arrive together,
+  // and it is the flow the worker agent is built around — "acabei" attached to
+  // the photo of the finished work. Photos sent as their own message with no
+  // caption still work; see runWorkerTurn for what does NOT work, and why.
+  //
+  // The BYTES are never shown to a model. An image can carry text and text is
+  // instructions, so a vision pass here would be a prompt-injection surface
+  // with nothing in front of it (0023, AGENTS.md).
+  image?: { id: string; mime_type?: string; caption?: string; sha256?: string };
   // A tap on an approval card's Aprovar/Rechazar button — an INTERACTIVE reply
   // button, sent by the sink inside the 24h window, always to a MANAGER. Other
   // subtypes (`list_reply`, `nfm_reply`) are logged and ignored.
@@ -154,9 +197,14 @@ interface WhatsAppMessage {
   system?: { type?: string } & Record<string, unknown>;
 }
 
-// The whole worker-facing command surface: reply one of these, alone, and your
-// briefing language changes. Deliberately not a chat — a worker's text never
-// reaches the model (see handleWorkerReply), so this is a lookup, not a parse.
+// Reply one of these, alone, and your briefing language changes.
+//
+// This lookup STAYS IN FRONT OF THE WORKER AGENT and must keep resolving "ES"
+// with zero model calls. It is free, instant, and the command surface every
+// briefing has trained the crew on; routing it through a model would be a
+// regression in cost and latency for the one thing that already works. The
+// agent has `set_my_language` for the sentence a lookup cannot answer
+// ("podes falar comigo em espanhol?").
 //
 // Whole-message exact match only. A worker writing "es que falta material"
 // must not be read as "switch to Spanish", and a substring match would do
@@ -624,21 +672,203 @@ async function handleCheckinTap(
 }
 
 /**
- * A reply from a WORKER — someone with a row in `workers` but no account, no
- * profile, and no conversation with Capo.
+ * Take in the photos attached to ONE inbound message.
+ *
+ * Downloaded synchronously, here and now, exactly as audio is: hop 1's media
+ * URL lasts ~5 minutes, is effectively single-use, and still requires the
+ * Authorization header. There is no retry and nothing is persisted at this
+ * point — the bytes are held in memory for the duration of the turn, because a
+ * task photo's object key contains the TASK id and the task is not known until
+ * `declare_task_done` names one.
+ *
+ * TASK_PHOTO_MAX_BYTES rather than downloadMedia's 16 MiB default. One constant
+ * bounds both intake paths (the manager's browser upload and this one) and it
+ * matches Meta's own 5 MiB cap for an inbound image, which is what makes it the
+ * right number rather than a convenient one.
+ *
+ * Returns an empty array on any failure. The caller then runs the turn anyway
+ * with no photos, and the agent asks for the photo again — which is far better
+ * than dropping the message, because the worker also wrote something.
+ */
+async function takeInboundPhotos(
+  message: WhatsAppMessage,
+  worker: { id: string; company_id: string },
+  accessToken: string,
+): Promise<{ photos: PendingPhoto[]; failed: boolean }> {
+  if (message.type !== 'image' || !message.image?.id) return { photos: [], failed: false };
+
+  try {
+    const media = await downloadMedia(message.image.id, { accessToken, maxBytes: TASK_PHOTO_MAX_BYTES });
+    if (!isTaskPhotoMime(media.mediaType)) {
+      logEvent('whatsapp.worker_photo_rejected', {
+        companyId: worker.company_id,
+        workerId: worker.id,
+        messageId: message.id,
+        mediaType: media.mediaType,
+      });
+      return { photos: [], failed: true };
+    }
+    return {
+      photos: [
+        {
+          // Ours, not Meta's media id. The id is handed to the model, and a
+          // Graph API media id in a model's context is a value it could later
+          // emit somewhere it should not be.
+          id: randomUUID(),
+          mime: media.mediaType,
+          bytes: media.bytes,
+          byteSize: media.byteLength,
+        },
+      ],
+      failed: false,
+    };
+  } catch (err) {
+    logEvent('whatsapp.worker_photo_failed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      messageId: message.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { photos: [], failed: true };
+  }
+}
+
+/**
+ * Run one turn of the RESTRICTED worker agent.
+ *
+ * Everything the manager branch below does — approval labels, the sink that can
+ * render cards, `handleInbound` — is deliberately absent. `workerSink` takes a
+ * plain send config and THROWS if a turn ever produces a proposal, because a
+ * silently dropped card is the bug the channel file's header documents as
+ * already fixed once, and on this path it would also be the only signal that
+ * the two rosters had stopped being isolated.
+ *
+ * ── A KNOWN LIMIT, STATED RATHER THAN HIDDEN ────────────────────────────────
+ * Photos live for exactly one turn. WhatsApp delivers each image as its OWN
+ * message, so "photo, then a separate message saying which task" loses the
+ * photo: by the time the second message arrives, the bytes are gone and the
+ * agent has to ask for it again. The flows that work are the two natural ones —
+ * a photo with a caption, and "acabei" → "manda foto" → photo — and the worker
+ * policy tells the model to ask for a resend rather than pretend otherwise.
+ * Sending three photos as three messages attaches only the last one.
+ *
+ * The fix is a staging area for inbound photos keyed on the worker, with its
+ * own table, RLS and cleanup. That is a design, not a patch, and it is out of
+ * this PRD's scope — but this is the first thing to build if the crew trips
+ * over it.
+ */
+async function runWorkerTurn(
+  db: Db,
+  message: WhatsAppMessage,
+  worker: { id: string; company_id: string },
+  locale: Locale,
+  sendConfig: WhatsAppSendConfig,
+  accessToken: string,
+): Promise<void> {
+  const t = getCatalog(locale).whatsapp;
+  const { photos, failed } = await takeInboundPhotos(message, worker, accessToken);
+  if (failed) {
+    // Say so immediately, before the turn: a worker who is told nothing assumes
+    // the photo landed and stops trying to send it.
+    await sendWhatsAppText(t.workerPhotoFailed, sendConfig).catch(() => {});
+  }
+
+  const text = message.type === 'image' ? (message.image?.caption ?? '') : (message.text?.body ?? '');
+
+  // A photo that failed to download, with no caption to go with it, leaves
+  // nothing for the model to answer. The worker has already been asked to send
+  // it again, so running an agent turn on an empty message would spend a slice
+  // of their daily budget to say nothing.
+  if (!text.trim() && photos.length === 0) return;
+
+  // Declared outside the try so the catch below can defuse it. `delivery` only
+  // settles once mergeAssistantStream has been called; if the turn throws AFTER
+  // that (persisting the reply, say) the promise can still reject later with
+  // nobody awaiting it, which surfaces as an unhandled rejection inside after().
+  let delivery: Promise<void> | undefined;
+
+  try {
+    const sinkPair = workerSink(sendConfig);
+    const sink = sinkPair.sink;
+    delivery = sinkPair.delivery;
+    const result = await handleWorkerInbound({
+      db,
+      companyId: worker.company_id,
+      workerId: worker.id,
+      locale,
+      inbound: { channel: 'whatsapp', text },
+      photos,
+      sink,
+    });
+
+    if (result.outcome === 'budget_exhausted') {
+      // ZERO model calls were made getting here — that is the whole point of
+      // the cap, and the reason it is read before anything else in the loop.
+      logEvent('whatsapp.worker_budget_exhausted', {
+        companyId: worker.company_id,
+        workerId: worker.id,
+        limit: result.limit,
+      });
+      await sendWhatsAppText(t.workerBudgetReached, sendConfig).catch(() => {});
+      return;
+    }
+
+    await delivery;
+    logEvent('whatsapp.worker_agent_answered', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      messageId: message.id,
+      photos: photos.length,
+    });
+  } catch (err) {
+    // See the declaration above: swallow a late rejection from a send that was
+    // already in flight when the turn failed, so it cannot escape as an
+    // unhandled rejection.
+    delivery?.catch(() => {});
+    // 131047 = "re-engagement required": we are outside Meta's 24-hour window.
+    // Log it, stop, and send NOTHING — in particular never a template. A paid
+    // proactive send triggered by inbound text is a cost-amplification vector
+    // an attacker controls directly, and the fallback text below would fail the
+    // same way anyway.
+    if (err instanceof WhatsAppSendError && err.code === 131047) {
+      logEvent('whatsapp.worker_window_expired', {
+        companyId: worker.company_id,
+        workerId: worker.id,
+        messageId: message.id,
+      });
+      return;
+    }
+    logEvent('whatsapp.worker_agent_failed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      messageId: message.id,
+      // The message body is never logged — it is third-party content. An error
+      // string from our own stack is not.
+      error: err instanceof Error ? err.message : String(err),
+    });
+    // Silence after a question reads as "Capo is broken", the same failure the
+    // voice-note path already guards against.
+    await sendWhatsAppText(t.workerAgentFailed, sendConfig).catch(() => {});
+  }
+}
+
+/**
+ * A reply from a WORKER — someone with a row in `workers` but no account and no
+ * profile.
  *
  * Returns true when the sender was recognised as a worker (handled, whatever
  * the outcome), false when they are genuinely unknown.
  *
  * Three deliberate limits:
- *   - The agent NEVER runs here and the text is NEVER persisted to `messages`.
- *     Worker text is third-party input; keeping it out of the thread keeps it
- *     out of the model's context window entirely.
+ *   - The RESTRICTED worker agent runs here (PRD 4) and the text is persisted
+ *     to `worker_messages` — NEVER to `messages`. That separation is what keeps
+ *     worker text out of the manager agent's context and out of the write
+ *     guard's evidence pool. See this file's header.
  *   - `workers.phone` has no unique constraint (unlike `profiles.phone`), so
  *     two companies can hold the same number. On a collision we stay silent
  *     rather than guess a tenant.
- *   - The ack is not politeness. A template send does not open Meta's 24-hour
- *     window — only the recipient's reply does — so acknowledging a worker is
+ *   - The reply is not politeness. A template send does not open Meta's 24-hour
+ *     window — only the recipient's reply does — so answering a worker is
  *     what converts tomorrow's paid template into a free session message.
  */
 async function handleWorkerReply(
@@ -785,18 +1015,55 @@ async function handleWorkerReply(
     return true;
   }
 
-  if (requested && requested !== current) {
-    const { error: updateError } = await db.from('workers').update({ language: requested }).eq('id', worker.id);
-    if (updateError) {
-      console.error('whatsapp: worker language update failed:', updateError.message);
-      return true;
+  // THE LANGUAGE KEYWORD FAST PATH — still in front of the agent, still zero
+  // model calls, and byte-identical in behaviour to what it has always done
+  // (including the case where the requested language is already the current
+  // one: the confirmation is sent either way, because the worker asked and
+  // deserves an answer). The `requested` branch returns, so nothing below runs.
+  if (requested) {
+    if (requested !== current) {
+      const { error: updateError } = await db.from('workers').update({ language: requested }).eq('id', worker.id);
+      if (updateError) {
+        console.error('whatsapp: worker language update failed:', updateError.message);
+        return true;
+      }
     }
+    // Confirmation is always in the language the worker will get from now on.
+    const tl = getCatalog(requested).whatsapp;
+    await sendWhatsAppText(tl.workerLanguageChanged, sendConfig).catch(err => {
+      logEvent('whatsapp.worker_ack_failed', {
+        companyId: worker.company_id,
+        workerId: worker.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    return true;
   }
 
-  // Confirmation is always in the language the worker will get from now on.
-  const locale = requested ?? current;
-  const t = getCatalog(locale).whatsapp;
-  await sendWhatsAppText(requested ? t.workerLanguageChanged : t.workerAck, sendConfig).catch(err => {
+  // ── the restricted agent (PRD 4) ──────────────────────────────────────────
+  // BELOW every deterministic branch above, and that ordering is the design:
+  // the check-in tap, STOP/START and the language keyword are free, instant and
+  // already right, so a model must never be able to get at them first.
+  //
+  // Text and photos only. A voice note from a worker is deliberately NOT
+  // transcribed here — that would add a second model call to every message and
+  // double what the daily budget buys, for a path this PRD does not cover. It
+  // falls to the ack below, as it always has.
+  //
+  // The emptiness checks mirror the manager triage below: a `text` message with
+  // no body and an `image` with no media id are both things Meta can send and
+  // neither is worth a model turn against a daily budget.
+  const hasText = message.type === 'text' && !!message.text?.body?.trim();
+  const hasPhoto = message.type === 'image' && !!message.image?.id;
+  if (hasText || hasPhoto) {
+    await runWorkerTurn(db, message, worker, current, sendConfig, env.accessToken);
+    return true;
+  }
+
+  // Everything else — a sticker, a document, a video, a location. Acknowledged
+  // so the worker is not met with silence, and never given to a model.
+  const t = getCatalog(current).whatsapp;
+  await sendWhatsAppText(t.workerAck, sendConfig).catch(err => {
     logEvent('whatsapp.worker_ack_failed', {
       companyId: worker.company_id,
       workerId: worker.id,
