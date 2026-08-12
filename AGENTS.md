@@ -117,7 +117,8 @@ and say what the alternative would be — he is the one who decides.
   per-tenant visibility sweep over every relation carrying `company_id`, a
   deny-all check on the two send ledgers, and a set of adversarial cross-tenant
   attacks (cross-company FKs, billing self-upgrade, forging a translation undo
-  snapshot, forging a worker check-in answer, the two task-review RPCs, and the
+  snapshot, forging a worker check-in answer, claiming another tenant's worker's
+  BSUID, the two task-review RPCs, and the
   Supabase Storage surface — signing, downloading, listing and writing another
   tenant's task photos, and the worker thread a tenant may read but never
   write). Since #22 it also carries `checkWorkerTextIsolation`, the one check in
@@ -271,14 +272,26 @@ Structural invariants (do not regress):
     matched row; RLS is still the boundary. `workers.whatsapp_user_id` is
     non-unique for the same reason `workers.phone` is, so its lookup carries the
     same `.limit(2)` → `whatsapp.worker_ambiguous` → stay-silent guard.
-    **That guard is load-bearing, not defensive.** 0025 revoked the table-wide
-    UPDATE on `workers` and re-granted a column list excluding this one, but
-    `authenticated` still holds a table-wide INSERT and `workers_insert_company`
-    constrains only `company_id` — so a tenant CAN create a crew row carrying
-    another company's worker's BSUID. Two matches means answering neither, which
-    turns that into silence rather than a wrong tenant. Do not tie-break it.
-    `profiles.whatsapp_user_id` has no equivalent hole: `unique`, and absent
-    from the tenant's column UPDATE grant.
+    **Keep that guard, and do not tie-break it.** It was once the only thing
+    standing between a forged crew row and a wrong-tenant answer: 0025 revoked
+    the table-wide UPDATE and re-granted a column list excluding this one, but
+    `authenticated` still held a table-wide INSERT while `workers_insert_company`
+    constrains only `company_id`, so a tenant could CREATE a crew row carrying
+    another company's worker's BSUID. **0028 closed that** with a column-scoped
+    INSERT grant — the seven columns 0025 allows editing, plus `company_id`.
+    The guard is now defence in depth rather than the boundary itself, and it
+    still earns its place: `workers.whatsapp_user_id` carries no unique
+    constraint, and the service role can produce a duplicate through a bug, a
+    backfill, or a rotation racing an initial capture.
+    `profiles.whatsapp_user_id` has no equivalent hole — but **not for the
+    reason long recorded here.** It is `unique` and absent from the tenant's
+    UPDATE grant, both true; its INSERT grant, however, *does* still include
+    the column. What actually refuses the write is that `profiles` has **no
+    INSERT policy at all**, and under RLS an INSERT with no permissive policy
+    is refused outright (rows come from `complete_onboarding()`, SECURITY
+    DEFINER). That protection is load-bearing and invisible: adding an INSERT
+    policy to `profiles` for any reason reopens the stale grant on the side
+    that has data behind it.
   - **BSUIDs ROTATE.** Changing a phone number regenerates one, and Meta
     announces it on a webhook change whose `field` is `user_id_update` and which
     carries NO `messages` array — so the pre-#28 parser dropped every rotation

@@ -205,8 +205,17 @@ async function seedTenant(label) {
     `push_subscriptions(${label})`,
   );
 
+  // The BSUID is seeded on the service role because that is the only writer
+  // 0028 leaves — and because the adversarial pass needs a REAL victim
+  // identity to try to claim. A literal string invented at the attack site
+  // would test the grant just as well but would stop describing the actual
+  // threat, which is one tenant claiming another tenant's worker.
   const worker = await must(
-    admin.from('workers').insert({ company_id: companyId, name: `Worker ${label}` }).select().single(),
+    admin.from('workers').insert({
+      company_id: companyId,
+      name: `Worker ${label}`,
+      whatsapp_user_id: `PT.9900000000000000000${label}`,
+    }).select().single(),
     `worker(${label})`,
   );
   const job = await must(
@@ -387,7 +396,7 @@ async function seedTenant(label) {
 
   return {
     label, userId, companyId, client,
-    workerId: worker.id, jobId: job.id, taskIds: [task1.id, task2.id],
+    workerId: worker.id, workerBsuid: worker.whatsapp_user_id, jobId: job.id, taskIds: [task1.id, task2.id],
     conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
     photoPath,
     colleagueId, ownNotificationId, colleagueNotificationId,
@@ -1209,6 +1218,69 @@ async function runAdversarial(attacker, victim) {
       error != null,
       error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — boundary broken',
     );
+  }
+
+  // ── 0028: claiming another tenant's worker identity ───────────────────────
+  // The row is ENTIRELY well-formed as a tenant row: company_id is the
+  // attacker's own, so workers_insert_company passes and RLS has nothing to
+  // say. The only thing standing between this and a successful write is the
+  // column INSERT grant — which is why this is a grant-layer check aimed at
+  // the attacker's OWN company, not a cross-tenant boundary check.
+  //
+  // What it would buy an attacker if it landed is worth stating, because it is
+  // NOT data: handleWorkerReply resolves a BSUID with .limit(2) and answers
+  // neither party on two matches, so a forged row silences the victim's
+  // replies rather than redirecting them. A denial of service against one
+  // worker's inbound messages, not a leak. Closing the grant demotes the
+  // .limit(2) guard from load-bearing to defence in depth; it stays either way,
+  // because workers.whatsapp_user_id carries no unique constraint and the
+  // service role can still produce a duplicate.
+  //
+  // Assert the victim's row is untouched as well as the error: a refusal that
+  // somehow still wrote would be the worst possible pass.
+  {
+    const { error } = await db.from('workers').insert({
+      company_id: attacker.companyId,
+      name: 'Forged identity',
+      whatsapp_user_id: victim.workerBsuid,
+    });
+    const { data: claimants } = await admin
+      .from('workers')
+      .select('id')
+      .eq('whatsapp_user_id', victim.workerBsuid);
+    check(
+      "adversarial: tenant cannot claim another worker's WhatsApp identity",
+      error != null && (claimants ?? []).length === 1,
+      error
+        ? `rejected (${error.code ?? 'err'})`
+        : `ACCEPTED — ${(claimants ?? []).length} crew rows now claim that identity`,
+    );
+    if (!error) {
+      await admin.from('workers').delete()
+        .eq('company_id', attacker.companyId).eq('name', 'Forged identity');
+    }
+  }
+
+  // POSITIVE CONTROL. Every check in this file asserts a REFUSAL, so revoking
+  // the INSERT grant outright — the exact way 0028 can go wrong — would pass
+  // the attack above and leave a manager unable to add anyone to their crew.
+  // This is the `add_worker` shape verbatim, consent timestamp included:
+  // #39's own suggested column list omitted whatsapp_opt_in_at, and without
+  // this control that omission would have shipped green.
+  {
+    const { data, error } = await db.from('workers').insert({
+      company_id: attacker.companyId,
+      name: 'Novo membro',
+      trade: 'pedreiro',
+      phone: '+351912345678',
+      whatsapp_opt_in_at: new Date().toISOString(),
+    }).select('id').single();
+    check(
+      'adversarial: manager can still add a crew member with consent (positive control)',
+      !error && data?.id != null,
+      error ? `REFUSED (${error.code ?? 'err'}) — add_worker is broken` : 'accepted',
+    );
+    if (data?.id) await admin.from('workers').delete().eq('id', data.id);
   }
 }
 
