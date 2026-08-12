@@ -97,3 +97,68 @@ export function buildPushPayload(input: {
     tag: input.notificationId,
   };
 }
+
+/**
+ * Whether a push endpoint URL is safe for OUR server to POST to later.
+ *
+ * This is the guard against server-side request forgery: an authenticated
+ * tenant could otherwise register a URL like http://localhost:9200/ or a
+ * cloud metadata service address (169.254.169.254) and make Capo's server
+ * issue a request to an internal host on their behalf when the dispatcher
+ * later sends to it. Only HTTPS endpoints with real DNS names are valid — a
+ * legitimate push service always has both. Do not add an allowlist of known
+ * push-service hostnames; they change and add frequently, and a stale
+ * allowlist would silently break users' real registrations, which is worse
+ * than the attack being prevented here.
+ *
+ * Lives here rather than in apps/web/app/api/push/route.ts, its only caller,
+ * because it is pure and dependency-free — exactly what `pnpm push-check`
+ * exists for. That matters concretely: this predicate shipped two live
+ * bypasses during review (first accepting "https://localhost./x", then
+ * "https://localhost../x") before a third attempt got it right, and nothing
+ * was asserting it at the time. See scripts/push-check.mts for the generated
+ * coverage that now exists specifically because of that history.
+ */
+export function isValidPushEndpoint(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+
+    // Scheme must be exactly https.
+    if (parsed.protocol !== 'https:') return false;
+
+    const hostname = parsed.hostname;
+    if (!hostname) return false;
+
+    // A trailing dot is valid FQDN syntax and resolves identically to the
+    // same name without one, so "localhost." (or "localhost..") would
+    // otherwise walk straight past an exact-match check below. Earlier
+    // drafts of this function tried to STRIP trailing dots before comparing
+    // — first one, then "all trailing dots" — and each version shipped a
+    // bypass: normalising is exactly the kind of logic that is easy to get
+    // subtly wrong and hard to notice you got wrong, because the hostname
+    // LOOKS handled either way. Rejecting outright needs no such reasoning: a
+    // real push service endpoint never has a trailing dot, so any hostname
+    // that does is refused, full stop, before anything below runs.
+    if (hostname.endsWith('.')) return false;
+
+    const host = hostname.toLowerCase();
+
+    // Reject localhost.
+    if (host === 'localhost') return false;
+
+    // Reject .local and .internal domains.
+    if (host.endsWith('.local') || host.endsWith('.internal')) return false;
+
+    // Reject IPv4 and IPv6 literals. IPv6 in a URL is bracket-wrapped, e.g.
+    // https://[::1]/x. A bare IPv4 shows up as a dotted quad — and the URL
+    // parser itself folds other IPv4 spellings (decimal, e.g.
+    // "2130706433", or a trailing-dotted "127.0.0.1.") into that same
+    // dotted-quad form before this function ever sees them, so this one
+    // check also covers those.
+    if (host.includes(':') || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return false;
+
+    return true;
+  } catch {
+    return false;
+  }
+}

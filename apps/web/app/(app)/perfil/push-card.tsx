@@ -58,14 +58,20 @@ export default function PushCard({
     let cancelled = false;
 
     (async () => {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
-        if (!cancelled) setState('unsupported');
-        return;
-      }
-      // 'ios' already means NOT standalone; Safari delivers push only to a
-      // home-screen install.
+      // Checked BEFORE the capability probe below, deliberately: WebKit gates
+      // PushManager/Notification behind a home-screen install, so on an
+      // iPhone in a plain Safari tab those APIs are likely just undefined —
+      // the capability check below would catch that first and render
+      // nothing, silently skipping the one state this screen has specifically
+      // for that device. 'ios' already means NOT standalone (checked first in
+      // detectPlatform()), so no other platform's behaviour changes by moving
+      // this above the probe.
       if (platform === 'ios') {
         if (!cancelled) setState('ios-needs-install');
+        return;
+      }
+      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+        if (!cancelled) setState('unsupported');
         return;
       }
       if (Notification.permission === 'denied') {

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getApiAuth } from '@capo/db/session';
 import { getDb } from '@capo/db/client';
+import { isValidPushEndpoint } from '@capo/core/channels/push-rules';
 import { logEvent } from '@/lib/log';
 
 // Registering and unregistering one phone.
@@ -14,52 +15,10 @@ import { logEvent } from '@/lib/log';
 // Deliberately NOT behind assertNotBlocked, like markAllRead: a lapsed
 // subscription blocks changing site data, and it must never trap someone into
 // alerts they cannot switch off.
-
-// Validate that an endpoint URL is safe for our server to POST to later.
-// This prevents server-side request forgery: an authenticated tenant could
-// otherwise register a URL like http://localhost:9200/ or a cloud metadata
-// service address and make Capo's server issue requests to internal hosts.
-// Only HTTPS endpoints with real DNS names are valid — a legitimate push
-// service always has both. Do not add an allowlist of known push-service
-// hostnames; they change and add frequently, and a stale allowlist would
-// silently break users' real registrations, which is worse than the attack
-// we are preventing here.
-function isValidPushEndpoint(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-
-    // Scheme must be exactly https.
-    if (parsed.protocol !== 'https:') return false;
-
-    const hostname = parsed.hostname;
-    if (!hostname) return false;
-
-    // A real push service never sends a trailing dot. Reject any hostname that
-    // does, as it is either a mistake or an attempt to bypass other checks. This
-    // is also why we normalise: a trailing dot is valid FQDN syntax and resolves
-    // identically, so "localhost." would otherwise walk straight past an
-    // exact-match check. The + is load-bearing: strip all trailing dots
-    // exhaustively, not just one.
-    if (hostname.endsWith('.')) return false;
-
-    const host = hostname.toLowerCase();
-
-    // Reject localhost.
-    if (host === 'localhost') return false;
-
-    // Reject .local and .internal domains.
-    if (host.endsWith('.local') || host.endsWith('.internal')) return false;
-
-    // Reject IPv4 and IPv6 literals. IPv6 in a URL is bracket-wrapped,
-    // e.g. https://[::1]/x. A bare IPv4 shows up as a dotted quad.
-    // Both are invalid for a legitimate push service endpoint.
-    if (host.includes(':') || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return false;
-
-    return true;
-  } catch {
-    return false;
-  }
-}
+//
+// isValidPushEndpoint (the SSRF guard on what this route will later POST to)
+// lives in @capo/core/channels/push-rules — pure, dependency-free, and
+// asserted by `pnpm push-check` — rather than here. See that file for why.
 
 const subscribeSchema = z.object({
   endpoint: z
@@ -114,11 +73,15 @@ export async function POST(req: Request) {
   // out, leaving a row this manager can neither see nor delete. Presenting the
   // endpoint IS the capability: it is a high-entropy URL that only that
   // device's browser knows. An attacker who obtains an endpoint can silently
-  // unsubscribe the previous owner and cause that physical device to receive
-  // their own tenant's alerts instead. This is accepted because Web Push
-  // offers no device-ownership proof — the endpoint is the only credential
-  // that exists. Better to have an endpoint swapped than require a device you
-  // cannot prove owning to never register again.
+  // unsubscribe the previous owner — but cannot read their alerts by doing so.
+  // The reclaim inserts the ATTACKER's own p256dh/auth keys, so a later push is
+  // sealed to a key pair the victim's browser never held and its service
+  // worker cannot decrypt; delivery is by endpoint, not by key, so the
+  // attacker's own devices never receive it either. The realistic outcome is
+  // silence for the victim, not disclosure to the attacker. This is accepted
+  // because Web Push offers no device-ownership proof — the endpoint is the
+  // only credential that exists. Better to have an endpoint go silent than
+  // require a device you cannot prove owning to never register again.
   if (error?.code === '23505') {
     // Reclaim the endpoint on the service role. Row-level security
     // structurally cannot let one profile delete another's row, so some

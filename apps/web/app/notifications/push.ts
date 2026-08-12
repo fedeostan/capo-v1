@@ -137,12 +137,20 @@ export async function dispatchPushes(
     });
 
     // An unrenderable kind — a row from a newer deploy reaching an older
-    // bundle. Stamped rather than left pending: it will never become
-    // renderable to THIS bundle, so retrying is pointless, and the inbox
-    // already degrades gracefully on screen.
+    // bundle. During a Vercel rollout BOTH bundles serve requests at once, so
+    // "unrenderable to THIS bundle" does not mean "unrenderable, full stop":
+    // if an old instance's dispatch runs first and stamps the row, the new
+    // bundle — whose dispatch might run on the very next request — never
+    // gets the chance to push it at all, and nobody is buzzed. So this is
+    // deliberately left UNSTAMPED, same as a transient send failure, rather
+    // than treated as done. Left alone forever, though, that would circle
+    // indefinitely after a rollback that never ships the renderer — so it is
+    // bounded the same way a failed send is bounded: bumpAttempts caps it at
+    // PUSH_MAX_ATTEMPTS sweeps (about 30 minutes, comfortably longer than a
+    // rollout) instead of either vanishing immediately or chasing forever.
     if (!payload) {
       skipped += 1;
-      await stamp(db, row.id);
+      await bumpAttempts(db, row);
       continue;
     }
 
@@ -157,36 +165,42 @@ export async function dispatchPushes(
         // Believe it the first time. A registration the push service calls
         // dead will never deliver again, and retrying it forever is how this
         // table stops being small.
-        await db.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+        const { error: deleteError } = await db
+          .from('push_subscriptions')
+          .delete()
+          .eq('endpoint', sub.endpoint);
+        if (deleteError) {
+          // Not fatal to this row: worst case a dead registration lingers and
+          // gets tried again next sweep, which just costs one more failed
+          // send. Still worth its own line — a delete that keeps failing for
+          // the same endpoint is how this table stops staying small.
+          logEvent('notifications.push_subscription_delete_failed', {
+            id: row.id,
+            companyId: row.company_id,
+            error: deleteError.message,
+          });
+        }
       }
       if (outcome === 'retry') {
-        await db
+        const { error: failError } = await db
           .from('push_subscriptions')
           .update({ last_failed_at: new Date().toISOString() })
           .eq('endpoint', sub.endpoint);
+        if (failError) {
+          logEvent('notifications.push_subscription_mark_failed_failed', {
+            id: row.id,
+            companyId: row.company_id,
+            error: failError.message,
+          });
+        }
       }
     }
 
     if (decideRowState(outcomes) === 'stamp') {
-      await stamp(db, row.id);
+      await stamp(db, row);
     } else {
       retried += 1;
-      const attempts = row.push_attempts + 1;
-      await db.from('notifications').update({ push_attempts: attempts }).eq('id', row.id);
-      // Deliberately left UNstamped even once attempts hits PUSH_MAX_ATTEMPTS:
-      // 0026's own comment defines an unstamped row as "an undelivered
-      // parcel", and this row genuinely was never delivered — stamping it here
-      // would make that comment a lie about a row that just happened to run
-      // out of tries. The cost is that abandoned rows stay in
-      // notifications_push_pending_idx and get re-read (then filtered out by
-      // the `lt('push_attempts', PUSH_MAX_ATTEMPTS)` above) on every future
-      // sweep. Reaching PUSH_MAX_ATTEMPTS needs three consecutive transient
-      // failures for one recipient, so that population stays tiny — the inbox
-      // and the unread strip still carry the notification either way, so the
-      // manager is un-buzzed, never uninformed.
-      if (attempts >= PUSH_MAX_ATTEMPTS) {
-        logEvent('notifications.push_abandoned', { id: row.id, companyId: row.company_id });
-      }
+      await bumpAttempts(db, row);
     }
   }
 
@@ -203,8 +217,61 @@ export async function dispatchPushes(
   });
 }
 
-async function stamp(db: ReturnType<typeof getDb>, id: string): Promise<void> {
-  await db.from('notifications').update({ pushed_at: new Date().toISOString() }).eq('id', id);
+/** Mark a row delivered. On failure this does NOT retry the write itself —
+ *  see bumpAttempts below, which is what keeps a persistently failing stamp
+ *  from circling forever. */
+async function stamp(db: ReturnType<typeof getDb>, row: PendingRow): Promise<void> {
+  const { error } = await db
+    .from('notifications')
+    .update({ pushed_at: new Date().toISOString() })
+    .eq('id', row.id);
+  if (error) {
+    // The stamp IS the delivery record. If writing it fails, the row stays
+    // unstamped even though the push already went out, and every future
+    // sweep re-sends it to a phone that already has it — undetectably,
+    // unless this is bounded the same way a failed SEND is bounded. Bumping
+    // push_attempts here caps a persistently failing stamp write at
+    // PUSH_MAX_ATTEMPTS sweeps instead of retrying it indefinitely.
+    logEvent('notifications.push_stamp_failed', {
+      id: row.id,
+      companyId: row.company_id,
+      error: error.message,
+    });
+    await bumpAttempts(db, row);
+  }
+}
+
+/** Bump push_attempts for a row that was not (successfully) delivered this
+ *  round — either a transient send failure, an unrenderable kind (see the
+ *  comment at the `!payload` branch above), or a stamp write that itself
+ *  failed. Deliberately never stamps `pushed_at` here: 0026's own comment
+ *  defines an unstamped row as "an undelivered parcel", and every row that
+ *  reaches this function genuinely was not delivered — stamping it would
+ *  make that comment a lie about a row that just happened to run out of
+ *  tries. The cost is that an abandoned row stays in
+ *  notifications_push_pending_idx and gets re-read (then filtered out by the
+ *  `lt('push_attempts', PUSH_MAX_ATTEMPTS)` query above) on every future
+ *  sweep — the inbox and the unread strip still carry the notification
+ *  either way, so the manager is un-buzzed, never uninformed. */
+async function bumpAttempts(db: ReturnType<typeof getDb>, row: PendingRow): Promise<void> {
+  const attempts = row.push_attempts + 1;
+  const { error } = await db.from('notifications').update({ push_attempts: attempts }).eq('id', row.id);
+  if (error) {
+    // Worse than a failed stamp: this row now has no bound at all until the
+    // NEXT sweep tries the same write again with the same push_attempts
+    // value read from the DB, so it is not stuck — just undercounted for one
+    // round. Logged so a write that keeps failing for the same row is at
+    // least visible.
+    logEvent('notifications.push_attempts_update_failed', {
+      id: row.id,
+      companyId: row.company_id,
+      error: error.message,
+    });
+    return;
+  }
+  if (attempts >= PUSH_MAX_ATTEMPTS) {
+    logEvent('notifications.push_abandoned', { id: row.id, companyId: row.company_id });
+  }
 }
 
 /** Review id → (task id, company id), so the tap lands where approve/reject

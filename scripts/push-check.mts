@@ -14,6 +14,7 @@ import {
   buildPushPayload,
   classifyPushStatus,
   decideRowState,
+  isValidPushEndpoint,
   pushTargetUrl,
   PUSH_MAX_ATTEMPTS,
 } from '@capo/core/channels/push-rules';
@@ -81,6 +82,47 @@ eq(
   buildPushPayload({ notificationId: 'n3', appName: 'Capo', headline: '   ', taskId: 't1' }),
   null,
 );
+
+// ── isValidPushEndpoint ────────────────────────────────────────────────────
+// The SSRF guard on what apps/web/app/api/push/route.ts will later POST to.
+// It shipped two live bypasses during review — first accepting
+// "https://localhost./x", then "https://localhost../x" — before a third
+// attempt got it right, and neither was caught by anything until now.
+// Generate the hostile cases rather than hand-listing them, so a fourth
+// regression on any of these hosts, at any number of trailing dots, cannot
+// slip through unnoticed.
+const HOSTILE_HOSTS = ['localhost', 'foo.internal', 'foo.local', '127.0.0.1', '169.254.169.254'];
+const TRAILING_DOTS = [0, 1, 2, 3, 5];
+for (const host of HOSTILE_HOSTS) {
+  for (const dots of TRAILING_DOTS) {
+    const url = `https://${host}${'.'.repeat(dots)}/x`;
+    check(`isValidPushEndpoint rejects ${url}`, isValidPushEndpoint(url) === false);
+  }
+}
+
+const REAL_PUSH_SERVICES = [
+  'https://fcm.googleapis.com/fcm/send/abc123',
+  'https://updates.push.services.mozilla.com/wpush/v2/abc123',
+  'https://web.push.apple.com/QAbc123',
+];
+for (const url of REAL_PUSH_SERVICES) {
+  check(`isValidPushEndpoint accepts real push service ${url}`, isValidPushEndpoint(url) === true);
+}
+
+check('isValidPushEndpoint rejects http scheme', isValidPushEndpoint('http://fcm.googleapis.com/x') === false);
+check(
+  'isValidPushEndpoint rejects a userinfo-smuggled loopback',
+  isValidPushEndpoint('https://evil@127.0.0.1/x') === false,
+);
+check(
+  'isValidPushEndpoint rejects a decimal-encoded loopback IP',
+  isValidPushEndpoint('https://2130706433/x') === false,
+);
+check(
+  'isValidPushEndpoint rejects an IPv6 loopback literal',
+  isValidPushEndpoint('https://[::1]/x') === false,
+);
+check('isValidPushEndpoint rejects a non-URL string', isValidPushEndpoint('not-a-url') === false);
 
 // ── constants ──────────────────────────────────────────────────────────────
 eq('attempt cap is 3', PUSH_MAX_ATTEMPTS, 3);
