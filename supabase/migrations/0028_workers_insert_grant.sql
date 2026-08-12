@@ -1,0 +1,92 @@
+-- workers.whatsapp_user_id: close the INSERT door 0025 left open on the UPDATE
+-- side. Issue #39, follow-up from #28.
+--
+-- 0025 revoked the table-wide UPDATE on `workers` and re-granted a column list
+-- that deliberately excludes whatsapp_user_id, so a tenant cannot EDIT the
+-- WhatsApp identity code on a crew row. But `authenticated` still held the
+-- table-wide INSERT that Supabase grants by default, and workers_insert_company
+-- constrains one column and one only:
+--
+--   with check (company_id = (select private.current_company_id()))
+--
+-- So a tenant could CREATE a crew row in its own company carrying any
+-- whatsapp_user_id it liked, including one belonging to another company's
+-- worker. Same column, same authority, different verb.
+--
+-- ── what that bought an attacker, stated honestly ───────────────────────────
+-- Not data. Since #28, handleWorkerReply resolves a BSUID with .limit(2) and
+-- answers NEITHER party on two matches, so a forged row cannot make us reply to
+-- the attacker; and the worker acknowledgement carries no tenant data even if it
+-- did. What it bought was silence: the victim's own replies stop being
+-- acknowledged. A denial of service against one worker's inbound messages.
+--
+-- It also required knowing a target BSUID, which is revealed to us only on an
+-- inbound message and is displayed nowhere in the product. This migration
+-- therefore closes a door deliberately rather than responding to an incident.
+
+-- ── the grant ──────────────────────────────────────────────────────────────
+-- Eight columns: the seven 0025 already lets a tenant EDIT, plus company_id.
+-- That is the whole rule, and keeping it stateable in one sentence is the
+-- point — a future reader can check this list against 0025's mechanically.
+--
+-- Enumerated against the LIVE schema on 2026-08-12 (11 columns on `workers`),
+-- not against the snippet in #39, because column grants are NOT ADDITIVE: this
+-- revoke replaces the entire set, and anything omitted silently loses write
+-- access. 0014 and 0025 both document the same trap, and #39's own suggested
+-- list fell into it — it omitted the two consent timestamps, which add_worker
+-- writes whenever a manager attests that a worker agreed to WhatsApp
+-- ("adiciona o Zé, ele concordou em receber mensagens"). Shipping that list
+-- would have failed with 42501 on the one INSERT path that exists.
+--
+-- Excluded, and why:
+--
+--   whatsapp_user_id  the column this migration is about. Written only by the
+--                     service role — captureBsuid and applyBsuidRotation in
+--                     apps/web/app/api/whatsapp/route.ts — which bypasses
+--                     grants entirely and is unaffected by this file.
+--   id, created_at    database-generated defaults. No code path supplies
+--                     either, and a tenant choosing its own primary key buys
+--                     nothing it does not already have.
+--
+-- `active` and `language` widen no authority by being here: both are already in
+-- 0025's UPDATE list, so a tenant that could not set them on INSERT could set
+-- them a millisecond later. Including them keeps the rule simple and avoids a
+-- future breakage in exchange for nothing.
+--
+-- anon is revoked and NOT re-granted. Every policy on `workers` is `to
+-- authenticated`, so RLS already refuses a logged-out INSERT — but that is one
+-- lock, and there is no reason for the grant to be the one that is missing.
+--
+-- The one tenant-path INSERT into `workers` anywhere in the repo is add_worker
+-- (packages/core/src/capabilities/workers.ts), reached through chat and running
+-- on the RLS-scoped user client. Note for anyone re-verifying: /perfil has NO
+-- add-crew-member form — its Equipa card is read-only — so the positive-path
+-- check is the agent tool, not that screen. #39 says otherwise and is wrong.
+revoke insert on table workers from anon, authenticated;
+grant insert (company_id, name, trade, phone, active, language,
+              whatsapp_opt_in_at, whatsapp_opt_out_at)
+  on table workers to authenticated;
+
+-- ── what this does NOT do ──────────────────────────────────────────────────
+-- The .limit(2) → whatsapp.worker_ambiguous → stay-silent guard in
+-- handleWorkerReply STAYS, and AGENTS.md's invariant about it is edited rather
+-- than deleted. It is no longer the only thing standing between a forged row
+-- and a wrong-tenant answer, but workers.whatsapp_user_id still carries no
+-- unique constraint, and the service role can still produce a duplicate through
+-- a bug, a backfill, or a rotation racing an initial capture. Do not tie-break
+-- it.
+--
+-- A partial unique index on workers.whatsapp_user_id would make that ambiguity
+-- structurally impossible, and is safe to add once this grant is closed. It is
+-- deliberately NOT in this migration: one idea per file, and it is a second
+-- thing that can go wrong on a live table.
+--
+-- `profiles` is NOT touched, and the reason it is safe is worth writing down
+-- because it is not the reason previously recorded. Its tenant INSERT grant
+-- DOES still include whatsapp_user_id. What refuses the write is that
+-- `profiles` has no INSERT POLICY at all — only profiles_select_own and
+-- profiles_update_own — and under RLS an INSERT with no permissive policy is
+-- refused outright. Rows are created by complete_onboarding(), which is
+-- SECURITY DEFINER and bypasses it. That protection is load-bearing and
+-- invisible: the day anyone adds an INSERT policy to `profiles`, the stale
+-- grant becomes a hole on the side that actually has data behind it.
