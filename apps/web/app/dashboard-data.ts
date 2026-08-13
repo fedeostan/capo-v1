@@ -10,13 +10,13 @@ import type { AuthContext } from '@capo/db/session';
 import type { Tables } from '@capo/db/types';
 import { TASK_PHOTO_BUCKET } from '@capo/core/media/photos';
 import { getCatalog } from '@capo/i18n/catalog';
-import type { BoardTask, DashboardObra, MaterialsGroup } from '@capo/ui/dashboard-ui';
+import type { BoardTask, DashboardObra, MaterialsGroup, MaterialsTask } from '@capo/ui/dashboard-ui';
 // Type-only: keeps the 'use client' markdown renderer inside task-detail.tsx
 // out of this module's graph.
 import type { TaskDetailJob, TaskDetailWorker } from '@capo/ui/task-detail';
 import type { TarefasFilters } from '@/app/(app)/tarefas/filters';
 
-export type { BoardTask, DashboardObra, MaterialsGroup, TaskDetailJob, TaskDetailWorker };
+export type { BoardTask, DashboardObra, MaterialsGroup, MaterialsTask, TaskDetailJob, TaskDetailWorker };
 
 export type GroupBy = 'date' | 'obra';
 
@@ -329,7 +329,9 @@ export async function loadMaterials(
   horizon: 'amanha' | 'semana',
   today: string | null,
 ): Promise<MaterialsGroup[]> {
-  let query = db.from('task_board').select('job_id, job_name, title, materials').eq('company_id', companyId);
+  // `id` joined the select for issue #60: a material can now be edited from
+  // this screen, and every write has to name the task row it belongs to.
+  let query = db.from('task_board').select('id, job_id, job_name, title, materials').eq('company_id', companyId);
 
   if (horizon === 'amanha') {
     query = query.eq('active_tomorrow', true);
@@ -348,25 +350,44 @@ export async function loadMaterials(
 
   const { data } = await query.order('job_name', { ascending: true });
 
-  const byJob = new Map<string, { obraId: string | null; items: Map<string, Set<string>> }>();
-  for (const task of data ?? []) {
-    if (!task.materials?.length) continue;
-    const key = task.job_name ?? '';
-    const group = byJob.get(key) ?? { obraId: task.job_id, items: new Map<string, Set<string>>() };
-    for (const material of task.materials) {
-      const forTasks = group.items.get(material) ?? new Set<string>();
-      if (task.title) forTasks.add(task.title);
+  // Two collections per obra, and the difference matters (issue #60):
+  //   * `items` is still built only from tasks that ALREADY carry materials —
+  //     the buy-tonight list is unchanged, and the amber banner on /tarefas
+  //     counts these, so its number cannot drift.
+  //   * `tasks` holds every task of the obra in this horizon, materials or
+  //     not, because a task with an empty list is exactly the one a manager
+  //     wants to add to. Filtering it out would make the obra unaddable.
+  // The consequence to know about: an obra with work tomorrow and nothing
+  // recorded now appears as an empty group rather than not at all. That is
+  // deliberate — otherwise "add a material" is only reachable for obras that
+  // already have one.
+  const byJob = new Map<
+    string,
+    { obraId: string | null; items: Map<string, Map<string, MaterialsTask>>; tasks: Map<string, MaterialsTask> }
+  >();
+  for (const row of data ?? []) {
+    // The view types every column nullable. A row with no id could not be
+    // written to anyway, and a row with no title has nothing to show.
+    if (!row.id || !row.title) continue;
+    const key = row.job_name ?? '';
+    const group = byJob.get(key) ?? { obraId: row.job_id, items: new Map(), tasks: new Map() };
+    const task: MaterialsTask = { id: row.id, title: row.title, materials: row.materials ?? [] };
+    group.tasks.set(task.id, task);
+    for (const material of row.materials ?? []) {
+      const forTasks = group.items.get(material) ?? new Map<string, MaterialsTask>();
+      forTasks.set(task.id, task);
       group.items.set(material, forTasks);
     }
     byJob.set(key, group);
   }
 
-  return [...byJob.entries()].map(([obraName, { obraId, items }]) => ({
+  return [...byJob.entries()].map(([obraName, { obraId, items, tasks }]) => ({
     obraId,
     obraName,
     items: [...items.entries()]
-      .map(([material, forTasks]) => ({ material, forTasks: [...forTasks] }))
+      .map(([material, forTasks]) => ({ material, forTasks: [...forTasks.values()] }))
       .sort((a, b) => a.material.localeCompare(b.material)),
+    tasks: [...tasks.values()].sort((a, b) => a.title.localeCompare(b.title)),
   }));
 }
 

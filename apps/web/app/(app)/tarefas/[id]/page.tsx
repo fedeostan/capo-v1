@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { getCatalog } from '@capo/i18n/catalog';
 import { formatShortDate, ScreenShell } from '@capo/ui/dashboard-ui';
 import { TaskDetail } from '@capo/ui/task-detail';
 import {
@@ -9,6 +10,7 @@ import {
   loadTaskPhotos,
 } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
+import MaterialsEditor from '@/app/(app)/_tasks/materials-editor';
 import ReviewActions from '@/app/(app)/_tasks/review-actions';
 import TaskActions from '@/app/(app)/_tasks/task-actions';
 import PullToRefresh from '@/app/pull-to-refresh';
@@ -85,6 +87,21 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
               // @capo/ui/dashboard-ui and pulling that module into a client
               // component would drag the whole board with it.
               dateLabel={assignable.date ? formatShortDate(assignable.date, locale) : null}
+              locale={locale}
+            />
+          )}
+          // One candidate task by definition, so the editor opens straight on
+          // the list instead of asking which task it is for.
+          renderMaterials={() => (
+            <MaterialsEditor
+              tasks={[
+                {
+                  id: detail.task.id,
+                  title: detail.task.title,
+                  materials: detail.task.materials ?? [],
+                },
+              ]}
+              label={getCatalog(locale).screens.materialsEdit.edit}
               locale={locale}
             />
           )}

@@ -2,8 +2,9 @@ import type { Metadata } from 'next';
 import { requireAuth } from '@capo/db/session';
 import { getCatalog } from '@capo/i18n/catalog';
 import { loadDayLabel, loadMaterials, loadToday } from '@/app/dashboard-data';
-import { MaterialsList, ScreenShell } from '@capo/ui/dashboard-ui';
+import { MaterialsList, ScreenShell, type MaterialsGroup } from '@capo/ui/dashboard-ui';
 import PullToRefresh from '@/app/pull-to-refresh';
+import MaterialsEditor from '@/app/(app)/_tasks/materials-editor';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,7 +41,31 @@ export default async function MateriaisPage() {
       ...group,
       items: group.items.filter(item => !tomorrowKeys.has(`${group.obraName}::${item.material}`)),
     }))
+    // The week section is a surplus list: a group left with nothing after the
+    // tomorrow items are removed has nothing to say. Adding still happens from
+    // the tomorrow section, which now carries every obra with work.
     .filter(group => group.items.length > 0);
+
+  const te = t.screens.materialsEdit;
+
+  // Both sections get the same two controls, so they are built once. Materials
+  // hang off a TASK, never off an obra — so the "add" control is handed the
+  // group's whole task list and the editor asks which one when there is more
+  // than one. A material already on the list is tappable too: it knows exactly
+  // which tasks carry it, so it pre-selects when that is a single task and
+  // otherwise asks, same as adding.
+  const groupAction = (group: MaterialsGroup) => (
+    <MaterialsEditor tasks={group.tasks} label={te.add} locale={ctx.locale} />
+  );
+  const itemAction = (item: MaterialsGroup['items'][number]) => (
+    <MaterialsEditor
+      tasks={item.forTasks}
+      label={item.material}
+      variant="inline"
+      initialTaskId={item.forTasks.length === 1 ? item.forTasks[0].id : null}
+      locale={ctx.locale}
+    />
+  );
 
   return (
     <ScreenShell title={t.screens.materials.title} subtitle={t.screens.materials.subtitle}>
@@ -57,6 +82,11 @@ export default async function MateriaisPage() {
             empty={t.screens.materials.emptyTomorrow}
             noJobLabel={t.dashboard.noJob}
             forLabel={t.screens.materials.forTasks}
+            countLabel={te.groupCount}
+            emptyGroupLabel={te.groupEmpty}
+            seeJobLabel={te.seeJob}
+            renderGroupAction={groupAction}
+            renderItem={itemAction}
           />
         </section>
 
@@ -71,6 +101,10 @@ export default async function MateriaisPage() {
               empty=""
               noJobLabel={t.dashboard.noJob}
               forLabel={t.screens.materials.forTasks}
+              countLabel={te.groupCount}
+              seeJobLabel={te.seeJob}
+              renderGroupAction={groupAction}
+              renderItem={itemAction}
             />
           </section>
         )}

@@ -90,54 +90,137 @@ export function ScreenShell({
   );
 }
 
+/**
+ * One task a material is attached to — or could be attached to.
+ *
+ * It carries the task's WHOLE current material list because `tasks.materials`
+ * is a single `text[]` column: an editor can only write it by replacing it, so
+ * it has to start from what is already there. Ids, not just titles: "add a
+ * material here" has to resolve to a specific task row (issue #60).
+ */
+export interface MaterialsTask {
+  id: string;
+  title: string;
+  materials: string[];
+}
+
 export interface MaterialsGroup {
   obraId: string | null;
   obraName: string;
-  items: { material: string; forTasks: string[] }[];
+  items: { material: string; forTasks: MaterialsTask[] }[];
+  /** Every task of this obra inside the horizon, including the ones carrying
+   *  no materials at all — those are exactly the tasks a manager wants to add
+   *  a material TO, so they cannot be filtered out the way `items` is. */
+  tasks: MaterialsTask[];
 }
+
+/**
+ * Above this many obra groups the list opens collapsed.
+ *
+ * Federico's complaint verbatim: four materials on one site is fine, seven
+ * sites means "you need to scroll like crazy". Three groups fit on a phone
+ * screen and collapsing them would cost a tap for nothing; past three the
+ * headers become the index of the page, which is the thing worth seeing first.
+ */
+const COLLAPSE_ABOVE = 3;
 
 // Materiais — the anticipation screen. 00_VISION/02-solution-mvp.md calls this
 // the killer feature: "check tomorrow's materials today" is what stops the
 // manager being the one who drives to the supplier at 08:00. `tasks.materials`
 // has existed since migration 0010 and nothing ever read it.
+//
+// Collapsing is native <details>/<summary>, not client state, for the same
+// reason the /perfil advanced block is: it works before hydration, which on a
+// cold PWA over a building-site connection is most of the time the manager
+// actually spends looking at it. React only rewrites the `open` attribute when
+// the computed value CHANGES, so a group the manager collapsed by hand stays
+// collapsed across a server-action revalidation.
 export function MaterialsList({
   groups,
   empty,
   noJobLabel,
   forLabel,
+  countLabel,
+  emptyGroupLabel,
+  seeJobLabel,
+  renderGroupAction,
+  renderItem,
 }: {
   groups: MaterialsGroup[];
   empty: string;
   noJobLabel: string;
   /** e.g. "for: Tiling, Grouting" — says WHY each item is on the list. */
   forLabel: (tasks: string[]) => string;
+  /** e.g. "4 materiais" — what a collapsed group tells you without opening. */
+  countLabel?: (n: number) => string;
+  /** Shown inside a group whose obra has work but nothing recorded yet. */
+  emptyGroupLabel?: string;
+  seeJobLabel?: string;
+  /** The "add material" control. Injected, never built here: this package is
+   *  presentational by contract and owns no mutation (see the file header). */
+  renderGroupAction?: (group: MaterialsGroup) => React.ReactNode;
+  /** Replaces the plain material name with something tappable. */
+  renderItem?: (item: MaterialsGroup['items'][number], group: MaterialsGroup) => React.ReactNode;
 }) {
   if (groups.length === 0) return <EmptyState text={empty} />;
+  const openByDefault = groups.length <= COLLAPSE_ABOVE;
   return (
     <>
       {groups.map(group => (
-        <section key={group.obraName || noJobLabel} className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            {group.obraId ? (
-              <a href={`/obras/${group.obraId}`}>{group.obraName || noJobLabel}</a>
+        <details
+          key={group.obraName || noJobLabel}
+          open={openByDefault}
+          className="group rounded-xl border border-zinc-500/20"
+        >
+          {/* No link in the summary: an <a> inside it would both navigate and
+              toggle on the same tap. "Ver obra" lives in the panel instead. */}
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 [&::-webkit-details-marker]:hidden">
+            <span className="min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              {group.obraName || noJobLabel}
+            </span>
+            <span className="flex shrink-0 items-center gap-2 text-[11px] text-zinc-500">
+              {countLabel && <span>{countLabel(group.items.length)}</span>}
+              <span aria-hidden className="transition-transform group-open:rotate-180">
+                ▾
+              </span>
+            </span>
+          </summary>
+          <div className="border-t border-zinc-500/20">
+            {group.items.length === 0 ? (
+              emptyGroupLabel && <p className="p-3 text-sm text-zinc-500">{emptyGroupLabel}</p>
             ) : (
-              group.obraName || noJobLabel
+              <ul className="divide-y divide-zinc-500/15">
+                {group.items.map(item => (
+                  <li key={item.material} className="flex items-start gap-3 p-3">
+                    <span aria-hidden className="mt-0.5 text-zinc-500">
+                      ▢
+                    </span>
+                    <div className="min-w-0">
+                      {renderItem ? (
+                        renderItem(item, group)
+                      ) : (
+                        <p className="text-sm font-medium">{item.material}</p>
+                      )}
+                      <p className="text-xs text-zinc-500">{forLabel(item.forTasks.map(task => task.title))}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
             )}
-          </h2>
-          <ul className="divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
-            {group.items.map(item => (
-              <li key={item.material} className="flex items-start gap-3 p-3">
-                <span aria-hidden className="mt-0.5 text-zinc-500">
-                  ▢
-                </span>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">{item.material}</p>
-                  <p className="text-xs text-zinc-500">{forLabel(item.forTasks)}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
+            {(renderGroupAction || (group.obraId && seeJobLabel)) && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-500/15 p-3">
+                {group.obraId && seeJobLabel ? (
+                  <a href={`/obras/${group.obraId}`} className="text-xs text-zinc-500 underline">
+                    {seeJobLabel}
+                  </a>
+                ) : (
+                  <span />
+                )}
+                {renderGroupAction?.(group)}
+              </div>
+            )}
+          </div>
+        </details>
       ))}
     </>
   );

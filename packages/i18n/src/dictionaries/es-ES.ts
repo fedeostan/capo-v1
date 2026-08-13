@@ -273,6 +273,29 @@ const dict: Catalog = {
       pending: n => `${n} ${n === 1 ? 'material' : 'materiales'} para mañana`,
       pendingHint: 'Comprueba que está en obra antes de cerrar el día.',
     },
+    // ── issue #60 ────────────────────────────────────────────────────────
+    materialsEdit: {
+      groupCount: n => (n === 1 ? '1 material' : `${n} materiales`),
+      groupEmpty: 'Todavía sin materiales registrados.',
+      seeJob: 'Ver obra',
+      add: 'Añadir material',
+      edit: 'Editar materiales',
+      pickTask: '¿Para qué tarea?',
+      pickTaskHint: 'Los materiales pertenecen a una tarea. Elige la tarea para la que hace falta este material.',
+      taskCount: n => (n === 1 ? '1 material' : `${n} materiales`),
+      title: task => `Materiales — ${task}`,
+      placeholder: 'Ej.: 20 sacos de cemento',
+      addRow: 'Añadir línea',
+      removeRow: 'Quitar',
+      empty: 'Todavía no hay materiales en esta tarea.',
+      save: 'Guardar',
+      saving: 'Guardando…',
+      cancel: 'Cancelar',
+      back: 'Volver a las tareas',
+      failed: 'No se pudieron guardar los materiales.',
+      noTasks: 'No hay ninguna tarea en esta obra que pueda llevar materiales.',
+    },
+    // ── end issue #60 ────────────────────────────────────────────────────
   },
 
   auth: {
