@@ -1,13 +1,19 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { ScreenShell } from '@capo/ui/dashboard-ui';
+import { formatShortDate, ScreenShell } from '@capo/ui/dashboard-ui';
 import { TaskDetail } from '@capo/ui/task-detail';
-import { loadPendingReviews, loadTaskDetail, loadTaskPhotos } from '@/app/dashboard-data';
+import {
+  loadAssignableWorkers,
+  loadPendingReviews,
+  loadTaskDetail,
+  loadTaskPhotos,
+} from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import ReviewActions from '@/app/(app)/_tasks/review-actions';
 import TaskActions from '@/app/(app)/_tasks/task-actions';
 import PullToRefresh from '@/app/pull-to-refresh';
 import { isUuid } from '../filters';
+import AssigneePicker from './assignee-picker';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,9 +50,15 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
   // Both reads are per-request and neither may be cached: loadTaskPhotos mints
   // signed URLs, which is the reason `export const dynamic = 'force-dynamic'`
   // above is now load-bearing rather than merely tidy.
-  const [review, photos] = await Promise.all([
+  //
+  // The third read is the worker picker's roster. It is loaded with the page
+  // rather than fetched when the sheet opens: the crew of a construction
+  // company is tens of rows, not thousands, and a picker that spins before it
+  // can answer "who is free" is a picker the manager taps twice.
+  const [review, photos, assignable] = await Promise.all([
     loadPendingReviews(ctx, [detail.task.id]).then(m => m.get(detail.task.id) ?? null),
     loadTaskPhotos(ctx, detail.task.id),
+    loadAssignableWorkers(ctx, detail.task),
   ]);
 
   const subtitle = [detail.job?.name, detail.job?.address].filter(Boolean).join(' · ') || undefined;
@@ -63,6 +75,19 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
           worker={detail.worker}
           photos={photos}
           locale={locale}
+          renderAssignee={() => (
+            <AssigneePicker
+              taskId={detail.task.id}
+              currentWorkerId={detail.task.assignee_worker_id}
+              currentWorkerName={detail.worker?.name ?? null}
+              workers={assignable.workers}
+              // Formatted here, on the server: formatShortDate lives in
+              // @capo/ui/dashboard-ui and pulling that module into a client
+              // component would drag the whole board with it.
+              dateLabel={assignable.date ? formatShortDate(assignable.date, locale) : null}
+              locale={locale}
+            />
+          )}
           renderActions={() => (
             <>
               <TaskActions taskId={detail.task.id} status={detail.task.status} locale={locale} allowRequestReview />

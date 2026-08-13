@@ -219,6 +219,34 @@ export interface Catalog {
       /** An active worker with no phone gets no 07:00 WhatsApp briefing. */
       assigneeNoPhone: string;
       assigneeInactive: string;
+      /** The assignee line is a button now. This is what it says when nobody
+       *  is assigned — an invitation, not a hole in the screen. */
+      assignUnassigned: string;
+      /** Heading of the picker sheet. */
+      assignTitle: string;
+      /** Names the day availability was worked out for, e.g. "Livre a 14/08?".
+       *  Saying the date matters: the answer is only true for that one day. */
+      assignAvailabilityOn(shortDate: string): string;
+      /** Shown instead when the task has no start date and no deadline, so
+       *  there is no day to check anybody against. Must say plainly that Capo
+       *  cannot tell — never imply everyone is free. */
+      assignAvailabilityUnknown: string;
+      /** Badge on a worker with nothing else on that day. */
+      assignFree: string;
+      /** Badge on a worker who already has work that day, with how much. */
+      assignBusy(n: number): string;
+      /** Said out loud when every worker is busy, so the manager does not have
+       *  to infer it from the badges. The list is still shown below it —
+       *  double-booking stays possible, it is just no longer accidental. */
+      assignNoneFree: string;
+      /** No active crew at all. */
+      assignNoWorkers: string;
+      /** Marks the person the task already belongs to. */
+      assignCurrent: string;
+      /** Clears the assignee. */
+      assignRemove: string;
+      assignCancel: string;
+      assignFailed: string;
       dates: string;
       startDate: string;
       dueDate: string;

@@ -72,6 +72,7 @@ export function TaskDetail({
   worker,
   photos,
   locale,
+  renderAssignee,
   renderActions,
 }: {
   task: BoardTask;
@@ -82,6 +83,11 @@ export function TaskDetail({
    *  an optional feature into a standing reproach. */
   photos?: TaskDetailPhoto[];
   locale: Locale;
+  /** Replaces the read-only assignee line with something interactive — in
+   *  apps/web, the worker picker. Same rule as renderActions: @capo/ui stays
+   *  presentation-only and owns no mutation. When absent the line renders as
+   *  plain text, which is what any caller without a picker still gets. */
+  renderAssignee?: () => React.ReactNode;
   /** Concluir/Reabrir today; the reminder card joins it in phase 2. */
   renderActions?: () => React.ReactNode;
 }) {
@@ -132,7 +138,7 @@ export function TaskDetail({
       )}
 
       <Section title={t.assignee}>
-        <p className="text-sm">{worker ? worker.name : dash.noAssignee}</p>
+        {renderAssignee ? renderAssignee() : <p className="text-sm">{worker ? worker.name : dash.noAssignee}</p>}
         {workerNotes.length > 0 && <p className="text-xs text-zinc-500">{workerNotes.join(' · ')}</p>}
       </Section>
 
