@@ -31,6 +31,12 @@
 //      two rosters has broken. planWorkerMessages must THROW on that rather
 //      than skip it: a dropped card is defect 1 again, and on the worker path
 //      it would be the only signal we would ever get.
+//  10. Every briefing went out as a PAID template, including to people already
+//      inside their free 24-hour window (issue #46). The predicate that fixes
+//      that has to fail CLOSED: guessing "inside" earns a 131047 and the
+//      recipient gets NOTHING, which on the 07:00 send is a silent morning for
+//      the whole crew. Guessing "outside" only costs money. Every ambiguity —
+//      null, garbage, a future timestamp — must resolve to the template.
 //
 // Run with `pnpm whatsapp-check`. Exit 0 = green, 1 = at least one failure.
 
@@ -41,6 +47,9 @@ import {
   checkinPayload,
   hasWhatsAppConsent,
   isBsuid,
+  isOutsideWindowError,
+  FREE_FORM_WINDOW_MS,
+  OUTSIDE_WINDOW_ERROR_CODE,
   parseCheckinPayload,
   parseProposalButtonId,
   planAssistantMessages,
@@ -52,11 +61,22 @@ import {
   splitForWhatsApp,
   toTemplateParam,
   toWhatsAppMarkdown,
+  WhatsAppSendError,
+  withinFreeFormWindow,
   type ApprovalLabels,
 } from '@capo/core/channels/whatsapp';
 import { getCatalog } from '@capo/i18n/catalog';
 import { LOCALES } from '@capo/i18n/locale';
 import { allTemplates, MANAGED_TEMPLATE_NAMES, TEMPLATE_LANGUAGES } from './whatsapp-templates.ts';
+// The free-form renderer lives in the web app rather than @capo/core, for the
+// same reason renderWorkerBriefing does: it needs the USER copy catalog, which
+// must never enter the agent bundle. Reached the same way scheduler-check
+// reaches apps/web/lib/cron — it is pure, so no credentials come with it.
+import {
+  renderWorkerFreeForm,
+  type BriefingTask,
+  type WorkerBriefing,
+} from '../apps/web/app/notifications/briefing.ts';
 
 let failures = 0;
 const lines: string[] = [];
@@ -455,6 +475,195 @@ check('a simultaneous pair → no consent', !hasWhatsAppConsent({ whatsapp_opt_i
 // Garbage in a timestamp column must fail CLOSED, never open.
 check('an unparseable opt-out → no consent', !hasWhatsAppConsent({ whatsapp_opt_in_at: T1, whatsapp_opt_out_at: 'não sei' }));
 check('an unparseable opt-in → no consent', !hasWhatsAppConsent({ whatsapp_opt_in_at: 'ontem' }));
+
+// ── the 24-hour free-form window (issue #46) ────────────────────────────────
+// The predicate that decides whether a briefing costs money. It is the same
+// class of thing as hasWhatsAppConsent above — one wrong branch and the
+// consequence is invisible — so the truth table is pinned here too.
+//
+// It must return true ONLY on positive proof. Everything else sends a template:
+// a template always arrives, whereas free-form text outside the window is
+// refused with 131047 and the person receives nothing at all.
+{
+  const NOW = Date.parse('2026-08-14T07:00:00.000Z');
+  const at = (msAgo: number) => new Date(NOW - msAgo).toISOString();
+  const HOUR = 60 * 60 * 1000;
+
+  eq('23 hours is the window, not 24', FREE_FORM_WINDOW_MS, 23 * HOUR);
+
+  check('a message a minute ago is inside', withinFreeFormWindow(at(60_000), NOW));
+  check('a message 22 hours ago is inside', withinFreeFormWindow(at(22 * HOUR), NOW));
+  check('a message 25 hours ago is outside', !withinFreeFormWindow(at(25 * HOUR), NOW));
+  // The hour of deliberate margin. Meta's window is 24h; we stop at 23 so a
+  // send decided at the top of a run cannot expire before it is posted.
+  check(
+    'THE MARGIN: 23.5 hours is outside, even though Meta would still allow it',
+    !withinFreeFormWindow(at(23.5 * HOUR), NOW),
+  );
+
+  // Exactly at the boundary, both sides of it. An off-by-one here is a send
+  // that Meta refuses and nobody ever sees.
+  check('exactly at the margin is inside', withinFreeFormWindow(at(FREE_FORM_WINDOW_MS), NOW));
+  check('one millisecond past it is outside', !withinFreeFormWindow(at(FREE_FORM_WINDOW_MS + 1), NOW));
+  check('one millisecond inside it is inside', withinFreeFormWindow(at(FREE_FORM_WINDOW_MS - 1), NOW));
+  check('this instant is inside', withinFreeFormWindow(at(0), NOW));
+
+  // Every ambiguity resolves to the template.
+  check('null → template', !withinFreeFormWindow(null, NOW));
+  check('undefined (the column does not exist yet) → template', !withinFreeFormWindow(undefined, NOW));
+  check('an empty string → template', !withinFreeFormWindow('', NOW));
+  check('an unparseable timestamp → template', !withinFreeFormWindow('ontem de manhã', NOW));
+  check('a date-shaped non-date → template', !withinFreeFormWindow('2026-13-45T99:00:00Z', NOW));
+  // A FUTURE timestamp means the runtime clock and whatever wrote the column
+  // disagree. That is exactly the situation in which "trust it, it's recent"
+  // is the wrong instinct: we cannot tell how far off the other clock is, so we
+  // cannot tell how much of the window is left.
+  check('a timestamp one hour in the FUTURE → template', !withinFreeFormWindow(at(-HOUR), NOW));
+  check('a timestamp one second in the future → template', !withinFreeFormWindow(at(-1000), NOW));
+  check('a wildly future timestamp → template', !withinFreeFormWindow('2099-01-01T00:00:00Z', NOW));
+}
+
+// ── the one recoverable send failure ────────────────────────────────────────
+// 131047 means "the envelope was wrong, the recipient is fine", so the briefing
+// retries that person with a template inside the same notification_log claim.
+// It must be recognised NARROWLY: every other failure means the send is
+// genuinely broken, and re-sending it as a template would spend money to reach
+// the same wall.
+{
+  const body = (code: number) => JSON.stringify({ error: { message: 'nope', code } });
+  eq('the code is Meta\'s re-engagement error', OUTSIDE_WINDOW_ERROR_CODE, 131047);
+  check('131047 is recoverable', isOutsideWindowError(new WhatsAppSendError(400, body(131047))));
+  // The ones that must NOT trigger a template retry.
+  check('131026 (undeliverable) is not', !isOutsideWindowError(new WhatsAppSendError(400, body(131026))));
+  check('131030 (allow-list) is not', !isOutsideWindowError(new WhatsAppSendError(400, body(131030))));
+  check('132000 (bad parameter) is not', !isOutsideWindowError(new WhatsAppSendError(400, body(132000))));
+  // A 500 with an HTML body parses to code null — a broken gateway, not a
+  // window problem.
+  check('an unparseable error body is not', !isOutsideWindowError(new WhatsAppSendError(502, '<html>bad gateway')));
+  check('a plain Error is not', !isOutsideWindowError(new Error('boom')));
+  check('null is not', !isOutsideWindowError(null));
+  check('undefined is not', !isOutsideWindowError(undefined));
+  // A DIFFERENT error class carrying the same number must not qualify either:
+  // the code alone is not the signal, the class is half of it.
+  check('a look-alike object is not', !isOutsideWindowError({ code: 131047 }));
+}
+
+// ── the free-form briefing body (issue #46, defect 4) ───────────────────────
+// "Canalização" on its own tells a plumber nothing. The free-form envelope has
+// no template constraints, so it carries the description and the materials —
+// the two fields that were always in task_board and could never fit in a
+// one-line template parameter.
+{
+  function task(over: Partial<BriefingTask> = {}): BriefingTask {
+    return {
+      id: uuid,
+      title: 'Canalização',
+      job_name: 'Casa de Paco',
+      overdue: false,
+      days_overdue: 0,
+      description: 'Substituir os tubos da cozinha.',
+      materials: ['tubo PVC 50mm', 'cola', 'fita'],
+      ...over,
+    };
+  }
+  function briefing(tasks: BriefingTask[]): WorkerBriefing {
+    return {
+      workerId: uuid,
+      name: 'Miguel',
+      recipient: { kind: 'phone', waId },
+      locale: 'pt-PT',
+      tasks,
+      lastInboundAt: null,
+    };
+  }
+
+  const one = renderWorkerFreeForm(briefing([task()]));
+  check('the body greets by name', one.includes('Miguel'), one);
+  check('and names the task', one.includes('Canalização'), one);
+  check('and its obra', one.includes('Casa de Paco'), one);
+  // THE defect. Before this renderer the message was the title and nothing else.
+  check('AND THE DESCRIPTION', one.includes('Substituir os tubos da cozinha.'), one);
+  check('AND THE MATERIALS', one.includes('tubo PVC 50mm') && one.includes('fita'), one);
+  // Newlines are the whole reason this is not a template parameter.
+  check('the body uses newlines', one.includes('\n'), JSON.stringify(one));
+  // Defect 3: we already know their language, so we never ask them to pick one.
+  check(
+    'and never explains how to change language',
+    !/\bPT\b.*\bES\b.*\bEN\b/i.test(one) && !/STOP/i.test(one),
+    one,
+  );
+
+  // A row with neither field degrades to what the template used to send — never
+  // worse than today, only better when the data is there.
+  const bare = renderWorkerFreeForm(briefing([task({ description: null, materials: [] })]));
+  check('a bare task is still a complete message', bare.includes('Canalização'), bare);
+  check('and invents no empty Material line', !bare.includes('Material:'), bare);
+
+  const idle = renderWorkerFreeForm(briefing([]));
+  check('a worker with nothing on still gets a message', idle.includes('Miguel'), idle);
+  check('and it says so', idle.includes(getCatalog('pt-PT').reminders.workerNothing), idle);
+
+  // Truncation. There is no second message at 07:00, so a long list is trimmed
+  // rather than split.
+  const manyMaterials = renderWorkerFreeForm(
+    briefing([task({ materials: Array.from({ length: 20 }, (_, i) => `material ${i}`) })]),
+  );
+  check('a 20-item material list is truncated', !manyMaterials.includes('material 19'), manyMaterials);
+  check('and says how many were left out', manyMaterials.includes('+14'), manyMaterials);
+  check('while still showing the first ones', manyMaterials.includes('material 0'), manyMaterials);
+
+  const manyTasks = renderWorkerFreeForm(
+    briefing(Array.from({ length: 9 }, (_, i) => task({ title: `Tarefa ${i}` }))),
+  );
+  check('more than five tasks are truncated', !manyTasks.includes('Tarefa 8'), manyTasks);
+  check('and the remainder is counted', manyTasks.includes('+4'), manyTasks);
+
+  const longDescription = renderWorkerFreeForm(briefing([task({ description: 'x'.repeat(1000) })]));
+  check('an essay of a description is cut', !longDescription.includes('x'.repeat(500)), 'not truncated');
+
+  // The last-resort cap. Even a pathological row must fit one WhatsApp message,
+  // because two pushes at 07:00 read worse than a trimmed one.
+  const pathological = renderWorkerFreeForm(
+    briefing(
+      Array.from({ length: 5 }, (_, i) =>
+        task({
+          title: `${'T'.repeat(400)} ${i}`,
+          description: 'd'.repeat(1000),
+          materials: Array.from({ length: 30 }, () => 'm'.repeat(200)),
+        }),
+      ),
+    ),
+  );
+  check(
+    'even a pathological briefing fits one WhatsApp message',
+    pathological.length <= 4000,
+    `${pathological.length} chars`,
+  );
+  eq('so it is never split', splitForWhatsApp(pathological).length, 1);
+
+  // Overdue-first, the same ordering the template path uses — the two envelopes
+  // may differ in detail but never in which task is most urgent.
+  const mixedOrder = renderWorkerFreeForm(
+    briefing([
+      task({ title: 'A tempo', overdue: false }),
+      task({ title: 'Atrasada', overdue: true, days_overdue: 3 }),
+    ]),
+  );
+  check(
+    'the overdue task is listed first',
+    mixedOrder.indexOf('Atrasada') < mixedOrder.indexOf('A tempo'),
+    mixedOrder,
+  );
+  check('and is marked with its age', mixedOrder.includes('3'), mixedOrder);
+
+  // Every locale must render, with no `undefined` leaking from a missing key.
+  for (const locale of LOCALES) {
+    const body = renderWorkerFreeForm({ ...briefing([task()]), locale });
+    check(`${locale} — renders a body`, body.length > 0);
+    check(`${locale} — leaks no undefined`, !body.includes('undefined'), body);
+    check(`${locale} — still carries the materials`, body.includes('tubo PVC 50mm'), body);
+  }
+}
 
 // ── committed template definitions ──────────────────────────────────────────
 // These are the mistakes that would otherwise surface as a Meta rejection days

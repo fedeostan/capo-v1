@@ -78,6 +78,22 @@
 // user_id — which is exactly where git put both sides of the merge conflict.
 // They are unrelated features: consent (0025) and identity (0022).
 //
+// ── last_inbound_at (0030), HAND-ADDED AHEAD OF THE MIGRATION ──────────────
+// profiles/workers.last_inbound_at comes from 0030_last_inbound_at.sql and is
+// added here by hand, in alphabetical position, the same way 0022/0024/0025
+// were. It is NOT yet confirmed against a real generate_typescript_types run —
+// the migration may not be applied when you read this. Verify before relying on
+// the byte-equality regeneration check.
+//
+// Reading ahead of the migration is safe here and only here, because the one
+// consumer is deliberately defensive about it: readLastInboundAt() in
+// apps/web/app/notifications/briefing.ts validates the value rather than
+// trusting the type, and withinFreeFormWindow() treats anything unreadable —
+// including the `undefined` a pre-migration select('*') returns — as "not in
+// the window", i.e. send the paid template, i.e. exactly today's behaviour. The
+// webhook's write side degrades to a swallowed 42703. Do not add a second,
+// trusting reader of this column.
+//
 // ── worker agent (0027), WRITTEN BY HAND, NOT YET APPLIED ──────────────────
 // `worker_conversations`, `worker_messages` and the single appended view column
 // `task_board.job_address` come from 0027_worker_agent.sql, which is
@@ -599,6 +615,7 @@ export type Database = {
           full_name: string
           id: string
           language: string
+          last_inbound_at: string | null
           phone: string
           whatsapp_opt_in_at: string | null
           whatsapp_opt_out_at: string | null
@@ -610,6 +627,7 @@ export type Database = {
           full_name: string
           id: string
           language?: string
+          last_inbound_at?: string | null
           phone: string
           whatsapp_opt_in_at?: string | null
           whatsapp_opt_out_at?: string | null
@@ -621,6 +639,7 @@ export type Database = {
           full_name?: string
           id?: string
           language?: string
+          last_inbound_at?: string | null
           phone?: string
           whatsapp_opt_in_at?: string | null
           whatsapp_opt_out_at?: string | null
@@ -1440,6 +1459,7 @@ export type Database = {
           created_at: string
           id: string
           language: string | null
+          last_inbound_at: string | null
           name: string
           phone: string | null
           trade: string | null
@@ -1453,6 +1473,7 @@ export type Database = {
           created_at?: string
           id?: string
           language?: string | null
+          last_inbound_at?: string | null
           name: string
           phone?: string | null
           trade?: string | null
@@ -1466,6 +1487,7 @@ export type Database = {
           created_at?: string
           id?: string
           language?: string | null
+          last_inbound_at?: string | null
           name?: string
           phone?: string | null
           trade?: string | null

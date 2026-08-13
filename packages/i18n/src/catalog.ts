@@ -704,5 +704,35 @@ export interface Catalog {
     managerNothing: string;
     /** The fuller version written into the chat thread, where newlines are fine. */
     managerEvent(counts: { today: number; unassigned: number; overdue: number; notified: number }): string;
+
+    // ── the FREE-FORM briefing (issue #46) ───────────────────────────────────
+    // Everything above this line is squeezed into a Meta TEMPLATE parameter:
+    // one line, no newlines, and wrapped by a sentence Meta approved months ago
+    // that we cannot edit from this repo.
+    //
+    // These keys are for the other envelope. When the recipient wrote to us in
+    // the last 23 hours we may answer with ordinary text, which is FREE, has no
+    // approved wrapper, and may run to several lines. So this version can say
+    // what the template cannot: what the job actually is, and what to bring.
+    //
+    // Two things the template says that these deliberately DO NOT repeat:
+    //   - the "reply PT/ES/EN to change language" line. We already know this
+    //     person's language — it is why this string is being read from this
+    //     dictionary and not another one. Telling someone how to pick the
+    //     language they are already reading is noise (issue #46, defect 3).
+    //   - the "reply STOP to unsubscribe" line. STOP is still honoured by the
+    //     webhook on every inbound message; it just does not need saying every
+    //     single morning.
+    /** Opens the free-form briefing. Followed by a blank line. */
+    freeFormGreeting(name: string): string;
+    /** The line introducing the day's list, e.g. "Hoje tens 2 tarefas:". */
+    freeFormHeader(count: number): string;
+    /** A task's own description, indented under its title. Kept as a separate
+     *  key so a dictionary can add punctuation or an em-dash of its own. */
+    freeFormDescription(text: string): string;
+    /** The materials line under one task. `items` is already joined. */
+    freeFormMaterials(items: string): string;
+    /** Joins the material names inside that line. */
+    freeFormMaterialSeparator: string;
   };
 }

@@ -560,6 +560,11 @@ const dict: Catalog = {
           : `I sent the rundown to ${notified} ${notified === 1 ? 'person' : 'people'}.`;
       return `${head}. ${tail}`;
     },
+    freeFormGreeting: name => `Morning, ${name}.`,
+    freeFormHeader: count => `You have ${count} ${count === 1 ? 'task' : 'tasks'} today:`,
+    freeFormDescription: text => text,
+    freeFormMaterials: items => `Materials: ${items}`,
+    freeFormMaterialSeparator: ', ',
   },
 };
 

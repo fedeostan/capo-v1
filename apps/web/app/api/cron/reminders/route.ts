@@ -1,7 +1,13 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDb } from '@capo/db/client';
 import { appendEventMessage, ensureConversation } from '@capo/core/conversation';
-import { sendWhatsAppTemplate } from '@capo/core/channels/whatsapp';
+import {
+  isOutsideWindowError,
+  sendWhatsAppTemplate,
+  sendWhatsAppText,
+  withinFreeFormWindow,
+  type WhatsAppRecipient,
+} from '@capo/core/channels/whatsapp';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
 import {
@@ -10,6 +16,7 @@ import {
   recipientFor,
   sendConfigFor,
   whatsappSendEnv,
+  type WhatsAppEnv,
 } from '../../../../lib/whatsapp';
 import { logEvent } from '../../../../lib/log';
 import {
@@ -24,9 +31,12 @@ import {
 } from '../../../../lib/cron';
 import {
   loadCompanyBriefing,
+  readLastInboundAt,
   renderManagerBriefing,
   renderManagerEvent,
+  renderManagerFreeForm,
   renderWorkerBriefing,
+  renderWorkerFreeForm,
 } from '../../../notifications/briefing';
 
 // The daily 07:00 Europe/Lisbon briefing.
@@ -73,6 +83,80 @@ const NOTIFY_IDLE_WORKERS = false;
 
 const KIND = 'daily_briefing';
 
+/** Which envelope a briefing actually went out in. */
+type SendPath = 'free_form' | 'template';
+
+interface BriefingDelivery {
+  path: SendPath;
+  providerMessageId: string | null;
+  /** True when a free-form attempt was refused as out-of-window and the
+   *  template picked it up. Logged, because it means the stored
+   *  `last_inbound_at` and Meta's own view of the window disagreed. */
+  fellBack: boolean;
+}
+
+/**
+ * Send ONE person their briefing, in the cheapest envelope that will actually
+ * arrive.
+ *
+ * ── The decision (issue #46, defect 1) ─────────────────────────────────────
+ * Meta bills every TEMPLATE send. It bills nothing for ordinary text sent
+ * inside the 24 hours a person's own inbound message opens. Before this, the
+ * 07:00 briefing sent a paid template to everybody — including the manager who
+ * had been chatting with Capo minutes earlier.
+ *
+ * `freeForm` comes from withinFreeFormWindow(), which returns true only on
+ * POSITIVE PROOF of an inbound in the last 23 hours and fails closed toward the
+ * template on everything else. That asymmetry is the safety property: a
+ * template always arrives and merely costs money, while free-form text outside
+ * the window is refused outright (131047) and the person gets nothing at all.
+ *
+ * ── The fallback ───────────────────────────────────────────────────────────
+ * A free-form attempt that is refused as out-of-window costs nothing, so the
+ * template picks it up immediately — the recipient still hears from Capo, and
+ * the day costs exactly what it cost before. Caught NARROWLY, by Meta's error
+ * code: any other failure means the send is genuinely broken and re-sending it
+ * as a template would spend money to reach the same wall.
+ *
+ * Both attempts sit inside the caller's SINGLE notification_log claim. One
+ * person, one claim, one day — a second claim would defeat the idempotency lock
+ * the whole cron rests on.
+ */
+async function deliverBriefing(args: {
+  env: WhatsAppEnv;
+  recipient: WhatsAppRecipient;
+  freeForm: boolean;
+  /** The multi-line text body. Only read when `freeForm` is true. */
+  freeFormBody: string;
+  templateLanguage: string;
+  templateParams: [string, string];
+}): Promise<BriefingDelivery> {
+  const config = sendConfigFor(args.env, args.recipient);
+  const template = () =>
+    sendWhatsAppTemplate(
+      {
+        name: TEMPLATE_NAME,
+        languageCode: args.templateLanguage,
+        bodyParams: args.templateParams,
+      },
+      config,
+    );
+
+  if (!args.freeForm) {
+    const { providerMessageId } = await template();
+    return { path: 'template', providerMessageId, fellBack: false };
+  }
+
+  try {
+    const { providerMessageId } = await sendWhatsAppText(args.freeFormBody, config);
+    return { path: 'free_form', providerMessageId, fellBack: false };
+  } catch (err) {
+    if (!isOutsideWindowError(err)) throw err;
+    const { providerMessageId } = await template();
+    return { path: 'template', providerMessageId, fellBack: true };
+  }
+}
+
 export async function GET(request: NextRequest) {
   const denied = authorizeCron(request);
   if (denied) return denied;
@@ -105,6 +189,14 @@ export async function GET(request: NextRequest) {
 
   const env = whatsappSendEnv();
   if (!env && !dryRun) return new NextResponse('whatsapp not configured', { status: 503 });
+
+  // ONE `now` for the whole invocation, read here rather than per recipient.
+  // A run across a large estate can take minutes; a per-recipient clock would
+  // mean two people with identical inbound times could be classified
+  // differently, which is impossible to reason about from a log. The 23-hour
+  // margin in FREE_FORM_WINDOW_MS is far wider than any run could last, so
+  // freezing the clock costs nothing and makes the decision reproducible.
+  const now = Date.now();
 
   let companies;
   try {
@@ -152,6 +244,12 @@ export async function GET(request: NextRequest) {
         const taskIds = worker.tasks.map(t => t.id);
         const idle = worker.tasks.length === 0;
 
+        // Decided ONCE per recipient, from `now` rather than per attempt, so
+        // the dry-run report and the real send can never disagree about which
+        // envelope this person was going to get.
+        const freeForm = withinFreeFormWindow(worker.lastInboundAt, now);
+        const freeFormBody = renderWorkerFreeForm(worker);
+
         if (dryRun) {
           // `to` keeps its old meaning — the address as sent — and `address`
           // adds which KIND it is. That kind is the operator's only pre-flight
@@ -165,6 +263,11 @@ export async function GET(request: NextRequest) {
             name,
             summary,
             idle,
+            // The two fields an operator needs to answer "why did this cost
+            // money?" before it does. `body` is what would actually be sent on
+            // the free-form path — the template path sends `summary`.
+            path: freeForm ? 'free_form' : 'template',
+            body: freeForm ? freeFormBody : undefined,
           });
           continue;
         }
@@ -187,15 +290,30 @@ export async function GET(request: NextRequest) {
         }
 
         try {
-          const { providerMessageId } = await sendWhatsAppTemplate(
-            {
-              name: TEMPLATE_NAME,
-              languageCode: getCatalog(worker.locale).reminders.templateLanguage,
-              bodyParams: [name, summary],
-            },
-            sendConfigFor(env!, worker.recipient),
-          );
-          await resolveNotification(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
+          const delivery = await deliverBriefing({
+            env: env!,
+            recipient: worker.recipient,
+            freeForm,
+            freeFormBody,
+            templateLanguage: getCatalog(worker.locale).reminders.templateLanguage,
+            templateParams: [name, summary],
+          });
+          await resolveNotification(db, claimed.id, 'sent', {
+            provider_message_id: delivery.providerMessageId,
+          });
+          // WHICH ENVELOPE, on every send. notification_log has no column for
+          // it and adding one would make a deploy that lands before its
+          // migration leave every row stuck at 'pending', so the record lives
+          // in the log drain instead. Without this line the cost saving is
+          // unverifiable: a free send and a paid one look identical in the
+          // ledger.
+          logEvent('reminders.briefing_sent', {
+            companyId: company.id,
+            audience: 'worker',
+            workerId: worker.workerId,
+            path: delivery.path,
+            fellBack: delivery.fellBack,
+          });
           notified += 1;
         } catch (err) {
           // One unreachable worker must never abort the run. A 132001 means the
@@ -246,6 +364,13 @@ export async function GET(request: NextRequest) {
         // throw instead of a skip.
         const recipient = recipientFor(manager);
 
+        // The manager gets the cost fix too, and is in fact the person who
+        // reported it — issue #46 opens with "a user, that is, the manager in
+        // this case, which is me". Their CONTENT is unchanged: what a manager
+        // needs at 07:00 is the count, and the board is one tap away.
+        const freeForm = withinFreeFormWindow(readLastInboundAt(manager), now);
+        const freeFormBody = renderManagerFreeForm(manager.full_name, briefing.counts, locale);
+
         if (dryRun) {
           sends.push({
             audience: 'manager',
@@ -254,6 +379,8 @@ export async function GET(request: NextRequest) {
             locale,
             name,
             summary,
+            path: freeForm ? 'free_form' : 'template',
+            body: freeForm ? freeFormBody : undefined,
           });
           continue;
         }
@@ -283,15 +410,23 @@ export async function GET(request: NextRequest) {
         }
 
         try {
-          const { providerMessageId } = await sendWhatsAppTemplate(
-            {
-              name: TEMPLATE_NAME,
-              languageCode: getCatalog(locale).reminders.templateLanguage,
-              bodyParams: [name, summary],
-            },
-            sendConfigFor(env!, recipient),
-          );
-          await resolveNotification(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
+          const delivery = await deliverBriefing({
+            env: env!,
+            recipient,
+            freeForm,
+            freeFormBody,
+            templateLanguage: getCatalog(locale).reminders.templateLanguage,
+            templateParams: [name, summary],
+          });
+          await resolveNotification(db, claimed.id, 'sent', {
+            provider_message_id: delivery.providerMessageId,
+          });
+          logEvent('reminders.briefing_sent', {
+            companyId: company.id,
+            audience: 'manager',
+            path: delivery.path,
+            fellBack: delivery.fellBack,
+          });
         } catch (err) {
           await resolveNotification(db, claimed.id, 'failed', { error: describeSendError(err) });
           logEvent('reminders.manager_send_failed', {
