@@ -14,15 +14,16 @@ import { cookies } from 'next/headers';
 // change one and you must change the other.
 //
 // NOTE: this module imports next/headers, exactly like lib/i18n.ts, so it can
-// never be pulled into a client bundle. If a client component ever needs
-// THEME_COOKIE, split the constants into lib/theme-shared.ts the way
-// lib/i18n-shared.ts was split off — do not import this file from the client.
+// never be pulled into a client bundle. That split has now happened: THEMES and
+// Theme live in lib/theme-shared.ts, which the appearance pills import from the
+// client. Anything else a client component comes to need moves there too — do
+// not import this file from the client.
+
+export { THEMES, type Theme } from './theme-shared';
+import { THEMES, type Theme } from './theme-shared';
 
 export const THEME_COOKIE = 'capo_theme';
 export const THEME_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
-
-export const THEMES = ['light', 'dark', 'system'] as const;
-export type Theme = (typeof THEMES)[number];
 
 export const DEFAULT_THEME: Theme = 'light';
 
