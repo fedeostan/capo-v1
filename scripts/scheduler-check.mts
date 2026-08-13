@@ -7,8 +7,13 @@
 // advanced in CALENDAR days, so every plan was quietly compressed by weekends
 // and by the thirteen Portuguese national holidays.
 //
+// Since #51 it also guards the OTHER schedule in the product — the one Vercel
+// runs rather than the one the planner computes. See the send-window section
+// at the bottom.
+//
 // Run with `pnpm scheduler-check`. Exit 0 = green, 1 = at least one failure.
 
+import { readFileSync } from 'node:fs';
 import { scheduleTasks } from '@capo/core/capabilities/plan';
 import {
   addWorkdays,
@@ -26,6 +31,13 @@ import {
   type ExistingTask,
   type RescheduleChange,
 } from '@capo/core/capabilities/reschedule';
+// The one import in this file that reaches into an app rather than a package.
+// The send window has to live in apps/web/lib/cron.ts — that is the seam the
+// two scheduled routes share, and moving it into @capo/core to make this import
+// prettier would put it somewhere neither route naturally reads. The module is
+// pure enough to load here: it touches no env at module scope and opens no
+// connection, so this check still needs no credentials and no network.
+import { SEND_WINDOW_HOURS, sendWindowEnd, withinSendWindow } from '../apps/web/lib/cron';
 
 let failures = 0;
 const lines: string[] = [];
@@ -383,6 +395,125 @@ try {
   selfCycleThrew = e instanceof RescheduleError;
 }
 check('a self-dependency throws RescheduleError', selfCycleThrew);
+
+// ── the cron send window (#51) ──────────────────────────────────────────────
+// A different schedule from everything above: not the one the planner computes
+// for a job, but the one Vercel runs the two daily WhatsApp sends on.
+//
+// The bug being guarded is total silence. Both routes used to demand
+// `lisbonHour === SEND_HOUR`, which survives only while Vercel's cron dispatch
+// is under 60 minutes late — and on this project it was measured at 45, 45, 33
+// and 49 minutes on 9/10/11/13 August 2026. Eleven minutes from the edge. Past
+// it, the route answers 200 with {skipped}, writes no notification_log row,
+// raises no error, and the whole crew hears nothing on a morning that looks
+// completely healthy from every surface in the product.
+//
+// Nothing else in the repo can catch a regression here: there are no route
+// tests, and the symptom in production is an absence rather than a failure.
+
+// Restated here rather than imported: each route's SEND_HOUR is a module-local
+// const in a Next route file, and exporting arbitrary symbols from a route.ts
+// is not something to do for a script's convenience. The cost is that moving a
+// route's SEND_HOUR without touching this file leaves the two disagreeing — but
+// the vercel.json sweep below is checked against THESE numbers, so a route that
+// moved alone would still have to move its UTC entries or fail on the next PR.
+const BRIEFING_HOUR = 7;
+const CHECKIN_HOUR = 16;
+
+eq('the send window is two Lisbon hours wide', SEND_WINDOW_HOURS, 2);
+eq('the 07:00 briefing window ends at Lisbon 08', sendWindowEnd(BRIEFING_HOUR), 8);
+eq('the late-afternoon check-in window ends at Lisbon 17', sendWindowEnd(CHECKIN_HOUR), 17);
+
+check('the briefing sends on time, at Lisbon 07', withinSendWindow(BRIEFING_HOUR, BRIEFING_HOUR));
+check('the check-in sends on time, at Lisbon 16', withinSendWindow(CHECKIN_HOUR, CHECKIN_HOUR));
+
+// ⚠ THE REGRESSION THIS WHOLE ISSUE EXISTS FOR. A dispatch 49 minutes late that
+// spills over into the NEXT Lisbon hour must still send. Before #51 both of
+// these were false and the crew got nothing.
+check(
+  'a 49-minutes-late briefing dispatch that lands in the next Lisbon hour (08) still sends',
+  withinSendWindow(BRIEFING_HOUR + 1, BRIEFING_HOUR),
+);
+check(
+  'a 49-minutes-late check-in dispatch that lands in the next Lisbon hour (17) still sends',
+  withinSendWindow(CHECKIN_HOUR + 1, CHECKIN_HOUR),
+);
+
+// The other direction is the reason the gate exists at all: a "bom dia, aqui
+// está o teu dia" arriving in the evening is worse than no message.
+check('two hours late is too late for the briefing (Lisbon 09)', !withinSendWindow(BRIEFING_HOUR + 2, BRIEFING_HOUR));
+check('two hours late is too late for the check-in (Lisbon 18)', !withinSendWindow(CHECKIN_HOUR + 2, CHECKIN_HOUR));
+check('the briefing never sends early (Lisbon 06)', !withinSendWindow(BRIEFING_HOUR - 1, BRIEFING_HOUR));
+check('the check-in never sends early (Lisbon 15)', !withinSendWindow(CHECKIN_HOUR - 1, CHECKIN_HOUR));
+
+// Clamped at 23, never wrapped. A window that wrapped past midnight would make
+// lisbon_today() roll over, which turns notification_log's unique constraint
+// from an idempotency lock into a fresh unclaimed day and messages everybody a
+// second time.
+eq('a 22:00 send hour still gets its second hour', sendWindowEnd(22), 23);
+eq('a 23:00 send hour is clamped rather than wrapped', sendWindowEnd(23), 23);
+check('a 23:00 send hour still accepts its own hour', withinSendWindow(23, 23));
+check('a 23:00 send hour does NOT spill into hour 0 the next day', !withinSendWindow(0, 23));
+
+// ── the UTC entries that feed the window ────────────────────────────────────
+// vercel.json is the other half of the mechanism and is JSON, so nothing in it
+// can explain itself and nothing in CI reads it. Lisbon is UTC+0 in winter and
+// UTC+1 in summer, so each hour-gated route needs the UNION of the UTC hours
+// that land inside its window under BOTH offsets — and in each season one of
+// them must land exactly on the target hour, or the route starts the day
+// already one hour into its own window with no headroom left.
+
+interface CronEntry {
+  path: string;
+  schedule: string;
+}
+
+const crons = (
+  JSON.parse(readFileSync(new URL('../apps/web/vercel.json', import.meta.url), 'utf8')) as {
+    crons: CronEntry[];
+  }
+).crons;
+
+function scheduledUtcHours(path: string): number[] {
+  const entries = crons.filter(c => c.path === path);
+  check(`${path} has at least one schedule`, entries.length > 0);
+  return entries.map(entry => {
+    const [minute, hour] = entry.schedule.split(' ');
+    // The :00 rule (AGENTS.md). A :30 entry has thirty minutes of headroom
+    // before the Lisbon hour rolls over instead of sixty, and that is exactly
+    // how the check-in shipped and then never sent a single message.
+    check(`${path} "${entry.schedule}" fires at :00`, minute === '0', `minute field is "${minute}"`);
+    return Number(hour);
+  });
+}
+
+const SEASONS = [
+  ['winter (UTC+0)', 0],
+  ['summer (UTC+1)', 1],
+] as const;
+
+for (const [path, sendHour] of [
+  ['/api/cron/reminders', BRIEFING_HOUR],
+  ['/api/cron/checkin', CHECKIN_HOUR],
+] as const) {
+  const utcHours = scheduledUtcHours(path);
+  for (const [season, offset] of SEASONS) {
+    const inWindow = utcHours.map(h => (h + offset) % 24).filter(h => withinSendWindow(h, sendHour));
+    const detail = `in-window Lisbon hours: [${inWindow.join(', ')}] from UTC [${utcHours.join(', ')}]`;
+    check(`${path} has an entry inside its window in ${season}`, inWindow.length > 0, detail);
+    check(
+      `${path} has an entry landing ON the target hour in ${season}, so a late dispatch keeps the full window`,
+      inWindow.includes(sendHour),
+      detail,
+    );
+  }
+}
+
+// The push sweep is deliberately NOT in this scheme: it has no hour gate and is
+// meant to run all day, so giving it one would be the check-in bug again.
+const pushEntries = crons.filter(c => c.path === '/api/cron/push');
+eq('/api/cron/push is scheduled exactly once', pushEntries.length, 1);
+eq('/api/cron/push still runs all day, ungated', pushEntries[0]?.schedule, '*/10 * * * *');
 
 // ── report ──────────────────────────────────────────────────────────────────
 console.log(lines.join('\n'));

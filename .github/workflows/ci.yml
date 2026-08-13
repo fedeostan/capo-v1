@@ -35,10 +35,12 @@ jobs:
       - name: Lint, typecheck, build (workspace)
         run: pnpm turbo lint typecheck build
 
-      # Deterministic, credential-free correctness check of the plan scheduler
-      # and the Portuguese working-day calendar. The credentialed gates
-      # (pnpm rls-matrix, pnpm agent-smoke) still have to be run by hand —
-      # this is the slice that can run on every PR.
+      # Deterministic, credential-free correctness check of the plan scheduler,
+      # the Portuguese working-day calendar, and the cron send window — the
+      # Lisbon hours in which the two daily WhatsApp sends are still allowed
+      # out, together with the UTC entries in apps/web/vercel.json that feed
+      # them. The credentialed gates (pnpm rls-matrix, pnpm agent-smoke) still
+      # have to be run by hand — this is the slice that can run on every PR.
       - name: Scheduler & calendar check
         run: pnpm scheduler-check
 

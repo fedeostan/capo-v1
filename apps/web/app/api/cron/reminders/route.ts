@@ -19,6 +19,8 @@ import {
   describeSendError,
   readLisbonClock,
   resolveNotification,
+  sendWindowEnd,
+  withinSendWindow,
 } from '../../../../lib/cron';
 import {
   loadCompanyBriefing,
@@ -43,7 +45,13 @@ export const dynamic = 'force-dynamic';
 // company, all inside a single invocation. 300 matches the WhatsApp webhook.
 export const maxDuration = 300;
 
-/** 07:00 in Lisbon. Vercel schedules in UTC; see the hour gate below. */
+/**
+ * 07:00 in Lisbon — the hour this briefing TARGETS, not the only hour it may
+ * go out in. Vercel schedules in UTC and its dispatch drifts by up to an hour
+ * on this project, so the gate below accepts the whole SEND_WINDOW_HOURS-wide
+ * window starting here (07:00–08:59 Lisbon). The reasoning, the measured drift
+ * and the matching vercel.json UTC entries are all in `withinSendWindow`.
+ */
 const SEND_HOUR = 7;
 
 /**
@@ -70,7 +78,7 @@ export async function GET(request: NextRequest) {
   if (denied) return denied;
 
   // dry_run renders everything and sends nothing, writes nothing. It also
-  // bypasses the hour gate, so the output can be inspected at any time of day.
+  // bypasses the send window, so the output can be inspected at any time of day.
   const dryRun = request.nextUrl.searchParams.get('dry_run') === '1';
 
   const db = getDb();
@@ -78,13 +86,21 @@ export async function GET(request: NextRequest) {
   const clock = await readLisbonClock(db, 'cron/reminders');
   if (!clock) return new NextResponse('clock unavailable', { status: 500 });
   const { hour, today } = clock;
-  if (!dryRun && hour !== SEND_HOUR) {
+  const windowEnd = sendWindowEnd(SEND_HOUR);
+  if (!dryRun && !withinSendWindow(hour, SEND_HOUR)) {
     // Logged, not just returned. A cron that fires and is then rejected by this
     // gate leaves no trace anywhere else — no notification_log row, no error —
     // which is exactly how the check-in's schedule bug stayed invisible for two
-    // days. See the header of apps/web/vercel.json's sibling route.
-    logEvent('reminders.outside_send_hour', { lisbonHour: hour, sendHour: SEND_HOUR });
-    return NextResponse.json({ skipped: 'outside the send hour', lisbonHour: hour });
+    // days, and exactly what a drift past the window would look like on the
+    // morning the crew hears nothing. `windowEnd` is in the payload so the line
+    // records what was actually required rather than only what was aimed at.
+    logEvent('reminders.outside_send_hour', { lisbonHour: hour, sendHour: SEND_HOUR, windowEnd });
+    return NextResponse.json({
+      skipped: 'outside the send window',
+      lisbonHour: hour,
+      sendHour: SEND_HOUR,
+      windowEnd,
+    });
   }
 
   const env = whatsappSendEnv();
@@ -105,6 +121,13 @@ export async function GET(request: NextRequest) {
       const briefing = await loadCompanyBriefing(db, company.id, company.language);
       const sends: unknown[] = [];
       let notified = 0;
+
+      // Two counters that exist only to keep the chat-thread note below written
+      // exactly once a day now that more than one invocation can pass the gate.
+      // `targets` is everyone this run was willing to claim; `claims` is how
+      // many of those claims it actually won. See the note's own comment.
+      let targets = 0;
+      let claims = 0;
 
       // Not a per-worker log line: this is the count of people the consent gate
       // removed before the loop below could see them, and without it a company
@@ -146,6 +169,7 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
+        targets += 1;
         const claimed = await claimNotification(db, {
           kind: KIND,
           company_id: company.id,
@@ -155,6 +179,7 @@ export async function GET(request: NextRequest) {
           task_ids: taskIds,
         });
         if (!claimed) continue;
+        claims += 1;
 
         if (idle && !NOTIFY_IDLE_WORKERS) {
           await resolveNotification(db, claimed.id, 'skipped');
@@ -233,6 +258,7 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
+        targets += 1;
         const claimed = await claimNotification(db, {
           kind: KIND,
           company_id: company.id,
@@ -242,6 +268,7 @@ export async function GET(request: NextRequest) {
           task_ids: [],
         });
         if (!claimed) continue;
+        claims += 1;
 
         // Claimed FIRST, then skipped — the same order the idle-worker branch
         // uses above. A 'skipped' row is what makes an unreachable manager
@@ -280,11 +307,37 @@ export async function GET(request: NextRequest) {
       // crew?" should get an answer even on a day Meta rejected every send.
       // appendEventMessage writes role='event', which the chat page renders as
       // a system note and toThread() presents to the model as <system-event>.
+      //
+      // ⚠ This is the ONE side effect of this route that notification_log's
+      // unique constraint does not protect — it is a message, not a send — and
+      // widening the hour gate into a two-hour window means two or three
+      // invocations now pass it every day instead of one. Written
+      // unconditionally, the manager would find the note two or three times
+      // each morning, every copy after the first claiming "avisei 0 pessoas",
+      // and every copy would also enter the agent's context as a
+      // <system-event>. So only the invocation that actually did the work
+      // writes it:
+      //
+      //   claims > 0    this run won the claims, so it is the run that briefed
+      //                 the crew. Later runs in the same window claim nothing
+      //                 (23505) and stay quiet. Holds however many times the
+      //                 route is invoked.
+      //   targets === 0 the company had nobody claimable at all — no crew with
+      //                 consent, no manager with consent — so there is no
+      //                 ledger row to dedupe against and the "nothing went out
+      //                 today" note would otherwise be lost entirely. That note
+      //                 is worth keeping: it is the only in-product trace that
+      //                 a whole company is silently unreachable. Restricted to
+      //                 the target hour so it is written once rather than once
+      //                 per in-window invocation.
       const eventLocale = firstManagerLocale(managers, briefing.companyLocale);
       const eventText = renderManagerEvent(briefing.counts, notified, eventLocale);
+      const firstRunOfTheDay = claims > 0 || (targets === 0 && hour === SEND_HOUR);
       if (!dryRun) {
-        const conversationId = await ensureConversation(db, company.id);
-        await appendEventMessage(db, conversationId, eventText);
+        if (firstRunOfTheDay) {
+          const conversationId = await ensureConversation(db, company.id);
+          await appendEventMessage(db, conversationId, eventText);
+        }
       } else {
         sends.push({ audience: 'thread', locale: eventLocale, text: eventText });
       }
