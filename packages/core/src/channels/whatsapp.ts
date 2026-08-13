@@ -164,6 +164,78 @@ export function hasWhatsAppConsent(row: {
   return Date.parse(row.whatsapp_opt_out_at) < optIn;
 }
 
+// ── the 24-hour customer-service window ─────────────────────────────────────
+
+/**
+ * How long after an inbound message we are still willing to answer with FREE
+ * TEXT rather than a paid template.
+ *
+ * Meta's window is 24 hours from the recipient's last inbound message. This is
+ * 23, and the missing hour is a deliberate safety margin, not an approximation.
+ * A send decided at the top of a run goes out some seconds or minutes later,
+ * after a database claim and possibly after dozens of other recipients in the
+ * same invocation; the stored timestamp is itself written by a best-effort
+ * webhook stamp that can lag its message. Deciding "inside" at 23:59:50 and
+ * posting at 24:00:10 earns a 131047 and the person gets nothing.
+ *
+ * The margin costs one paid template for anybody whose only inbound message of
+ * the day landed between 23 and 24 hours ago. That is the cheap side.
+ */
+export const FREE_FORM_WINDOW_MS = 23 * 60 * 60 * 1000;
+
+/**
+ * Is this person inside their free-form window?
+ *
+ * FAILS CLOSED TOWARD THE TEMPLATE, which is the whole design of this
+ * predicate. It returns true only on POSITIVE PROOF of an inbound message in
+ * the last FREE_FORM_WINDOW_MS. Everything else — no column, null, empty
+ * string, an unparseable timestamp, a value from a deploy that landed before
+ * 0030, or a timestamp in the FUTURE (a clock disagreement between Postgres and
+ * the runtime, or a rogue write) — returns false and the caller sends a
+ * template.
+ *
+ * The asymmetry is not caution for its own sake. A template always arrives; it
+ * merely costs money. Free-form text sent outside the window is rejected
+ * wholesale by Meta with error 131047 and the recipient receives NOTHING, which
+ * on the 07:00 briefing means a crew that hears nothing all morning and no
+ * symptom anybody can see. Guessing "inside" is the expensive mistake and
+ * guessing "outside" is the cheap one, so every ambiguity resolves outward.
+ *
+ * `now` is injected rather than read from Date.now() so this stays pure and
+ * scripts/whatsapp-check.mts can pin the boundary exactly.
+ */
+export function withinFreeFormWindow(
+  lastInboundAt: string | null | undefined,
+  now: number,
+  windowMs = FREE_FORM_WINDOW_MS,
+): boolean {
+  if (!lastInboundAt) return false;
+  const at = Date.parse(lastInboundAt);
+  if (Number.isNaN(at)) return false;
+  const elapsed = now - at;
+  // `elapsed >= 0` refuses a future timestamp. NaN in `now` (nothing should
+  // pass one, but the arithmetic would propagate it silently) fails both
+  // comparisons, which is again the closed direction.
+  return elapsed >= 0 && elapsed <= windowMs;
+}
+
+/**
+ * Meta's "re-engagement required": a free-form send that landed outside the
+ * 24-hour window. The one send failure the briefing can RECOVER from, by
+ * retrying the same recipient with a template.
+ *
+ * Recognised NARROWLY, by code, and never by a blanket catch. Every other
+ * failure — 131026 (no WhatsApp), 131021 (messaging ourselves), a 500 from the
+ * Graph API, a network reset — means the send is genuinely broken, and retrying
+ * it as a template would either fail identically or spend money to no purpose.
+ * Only this one code says "the envelope was wrong, the recipient is fine".
+ */
+export const OUTSIDE_WINDOW_ERROR_CODE = 131047;
+
+export function isOutsideWindowError(err: unknown): boolean {
+  return err instanceof WhatsAppSendError && err.code === OUTSIDE_WINDOW_ERROR_CODE;
+}
+
 // ── approval button ids ─────────────────────────────────────────────────────
 // The proposal id travels in the button id and is the ONLY thing carrying the
 // manager's decision back — no model, no message-id bookkeeping. ~52 chars,
@@ -717,8 +789,11 @@ async function post(
   }
 }
 
-async function sendText(body: string, config: WhatsAppSendConfig): Promise<void> {
-  await post({ type: 'text', text: { body } }, config);
+async function sendText(
+  body: string,
+  config: WhatsAppSendConfig,
+): Promise<{ providerMessageId: string | null }> {
+  return await post({ type: 'text', text: { body } }, config);
 }
 
 // No header (plain-text only on Meta's side, and it would just duplicate the
@@ -744,10 +819,19 @@ async function sendInteractive(
 // for the confirmation after a button press. It cannot reuse the sink there,
 // because `delivery` only settles once mergeAssistantStream has been called —
 // and on those paths the agent never runs, so it never would.
-export async function sendWhatsAppText(body: string, config: WhatsAppSendConfig): Promise<void> {
+// Returns the LAST chunk's provider message id, for the same reason
+// sendWhatsAppTemplate returns one: the daily briefing records it in
+// notification_log, and without it a free-form briefing would be less traceable
+// than the template it replaces. Every existing caller ignores the value.
+export async function sendWhatsAppText(
+  body: string,
+  config: WhatsAppSendConfig,
+): Promise<{ providerMessageId: string | null }> {
+  let last: { providerMessageId: string | null } = { providerMessageId: null };
   for (const chunk of splitForWhatsApp(body)) {
-    await sendText(chunk, config);
+    last = await sendText(chunk, config);
   }
+  return last;
 }
 
 // Sends are STRICTLY SEQUENTIAL and fail fast:

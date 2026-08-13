@@ -23,6 +23,17 @@ export interface BriefingTask {
   job_name: string | null;
   overdue: boolean;
   days_overdue: number;
+  /**
+   * The two fields that answer "what am I actually doing, and what do I bring?"
+   * — read only by the FREE-FORM renderer. They cannot go in the template: a
+   * template parameter is one line, and Meta rejects a newline outright (132000).
+   *
+   * Both are stored in companies.language and are never retranslated (0014), so
+   * a worker on 'es-ES' reads Spanish sentences wrapping Portuguese content —
+   * the same trade-off task titles already make.
+   */
+  description: string | null;
+  materials: string[];
 }
 
 export interface WorkerBriefing {
@@ -37,6 +48,19 @@ export interface WorkerBriefing {
   recipient: WhatsAppRecipient;
   locale: Locale;
   tasks: BriefingTask[];
+  /**
+   * When this worker last wrote to us (0030), or null when there is no inbound
+   * on record. The ONLY input to the template-vs-free-form decision — see
+   * withinFreeFormWindow, which fails closed toward the paid template on
+   * anything it cannot read, this null included.
+   *
+   * Typed `string | null` rather than read straight off the row because the
+   * generated DB types lead the live schema here: on a deploy that lands before
+   * 0030 the column simply is not there, `select('*')` returns undefined for it,
+   * and undefined reads as "no inbound on record" — degrading to today's
+   * behaviour rather than erroring.
+   */
+  lastInboundAt: string | null;
 }
 
 export interface ManagerCounts {
@@ -115,6 +139,10 @@ export async function loadCompanyBriefing(
       job_name: row.job_name,
       overdue: row.overdue === true,
       days_overdue: row.days_overdue ?? 0,
+      description: row.description,
+      // `materials` is a Postgres text[]; null and an empty array mean the same
+      // thing to a reader, so they are collapsed here rather than at each use.
+      materials: Array.isArray(row.materials) ? row.materials.filter(Boolean) : [],
     });
     byWorker.set(row.assignee_worker_id, list);
   }
@@ -147,6 +175,7 @@ export async function loadCompanyBriefing(
     // replying a keyword to their briefing.
     locale: worker.language ? coerceLocale(worker.language) : companyLocale,
     tasks: byWorker.get(worker.id) ?? [],
+    lastInboundAt: readLastInboundAt(worker),
   }));
 
   return {
@@ -161,6 +190,22 @@ export async function loadCompanyBriefing(
       overdue: open.filter(r => r.overdue === true).length,
     },
   };
+}
+
+/**
+ * Read `last_inbound_at` off a row that may not have the column yet.
+ *
+ * 0030 adds it; a deploy that lands before the migration gets `undefined` from
+ * `select('*')`, and the generated DB types are hand-maintained and may lead or
+ * lag either way. Rather than let that be a `tsc` error or a runtime surprise,
+ * the value is read through an index and validated: anything that is not a
+ * non-empty string becomes null, which withinFreeFormWindow reads as "no proof"
+ * and answers with a template. One narrow cast, in one place, with the failure
+ * pointing the safe way.
+ */
+export function readLastInboundAt(row: object): string | null {
+  const value = (row as Record<string, unknown>).last_inbound_at;
+  return typeof value === 'string' && value ? value : null;
 }
 
 // How many tasks fit in one message before it stops being scannable on a phone
@@ -201,6 +246,119 @@ export function renderWorkerBriefing(briefing: WorkerBriefing): [name: string, t
   if (ordered.length > shown.length) parts.push(t.andMore(ordered.length - shown.length));
 
   return [briefing.name, parts.join(t.taskSeparator)];
+}
+
+// ── the free-form briefing (issue #46) ──────────────────────────────────────
+//
+// The SAME day, in the other envelope. When the recipient wrote to us in the
+// last 23 hours, Meta lets us answer with ordinary text: free of charge, free of
+// the approved template's wrapper, and free of its one-line constraint.
+//
+// So this renderer says the thing renderWorkerBriefing structurally cannot.
+// "Canalização" on its own tells a plumber nothing they did not already know;
+// what they need at 07:00 is what the job is and what to put in the van. Both
+// have been sitting in task_board's `description` and `materials` all along, and
+// neither could ever fit in a template parameter.
+//
+// Still DETERMINISTIC — no model call, for the reason at the top of this file.
+// The upgrade here is that more of the row is shown, not that anything is
+// generated.
+//
+// Everything is capped, because there is no second message: a briefing that
+// spills past WhatsApp's 4096-char body would be split into two pushes at
+// 07:00, which reads worse than a trimmed one. Truncation is preferred to
+// splitting, per the same judgement MAX_LISTED already makes.
+
+/** Materials shown per task before the rest becomes "+N". A van load, not an order form. */
+const MAX_MATERIALS = 6;
+
+/** A task description is a note, not a spec. Longer than this and it stops being scannable. */
+const MAX_DESCRIPTION = 200;
+
+/**
+ * The last-resort cap on the whole body. WhatsApp's own limit is 4096; this
+ * sits well below it so that even a pathological row — five tasks with 300-char
+ * titles — is trimmed here rather than split into two morning pushes by
+ * splitForWhatsApp. Nothing in normal use comes close.
+ */
+const FREE_FORM_MAX_CHARS = 3000;
+
+function clamp(value: string, max: number): string {
+  const flat = value.replace(/\s+/g, ' ').trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
+}
+
+/**
+ * ── FEDERICO: this is the product-voice dial for the message people actually
+ * read. ── Everything renderWorkerBriefing's note says about MAX_LISTED, obra
+ * names and overdue-first still applies; this adds two lines per task.
+ *
+ * Shape, per task:
+ *
+ *   Bom dia, Miguel.
+ *
+ *   Hoje tens 2 tarefas:
+ *
+ *   1. Canalização (Casa de Paco)
+ *      Substituir os tubos da cozinha e ligar a máquina.
+ *      Material: tubo PVC 50mm, cola, fita
+ *
+ *   2. Pintar tecto (Casa de Paco) — atrasada 3d
+ *
+ * A task with no description and no materials is just its numbered line, which
+ * is exactly what the template used to send — so this is never worse than what
+ * it replaces, only better when the data is there.
+ */
+export function renderWorkerFreeForm(briefing: WorkerBriefing): string {
+  const t = getCatalog(briefing.locale).reminders;
+  const greeting = t.freeFormGreeting(briefing.name);
+
+  if (briefing.tasks.length === 0) return `${greeting}\n\n${t.workerNothing}`;
+
+  // Same ordering and same cap as the template path, deliberately: the two
+  // envelopes must not disagree about which tasks are "today's", only about how
+  // much room there is to describe them.
+  const ordered = [...briefing.tasks].sort((a, b) => Number(b.overdue) - Number(a.overdue));
+  const shown = ordered.slice(0, MAX_LISTED);
+
+  const blocks = shown.map((task, index) => {
+    const labelled = task.job_name ? t.taskWithJob(task.title, task.job_name) : task.title;
+    const headline =
+      task.overdue && task.days_overdue > 0 ? t.taskOverdue(labelled, task.days_overdue) : labelled;
+    const lines = [`${index + 1}. ${headline}`];
+
+    if (task.description) lines.push(`   ${t.freeFormDescription(clamp(task.description, MAX_DESCRIPTION))}`);
+
+    if (task.materials.length > 0) {
+      const listed = task.materials.slice(0, MAX_MATERIALS);
+      const names = listed.map(m => clamp(m, 60));
+      if (task.materials.length > listed.length) names.push(t.andMore(task.materials.length - listed.length));
+      lines.push(`   ${t.freeFormMaterials(names.join(t.freeFormMaterialSeparator))}`);
+    }
+
+    return lines.join('\n');
+  });
+
+  if (ordered.length > shown.length) blocks.push(t.andMore(ordered.length - shown.length));
+
+  const body = [greeting, '', t.freeFormHeader(ordered.length), '', blocks.join('\n\n')].join('\n');
+  // Clamped on the RAW body, not through clamp(), which flattens newlines —
+  // the whole point of this renderer is that it may have them.
+  return body.length <= FREE_FORM_MAX_CHARS
+    ? body
+    : `${body.slice(0, FREE_FORM_MAX_CHARS - 1).trimEnd()}…`;
+}
+
+/**
+ * The manager's free-form briefing. Their counts, unchanged — this fixes the
+ * COST defect for the manager (who is, per issue #46, the person who noticed
+ * it), not the content one. What the manager needs is the board, and the board
+ * is one screen away.
+ */
+export function renderManagerFreeForm(name: string, counts: ManagerCounts, locale: Locale): string {
+  const t = getCatalog(locale).reminders;
+  const summary = counts.today === 0 ? t.managerNothing : t.managerSummary(counts);
+  return `${t.freeFormGreeting(name)}\n\n${summary}`;
 }
 
 /** The manager's two body parameters. */

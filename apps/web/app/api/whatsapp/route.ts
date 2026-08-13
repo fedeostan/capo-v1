@@ -372,6 +372,66 @@ async function captureBsuid(db: Db, message: WhatsAppMessage, target: BsuidTarge
   }
 }
 
+/**
+ * Record that this person just wrote to us (0030).
+ *
+ * This one timestamp is what makes the 07:00 briefing free for anybody already
+ * in conversation with Capo. Meta bills every TEMPLATE send; free-form text
+ * inside the 24 hours an inbound message opens costs nothing. Until this column
+ * existed there was no way to tell the two groups apart, so everybody got the
+ * paid envelope (issue #46, defect 1).
+ *
+ * BEST-EFFORT, and structured exactly like captureBsuid beside it, for the same
+ * three reasons:
+ *   - Every failure is logged and swallowed. A failed stamp must never cost
+ *     somebody their reply. The worst it can cost is one wrongly-classified
+ *     window tomorrow morning — a paid template where free text would have
+ *     done, which is the direction the whole feature already fails in.
+ *   - It runs inside after(), never on the synchronous path, so it adds no
+ *     latency to the ack Meta is waiting for.
+ *   - It is its OWN write, never a widened column list on an existing one. A
+ *     deploy landing before 0030 answers 42703; as a separate statement that is
+ *     one swallowed log line, whereas folded into sender resolution it would
+ *     make every manager an unknown sender.
+ *
+ * Unconditional, unlike captureBsuid's `or` filter: the value changes on every
+ * message by definition, so there is no unchanged case to skip. `now()` comes
+ * from the RUNTIME rather than from Postgres, which is a deliberate small
+ * imprecision — the alternative is an RPC, and the 23-hour margin in
+ * FREE_FORM_WINDOW_MS is far wider than any clock skew between the two.
+ */
+async function stampLastInbound(db: Db, target: BsuidTarget): Promise<void> {
+  const patch = { last_inbound_at: new Date().toISOString() };
+  try {
+    const { error } =
+      target.audience === 'manager'
+        ? await db.from('profiles').update(patch).eq('id', target.id)
+        : await db
+            .from('workers')
+            .update(patch)
+            .eq('id', target.id)
+            // Defence in depth, same as captureBsuid: the row was already
+            // resolved within the tenant, and this makes a mis-wired call site
+            // fail closed rather than write across companies.
+            .eq('company_id', target.companyId);
+    if (error) {
+      // Expected, and harmless, on any deploy that lands before 0030 is
+      // applied: "column last_inbound_at does not exist".
+      logEvent('whatsapp.last_inbound_stamp_failed', {
+        companyId: target.companyId,
+        audience: target.audience,
+        error: error.message,
+      });
+    }
+  } catch (err) {
+    logEvent('whatsapp.last_inbound_stamp_failed', {
+      companyId: target.companyId,
+      audience: target.audience,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 // ── sender identity ─────────────────────────────────────────────────────────
 // readSender and WhatsAppSender live in @capo/core/channels/whatsapp: deciding
 // WHICH identifier wins and WHICH envelope a reply travels in is the highest-
@@ -942,7 +1002,13 @@ async function handleWorkerReply(
   // NOT above the ambiguity guard: a number on two companies' crews would mean
   // guessing which tenant to write the BSUID into, which is the same guess the
   // guard exists to refuse.
-  await captureBsuid(db, message, { audience: 'worker', id: worker.id, companyId: worker.company_id });
+  const workerTarget = { audience: 'worker' as const, id: worker.id, companyId: worker.company_id };
+  await captureBsuid(db, message, workerTarget);
+  // A SEPARATE write, awaited after it rather than merged into it: the two
+  // record different things (identity vs recency), fail for different reasons,
+  // and neither may take the other down. Both are already swallowed internally,
+  // so neither can abort this reply.
+  await stampLastInbound(db, workerTarget);
 
   const current = worker.language ? coerceLocale(worker.language) : coerceLocale(worker.company?.language);
   const requested = message.type === 'text' ? languageCommand(message.text?.body) : null;
@@ -1183,6 +1249,11 @@ export async function POST(request: NextRequest) {
     // A manager who only ever taps approval buttons still gets their BSUID
     // recorded.
     after(() => captureBsuid(db, message, { audience: 'manager', id: userId, companyId }));
+
+    // Placed beside it and for the same reasons — see stampLastInbound. Its own
+    // after() callback rather than chained onto the one above, so a slow or
+    // failing capture cannot delay or skip the stamp.
+    after(() => stampLastInbound(db, { audience: 'manager', id: userId, companyId }));
 
     // Service role: auth.uid() is null on this path, so the locale cannot come
     // from RLS — it comes from the profile row matched by phone.

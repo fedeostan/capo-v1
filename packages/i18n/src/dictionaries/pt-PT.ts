@@ -566,6 +566,11 @@ const dict: Catalog = {
           : `Enviei o resumo a ${notified} ${notified === 1 ? 'pessoa' : 'pessoas'}.`;
       return `${head}. ${tail}`;
     },
+    freeFormGreeting: name => `Bom dia, ${name}.`,
+    freeFormHeader: count => `Hoje tens ${count} ${count === 1 ? 'tarefa' : 'tarefas'}:`,
+    freeFormDescription: text => text,
+    freeFormMaterials: items => `Material: ${items}`,
+    freeFormMaterialSeparator: ', ',
   },
 };
 
