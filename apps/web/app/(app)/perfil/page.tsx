@@ -8,13 +8,12 @@ import { getBillingState } from '@/lib/billing';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { countTranslatable } from '@capo/core/translation';
 import { hasWhatsAppConsent } from '@capo/core/channels/whatsapp';
-import { resolveTheme, THEMES, type Theme } from '@/lib/theme';
+import { resolveTheme } from '@/lib/theme';
 import { vapidPublicKey } from '@/lib/push';
 import {
   revertTranslation,
   saveLanguage,
   setCompanyLanguage,
-  setTheme,
   setUserLanguage,
   setWhatsAppConsent,
 } from './actions';
@@ -22,6 +21,7 @@ import PullToRefresh from '@/app/pull-to-refresh';
 import { AccountForm, CompanyForm } from './profile-forms';
 import PushCard from './push-card';
 import SignOutButton from './sign-out-button';
+import ThemePills from './theme-pills';
 import { TranslationProgress } from './translation-progress';
 
 export const dynamic = 'force-dynamic';
@@ -118,38 +118,9 @@ function WhatsAppConsentPills({ consenting, t }: { consenting: boolean; t: Catal
   );
 }
 
-// Deliberately the same shape as LanguagePills: three options, no client JS,
-// works before hydration on a cold PWA. Indexing themeOption with a Theme is
-// the tripwire that keeps @capo/i18n and lib/theme.ts from drifting apart —
-// widen one union without the other and tsc fails here.
-function ThemePills({ current, t }: { current: Theme; t: Catalog }) {
-  return (
-    <form action={setTheme} className="space-y-2">
-      <div className="flex gap-2">
-        {THEMES.map(option => (
-          <label key={option} className="flex-1">
-            <input
-              type="radio"
-              name="tema"
-              value={option}
-              defaultChecked={option === current}
-              className="peer sr-only"
-            />
-            <span className="block cursor-pointer rounded-lg border border-zinc-500/30 py-2 text-center text-sm peer-checked:border-orange-600 peer-checked:bg-orange-600/10 peer-checked:font-semibold">
-              {t.settings.themeOption[option]}
-            </span>
-          </label>
-        ))}
-      </div>
-      <button
-        type="submit"
-        className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-semibold hover:bg-zinc-500/10"
-      >
-        {t.common.save}
-      </button>
-    </form>
-  );
-}
+// The appearance pills used to live here, in the same shape as LanguagePills.
+// They are a client component now (./theme-pills) because tapping one has to
+// repaint the app before Save is pressed, and only the browser can do that.
 
 // Everything about the company and the account lives here: it is the only tab
 // that owns settings, so nothing else in the app needs a header action.
@@ -248,7 +219,7 @@ export default async function PerfilPage({
             reversible, while the company language card carries a warning. */}
         <Card title={t.settings.appearance}>
           <p className="text-xs text-zinc-500">{t.settings.appearanceHint}</p>
-          <ThemePills current={theme} t={t} />
+          <ThemePills current={theme} locale={locale} />
         </Card>
 
         {/* One control, because "the language" is one thing to the manager. The
