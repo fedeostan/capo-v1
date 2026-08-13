@@ -131,7 +131,10 @@ and say what the alternative would be — he is the one who decides.
   denied everyone would pass all of them. After adding a policy, verify the
   owner's own path still works too.
 - `scripts/scheduler-check.mts` — deterministic checks over the plan
-  scheduler and the Portuguese working-day calendar. Needs **no credentials
+  scheduler and the Portuguese working-day calendar. Since #51 it also covers
+  the *other* schedule in the product: the cron send window
+  (`withinSendWindow`) and the UTC entries in `apps/web/vercel.json` that feed
+  it, which it reads and asserts season by season. Needs **no credentials
   and no network**, so it runs in CI on every PR (`pnpm scheduler-check`).
 - `scripts/agent-smoke.mts` — drives `handleInbound()` against a throwaway
   seeded tenant. Needs real API keys, so it is a manual gate
@@ -213,9 +216,9 @@ Structural invariants (do not regress):
   `dispatch_log`'s `unique (worker_id, dispatch_date)` would collide the day
   both channels run.
 - **The worker briefing goes out over WhatsApp**, from
-  `apps/web/app/api/cron/reminders` at 07:00 Europe/Lisbon (two UTC Vercel Cron
-  entries, gated on `lisbon_hour()`). It reads `task_board` like everything
-  else. Proactive sends need an approved Meta **template** — free-form text is
+  `apps/web/app/api/cron/reminders` targeting 07:00 Europe/Lisbon (three UTC
+  Vercel Cron entries, gated on `lisbon_hour()` through `withinSendWindow`). It
+  reads `task_board` like everything else. Proactive sends need an approved Meta **template** — free-form text is
   only allowed inside the 24h window a recipient's own reply opens, which is
   why the webhook acknowledges worker replies.
 - **No proactive send goes out without a recorded opt-in** (migration `0025`).
@@ -229,13 +232,38 @@ Structural invariants (do not regress):
   allow-list, so this is now the only gate. Existing rows were deliberately not
   backfilled.
 - **Cron schedules must fire at `:00`, never `:30`.** Vercel's cron dispatch
-  drifts — ~45 minutes, reproducibly, on this project — and both send routes gate
-  on `lisbon_hour()` matching exactly. A `:30` entry crosses the hour boundary
-  and is rejected, which is precisely how the check-in shipped and then never
-  sent a single message. Both routes now `logEvent` when the gate rejects them,
-  because a rejection writes no row and raises no error.
+  drifts — 33 to 49 minutes, reproducibly, on this project — and both send routes
+  gate on the Lisbon hour. A `:30` entry crosses the hour boundary and is
+  rejected, which is precisely how the check-in shipped and then never sent a
+  single message. Both routes `logEvent` when the gate rejects them, because a
+  rejection writes no row and raises no error.
+- **The hour gate is a WINDOW, not an equality check** (#51). `withinSendWindow`
+  in `apps/web/lib/cron.ts` is the one seam both send routes ask, and it accepts
+  `SEND_WINDOW_HOURS` (2) Lisbon hours starting at the route's `SEND_HOUR`: 7–8
+  for the briefing, 16–17 for the check-in. Four things about it:
+  - **The equality check was 11 minutes from total silence.** It passes only
+    while drift stays under 60 minutes and drift hit 49 on 2026-08-13. Past the
+    hour the route answers 200 with `{skipped}`, writes no `notification_log`
+    row and raises no error — the crew gets nothing on a morning that looks
+    perfectly healthy. The window moves that cliff to 120 minutes; it does not
+    remove it, and it does **not** retire the `:00` rule above.
+  - **`notification_log`'s unique constraint is still the idempotency lock**, and
+    is what makes widening safe: a second in-window invocation claims nothing
+    (23505) and is a no-op by construction. The gate was never what stopped a
+    double send. Do not "protect" the window with app-level state instead.
+  - **The window never wraps past midnight** — `sendWindowEnd` clamps at 23. A
+    wrapped run would roll `lisbon_today()` over and the lock would read it as a
+    fresh unclaimed day, messaging everybody twice.
+  - **`vercel.json` carries the UNION of UTC hours that land in the window under
+    both DST offsets** — `0 6/7/8` and `0 15/16/17`. JSON has no comments, so the
+    season-by-season table lives on `withinSendWindow`, and `pnpm
+    scheduler-check` reads `vercel.json` and asserts it (plus the `:00` rule).
+  - Consequence to remember: **two invocations now pass the gate every day.**
+    Anything the briefing route does outside a claim must therefore be
+    idempotent — which is why its chat-thread event note is now written only by
+    the invocation that won the claims.
 - **There is a second daily send: the late-afternoon check-in**, from
-  `apps/web/app/api/cron/checkin`, same two-entry/`lisbon_hour()` shape. It asks
+  `apps/web/app/api/cron/checkin`, same three-entry/window shape. It asks
   "did you finish today's tasks?" as a template with two quick-reply buttons and
   records the tap in `worker_checkins`. Three things about it are load-bearing:
   it is **deterministic in both directions** (no model is called on this path at

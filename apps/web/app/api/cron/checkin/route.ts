@@ -11,13 +11,15 @@ import {
   describeSendError,
   readLisbonClock,
   resolveNotification,
+  sendWindowEnd,
+  withinSendWindow,
 } from '../../../../lib/cron';
 import { loadCompanyBriefing, renderWorkerBriefing } from '../../../notifications/briefing';
 
 // The late-afternoon Europe/Lisbon check-in: "did you finish today's tasks?",
 // asked as a template with two quick-reply buttons and answered by tapping one.
-// It goes out inside the 16:00–16:59 Lisbon hour — see SEND_HOUR below for why
-// the schedule is deliberately not pinned to a prettier minute.
+// It goes out inside the 16:00–17:59 Lisbon window — see SEND_HOUR below for
+// why the schedule is deliberately not pinned to a prettier minute.
 //
 // DETERMINISTIC END TO END, in both directions. The message is rendered by
 // renderWorkerBriefing — the same function the 07:00 briefing uses, so the two
@@ -42,23 +44,26 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 /**
- * The late-afternoon check-in hour in Lisbon. Vercel schedules in UTC and
- * Lisbon is UTC+0 in winter and UTC+1 in summer, so apps/web/vercel.json
- * registers TWO entries — 15:00 and 16:00 UTC — and this gate lets exactly one
- * of them through, year round: in summer 15:00 UTC is Lisbon 16 and 16:00 UTC
- * is Lisbon 17; in winter it is 15 and 16. Only the hour is compared.
+ * The Lisbon hour this check-in TARGETS, not the only hour it may go out in.
+ * Vercel schedules in UTC and Lisbon is UTC+0 in winter and UTC+1 in summer, so
+ * apps/web/vercel.json registers THREE entries — 15:00, 16:00 and 17:00 UTC —
+ * and `withinSendWindow` accepts whichever of them lands inside 16:00–17:59
+ * Lisbon. The season-by-season table and the reasoning for the window's width
+ * live on that function; only the hour is ever compared.
  *
- * ⚠ BOTH ENTRIES MUST FIRE AT :00, and this is the whole reason the feature was
+ * ⚠ EVERY ENTRY MUST FIRE AT :00, and this is the whole reason the feature was
  * dead on arrival. They used to be 15:30/16:30, and Vercel's cron dispatch
- * drifts — observed at ~45 minutes on this project, with every daily_briefing
- * row stamped 06:45 UTC for an entry scheduled at 06:00. A :00 schedule has a
+ * drifts — observed at 33–49 minutes on this project, with every daily_briefing
+ * row stamped ~06:45 UTC for an entry scheduled at 06:00. A :00 schedule has a
  * full hour of headroom before the Lisbon hour rolls over; a :30 schedule has
  * thirty minutes, so both check-in entries drifted past the boundary, this gate
  * rejected them, and not one check-in was ever sent. The 07:00 briefing
  * survived the identical drift purely because it was scheduled at :00.
  *
- * So: do not "tidy" these back to a nicer-looking wall-clock time. The send
- * lands somewhere in 16:00–16:59 Lisbon by design.
+ * The window added on top of that buys a second hour of headroom, but it does
+ * NOT retire the :00 rule — it shifts the cliff from 60 minutes of drift to
+ * 120. So: do not "tidy" these back to a nicer-looking wall-clock time. The
+ * send lands somewhere in 16:00–17:59 Lisbon by design.
  */
 const SEND_HOUR = 16;
 
@@ -88,7 +93,7 @@ export async function GET(request: NextRequest) {
   if (denied) return denied;
 
   // dry_run renders everything and sends nothing, writes nothing. It also
-  // bypasses the hour gate, so the output can be inspected at any time of day.
+  // bypasses the send window, so the output can be inspected at any time of day.
   const dryRun = request.nextUrl.searchParams.get('dry_run') === '1';
 
   const db = getDb();
@@ -96,12 +101,19 @@ export async function GET(request: NextRequest) {
   const clock = await readLisbonClock(db, 'cron/checkin');
   if (!clock) return new NextResponse('clock unavailable', { status: 500 });
   const { hour, today } = clock;
-  if (!dryRun && hour !== SEND_HOUR) {
+  const windowEnd = sendWindowEnd(SEND_HOUR);
+  if (!dryRun && !withinSendWindow(hour, SEND_HOUR)) {
     // Logged, not just returned. A rejection here writes no notification_log
     // row and raises no error, so before this line the only symptom of the
-    // schedule bug above was an empty table.
-    logEvent('checkin.outside_send_hour', { lisbonHour: hour, sendHour: SEND_HOUR });
-    return NextResponse.json({ skipped: 'outside the send hour', lisbonHour: hour });
+    // schedule bug above was an empty table. `windowEnd` is in the payload so
+    // the line records what was actually required, not only what was aimed at.
+    logEvent('checkin.outside_send_hour', { lisbonHour: hour, sendHour: SEND_HOUR, windowEnd });
+    return NextResponse.json({
+      skipped: 'outside the send window',
+      lisbonHour: hour,
+      sendHour: SEND_HOUR,
+      windowEnd,
+    });
   }
 
   const env = whatsappSendEnv();
