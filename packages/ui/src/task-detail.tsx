@@ -73,6 +73,7 @@ export function TaskDetail({
   photos,
   locale,
   renderAssignee,
+  renderMaterials,
   renderActions,
 }: {
   task: BoardTask;
@@ -88,6 +89,12 @@ export function TaskDetail({
    *  presentation-only and owns no mutation. When absent the line renders as
    *  plain text, which is what any caller without a picker still gets. */
   renderAssignee?: () => React.ReactNode;
+  /** The "edit materials" control (issue #60). Same slot contract as
+   *  renderAssignee: this package owns no mutation, so apps/web injects it.
+   *  Its presence also makes the Materials section render on a task with an
+   *  EMPTY list — otherwise the one screen that can add a material is the one
+   *  screen that hides the section when there is nothing to add yet. */
+  renderMaterials?: () => React.ReactNode;
   /** Concluir/Reabrir today; the reminder card joins it in phase 2. */
   renderActions?: () => React.ReactNode;
 }) {
@@ -161,9 +168,14 @@ export function TaskDetail({
         )}
       </Section>
 
-      {task.materials && task.materials.length > 0 && (
+      {(renderMaterials || (task.materials && task.materials.length > 0)) && (
         <Section title={t.materials}>
-          <Chips items={task.materials} />
+          {task.materials && task.materials.length > 0 ? (
+            <Chips items={task.materials} />
+          ) : (
+            <p className="text-sm text-zinc-500">{catalog.screens.materialsEdit.empty}</p>
+          )}
+          {renderMaterials && <div className="pt-1">{renderMaterials()}</div>}
         </Section>
       )}
 

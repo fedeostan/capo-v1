@@ -328,6 +328,45 @@ export interface Catalog {
       pending(n: number): string;
       pendingHint: string;
     };
+    // ── issue #60: collapsible obra groups on /materiais, and adding/editing
+    // a task's materials from both /materiais and the task detail screen.
+    // Kept as its own block rather than folded into `materials` above so the
+    // read-only anticipation copy and the editing copy stay separable.
+    materialsEdit: {
+      /** Count on a group header, e.g. "4 materiais". */
+      groupCount(n: number): string;
+      /** An obra with work in this horizon but nothing recorded yet. */
+      groupEmpty: string;
+      /** Link out of an expanded group to the obra screen. */
+      seeJob: string;
+      /** Opens the editor from a group on /materiais. */
+      add: string;
+      /** Opens the editor from the task detail screen. */
+      edit: string;
+      /** Sheet heading while the manager picks WHICH task the material is for.
+       *  Materials belong to a task, never to an obra — a group covering
+       *  several tasks has to ask rather than guess. */
+      pickTask: string;
+      pickTaskHint: string;
+      /** How many materials a task already carries, in the task chooser. */
+      taskCount(n: number): string;
+      /** Sheet heading while editing one task's list. */
+      title(task: string): string;
+      placeholder: string;
+      addRow: string;
+      /** Accessible name of the ✕ on a row. */
+      removeRow: string;
+      /** The task's list is empty and nothing has been typed yet. */
+      empty: string;
+      save: string;
+      saving: string;
+      cancel: string;
+      /** Returns to the task chooser. */
+      back: string;
+      failed: string;
+      /** The group has no task that could carry a material. */
+      noTasks: string;
+    };
   };
 
   profile: {

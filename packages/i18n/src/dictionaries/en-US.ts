@@ -273,6 +273,29 @@ const dict: Catalog = {
       pending: n => `${n} ${n === 1 ? 'material' : 'materials'} for tomorrow`,
       pendingHint: 'Check it is on site before you finish for the day.',
     },
+    // ── issue #60 ────────────────────────────────────────────────────────
+    materialsEdit: {
+      groupCount: n => (n === 1 ? '1 material' : `${n} materials`),
+      groupEmpty: 'No materials recorded yet.',
+      seeJob: 'Open job',
+      add: 'Add material',
+      edit: 'Edit materials',
+      pickTask: 'Which task is it for?',
+      pickTaskHint: 'Materials belong to a task. Pick the task this material is needed for.',
+      taskCount: n => (n === 1 ? '1 material' : `${n} materials`),
+      title: task => `Materials — ${task}`,
+      placeholder: 'e.g. 20 bags of cement',
+      addRow: 'Add a line',
+      removeRow: 'Remove',
+      empty: 'This task has no materials yet.',
+      save: 'Save',
+      saving: 'Saving…',
+      cancel: 'Cancel',
+      back: 'Back to tasks',
+      failed: 'Could not save the materials.',
+      noTasks: 'No task on this job can carry materials.',
+    },
+    // ── end issue #60 ────────────────────────────────────────────────────
   },
 
   auth: {
