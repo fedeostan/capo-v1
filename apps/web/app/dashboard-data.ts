@@ -163,6 +163,110 @@ export async function loadTaskDetail(
   return { task, job: jobRes?.data ?? null, worker: workerRes?.data ?? null };
 }
 
+/** One active crew member as an assignment candidate, with how busy they are
+ *  on this task's own day. See loadAssignableWorkers for what "busy" means. */
+export interface AssignableWorker {
+  id: string;
+  name: string;
+  trade: string | null;
+  /**
+   * How many OTHER open tasks this worker already has active on the target
+   * date. 0 means free; a positive number means busy.
+   *
+   * `null` means UNKNOWN — the task carries no date at all, so nothing can be
+   * said either way. Rendered without a badge, never as "free": an incorrect
+   * "free" label is worse than no label, because the manager acts on it.
+   */
+  busyOn: number | null;
+}
+
+export interface AssignableWorkers {
+  /** The day availability was computed for (ISO date), or null when unknown. */
+  date: string | null;
+  /** Free first, then by name. Never filtered — a manager must always be able
+   *  to double-book if the job needs it; the list only ever LABELS. */
+  workers: AssignableWorker[];
+}
+
+/**
+ * The worker picker on /tarefas/[id]: the company's ACTIVE crew, each marked
+ * free or busy on the day the task is scheduled for.
+ *
+ * ── WHAT "FREE" MEANS HERE, EXACTLY ────────────────────────────────────────
+ * This schema has no availability, absence, holiday or shift model. There is
+ * therefore no way to know whether someone is actually available. "Free" is
+ * defined narrowly and conservatively as:
+ *
+ *   the worker has NO OTHER OPEN TASK whose active window covers the target
+ *   date, on an obra that is itself active.
+ *
+ * The target date is the task's own `start_date`, falling back to `due_date`.
+ *
+ * The predicate is NOT re-derived in TypeScript. It is the exact filter the
+ * Tarefas board already uses for a specific day (see loadBoardTasks above):
+ * `is_open AND job_active AND window_start <= day <= window_end`, where all
+ * four columns are computed inside the `task_board` view from lisbon_today()
+ * and the task's own dates. That is the AGENTS.md invariant — one clock, one
+ * definition of "what is on that day" — and it is why this reads the view
+ * rather than `tasks`. `active_today`/`active_tomorrow` are deliberately NOT
+ * used: they are pinned to lisbon_today() and cannot answer "next Tuesday",
+ * which is precisely why the view exposes window_start/window_end.
+ *
+ * Two consequences worth naming rather than discovering later:
+ *  - A task with NO start_date and NO due_date has no target date. Every
+ *    worker then comes back with `busyOn: null` and the picker says outright
+ *    that it cannot tell — it does not guess, and it does not say "free".
+ *  - A worker holding an open-ended task (one with no due_date, so its window
+ *    runs to 'infinity') counts as busy on every future day. That errs toward
+ *    "busy", which is the safe direction: the cost of an unlabelled busy
+ *    worker is a manager reading one extra line, the cost of a wrong "free"
+ *    is a double-booked crew.
+ */
+export async function loadAssignableWorkers(
+  { db, companyId }: AuthContext,
+  task: { id: string; start_date: string | null; due_date: string | null },
+): Promise<AssignableWorkers> {
+  const date = task.start_date ?? task.due_date;
+
+  const { data: crew, error } = await db
+    .from('workers')
+    .select('id, name, trade')
+    .eq('company_id', companyId)
+    .eq('active', true)
+    .order('name', { ascending: true });
+  if (error) throw new Error(`workers read failed: ${error.message}`);
+  const roster = crew ?? [];
+
+  if (!date || roster.length === 0) {
+    return { date: null, workers: roster.map(w => ({ ...w, busyOn: null })) };
+  }
+
+  // Same shape as loadBoardTasks' specific-date branch, minus the obra filter
+  // and minus this task itself — a task does not make its own assignee busy.
+  const { data: sameDay, error: boardError } = await db
+    .from('task_board')
+    .select('assignee_worker_id')
+    .eq('company_id', companyId)
+    .eq('is_open', true)
+    .eq('job_active', true)
+    .lte('window_start', date)
+    .gte('window_end', date)
+    .neq('id', task.id);
+  if (boardError) throw new Error(`task_board read failed: ${boardError.message}`);
+
+  const busy = new Map<string, number>();
+  for (const row of sameDay ?? []) {
+    if (!row.assignee_worker_id) continue;
+    busy.set(row.assignee_worker_id, (busy.get(row.assignee_worker_id) ?? 0) + 1);
+  }
+
+  const workers = roster
+    .map(w => ({ ...w, busyOn: busy.get(w.id) ?? 0 }))
+    .sort((a, b) => a.busyOn - b.busyOn || a.name.localeCompare(b.name));
+
+  return { date, workers };
+}
+
 // Options for the obra filter. Reads `jobs`, NOT dashboard_obras: that view is
 // `where status = 'active'`, so a paused obra — precisely the one whose tasks
 // show up under "Em risco" via risk_paused_job — could never be selected.
