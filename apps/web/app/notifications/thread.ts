@@ -78,7 +78,19 @@ export type ThreadEventSource =
   /** The late-afternoon check-in: who was asked whether they had finished. */
   | 'checkin_ask'
   /** A crew member's answer to that check-in — the BUTTON, never any text. */
-  | 'checkin_answer';
+  | 'checkin_answer'
+  /**
+   * The welcome (issue #45): Capo introducing itself to somebody whose number
+   * has just entered the system. Crew only — the manager reads their own
+   * welcome on their own phone, and a note about it would land in this very
+   * thread.
+   *
+   * The fourth source, so the list AGENTS.md calls exhaustive is now four. It
+   * belongs here for the reason the other three do: this is a message the crew
+   * receives, and a manager must never find a conversation on a crew phone
+   * that Capo has no record of starting.
+   */
+  | 'welcome';
 
 /**
  * Append one system-authored line to a company's perpetual chat thread.

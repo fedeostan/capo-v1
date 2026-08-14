@@ -27,7 +27,7 @@ const whatsappOptIn = z
   .boolean()
   .optional()
   .describe(
-    'Set true ONLY when the manager states that this worker has agreed to receive WhatsApp messages from Capo. Required before Capo sends them anything — without it they get no briefing and no check-in. Never infer it: if the manager has not said so, ask. Set false to record that they no longer want them.',
+    'Set true ONLY when the manager states that this worker has agreed to receive WhatsApp messages from Capo. Required before Capo sends them anything — without it they get no briefing and no check-in. Never infer it: if the manager has not said so, ask. Set false to record that they no longer want them. Recording consent also makes Capo introduce itself to that person on WhatsApp, once — one paid message per person, so say so when the manager is consenting several people at a time.',
   );
 
 export const addWorkerInput = z.object({

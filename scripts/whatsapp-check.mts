@@ -109,6 +109,16 @@ import {
   buildWorkerMenu,
   renderTaskDetail,
 } from '../apps/web/app/notifications/worker-menu.ts';
+// The WELCOME (issue #45). Same reasoning again — pure renderers plus one
+// loader that reads three relations and filters them in TypeScript, so the fake
+// Db below drives the real function rather than a re-implementation of it.
+import {
+  loadPendingWelcomes,
+  renderWelcome,
+  renderWelcomeEvent,
+  renderWelcomeFreeForm,
+  WELCOME_KIND,
+} from '../apps/web/app/notifications/welcome.ts';
 // The three keyword tables that sit IN FRONT of the worker agent. They moved
 // out of the Next route precisely so this file could assert them: three sets
 // that must stay pairwise disjoint cannot be checked by reading.
@@ -163,6 +173,10 @@ function fakeBriefingDb(rows: Record<string, unknown[]>): Db {
     const chain: Record<string, unknown> = {
       select: () => chain,
       eq: () => chain,
+      // `order` is here for loadPendingWelcomes (#45), which reads `profiles`
+      // ordered by created_at. It is a no-op: nothing under test depends on the
+      // order, only on who is in the set.
+      order: () => chain,
       then: (resolve: (value: { data: unknown[]; error: null }) => unknown) =>
         resolve({ data: rows[table] ?? [], error: null }),
     };
@@ -1683,6 +1697,133 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     check(`${locale} — and leaks no undefined`, !s2.includes('undefined'), s2);
     const m = buildWorkerMenu({ tasks: [task()], body: 'x', locale });
     check(`${locale} — the menu labels leak no undefined`, !JSON.stringify(m).includes('undefined'), JSON.stringify(m));
+  }
+}
+
+// ── the welcome (issue #45) ─────────────────────────────────────────────────
+//
+// The first message Capo ever sends somebody, once per person, ever. Three
+// things here are load-bearing and none of them fails loudly in production:
+//
+//   a. It is a PROACTIVE send, so it may only ever reach somebody with a
+//      recorded opt-in. The audience loader must therefore drop exactly the
+//      people the two daily sends drop, and for exactly the same reasons —
+//      which is why it goes through partitionCrew rather than a filter of its
+//      own.
+//   b. It has TWO envelopes — the paid template and, for anybody inside their
+//      24-hour window, free text. The approved template body is BUILT from the
+//      same two catalog strings the free-form renderer uses, so the two cannot
+//      drift into introducing Capo differently depending on an invisible
+//      property of the recipient. Assert the rejoin, the way cache-check
+//      asserts the system-prompt split.
+//   c. Both parameters go into a Meta template, where a newline is a 132000
+//      that fails the whole send. A company name and a person's name are both
+//      manager-authored free text.
+{
+  const optedIn = '2026-08-01T10:00:00Z';
+
+  // The kinds must stay distinct. 'welcome' is the only one locked once-EVER
+  // (0033's partial unique index); collapsing it into either daily kind would
+  // either welcome people daily or stop a daily send after its first day.
+  check('the welcome kind is its own', WELCOME_KIND === 'welcome');
+  check('and is neither daily kind', WELCOME_KIND !== 'daily_briefing' && WELCOME_KIND !== 'task_checkin');
+
+  const crew = [
+    // welcomable: active, reachable, consenting, never welcomed
+    { id: 'w1', name: 'Zé', active: true, phone: '351911111111', whatsapp_opt_in_at: optedIn },
+    // consented, but ALREADY welcomed — the steady state, and the one the
+    // ledger read exists to keep cheap
+    { id: 'w2', name: 'Pepe', active: true, phone: '351922222222', whatsapp_opt_in_at: optedIn },
+    // ⚠ THE ONE THAT MATTERS. Reachable, active, and nobody has agreed on their
+    // behalf. A welcome to this person is the message that gets a business
+    // number banned.
+    { id: 'w3', name: 'Ana', active: true, phone: '351933333333', whatsapp_opt_in_at: null },
+    // consenting but with nowhere to send
+    { id: 'w4', name: 'Rui', active: true, phone: null, whatsapp_opt_in_at: optedIn },
+    // switched off
+    { id: 'w5', name: 'Antigo', active: false, phone: '351955555555', whatsapp_opt_in_at: optedIn },
+  ];
+  const managers = [
+    { id: 'p1', full_name: 'Federico', language: 'pt-PT', phone: '+5491178876189', whatsapp_opt_in_at: optedIn },
+    // the account holder who never ticked the box on /perfil. Being the owner
+    // is not consent to be messaged on WhatsApp.
+    { id: 'p2', full_name: 'Sócio', language: 'pt-PT', phone: '+351966666666', whatsapp_opt_in_at: null },
+  ];
+  const done = [{ worker_id: 'w2', profile_id: null }];
+
+  const audience = await loadPendingWelcomes(
+    fakeBriefingDb({ workers: crew, profiles: managers, notification_log: done }),
+    { id: 'co', name: 'Construções Silva', language: 'pt-PT' },
+  );
+
+  const ids = audience.pending.map(p => p.id).sort();
+  eq('only the never-welcomed, consenting, reachable people are pending', ids.join(','), 'p1,w1');
+  check('a worker with no recorded opt-in is NEVER pending', !ids.includes('w3'));
+  check('a manager with no recorded opt-in is NEVER pending either', !ids.includes('p2'));
+  check('an already-welcomed worker is not welcomed twice', !ids.includes('w2'));
+  eq('the consent exclusion is counted, not silent', audience.excludedNoConsent, 1);
+  eq('and so is the unreachable one', audience.excludedUnreachable, 1);
+  eq('and the inactive one', audience.excludedInactive, 1);
+  eq('and the manager one', audience.excludedManagers, 1);
+
+  const worker = audience.pending.find(p => p.id === 'w1')!;
+  const manager = audience.pending.find(p => p.id === 'p1')!;
+  eq('a crew member is addressed as a worker', worker.audience, 'worker');
+  eq('a profile is addressed as a manager', manager.audience, 'manager');
+
+  for (const locale of LOCALES) {
+    const t2 = getCatalog(locale).reminders;
+    const target = { ...worker, locale };
+    const [name, middle] = renderWelcome(target, 'Construções Silva');
+    const [, managerMiddle] = renderWelcome({ ...manager, locale }, 'Construções Silva');
+
+    // (c) Template parameters survive Meta's rules untouched. If toTemplateParam
+    // has to CHANGE either of them, the copy contains something Meta would have
+    // rejected outright.
+    eq(`${locale} — the name parameter needs no flattening`, toTemplateParam(name), name);
+    eq(`${locale} — the worker sentence needs no flattening`, toTemplateParam(middle), middle);
+    eq(`${locale} — the manager sentence needs no flattening`, toTemplateParam(managerMiddle), managerMiddle);
+
+    // The two audiences must actually differ. One approved template serving
+    // both is only defensible because {{2}} carries the difference.
+    check(`${locale} — worker and manager are told different things`, middle !== managerMiddle, middle);
+    check(`${locale} — the welcome names the company`, middle.includes('Construções Silva'), middle);
+
+    // A welcome is by definition first contact, so this is the one message
+    // where the language options are certainly new information (#49 made them
+    // conditional everywhere else).
+    check(`${locale} — the crew welcome offers PT/ES/EN`, /\bPT\b/.test(middle), middle);
+    check(`${locale} — the manager welcome does not`, !/\bPT,/.test(managerMiddle), managerMiddle);
+
+    // (b) THE REJOIN. The approved template body is greeting ⊕ {{2}} ⊕ opt-out,
+    // and the free-form twin is the same three strings with newlines between
+    // them. Assert against the REAL template definition rather than a
+    // re-derivation, so a change to either side fails here.
+    const def = allTemplates().find(d => d.name === 'capo_welcome' && d.language === t2.templateLanguage)!;
+    const body = (def.components.find(c => c.type === 'BODY') as { text: string }).text;
+    const freeForm = renderWelcomeFreeForm(target, 'Construções Silva');
+    eq(
+      `${locale} — the free-form welcome is the template body, rejoined`,
+      freeForm.replace(/\n+/g, ' '),
+      body.replace('{{1}}', name).replace('{{2}}', middle),
+    );
+    // Meta expects a utility message to say how to stop receiving them, and the
+    // free-form path has no approved wrapper to say it on our behalf.
+    check(`${locale} — the free-form welcome still states the opt-out`, freeForm.includes(t2.welcomeStop), freeForm);
+    check(`${locale} — and leaks no undefined`, !freeForm.includes('undefined'), freeForm);
+  }
+
+  // A pasted paragraph in the company name must not blow the parameter apart.
+  const [, messy] = renderWelcome({ ...worker, locale: 'pt-PT' }, 'Obras\nSilva\t& Filhos, Lda, a maior empresa de construção civil de toda a região norte de Portugal');
+  eq('a multi-line company name is flattened before it reaches Meta', toTemplateParam(messy), messy);
+  check('and clamped rather than allowed to run on', messy.includes('…'), messy);
+
+  // The thread note (issue #47's boundary, one more source). Crew names only,
+  // and they are text the MANAGER typed.
+  for (const locale of LOCALES) {
+    const note = renderWelcomeEvent(2, ['Zé', 'Pepe'], locale);
+    check(`${locale} — the welcome thread note names who was introduced`, note.includes('Zé') && note.includes('Pepe'), note);
+    check(`${locale} — and leaks no undefined`, !note.includes('undefined'), note);
   }
 }
 

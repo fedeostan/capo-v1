@@ -1786,6 +1786,10 @@ export type Database = {
         }[]
       }
       revert_translation_batch: { Args: { p_batch: string }; Returns: Json }
+      // 0033. A marker, not a computation: the welcome sweep asks for it before
+      // it sends anything, and a missing function means the once-ever index and
+      // the backfill are not in place yet, so nothing goes out.
+      welcome_ledger_ready: { Args: never; Returns: boolean }
       search_knowledge: {
         Args: {
           filter_category?: string

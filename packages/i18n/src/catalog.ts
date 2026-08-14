@@ -390,6 +390,17 @@ export interface Catalog {
      */
     noConsentWarning: string;
     receivesWhatsApp: string;
+    /**
+     * The cost of recording consent for the CREW (issue #45). Each person Capo
+     * is newly allowed to message gets one welcome, and each welcome is a paid
+     * WhatsApp template — so consenting a twenty-person crew is twenty paid
+     * messages, not one.
+     *
+     * On the team card rather than in chat because this is where the manager
+     * sees the whole crew at once, which is the only place the multiplication
+     * is visible.
+     */
+    welcomeCostHint: string;
     teamHint: string;
     teamHintLink: string;
     subscription: string;
@@ -523,6 +534,16 @@ export interface Catalog {
     whatsappConsentOn: string;
     /** Shown when it is not — the reason the daily messages are not arriving. */
     whatsappConsentOff: string;
+    /**
+     * What turning consent ON actually causes (issue #45): Capo introduces
+     * itself on WhatsApp, once, and that introduction is a PAID template send.
+     *
+     * Said out loud on the control that triggers it, because the manager is
+     * spending money on their own account and cannot see the bill from here.
+     * One message for their own number; the crew equivalent is
+     * `profile.welcomeCostHint`, where it is one message per person.
+     */
+    whatsappConsentCost: string;
     // Keys must match Theme in apps/web/lib/theme.ts — tsc catches drift at
     // the call site, where the index is typed as Theme. Duplicated rather than
     // imported: @capo/i18n is a zero-dependency leaf and must never reach into
@@ -1020,5 +1041,70 @@ export interface Catalog {
      * re-approved in WhatsApp Manager — see docs/whatsapp-cloud-api-runbook.md.
      */
     languageHint: string;
+
+    // ── the WELCOME message (issue #45) ──────────────────────────────────────
+    // The first thing Capo ever says to somebody, sent once and never again,
+    // and the only message in the product whose whole job is to explain what
+    // the sender is.
+    //
+    // ⚠ IT IS NOT A REQUEST FOR CONSENT, AND MUST NEVER READ AS ONE. A
+    // proactive WhatsApp message is legal only AFTER an opt-in is on record, so
+    // by the time any of these strings is rendered the person has already
+    // agreed (on site, to their manager, or by ticking the box on /perfil).
+    // The welcome CONFIRMS that agreement and states how to withdraw it. Copy
+    // that asked "do you want to receive messages?" would be asking a question
+    // the answer to which is the reason the message was allowed to be sent.
+    //
+    // ── the template split, and why the interesting half is a PARAMETER ──────
+    // The approved Meta template `capo_welcome` is
+    //     "<fixed opening> {{1}}<fixed>. {{2}} <fixed closing>"
+    // and the fixed parts cannot be changed from this repository — editing an
+    // approved template means re-submitting it by hand and waiting for review.
+    // That is exactly the trap the daily briefing fell into with its "reply PT,
+    // ES or EN" line (issue #49). So everything audience-specific lives in
+    // {{2}}: `welcomeWorker` and `welcomeManager` below. One approved template,
+    // two very different messages, and the difference is ours to change.
+    //
+    // ⚠ BOTH ARE TEMPLATE PARAMETERS. One line each — no newlines, no tabs, no
+    // runs of four spaces, or Meta rejects the whole send with a 132000.
+
+    /**
+     * {{2}} for a CREW MEMBER: their manager put their number in, this is what
+     * they will now get, and how to change the language it arrives in.
+     *
+     * The language sentence is unconditional here and conditional in the daily
+     * briefing, and that asymmetry is deliberate: a welcome is by definition
+     * first contact, so this is the one message where "reply PT, ES or EN" is
+     * certainly new information rather than daily noise.
+     */
+    welcomeWorker(company: string): string;
+    /**
+     * {{2}} for a MANAGER: their account is live, and this message is itself
+     * the proof that the number they typed on /perfil actually reaches them.
+     * No language sentence — a manager changes language on the profile screen.
+     */
+    welcomeManager(company: string): string;
+    /**
+     * The free-form opening, used ONLY when the recipient has written to us in
+     * the last 23 hours and ordinary text is therefore allowed (and free).
+     * Mirrors the approved template's fixed opening so the two envelopes say
+     * the same thing.
+     */
+    welcomeGreeting(name: string): string;
+    /**
+     * The free-form closing, mirroring the template's own opt-out sentence.
+     * Meta expects a utility message to state how to stop receiving them, and
+     * the free-form path has no approved wrapper to state it for us.
+     */
+    welcomeStop: string;
+    /**
+     * The manager's CHAT-THREAD note: who Capo just introduced itself to.
+     *
+     * Same contract as `managerEvent` and `checkinEvent` — our copy, a count,
+     * and crew names the MANAGER typed, joined and capped by the renderer.
+     * Never a word a crew member wrote. Crew only: a manager reads their own
+     * welcome on their own phone and does not need Capo telling them about it.
+     */
+    welcomeEvent(args: { notified: number; names: string }): string;
   };
 }

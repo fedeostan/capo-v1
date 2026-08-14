@@ -171,13 +171,74 @@ export function capoTaskCheckin(): TemplateDefinition[] {
   });
 }
 
+/**
+ * capo_welcome — the first thing Capo ever says to somebody (issue #45).
+ *
+ * Sent once per person, ever, the first time their number can legally be
+ * messaged: a crew member whose manager has recorded their consent, or a
+ * manager who has ticked the box on /perfil.
+ *
+ * ── WHY THE BODY IS BUILT FROM THE CATALOG ─────────────────────────────────
+ * Unlike the two templates above, this one has a free-form TWIN. When the
+ * recipient happens to be inside their 24-hour window the welcome goes out as
+ * ordinary text instead — free, and rendered by renderWelcomeFreeForm() in
+ * apps/web/app/notifications/welcome.ts from `welcomeGreeting` / `welcomeStop`.
+ *
+ * Two copies of the same sentence, one here and one in the catalog, would
+ * eventually disagree, and the symptom would be that Capo introduces itself
+ * differently depending on an invisible property of the recipient. So the fixed
+ * halves are READ FROM THE CATALOG and the parameter is substituted straight
+ * into the greeting: welcomeGreeting('{{1}}') is literally the approved
+ * opening. scripts/whatsapp-check.mts pins that the two envelopes still agree.
+ *
+ * ── ONE TEMPLATE, TWO AUDIENCES ────────────────────────────────────────────
+ * A crew member and a manager need to be told very different things, and there
+ * is exactly one thing in this repository that can say them: {{2}}. The fixed
+ * body cannot — an approved template body is frozen until it is re-submitted by
+ * hand and re-reviewed, which is precisely how the daily briefing ended up
+ * telling every worker how to change language every single morning (#49). So
+ * `welcomeWorker` and `welcomeManager` are both {{2}}, and changing either one
+ * needs no approval at all.
+ *
+ * No BUTTONS component. A reply of any kind opens the free 24-hour window, and
+ * the crew already have STOP, PT/ES/EN and MENU as whole-message keywords; a
+ * quick-reply button would be a FOURTH tappable payload shape to keep disjoint
+ * from the other three for no gain (AGENTS.md).
+ */
+const WELCOME_EXAMPLE_NAME = 'Miguel';
+const WELCOME_EXAMPLE_COMPANY = 'Construções Silva';
+
+export function capoWelcome(): TemplateDefinition[] {
+  return LOCALES.map(locale => {
+    const t = getCatalog(locale).reminders;
+    return {
+      name: 'capo_welcome',
+      language: t.templateLanguage,
+      category: 'UTILITY' as const,
+      parameter_format: 'POSITIONAL' as const,
+      components: [
+        {
+          type: 'BODY',
+          text: `${t.welcomeGreeting('{{1}}')} {{2}} ${t.welcomeStop}`,
+          // The worker wording is the sample, not the manager's: it is the far
+          // more common send, and it is the one a Meta reviewer should judge —
+          // it names the business, states what will arrive, and offers the
+          // language choice, which is the whole case for the template being
+          // UTILITY rather than MARKETING.
+          example: { body_text: [[WELCOME_EXAMPLE_NAME, t.welcomeWorker(WELCOME_EXAMPLE_COMPANY)]] },
+        },
+      ],
+    };
+  });
+}
+
 /** Every template this repo knows how to submit. */
 export function allTemplates(): TemplateDefinition[] {
-  return [...capoDailyBriefing(), ...capoTaskCheckin()];
+  return [...capoDailyBriefing(), ...capoTaskCheckin(), ...capoWelcome()];
 }
 
 /** Templates `status` checks for existence and approval, definition or not. */
-export const MANAGED_TEMPLATE_NAMES = ['capo_daily_briefing', 'capo_task_checkin'];
+export const MANAGED_TEMPLATE_NAMES = ['capo_daily_briefing', 'capo_task_checkin', 'capo_welcome'];
 
 /** The three locale codes every managed template must exist in. */
 export const TEMPLATE_LANGUAGES = LOCALES.map(l => getCatalog(l).reminders.templateLanguage);

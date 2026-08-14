@@ -229,31 +229,8 @@ export async function loadCompanyBriefing(
     byWorker.set(row.assignee_worker_id, list);
   }
 
-  // A worker with NEITHER a phone nor a stored BSUID cannot be reached at all —
-  // /perfil already warns the manager about a missing phone, so it is not a
-  // silent drop.
-  //
-  // The BSUID half only ever fills in for someone Meta has stopped giving us a
-  // number for. It cannot be populated out of thin air: a BSUID is revealed only
-  // on an inbound message, so a worker reaches this branch only after having
-  // written to us at least once (see captureBsuid in the webhook route).
-  // `active !== true`, not `active === false`: the column is typed nullable, and
-  // a null must fall on the skipped side exactly as `.eq('active', true)` used
-  // to put it there. Everything downstream reads `active`, never `crew`.
-  const allCrew = crew ?? [];
-  const active = allCrew.filter(w => w.active === true);
-
-  const reachable = active.flatMap(w => {
-    const recipient = recipientFor(w);
-    return recipient ? [{ worker: w, recipient }] : [];
-  });
-
-  // THE CONSENT GATE, and the only one. Both proactive sends — the 07:00
-  // briefing and the late-afternoon check-in — reach their recipients through
-  // this function, so a worker filtered out here cannot be messaged by either.
-  // Putting it in the routes instead would mean two copies of a rule that must
-  // never disagree. See hasWhatsAppConsent() and 0025_whatsapp_optin.sql.
-  const consenting = reachable.filter(({ worker }) => hasWhatsAppConsent(worker));
+  const { messageable: consenting, excludedNoConsent, excludedUnreachable, excludedInactive } =
+    partitionCrew(crew ?? []);
 
   const workers: WorkerBriefing[] = consenting.map(({ worker, recipient }) => ({
     workerId: worker.id,
@@ -271,17 +248,89 @@ export async function loadCompanyBriefing(
     companyId,
     companyLocale,
     workers,
-    excludedNoConsent: reachable.length - consenting.length,
-    // Against `active`, not `allCrew` — otherwise every inactive worker would
-    // also be counted as unreachable and the two numbers would double-count the
-    // same person.
-    excludedUnreachable: active.length - reachable.length,
-    excludedInactive: allCrew.length - active.length,
+    excludedNoConsent,
+    excludedUnreachable,
+    excludedInactive,
     counts: {
       today: todayRows.length,
       unassigned: todayRows.filter(r => !r.assignee_worker_id).length,
       overdue: open.filter(r => r.overdue === true).length,
     },
+  };
+}
+
+/**
+ * A crew row, narrowed to the four questions "may we message this person, and
+ * where?" actually asks. Deliberately structural rather than the generated
+ * `workers` row type, so the same function serves a `select('*')` whose columns
+ * lead or lag the live schema (see readLastInboundAt on why that happens).
+ */
+export interface AddressableCrewRow {
+  active?: boolean | null;
+  phone?: string | null;
+  whatsapp_user_id?: string | null;
+  whatsapp_opt_in_at?: string | null;
+  whatsapp_opt_out_at?: string | null;
+}
+
+export interface CrewPartition<T> {
+  /** Active, addressable, consenting — the only people a send may reach. */
+  messageable: { worker: T; recipient: WhatsAppRecipient }[];
+  excludedNoConsent: number;
+  excludedUnreachable: number;
+  excludedInactive: number;
+}
+
+/**
+ * ── THE CONSENT GATE, AND THE ONLY ONE ─────────────────────────────────────
+ *
+ * Split out of loadCompanyBriefing when the WELCOME send (issue #45) needed the
+ * same three questions asked in the same order, over the same crew table, at a
+ * completely different time of day. Copying the filter would have put a second
+ * copy of a consent rule in the codebase — the one thing 0025 and AGENTS.md
+ * both say must never happen, because two copies eventually disagree and the
+ * symptom is a person one send reaches and another silently skips.
+ *
+ * So now every proactive send in the product — the 07:00 briefing, the
+ * late-afternoon check-in, and the welcome — reaches its crew through this
+ * function, and `hasWhatsAppConsent` is called from exactly one place for them.
+ * (Managers are the documented exception: they have no `workers` row, so the
+ * routes call the same predicate directly on their profile, as /api/cron/reminders
+ * has always done.)
+ *
+ * The three exclusions PARTITION the crew — nobody is counted twice, and
+ * messageable + the three counts equals the input length. That is asserted by
+ * `pnpm whatsapp-check`, and it is what makes "Capo has gone quiet" a question
+ * with a numeric answer rather than a log dive.
+ *
+ * `active !== true`, not `active === false`: the column is typed nullable and a
+ * null must fall on the skipped side, exactly where `.eq('active', true)` used
+ * to put it before the filter moved out of SQL (#54).
+ *
+ * A worker with NEITHER a phone nor a stored BSUID cannot be reached at all.
+ * The BSUID half only ever fills in for someone Meta has stopped giving us a
+ * number for, and it cannot be populated out of thin air: a BSUID is revealed
+ * only on an inbound message, so a worker reaches that branch only after having
+ * written to us at least once (see captureBsuid in the webhook route).
+ */
+export function partitionCrew<T extends AddressableCrewRow>(crew: T[]): CrewPartition<T> {
+  const active = crew.filter(w => w.active === true);
+
+  const reachable = active.flatMap(worker => {
+    const recipient = recipientFor(worker);
+    return recipient ? [{ worker, recipient }] : [];
+  });
+
+  const messageable = reachable.filter(({ worker }) => hasWhatsAppConsent(worker));
+
+  return {
+    messageable,
+    excludedNoConsent: reachable.length - messageable.length,
+    // Against `active`, not the whole crew — otherwise every inactive worker
+    // would also be counted as unreachable and the two numbers would
+    // double-count the same person.
+    excludedUnreachable: active.length - reachable.length,
+    excludedInactive: crew.length - active.length,
   };
 }
 
@@ -594,8 +643,14 @@ export function renderManagerBriefing(
  */
 const MAX_NAMED = 8;
 
-/** A capped, locale-joined list of crew names. Empty string for nobody. */
-function nameList(names: readonly string[], locale: Locale): string {
+/**
+ * A capped, locale-joined list of crew names. Empty string for nobody.
+ *
+ * Exported since #45 so the welcome note joins names exactly as the three
+ * older notes do — the cap and the separator are the same judgement about the
+ * manager's thread and about the model's context, and two of them would drift.
+ */
+export function nameList(names: readonly string[], locale: Locale): string {
   const t = getCatalog(locale).reminders;
   if (names.length === 0) return '';
   const shown = names.slice(0, MAX_NAMED);
