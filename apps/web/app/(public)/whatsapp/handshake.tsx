@@ -7,7 +7,7 @@ import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 import { useFormFactor } from '@/app/platform';
 import type { QrGeometry } from '@/lib/qr';
-import { checkWhatsAppArrival } from './actions';
+import { checkWhatsAppArrival, reportHandshakeStalled } from './actions';
 
 const POLL_MS = 3_000;
 /** Generous against a healthy path that completes in ~2s. Past this the screen
@@ -77,6 +77,16 @@ export default function Handshake({
     return () => clearTimeout(id);
   }, [status, router]);
 
+  useEffect(() => {
+    if (status !== 'stalled') return;
+    // Fire-and-forget: this is telemetry, not a step the manager is waiting
+    // on, so it must never be able to break or delay the stalled screen.
+    // Everything else on this page logs server-side; without this, the
+    // 90-second give-up — the one outcome this feature most needs visibility
+    // into — left no trace at all.
+    reportHandshakeStalled().catch(() => {});
+  }, [status]);
+
   // 'detecting' — the server pass and the moment before hydration — renders the
   // LINK alone. The link works on every device; the QR only works when there is
   // a second screen to scan it with. So the not-yet-known state is the safe one,
@@ -112,10 +122,18 @@ export default function Handshake({
         </div>
       )}
 
+      {/* Desktop: a secondary link beside the QR the manager is meant to keep
+          looking at, so a new tab is correct — they stay on this screen.
+          Mobile: navigating in the SAME tab is deliberate. A new tab puts the
+          wa.me interstitial and WhatsApp hand-off in front, and this tab
+          behind it — so when the manager returns to the browser, the front
+          tab is wa.me, not /whatsapp, and iOS suspends timers in a
+          backgrounded tab, so the poll may never even run. Same-tab means
+          Back returns here, which remounts and re-confirms immediately
+          because arrival is sticky by design (see actions.ts). */}
       <a
         href={link}
-        target="_blank"
-        rel="noopener noreferrer"
+        {...(desktop ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
         className={
           desktop
             ? 'block text-center text-sm text-zinc-500 underline'

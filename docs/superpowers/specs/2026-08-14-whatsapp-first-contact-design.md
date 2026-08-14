@@ -159,6 +159,20 @@ A manager who leaves before the poll registers records nothing, and gets no
 briefing until they tick the box on `/perfil`. That is the fail-closed direction
 and matches `0025`'s posture throughout.
 
+**Refinement: record once, never overwrite.** `checkWhatsAppArrival` only
+writes a consent timestamp the first time it observes arrival — it reads both
+`whatsapp_opt_in_at` and `whatsapp_opt_out_at` alongside `last_inbound_at`, and
+if either is already set, it leaves them alone. Without this, a manager who
+unticks the box, sends the message, leaves before the poll fires, and then
+comes back to `/whatsapp` (their tick-box reset to its default) would have
+their earlier opt-out silently reversed on the next poll — `last_inbound_at`
+is already set, so arrival "happens" again on a visit where nothing was
+actually decided. That is exactly the case the paragraph above already rules
+out ("not an act"); recording once is what makes the rule hold on a second
+visit, not only on the first.
+
+
+
 ## 6. Files
 
 ### New

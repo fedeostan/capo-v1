@@ -45,7 +45,7 @@ export async function checkWhatsAppArrival(optIn: boolean): Promise<ArrivalState
   // and that must be greppable.
   const { data, error } = await db
     .from('profiles')
-    .select('last_inbound_at')
+    .select('last_inbound_at, whatsapp_opt_in_at, whatsapp_opt_out_at')
     .eq('id', userId)
     .maybeSingle();
 
@@ -54,6 +54,25 @@ export async function checkWhatsAppArrival(optIn: boolean): Promise<ArrivalState
     return { arrived: false };
   }
   if (!data?.last_inbound_at) return { arrived: false };
+
+  // Record ONCE, never overwrite. Without this guard: a manager unticks the
+  // box, sends the message, taps "Fazer isto mais tarde" before the 3s poll
+  // fires (nothing recorded yet — correct), then presses Back. /whatsapp
+  // remounts with the tick-box reset to its `useState(true)` default, the poll
+  // sees `last_inbound_at` already set, and writes `whatsapp_opt_in_at = now()`
+  // — silently reversing an explicit opt-out. The same remount-and-overwrite
+  // would also stomp a choice just made on /perfil, since this screen's own
+  // "Corrigir o número" link sends them there and back. A visit where
+  // `last_inbound_at` was ALREADY set is also, per the design spec, not an
+  // act at all — the tick-box state at that moment is a stale default, not a
+  // decision. So: once either timestamp exists, this action leaves consent
+  // alone and /perfil remains the only way to change it.
+  const alreadyRecorded = data.whatsapp_opt_in_at != null || data.whatsapp_opt_out_at != null;
+
+  if (alreadyRecorded) {
+    logEvent('handshake.arrived', { companyId, userId, optIn, consentAlreadyRecorded: true });
+    return { arrived: true };
+  }
 
   // Marks, never clears — the two timestamps are compared and the later wins,
   // so withdrawing consent does not erase the record that it was once given.
@@ -68,6 +87,29 @@ export async function checkWhatsAppArrival(optIn: boolean): Promise<ArrivalState
     logEvent('handshake.consent_write_failed', { companyId, userId, optIn, error: consentError.message });
   }
 
-  logEvent('handshake.arrived', { companyId, userId, optIn, consentRecorded: !consentError });
+  logEvent('handshake.arrived', {
+    companyId,
+    userId,
+    optIn,
+    consentAlreadyRecorded: false,
+    consentRecorded: !consentError,
+  });
   return { arrived: true };
+}
+
+/**
+ * The 90-second give-up is decided entirely in the browser (handshake.tsx's
+ * own clock) and, unlike every other outcome on this screen, left no trace
+ * server-side. "How many new managers are failing first contact?" is the
+ * question this feature exists to expose, so record it — one event, no
+ * retries, swallowed on failure so a logging hiccup can never surface as a
+ * broken screen for someone who has already had a bad signup experience.
+ */
+export async function reportHandshakeStalled(): Promise<void> {
+  const { userId, companyId } = await requireAuth();
+  try {
+    logEvent('handshake.stalled', { companyId, userId });
+  } catch {
+    // Swallowed deliberately — see the doc comment above.
+  }
 }

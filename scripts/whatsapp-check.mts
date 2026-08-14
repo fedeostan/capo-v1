@@ -1759,7 +1759,11 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
   // Deterministic: the page is force-dynamic and re-renders per request, so a
   // non-deterministic encoder would hand two managers different codes for the
   // same link and make any bug here unreproducible.
-  eq('qr — the same text yields the same path', qrGeometry(link).path, qr.path);
+  // check(), not eq(): eq()'s detail string JSON.stringifies both sides and
+  // prints it on PASS as well as FAIL, and a QR path is ~50KB of SVG
+  // coordinates. Printed twice per run, it drowned out every other line in
+  // this file's output — this repo's only correctness signal.
+  check('qr — the same text yields the same path', qrGeometry(link).path === qr.path);
   check('qr — different text yields a different path', qrGeometry(`${link}x`).path !== qr.path);
 }
 

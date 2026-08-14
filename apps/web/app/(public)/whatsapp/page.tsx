@@ -51,7 +51,19 @@ export default async function WhatsAppPage() {
   // line. Its own query rather than widening getAuthState's: that one runs on
   // every authenticated page in the product and must not grow columns for one
   // screen's copy.
-  const { data: profile } = await db.from('profiles').select('phone').eq('id', userId).maybeSingle();
+  const { data: profile, error: phoneError } = await db
+    .from('profiles')
+    .select('phone')
+    .eq('id', userId)
+    .maybeSingle();
+  if (phoneError) {
+    // The screen still renders on a failed read — a missing phone number must
+    // not take down the whole handshake. But `profile?.phone ?? ''` below then
+    // renders the stalled sentence with its answer missing (t.stalled('') —
+    // "O  é o número do teu WhatsApp?"), which is a degraded state, not a
+    // normal empty one, and every other read on this branch logs its failure.
+    logEvent('handshake.phone_read_failed', { companyId, userId, error: phoneError.message });
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 px-6 pb-16">
