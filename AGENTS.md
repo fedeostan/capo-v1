@@ -275,6 +275,53 @@ Structural invariants (do not regress):
     existed since `0001` and is never written. With always-ask as the default,
     `status='pending'` accumulates much faster, and the chat page's unbounded
     `select` over `proposals` stacks every stale card above the conversation.
+- **Billing runs on the LIVE Stripe account, and the webhook URL is the `www`
+  host** (issue #85, cut over 2026-08-14). Live account `acct_1TtrERLIxn6Jugmn`,
+  price `price_1U4J91LIxn6JugmnvZc5XN12` (€45/month EUR), endpoint
+  `we_1U4JwCLIxn6JugmnMEnNNhDA` at
+  `https://www.construcapo.com/api/stripe/webhook`, three events, portal
+  configuration `bpc_1U4K5ALIxn6JugmnJTbCA060` (cancel at period end, no
+  proration, no plan switching).
+  **The apex `construcapo.com` answers `308`, and Stripe treats ANY 3xx reply to
+  a delivery as a failure** — an apex endpoint fails 100% of deliveries with no
+  error anywhere in this codebase. Since `0011` revoked the tenant's table-wide
+  UPDATE on `companies` and re-granted `(name)` only, that webhook is the sole
+  writer of `subscription_status`: no delivery means a paying customer keeps
+  `trialing` and is locked out the day their trial expires. Four things follow:
+  - **The 14-day trial lives in Capo's database and is handed to Stripe at
+    checkout**, as `subscription_data.trial_end`. `resolveTrialEnd`
+    (`apps/web/lib/billing-trial.ts`) is pure and lives OUTSIDE
+    `subscricao/actions.ts` because that file is `'use server'`, where every
+    export must be an async function compiled into a callable HTTP endpoint — a
+    sync helper there is a build error and an async one publishes the rule as an
+    endpoint. Stripe rejects an entire Checkout Session whose `trial_end` is
+    nearer than 48 hours, which is the whole reason the function exists; the
+    rule is *carry it across when comfortably clear of the floor, otherwise
+    charge today*, and `TRIAL_CARRY_MARGIN_SECONDS` exists because the floor is
+    evaluated when the request LANDS, so a trial ending at exactly 48:00:00
+    would be refused for arriving two seconds late. `pnpm billing-check`
+    (credential-free, in CI) asserts that no input can produce a value inside
+    the floor — an invariant that survives a change of product mind, unlike the
+    pinned cases beside it.
+  - **A zero-row update is not an error.** Postgres reports a filter that
+    matched nothing as a fully successful statement, so both webhook updates
+    carry `.select('id')` and log `billing.company_not_found` /
+    `billing.subscription_orphan` when nothing matched. Same posture as
+    `loadCompanySnapshot` and `recordUsage`: swallowed, but greppable. Grep
+    those events before concluding that a quiet billing table means quiet
+    traffic.
+  - **`subscription_data.metadata.company_id` is the SECOND identity, and the
+    reason the recovery path can exist.** `client_reference_id` rides the
+    Checkout Session only and is absent from every `customer.subscription.*`
+    event, so without the metadata an unmatched subscription event can only be
+    logged, never repaired. The recovery re-writes `stripe_customer_id`, and a
+    `23505` there means another company already claims that customer — a data
+    problem to look at, not a transient failure to retry.
+  - **The live price carries `tax_behavior: 'unspecified'` and that is now
+    frozen** — the field is immutable once a price has been used. Federico's
+    decision (2026-08-14) is that Stripe computes no IVA and collects no NIF;
+    invoicing happens outside Stripe. Adding IVA later means a NEW price object,
+    leaving existing subscribers alone. It is never an edit to this one.
 - **System-vs-user client split**: `getDb()` (service role) is system-only;
   `createUserClient()` (publishable key, RLS) is the client for everything on
   the tenant request path.

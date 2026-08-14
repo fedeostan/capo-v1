@@ -85,3 +85,12 @@ jobs:
       # make the whole bill appear to fall).
       - name: Cost ledger check
         run: pnpm cost-check
+
+      # The trial hand-off to Stripe (issue #85). Pure, credential-free, and
+      # the bug it guards is invisible until a real manager subscribes near the
+      # end of their trial: Stripe rejects an entire Checkout Session whose
+      # trial_end is nearer than 48 hours, so they get an error instead of a
+      # payment page. Nothing in the type system prevents it — trial_end is
+      # just a number.
+      - name: Billing trial check
+        run: pnpm billing-check
