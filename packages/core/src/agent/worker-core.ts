@@ -12,6 +12,7 @@ import type { OutboundSink } from '../channels/types';
 import { toWorkerAiTools } from '../capabilities/worker';
 import type { PendingPhoto, WorkerContext } from '../capabilities/worker/types';
 import { loadWorkerTasks } from '../capabilities/worker/tasks';
+import { withToolCacheBreakpoint } from './cache';
 import { buildWorkerSystemPrompt } from './worker-context';
 import { getModel } from './models';
 import {
@@ -161,10 +162,15 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
     budget: budget.remaining,
   };
 
+  // Prompt caching (issue #58), the worker's own two breakpoints — its own
+  // roster and its own stable prompt half, never the manager's. Both loops
+  // reach ../agent/cache.ts, which is provider plumbing in the same sense
+  // ./models.ts is: it speaks only `string` and the AI SDK's `ToolSet`, so no
+  // Capo tool type or context can travel through it.
   const agent = new ToolLoopAgent({
     model: getModel('conversation'),
     instructions: await buildWorkerSystemPrompt({ db, locale, today, tasks, pendingPhotos: photos }),
-    tools: toWorkerAiTools(ctx),
+    tools: withToolCacheBreakpoint(toWorkerAiTools(ctx)),
     stopWhen: stepCountIs(WORKER_STEPS),
   });
 

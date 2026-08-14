@@ -6,8 +6,12 @@
   "exports": {
     "./agent": "./src/agent/core.ts",
     "./agent/worker": "./src/agent/worker-core.ts",
+    "./capabilities": "./src/capabilities/index.ts",
     "./capabilities/worker": "./src/capabilities/worker/index.ts",
     "./models": "./src/agent/models.ts",
+    "./agent/cache": "./src/agent/cache.ts",
+    "./agent/context": "./src/agent/context.ts",
+    "./agent/worker-context": "./src/agent/worker-context.ts",
     "./embeddings": "./src/agent/embeddings.ts",
     "./knowledge": "./src/knowledge/search.ts",
     "./conversation": "./src/agent/memory/conversation.ts",
