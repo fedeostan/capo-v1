@@ -107,6 +107,11 @@ function stubDb(fixtures: Record<string, unknown>): Db {
 
 const db = stubDb({
   companies: { data: { name: 'Construções Silva' }, error: null },
+  // The manager's own name (issue #62). A per-PROFILE fact, so it belongs
+  // strictly below the breakpoint: above it, the cached prefix would stop being
+  // shared between two managers of the same company and would be rewritten on
+  // every rename.
+  profiles: { data: { full_name: 'Aníbal Gatsby' }, error: null },
   jobs: { count: 3, error: null },
   workers: { count: 7, error: null },
   tasks: { count: 12, error: null },
@@ -151,12 +156,19 @@ const db = stubDb({
 //
 // These markers are the things that MUST stay below the breakpoint. Each is a
 // different kind of volatility: the clock, the tenant's counts, the tenant's
-// rows, and the conversation itself.
-const VOLATILE_MARKERS = ["Today's date", 'Construções Silva', 'Prefere obras a norte'];
+// rows, the individual PROFILE (issue #62 — a name above the line would
+// fragment the cached prefix per manager), and the conversation itself.
+const VOLATILE_MARKERS = ["Today's date", 'Construções Silva', 'Aníbal Gatsby', 'Prefere obras a norte'];
 
 for (const locale of LOCALES) {
   const locales: LocaleContext = { user: locale, company: locale };
-  const msgs = await buildSystemPrompt(db, 'company-1', 'Resumo anterior da conversa.', locales);
+  const msgs = await buildSystemPrompt({
+    db,
+    companyId: 'company-1',
+    userId: 'profile-1',
+    summary: 'Resumo anterior da conversa.',
+    locales,
+  });
 
   eq(`manager/${locale}: two system messages`, msgs.length, 2);
   eq(`manager/${locale}: breakpoint on the first`, msgs[0]?.providerOptions, CACHE_BREAKPOINT);
@@ -188,6 +200,27 @@ for (const locale of LOCALES) {
     tokens >= MIN_CACHEABLE_PREFIX_TOKENS['claude-sonnet-5'],
     `~${tokens} tokens`,
   );
+}
+
+// The two live-fact reads fail INDEPENDENTLY (issue #62). If a transient
+// failure on the company counts also silenced the manager's name, the model
+// would fall straight back to reading a name out of the frozen summary — the
+// exact bug, reappearing only under a hiccup nobody would reproduce.
+{
+  const degraded = stubDb({
+    companies: { data: null, error: { message: 'transient' } },
+    profiles: { data: { full_name: 'Aníbal Gatsby' }, error: null },
+  });
+  const msgs = await buildSystemPrompt({
+    db: degraded,
+    companyId: 'company-1',
+    userId: 'profile-1',
+    summary: null,
+    locales: { user: 'pt-PT', company: 'pt-PT' },
+  });
+  const uncached = msgs[1]?.content ?? '';
+  check("manager: the name survives a failed company-snapshot read", uncached.includes('Aníbal Gatsby'));
+  check('manager: and the counts are absent rather than reported as zero', !uncached.includes('Obras ativas'));
 }
 
 for (const locale of LOCALES) {
@@ -343,7 +376,13 @@ for (const locale of LOCALES) {
     const locales: LocaleContext = { user: 'pt-PT', company: 'pt-PT' };
     await generateText({
       model: getModel('conversation'),
-      instructions: await buildSystemPrompt(db, 'company-1', null, locales),
+      instructions: await buildSystemPrompt({
+        db,
+        companyId: 'company-1',
+        userId: 'profile-1',
+        summary: null,
+        locales,
+      }),
       tools: withToolCacheBreakpoint(toAiTools({} as ToolContext)),
       messages: [{ role: 'user', content: 'olá' }],
     });

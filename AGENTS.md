@@ -673,6 +673,37 @@ Structural invariants (do not regress):
   headline, and the dispatcher renders it from the recipient's own
   `profiles.language` using the SAME catalog entry the inbox uses, so the two
   surfaces cannot say different things.
+- **The live facts outrank the frozen prose, and the prompt says so** (issue
+  #62). Capo's context holds two kinds of thing: blocks rebuilt from the
+  database on every turn (the date, the company snapshot, the knowledge index,
+  tool results) and blocks that are compressed HISTORY (`memories`, the
+  conversation summary). Nothing re-checks the second kind, and
+  `maybeSummarize` MERGES the previous summary into each new one — so a fact
+  written into it once is copied forward indefinitely. That is how a manager
+  who renamed himself on `/perfil` kept being called by his old surname while
+  the company rename was picked up immediately: `companies.name` is read every
+  turn, his own name was not read at all. Four things follow:
+  - **The manager's name is now a live fact**, loaded by `loadManagerName` in
+    `agent/context.ts` and rendered as the first line of the company snapshot,
+    with the same fail-soft posture as the counts (an error drops the line, it
+    never breaks the turn). `buildSystemPrompt` takes an options object with a
+    REQUIRED `userId` for it — positionally, `companyId`/`userId` are two bare
+    uuids and a swap would silently name the wrong person.
+  - **It must stay in the UNCACHED half.** It is per-PROFILE, so above the
+    breakpoint it would both rewrite the cached prefix on every rename and
+    fragment it per manager — two managers of one company would stop sharing an
+    entry. `pnpm cache-check` seeds a profile fixture and asserts the name
+    below the line, plus that it survives a failed snapshot read (the two reads
+    fail independently on purpose).
+  - **The precedence RULE is static text, so it lives above the line**, in
+    `prompts/orchestration.ts` ("Live facts outrank your notes"). Values below,
+    policy above — that split is what keeps the cache shareable.
+  - **The summarizer is told never to write the manager's name**, naming him by
+    role instead. It is not a safety boundary and not retroactive: existing
+    summaries keep the old name until they are next merged. Deliberately, no
+    path deletes or rewrites a stored summary on rename — a summary is a record
+    of what was said, and rewriting history to fix a display bug is the worse
+    trade. The precedence rule is what makes the stale copy harmless.
 - **One clock, one definition of "today".** The active-window rule
   (`lisbon_today() BETWEEN coalesce(start_date, created_at) AND
   coalesce(due_date, 'infinity')`) and every schedule-risk signal live in SQL,

@@ -5,6 +5,7 @@ const blocks: PromptBlocks = {
   knowledgeIntro: 'Documentos que puedes consultar para fundamentar respuestas legales o técnicas:',
 
   snapshotHeading: '# Estado actual de la empresa',
+  snapshotManager: 'Jefe con el que estás hablando',
   snapshotCompany: 'Empresa',
   snapshotActiveJobs: 'Obras activas',
   snapshotActiveWorkers: 'Trabajadores activos',
