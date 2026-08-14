@@ -17,6 +17,12 @@ export interface PromptBlocks {
 
   /** Company snapshot block. */
   snapshotHeading: string;
+  /**
+   * Label for the manager's own name (issue #62). It sits in the snapshot
+   * rather than in the cached policy half for the same reason every other line
+   * here does: it is a row in the tenant's database, read fresh each turn.
+   */
+  snapshotManager: string;
   snapshotCompany: string;
   snapshotActiveJobs: string;
   snapshotActiveWorkers: string;

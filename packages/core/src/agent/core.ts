@@ -88,7 +88,11 @@ export async function handleInbound(opts: HandleInboundOptions): Promise<void> {
       surface: 'manager_chat',
       actor: { kind: 'manager', profileId: userId },
     }),
-    instructions: await buildSystemPrompt(db, companyId, thread.summary, locales),
+    // `userId` goes in so the prompt can carry the manager's CURRENT name as a
+    // live fact (issue #62) instead of leaving the model to read one out of the
+    // conversation summary, which freezes whatever name was current when it was
+    // written.
+    instructions: await buildSystemPrompt({ db, companyId, userId, summary: thread.summary, locales }),
     tools: withToolCacheBreakpoint(toAiTools(ctx)),
     stopWhen: stepCountIs(12),
   });

@@ -34,7 +34,13 @@ import { buildLanguageDirective } from './prompts/language';
 // Two consequences to keep in mind when editing:
 //   - Anything added to the cached half must be a CONSTANT of the code, not of
 //     the tenant or the clock. A DB-derived block up there turns a cache hit
-//     into a cache rewrite on every change.
+//     into a cache rewrite on every change. The manager's own name (issue #62)
+//     is the worked example: it is a row in `profiles`, so it goes in the
+//     snapshot below the line. Above the line it would fragment the cached
+//     prefix PER PROFILE — every manager warming their own entry — on top of
+//     rewriting it on every rename. The static sentence telling the model that
+//     these live facts outrank the summary and the memories is the opposite
+//     case: it never varies, so it lives in orchestration, above the line.
 //   - The cache still fragments by locale — persona has 3 variants and the
 //     language directive varies with both dials — so each combination warms
 //     its own entry. The tool schemas carry their own, earlier breakpoint
@@ -74,6 +80,32 @@ async function loadCompanySnapshot(db: Db, companyId: string): Promise<CompanySn
       openTasks: tasks.count ?? 0,
       pendingProposals: proposals.count ?? 0,
     };
+  } catch {
+    return null;
+  }
+}
+
+// The manager's own name, read fresh on every turn (issue #62).
+//
+// This is a LIVE FACT and it is here, next to the company snapshot, for exactly
+// the reason that issue existed: `companies.name` was already read every turn,
+// so a company rename showed up immediately, while the manager's own name
+// appeared in the prompt only where some past turn had written it down — the
+// conversation summary. A manager who renamed himself on /perfil therefore kept
+// being addressed by his old surname, from prose frozen months earlier and
+// merged forward by every later summarization pass.
+//
+// Columns are named rather than `select('*')`: the 0031 reasoning (a deploy
+// landing before its migration 42703s on a named column) applies to columns a
+// PENDING migration adds, and `full_name` has existed since 0007. Same failure
+// posture as loadCompanySnapshot — any error collapses to "no name", never to a
+// crashed turn, because being addressed generically is a far smaller failure
+// than not answering at all.
+async function loadManagerName(db: Db, userId: string): Promise<string | null> {
+  try {
+    const { data, error } = await db.from('profiles').select('full_name').eq('id', userId).single();
+    if (error || !data) return null;
+    return data.full_name;
   } catch {
     return null;
   }
@@ -147,12 +179,34 @@ export function managerStableBlocks(locales: LocaleContext): string[] {
   return [personas[locales.user], orchestration, buildLanguageDirective(locales)];
 }
 
-export async function buildSystemPrompt(
-  db: Db,
-  companyId: string,
-  summary: string | null,
-  locales: LocaleContext,
-): Promise<SystemModelMessage[]> {
+/**
+ * Everything buildSystemPrompt needs, as an object rather than five positional
+ * arguments. `companyId` and `userId` are both bare uuid strings and would be
+ * silently swappable positionally — the kind of mistake that produces a prompt
+ * that builds, types and reads fine while naming the wrong person. Same shape,
+ * and same reason, as buildWorkerSystemPrompt's parameter.
+ */
+export interface SystemPromptInput {
+  db: Db;
+  companyId: string;
+  /**
+   * The manager on the other end. Required, not optional: every caller has one
+   * (it is already in `HandleInboundOptions`), and an optional field would let
+   * a future channel ship with the stale-name bug back in place by omission —
+   * silently, since a missing name simply removes a line from the prompt.
+   */
+  userId: string;
+  summary: string | null;
+  locales: LocaleContext;
+}
+
+export async function buildSystemPrompt({
+  db,
+  companyId,
+  userId,
+  summary,
+  locales,
+}: SystemPromptInput): Promise<SystemModelMessage[]> {
   const today = new Date().toISOString().slice(0, 10);
   const t = promptBlocks[locales.user];
 
@@ -170,18 +224,25 @@ export async function buildSystemPrompt(
       ? memories.map(m => `- [${m.kind}] (${m.created_at.slice(0, 10)}) ${m.content}`).join('\n')
       : t.memoryEmpty;
 
-  const [snapshot, knowledgeBlock] = await Promise.all([
+  const [snapshot, knowledgeBlock, managerName] = await Promise.all([
     loadCompanySnapshot(db, companyId),
     loadKnowledgeIndex(db, locales.user),
+    loadManagerName(db, userId),
   ]);
-  const snapshotBlock = snapshot
-    ? `${t.snapshotHeading}
-${t.snapshotCompany}: ${snapshot.companyName}
-${t.snapshotActiveJobs}: ${snapshot.activeObras}
-${t.snapshotActiveWorkers}: ${snapshot.activeWorkers}
-${t.snapshotOpenTasks}: ${snapshot.openTasks}
-${t.snapshotPendingProposals}: ${snapshot.pendingProposals}`
-    : null;
+
+  // Built line by line rather than as one template because the two reads fail
+  // independently: a transient failure on the counts must not also take the
+  // manager's name out of the prompt, and vice versa. The whole block is
+  // dropped only when both produced nothing.
+  const factLines = [
+    managerName ? `${t.snapshotManager}: ${managerName}` : null,
+    snapshot ? `${t.snapshotCompany}: ${snapshot.companyName}` : null,
+    snapshot ? `${t.snapshotActiveJobs}: ${snapshot.activeObras}` : null,
+    snapshot ? `${t.snapshotActiveWorkers}: ${snapshot.activeWorkers}` : null,
+    snapshot ? `${t.snapshotOpenTasks}: ${snapshot.openTasks}` : null,
+    snapshot ? `${t.snapshotPendingProposals}: ${snapshot.pendingProposals}` : null,
+  ].filter((line): line is string => line !== null);
+  const snapshotBlock = factLines.length > 0 ? `${t.snapshotHeading}\n${factLines.join('\n')}` : null;
   const onboardingBlock = snapshot ? buildOnboardingBlock(snapshot, locales.user) : null;
 
   // The block ORDER below is unchanged from before caching — the array is

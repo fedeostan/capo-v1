@@ -60,6 +60,14 @@ export async function maybeSummarize(
       'Anchor every fact to its date, e.g. "2026-07-06: created a foundations task for the Rua X job".',
       'Keep: decisions, created/updated tasks and jobs, approvals/rejections, deadlines, preferences, open questions.',
       'Drop: greetings, chit-chat, restatements.',
+      // Issue #62: the summary is injected into every later system prompt, and
+      // each pass MERGES the previous one — so anything written here is copied
+      // forward indefinitely. The manager's name is a database row he can
+      // change from Profile at any time; once frozen into this prose it goes
+      // stale silently and is then re-read on every turn for months. Naming him
+      // by role instead costs the summary nothing (there is exactly one manager
+      // per conversation) and makes each pass launder an older name out.
+      `Never write the manager's own name — call him "${t.speakers.user}", including when merging an existing summary that used his name. His name is live data that can change; a summary that hard-codes it goes stale silently.`,
     ].join('\n'),
     prompt: [
       window.summary ? `Existing summary (merge into this):\n${window.summary}` : null,
