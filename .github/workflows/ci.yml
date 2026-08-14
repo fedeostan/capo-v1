@@ -44,6 +44,15 @@ jobs:
       - name: Scheduler & calendar check
         run: pnpm scheduler-check
 
+      # The write-authorization guard: whether an instruction to Capo changes
+      # the real board immediately or waits behind an approval card. Pure, no
+      # credentials, and every regression it covers is silent — a posture that
+      # stopped being honoured writes to a live job without asking, and a broken
+      # quote match just turns every direct write into friction. Added with the
+      # confirmation posture (issues #57 / #64).
+      - name: Guard check
+        run: pnpm guard-check
+
       # Same idea for the WhatsApp channel: approval-card delivery, ordering,
       # markdown conversion, the button-id codec and Meta's payload limits are
       # all pure functions, so they can be asserted without credentials.

@@ -433,6 +433,16 @@ const dict: Catalog = {
     appearance: 'Aspeto',
     appearanceHint: 'Claro, escuro, ou o que o telemóvel usar. Fica guardado só neste aparelho.',
     themeOption: { light: 'Claro', dark: 'Escuro', system: 'Sistema' },
+    confirmPosture: 'Confirmar alterações',
+    confirmPostureHint:
+      'Quando pedes ao Capo para mudar alguma coisa — criar uma tarefa, passá-la para outra pessoa, cancelar uma obra — ele pode perguntar primeiro ou avançar logo.',
+    confirmPostureOption: { always_ask: 'Perguntar sempre', trust_quote: 'Avançar logo' },
+    confirmPostureOptionHint: {
+      always_ask:
+        'Mais seguro. Cada alteração aparece primeiro como um cartão com «Aprovar» e «Rejeitar» — nada muda no painel enquanto não carregares. Custa um toque de cada vez.',
+      trust_quote:
+        'Mais rápido. O Capo avança logo quando consegue repetir as tuas palavras exatas a autorizar a alteração; se não conseguir, mostra o cartão na mesma.',
+    },
     whatsappConsent: 'Mensagens no WhatsApp',
     whatsappConsentHint:
       'O resumo do dia de manhã e o ponto de situação ao fim da tarde, enviados para o teu número. Podes desligar quando quiseres.',

@@ -611,6 +611,7 @@ export type Database = {
       profiles: {
         Row: {
           company_id: string
+          confirm_posture: string
           created_at: string
           full_name: string
           id: string
@@ -623,6 +624,7 @@ export type Database = {
         }
         Insert: {
           company_id: string
+          confirm_posture?: string
           created_at?: string
           full_name: string
           id: string
@@ -635,6 +637,7 @@ export type Database = {
         }
         Update: {
           company_id?: string
+          confirm_posture?: string
           created_at?: string
           full_name?: string
           id?: string

@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { asConfirmPosture } from '@capo/db/posture';
 import { requireAuth } from '@capo/db/session';
 import { ActiveBatchError, createTranslationBatch, revertTranslationBatch } from '@capo/core/translation';
 import { getCatalog } from '@capo/i18n/catalog';
@@ -255,6 +256,41 @@ export async function setWhatsAppConsent(formData: FormData): Promise<void> {
   logEvent('profile.whatsapp_consent_changed', { companyId, userId, consent });
   revalidatePath('/perfil');
   redirect('/perfil?guardado=whatsapp');
+}
+
+// ── confirmation posture ────────────────────────────────────────────────────
+// profiles.confirm_posture (0031, issue #57): does an instruction to Capo that
+// CHANGES something act immediately, or raise an approval card first?
+//
+// Per user, like the language dial and unlike the theme cookie — two managers
+// in the same company can legitimately want different answers, and the setting
+// has to follow the person onto WhatsApp, where there is no browser to hold a
+// cookie.
+//
+// Same posture as the language forms: a plain redirecting action so the pills
+// work before client JS hydrates. Not gated on a subscription, for the reason
+// in this file's header — and here there is a sharper one: the direction a
+// lapsed tenant would most need is TIGHTENING it, and blocking that would mean
+// blocking someone from making the product safer.
+//
+// The real guard is the grant, as everywhere on this page: 0031 re-grants
+// UPDATE on profiles for (full_name, phone, language, whatsapp_opt_in_at,
+// whatsapp_opt_out_at, confirm_posture) only, and the CHECK constraint refuses
+// any third value even if this validation were bypassed entirely.
+export async function setConfirmPosture(formData: FormData): Promise<void> {
+  const posture = asConfirmPosture(String(formData.get('confirmacao') ?? ''));
+  if (!posture) redirect('/perfil?erro=confirmacao');
+
+  const { db, userId, companyId } = await requireAuth();
+  const { error } = await db.from('profiles').update({ confirm_posture: posture }).eq('id', userId);
+  if (error) {
+    console.error('setConfirmPosture failed:', error.message);
+    redirect('/perfil?erro=confirmacao');
+  }
+
+  logEvent('profile.confirm_posture_changed', { companyId, userId, posture });
+  revalidatePath('/perfil');
+  redirect('/perfil?guardado=confirmacao');
 }
 
 // ── appearance ──────────────────────────────────────────────────────────────

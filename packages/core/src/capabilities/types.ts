@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 import type { Db } from '@capo/db/client';
+import type { ConfirmPosture } from '@capo/db/posture';
 import type { LocaleContext } from '@capo/i18n/locale';
 
 export interface ToolContext {
@@ -20,6 +21,18 @@ export interface ToolContext {
   // is the ONLY filter standing between "update my language" and "update
   // everyone's language".
   userId: string | null;
+  // profiles.confirm_posture (0031) — 'always_ask' turns every guarded write
+  // into an approval card; 'trust_quote' keeps the pre-0031 behaviour of acting
+  // immediately on a verified verbatim quote. Read by runGuarded and by nothing
+  // else.
+  //
+  // REQUIRED, NOT OPTIONAL, and that is the whole reason it is on this type at
+  // all rather than being looked up where it is used. A `confirmPosture?:` with
+  // a default would make "somebody added a ToolContext call site and forgot the
+  // posture" fall back to the RISKIER behaviour, silently, in a commit about
+  // something else. As a required field it is a tsc error instead. Structural
+  // safety over convention (AGENTS.md).
+  confirmPosture: ConfirmPosture;
   // MUTABLE BY DESIGN. set_language rewrites `locales.user` in place so that a
   // renderProposal later in the SAME tool loop produces its card in the new
   // language. runGuarded's `{ ...ctx, actor: 'manager' }` is a shallow copy, so

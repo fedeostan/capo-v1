@@ -44,6 +44,10 @@ export async function POST(req: Request) {
         db: auth.db,
         companyId: auth.companyId,
         userId: auth.userId,
+        // Straight off the AuthContext — the profile row was already read by
+        // getApiAuth, so the posture costs no extra query and cannot disagree
+        // with what /perfil shows.
+        confirmPosture: auth.confirmPosture,
         locales: { user: auth.locale, company: auth.companyLocale },
         inbound: { channel: 'web', text },
         sink: webSink(writer),

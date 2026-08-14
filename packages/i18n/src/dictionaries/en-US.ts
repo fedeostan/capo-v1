@@ -428,6 +428,16 @@ const dict: Catalog = {
     appearance: 'Appearance',
     appearanceHint: "Light, dark, or whatever your phone's set to. Saved on this device only.",
     themeOption: { light: 'Light', dark: 'Dark', system: 'System' },
+    confirmPosture: 'Confirming changes',
+    confirmPostureHint:
+      'When you ask Capo to change something — create a task, hand it to someone else, cancel a job — it can check with you first or just go ahead.',
+    confirmPostureOption: { always_ask: 'Always ask first', trust_quote: 'Go ahead' },
+    confirmPostureOptionHint: {
+      always_ask:
+        'Safer. Every change shows up as a card with Approve and Reject first — nothing moves on the board until you tap. Costs you a tap each time.',
+      trust_quote:
+        'Faster. Capo acts straight away when it can quote your own words authorising the change; when it cannot, you still get the card.',
+    },
     whatsappConsent: 'WhatsApp messages',
     whatsappConsentHint:
       "The morning summary and the late-afternoon check, sent to your number. You can turn it off whenever you like.",

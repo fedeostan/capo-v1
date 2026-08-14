@@ -428,6 +428,16 @@ const dict: Catalog = {
     appearance: 'Aspecto',
     appearanceHint: 'Claro, oscuro, o lo que use el móvil. Se guarda solo en este dispositivo.',
     themeOption: { light: 'Claro', dark: 'Oscuro', system: 'Sistema' },
+    confirmPosture: 'Confirmar los cambios',
+    confirmPostureHint:
+      'Cuando le pides a Capo que cambie algo — crear una tarea, pasarla a otra persona, cancelar una obra — puede preguntarte primero o hacerlo directamente.',
+    confirmPostureOption: { always_ask: 'Preguntar siempre', trust_quote: 'Hacerlo directamente' },
+    confirmPostureOptionHint: {
+      always_ask:
+        'Más seguro. Cada cambio aparece primero como una tarjeta con «Aprobar» y «Rechazar» — nada cambia en el panel hasta que pulses. Cuesta un toque cada vez.',
+      trust_quote:
+        'Más rápido. Capo actúa en el momento cuando puede repetir tus palabras exactas autorizando el cambio; si no puede, te enseña la tarjeta igualmente.',
+    },
     whatsappConsent: 'Mensajes por WhatsApp',
     whatsappConsentHint:
       'El resumen del día por la mañana y el repaso al final de la tarde, enviados a tu número. Puedes desactivarlo cuando quieras.',

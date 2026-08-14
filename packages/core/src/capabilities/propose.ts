@@ -221,6 +221,15 @@ export async function resolveProposal(
       // No live user: this runs from an approval click, not a conversation turn.
       // Any tool needing a userId must handle null rather than assume one.
       userId: null,
+      // Structurally unreachable and pinned to the safe value anyway. Nothing
+      // on this path consults it: the guard is what reads confirmPosture, and
+      // the guard does not run here — the manager already tapped Approve, so
+      // asking them to confirm again would be the same question twice. If some
+      // future code DOES read it from an executing proposal, always_ask is the
+      // answer that cannot cause an unconfirmed write. Never read the approver's
+      // real posture here: it would let one manager's trust_quote setting change
+      // what a card another manager is looking at does.
+      confirmPosture: 'always_ask',
       locales,
     };
     const result = await target.execute(parsed.data, ctx);

@@ -202,6 +202,32 @@ backstop: `toAiTools` never gives it a `manager_instruction` field at all.
 
 Structural invariants (do not regress):
 
+- **The guard now has two postures, and the default is the cautious one**
+  (`profiles.confirm_posture`, migration `0031`, issues #57/#64). `always_ask`
+  — the column default, so every existing and future manager — makes
+  `runGuarded` skip the direct-execute branch entirely: the quote is not
+  consulted at all and every guarded write becomes an approval card.
+  `trust_quote` is the pre-0031 behaviour, preserved byte-for-byte.
+  Three things about it are load-bearing:
+  - **`ToolContext.confirmPosture` is REQUIRED, not optional-with-a-default.**
+    A default would make "new call site, forgot the posture" fall back to the
+    riskier behaviour silently; required makes it a `tsc` error. `WorkerContext`
+    must never gain the field — it is one of the five properties `tsc` now names
+    when refusing `WorkerContext → ToolContext`.
+  - **The guard stays pure and synchronous in its decision.** The posture is
+    resolved on the request path, off the profile row the caller has already
+    read (`getAuthState` on the web, `resolveManager` on WhatsApp) — never by a
+    lookup inside `runGuarded`. `decideGuard` is the exported pure function and
+    `pnpm guard-check` (credential-free, in CI) asserts the whole matrix.
+  - **Both profile reads use `select('*')` for this column, deliberately.**
+    Naming `confirm_posture` in either column list couples them to 0031, and a
+    deploy landing first 42703s — which on `getAuthState` is every page in the
+    app and on `resolveManager` is every manager becoming an unknown WhatsApp
+    sender. `coerceConfirmPosture` reads an absent field as `always_ask`.
+  - Known and NOT fixed: nothing expires `proposals`. The `'expired'` status has
+    existed since `0001` and is never written. With always-ask as the default,
+    `status='pending'` accumulates much faster, and the chat page's unbounded
+    `select` over `proposals` stacks every stale card above the conversation.
 - **System-vs-user client split**: `getDb()` (service role) is system-only;
   `createUserClient()` (publishable key, RLS) is the client for everything on
   the tenant request path.

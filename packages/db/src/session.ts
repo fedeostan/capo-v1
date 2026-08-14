@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
+import { coerceConfirmPosture, type ConfirmPosture } from './posture';
 import { createUserClient } from './user-client';
 import type { Db } from './client';
 
@@ -15,6 +16,17 @@ export interface AuthContext {
   locale: Locale;
   /** companies.language — what Capo STORES (task titles, job names, memories). */
   companyLocale: Locale;
+  /**
+   * profiles.confirm_posture (0031) — does a mutating instruction from this
+   * person act immediately, or raise an approval card first?
+   *
+   * Resolved HERE, on the request path, rather than inside the guard: the guard
+   * must stay a pure, synchronous decision over evidence it was handed. A
+   * database read inside it would make every write depend on a second round
+   * trip that can fail, and "the posture lookup errored" has no safe answer
+   * that is not just this default again.
+   */
+  confirmPosture: ConfirmPosture;
 }
 
 export type AuthState =
@@ -32,9 +44,16 @@ export async function getAuthState(): Promise<AuthState> {
   // is authenticated but not onboarded yet. The companies embed rides along on
   // the same request — companies_select_own already scopes it to this tenant,
   // so both language dials cost zero extra round-trips.
+  //
+  // `*` rather than a column list since 0031, and for the deploy-ordering
+  // reason in AGENTS.md: this query runs on EVERY authenticated page and route,
+  // so naming `confirm_posture` here would take the entire app down for the
+  // minutes between a deploy and its migration. With `*` the field is simply
+  // absent until the column exists, and coerceConfirmPosture reads that as the
+  // safe posture. One row, own row only — the extra columns cost nothing.
   const { data: profile } = await db
     .from('profiles')
-    .select('company_id, language, company:companies(language)')
+    .select('*, company:companies(language)')
     .eq('id', userId)
     .maybeSingle();
   if (!profile) return { status: 'no_profile', db, userId };
@@ -49,6 +68,9 @@ export async function getAuthState(): Promise<AuthState> {
       // degrade to the default rather than crash every render for that user.
       locale: coerceLocale(profile.language),
       companyLocale: coerceLocale(profile.company?.language),
+      // Same coerce-never-trust stance as the two locales above, and it fails
+      // to always_ask: see DEFAULT_CONFIRM_POSTURE.
+      confirmPosture: coerceConfirmPosture(profile.confirm_posture),
     },
   };
 }
