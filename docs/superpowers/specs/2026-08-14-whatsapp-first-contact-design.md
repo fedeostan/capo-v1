@@ -218,21 +218,19 @@ enters the browser bundle and no `dangerouslySetInnerHTML` is needed anywhere.
 
 ## 8. Risks, stated plainly
 
-### Migration `0030` may not be applied in production
+### Migration `0030` — ✅ VERIFIED APPLIED IN PRODUCTION (2026-08-14)
 
-This is the one thing that can make the feature look broken while every line of
-it is correct. The whole confirmation reads `profiles.last_inbound_at`, added by
-`0030_last_inbound_at.sql`. The production migration ledger is known to have
-gaps — `0026` and `0027` were never applied while `0028` was.
+This was the one thing that could have made the feature look broken while every
+line of it was correct. The whole confirmation reads
+`profiles.last_inbound_at`, added by `0030_last_inbound_at.sql`, and the
+production migration ledger is known to have gaps — `0026` and `0027` were never
+applied while `0028` was. Had `0030` been among them, `stampLastInbound` would
+have been failing silently all along (it logs `whatsapp.last_inbound_stamp_failed`
+and swallows), and **every manager would have seen the "still nothing" warning
+even when their message arrived perfectly.**
 
-If `0030` is missing in production, `stampLastInbound` has been failing silently
-all along (it logs `whatsapp.last_inbound_stamp_failed` and swallows), the column
-does not exist, **and every manager will see the "still nothing" warning even
-when their message arrived perfectly.**
-
-**This must be verified before the feature is trusted, and it cannot be verified
-from an agent session** — the Supabase connection needs an interactive
-authorisation step. Federico can settle it in the Supabase SQL editor:
+Settled by Federico in the Supabase SQL editor against project `capo`, branch
+`main`, PRODUCTION:
 
 ```sql
 select column_name from information_schema.columns
@@ -240,8 +238,14 @@ select column_name from information_schema.columns
    and column_name = 'last_inbound_at';
 ```
 
-One row back means the feature works. No rows means `0030` must be applied
-first, and that is a separate change.
+→ **1 row, `last_inbound_at`.** The column exists. The confirmation has a real
+signal to read.
+
+Checked against the live database rather than read off the migration file, per
+the standing rule that prose about schema state goes stale silently. Note what
+this does **not** prove: that the column is being *written*. Nothing has stamped
+it unless a manager has actually WhatsApped Capo since `0030` landed. The first
+end-to-end run of this screen is also the first honest test of that write.
 
 ### Device detection is a guess, and both guesses degrade to something usable
 
