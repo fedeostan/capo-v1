@@ -178,6 +178,35 @@
 // Invisible here as usual: the tenant grant on task_assignees is SELECT ONLY.
 // The Insert/Update shapes below are typed because the generator always emits
 // them, not because a tenant may use them — every write goes through the RPC.
+//
+// ── 0036 (issue #51), WRITTEN BY HAND, NOT YET APPLIED ─────────────────────
+// company_schedules, cron_runs, `company_send_history` under Functions, and
+// five APPENDED notification_log columns (delivered_at / read_at / failed_at /
+// delivery_error_code / delivery_error). Added by hand for the same reason as
+// every block above: regenerating against a project that lacks them would
+// silently DELETE these rather than add them.
+//
+// Four consequences while the migration is unapplied, and every one of them is
+// written to degrade rather than break:
+//   - company_schedules answers 42P01. readCompanySchedules (apps/web/lib/
+//     schedule.ts) catches that into a log line and returns an empty map, so
+//     EVERY company falls back to the built-in 07:00 / 16:00 — byte-identical
+//     to the product before this feature. This is the single most important
+//     degradation in the change: the schedule is the send.
+//   - cron_runs answers 42P01. recordCronRun swallows it, so a run is
+//     unrecorded and nothing else changes; nothing reads it on a send path.
+//   - company_send_history answers 42883 ("function does not exist"). The
+//     /perfil/automacoes screen renders its history section empty with a note
+//     rather than failing the page.
+//   - the five notification_log columns are absent. They are NEVER in
+//     claimNotification's INSERT — only in the webhook's UPDATE, inside a
+//     catch — so a status callback is dropped and no send is affected. Do NOT
+//     add any of them to that insert.
+//
+// Invisible here as usual: cron_runs is SELECT-only for tenants (the cron
+// writes it on the service role), and company_schedules' tenant INSERT/UPDATE
+// grants are COLUMN-SCOPED — `updated_at`/`updated_by` are stamped by triggers
+// and refused to a client that names them.
 export type Json =
   | string
   | number
@@ -376,6 +405,119 @@ export type Database = {
           trial_ends_at?: string
         }
         Relationships: []
+      }
+      company_schedules: {
+        Row: {
+          company_id: string
+          created_at: string
+          enabled: boolean
+          id: string
+          job_kind: string
+          send_hour: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          job_kind: string
+          send_hour: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          job_kind?: string
+          send_hour?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_schedules_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "company_schedules_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cron_runs: {
+        Row: {
+          company_id: string
+          due_hour: number
+          excluded_inactive: number
+          excluded_no_consent: number
+          excluded_unreachable: number
+          failed: number
+          finished_at: string | null
+          id: string
+          job_kind: string
+          managers_no_consent: number
+          messaged: number
+          no_manager_account: boolean
+          ran_at: string
+          ran_hour: number
+          run_date: string
+          skipped_idle: number
+        }
+        Insert: {
+          company_id: string
+          due_hour: number
+          excluded_inactive?: number
+          excluded_no_consent?: number
+          excluded_unreachable?: number
+          failed?: number
+          finished_at?: string | null
+          id?: string
+          job_kind: string
+          managers_no_consent?: number
+          messaged?: number
+          no_manager_account?: boolean
+          ran_at?: string
+          ran_hour: number
+          run_date: string
+          skipped_idle?: number
+        }
+        Update: {
+          company_id?: string
+          due_hour?: number
+          excluded_inactive?: number
+          excluded_no_consent?: number
+          excluded_unreachable?: number
+          failed?: number
+          finished_at?: string | null
+          id?: string
+          job_kind?: string
+          managers_no_consent?: number
+          messaged?: number
+          no_manager_account?: boolean
+          ran_at?: string
+          ran_hour?: number
+          run_date?: string
+          skipped_idle?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cron_runs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       conversation_summaries: {
         Row: {
@@ -690,12 +832,17 @@ export type Database = {
           channel: string
           company_id: string
           created_at: string
+          delivered_at: string | null
+          delivery_error: string | null
+          delivery_error_code: number | null
           error: string | null
+          failed_at: string | null
           id: string
           kind: string
           notification_date: string
           profile_id: string | null
           provider_message_id: string | null
+          read_at: string | null
           status: string
           task_ids: Json
           worker_id: string | null
@@ -705,12 +852,17 @@ export type Database = {
           channel?: string
           company_id: string
           created_at?: string
+          delivered_at?: string | null
+          delivery_error?: string | null
+          delivery_error_code?: number | null
           error?: string | null
+          failed_at?: string | null
           id?: string
           kind: string
           notification_date: string
           profile_id?: string | null
           provider_message_id?: string | null
+          read_at?: string | null
           status: string
           task_ids?: Json
           worker_id?: string | null
@@ -720,12 +872,17 @@ export type Database = {
           channel?: string
           company_id?: string
           created_at?: string
+          delivered_at?: string | null
+          delivery_error?: string | null
+          delivery_error_code?: number | null
           error?: string | null
+          failed_at?: string | null
           id?: string
           kind?: string
           notification_date?: string
           profile_id?: string | null
           provider_message_id?: string | null
+          read_at?: string | null
           status?: string
           task_ids?: Json
           worker_id?: string | null
@@ -1992,6 +2149,31 @@ export type Database = {
       set_task_collaborators: {
         Args: { p_task: string; p_workers: string[] }
         Returns: number
+      }
+      // 0036 (issue #51). The ONLY window a tenant gets into notification_log,
+      // which keeps its deny-all posture (RLS on, zero policies). SECURITY
+      // DEFINER, so its auth.uid()/company check is the entire boundary — see
+      // the migration, and scripts/rls-isolation-matrix.mjs, which attacks it.
+      company_send_history: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          id: string
+          kind: string
+          audience: string
+          worker_id: string | null
+          profile_id: string | null
+          notification_date: string
+          status: string
+          task_count: number
+          provider_message_id: string | null
+          error: string | null
+          created_at: string
+          delivered_at: string | null
+          read_at: string | null
+          failed_at: string | null
+          delivery_error_code: number | null
+          delivery_error: string | null
+        }[]
       }
       // 0033. A marker, not a computation: the welcome sweep asks for it before
       // it sends anything, and a missing function means the once-ever index and

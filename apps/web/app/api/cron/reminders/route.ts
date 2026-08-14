@@ -31,6 +31,8 @@ import {
   sendWindowEnd,
   withinSendWindow,
 } from '../../../../lib/cron';
+import { readCompanySchedules, scheduleFor } from '../../../../lib/schedule';
+import { recordCronRun } from '../../../notifications/cron-runs';
 import {
   loadCompanyBriefing,
   readLastInboundAt,
@@ -43,7 +45,10 @@ import {
 import { buildWorkerMenu } from '../../../notifications/worker-menu';
 import { recordThreadEvent, threadLocale } from '../../../notifications/thread';
 
-// The daily 07:00 Europe/Lisbon briefing.
+// The daily crew briefing — 07:00 Europe/Lisbon unless the company has chosen
+// otherwise on /perfil/automacoes (issue #51). The schedule is DATA now, in
+// company_schedules; vercel.json is an hourly heartbeat that asks "is anything
+// due for anyone?" and this route answers it per company.
 //
 // This replaces the external n8n + Twilio SMS dispatch, which is switched off.
 // Nothing here reads dispatch_tasks_today or writes dispatch_log — that
@@ -60,13 +65,25 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 /**
- * 07:00 in Lisbon — the hour this briefing TARGETS, not the only hour it may
- * go out in. Vercel schedules in UTC and its dispatch drifts by up to an hour
- * on this project, so the gate below accepts the whole SEND_WINDOW_HOURS-wide
- * window starting here (07:00–08:59 Lisbon). The reasoning, the measured drift
- * and the matching vercel.json UTC entries are all in `withinSendWindow`.
+ * The `notification_log` kind, the `cron_runs` job, and the `company_schedules`
+ * job — one string for all three, deliberately, so a claim, a run summary and a
+ * schedule row can never be about different things.
+ *
+ * ── WHERE 07:00 WENT (issue #51, part B1) ──────────────────────────────────
+ * There is no `SEND_HOUR` constant in this file any more. 07:00 is now the
+ * DEFAULT in apps/web/lib/schedule.ts, and the hour that actually applies is
+ * per company, in `company_schedules` (0036) — read once per invocation and
+ * resolved per company below. That is what makes the time editable at all:
+ * vercel.json is a static file baked into the deployment, so as long as the
+ * schedule lived there no tenant could ever move it.
+ *
+ * It is still not the only hour a briefing may go out in. Vercel's dispatch
+ * drifts by up to an hour on this project, so the gate accepts the whole
+ * SEND_WINDOW_HOURS-wide window starting at whatever the company chose. The
+ * reasoning, the measured drift and the hourly heartbeat that feeds it live in
+ * `withinSendWindow` and in apps/web/lib/schedule.ts.
  */
-const SEND_HOUR = 7;
+const KIND = 'daily_briefing';
 
 /**
  * The Meta template. Must already be approved in WhatsApp Manager for every
@@ -84,8 +101,6 @@ const TEMPLATE_NAME = 'capo_daily_briefing';
  *          so silence never has to be interpreted.
  */
 const NOTIFY_IDLE_WORKERS = false;
-
-const KIND = 'daily_briefing';
 
 /**
  * Which envelope a briefing actually went out in.
@@ -228,25 +243,6 @@ export async function GET(request: NextRequest) {
   const clock = await readLisbonClock(db, 'cron/reminders');
   if (!clock) return new NextResponse('clock unavailable', { status: 500 });
   const { hour, today } = clock;
-  const windowEnd = sendWindowEnd(SEND_HOUR);
-  if (!dryRun && !withinSendWindow(hour, SEND_HOUR)) {
-    // Logged, not just returned. A cron that fires and is then rejected by this
-    // gate leaves no trace anywhere else — no notification_log row, no error —
-    // which is exactly how the check-in's schedule bug stayed invisible for two
-    // days, and exactly what a drift past the window would look like on the
-    // morning the crew hears nothing. `windowEnd` is in the payload so the line
-    // records what was actually required rather than only what was aimed at.
-    logEvent('reminders.outside_send_hour', { lisbonHour: hour, sendHour: SEND_HOUR, windowEnd });
-    return NextResponse.json({
-      skipped: 'outside the send window',
-      lisbonHour: hour,
-      sendHour: SEND_HOUR,
-      windowEnd,
-    });
-  }
-
-  const env = whatsappSendEnv();
-  if (!env && !dryRun) return new NextResponse('whatsapp not configured', { status: 503 });
 
   // ONE `now` for the whole invocation, read here rather than per recipient.
   // A run across a large estate can take minutes; a per-recipient clock would
@@ -264,9 +260,66 @@ export async function GET(request: NextRequest) {
     return new NextResponse('company read failed', { status: 500 });
   }
 
+  // ── the per-company gate (issue #51, part B1) ──────────────────────────────
+  // The hour used to be a module constant, so this was one comparison for the
+  // whole estate. It is per company now, which is what makes the time editable
+  // at all — and it is also the cost control on the hourly heartbeat: an
+  // invocation that is nobody's hour does the clock, the company list and this
+  // one read, and never touches task_board for anybody.
+  //
+  // readCompanySchedules never throws; a deploy landing before 0036 returns an
+  // empty map and every company falls back to DEFAULT_SEND_HOUR, i.e. exactly
+  // the behaviour this route had before the feature existed.
+  const schedules = await readCompanySchedules(db, KIND);
+  const due: { company: (typeof companies)[number]; sendHour: number }[] = [];
+  let disabledInWindow = 0;
+  for (const company of companies) {
+    const schedule = scheduleFor(schedules, company.id, KIND);
+    // A dry run bypasses the window entirely so the output can be inspected at
+    // any hour — the same escape hatch the global gate used to offer.
+    if (!dryRun && !withinSendWindow(hour, schedule.sendHour)) continue;
+    if (!schedule.enabled) {
+      // Only logged for a company that WOULD have sent now, so switching a job
+      // off costs two log lines a day rather than twenty-four.
+      disabledInWindow += 1;
+      logEvent('reminders.schedule_disabled', { companyId: company.id, sendHour: schedule.sendHour });
+      continue;
+    }
+    due.push({ company, sendHour: schedule.sendHour });
+  }
+
+  if (due.length === 0) {
+    // The SAME event name the single-hour gate wrote, kept deliberately: it is
+    // the only trace a rejected invocation leaves anywhere — no
+    // notification_log row, no cron_runs row, no error — and it is what would
+    // have been searched for on the morning the crew heard nothing. What has
+    // changed is that it now means "nobody's window is open", not "the one
+    // window is shut".
+    logEvent('reminders.outside_send_hour', {
+      lisbonHour: hour,
+      companies: companies.length,
+      disabledInWindow,
+    });
+    return NextResponse.json({
+      skipped: 'outside the send window',
+      lisbonHour: hour,
+      companies: companies.length,
+      disabledInWindow,
+    });
+  }
+
+  // Read AFTER the window gate, deliberately, so an environment with no
+  // WhatsApp credentials — every preview deployment — answers the same
+  // 200-with-{skipped} an out-of-hours run always did, rather than turning the
+  // hourly heartbeat into twenty-four 503s a day. The check still stands in
+  // front of every send.
+  const env = whatsappSendEnv();
+  if (!env && !dryRun) return new NextResponse('whatsapp not configured', { status: 503 });
+
   const report: unknown[] = [];
 
-  for (const company of companies) {
+  for (const { company, sendHour } of due) {
+    const windowEnd = sendWindowEnd(sendHour);
     try {
       const briefing = await loadCompanyBriefing(db, company.id, company.language);
       const sends: unknown[] = [];
@@ -286,6 +339,16 @@ export async function GET(request: NextRequest) {
       // many of those claims it actually won. See the note's own comment.
       let targets = 0;
       let claims = 0;
+
+      // The tallies that become the cron_runs row (issue #51, part B2). They
+      // are counted here rather than aggregated from notification_log later
+      // because the interesting ones — the three exclusions, the managers with
+      // no consent, the company with no manager at all — never produce a
+      // notification_log row in the first place.
+      let skippedIdle = 0;
+      let failed = 0;
+      let managersNoConsent = 0;
+      let noManagerAccount = false;
 
       // Not a per-worker log line: this is the count of people the consent gate
       // removed before the loop below could see them, and without it a company
@@ -414,6 +477,7 @@ export async function GET(request: NextRequest) {
 
         if (idle && !NOTIFY_IDLE_WORKERS) {
           await resolveNotification(db, claimed.id, 'skipped');
+          skippedIdle += 1;
           continue;
         }
 
@@ -456,6 +520,7 @@ export async function GET(request: NextRequest) {
           // number itself. The allow-list 131030 belonged to the test tier and
           // should no longer appear.
           await resolveNotification(db, claimed.id, 'failed', { error: describeSendError(err) });
+          failed += 1;
           logEvent('reminders.worker_send_failed', {
             companyId: company.id,
             workerId: worker.workerId,
@@ -485,12 +550,24 @@ export async function GET(request: NextRequest) {
         .order('created_at');
       if (managersError) throw new Error(`profiles read failed: ${managersError.message}`);
 
+      // ── the company with nobody to report to (issue #51, finding 2) ──────
+      // "Construções Ostan Lda. has two active crew members and ZERO rows in
+      // profiles, so the manager loop iterates an empty list without logging
+      // anything at all." It was not merely unlogged — there was no shape for
+      // it anywhere, so a company that can never receive a manager summary was
+      // indistinguishable from one that had just received one. Recorded on the
+      // run row as well as in the log drain, because the log drain is the thing
+      // the manager cannot open.
+      noManagerAccount = (managers ?? []).length === 0;
+      if (noManagerAccount) logEvent('reminders.no_manager_account', { companyId: company.id });
+
       for (const manager of managers ?? []) {
         // The manager's own consent. Their briefing is as proactive a template
         // send as the crew's, so it needs the same recorded opt-in — the fact
         // that they are the account holder is not itself consent to be messaged
         // on WhatsApp. They tick this for themselves on /perfil.
         if (!hasWhatsAppConsent(manager)) {
+          managersNoConsent += 1;
           logEvent('reminders.manager_no_consent', { companyId: company.id });
           continue;
         }
@@ -547,6 +624,7 @@ export async function GET(request: NextRequest) {
         // for every other company.
         if (!recipient) {
           await resolveNotification(db, claimed.id, 'skipped');
+          skippedIdle += 1;
           logEvent('reminders.manager_unreachable', { companyId: company.id });
           continue;
         }
@@ -575,6 +653,7 @@ export async function GET(request: NextRequest) {
           });
         } catch (err) {
           await resolveNotification(db, claimed.id, 'failed', { error: describeSendError(err) });
+          failed += 1;
           logEvent('reminders.manager_send_failed', {
             companyId: company.id,
             error: describeSendError(err),
@@ -622,16 +701,70 @@ export async function GET(request: NextRequest) {
       //                 per in-window invocation.
       const eventLocale = threadLocale(managers, briefing.companyLocale);
       const eventText = renderManagerEvent(briefing.counts, notified, notifiedNames, eventLocale);
-      const firstRunOfTheDay = claims > 0 || (targets === 0 && hour === SEND_HOUR);
+      const firstRunOfTheDay = claims > 0 || (targets === 0 && hour === sendHour);
       if (!dryRun) {
         if (firstRunOfTheDay) {
           await recordThreadEvent(db, { companyId: company.id, source: 'briefing', text: eventText });
+        }
+
+        // ── the run row (issue #51, part B2) ───────────────────────────────
+        // Rides the SAME `claims` signal as the thread note above, and for the
+        // same reason: two or three invocations pass the window every morning,
+        // and the ones that correctly did nothing must not overwrite the
+        // numbers of the one that did the work.
+        //
+        // `targets === 0` is the case worth writing anyway — a company with no
+        // consenting crew and no consenting manager produces no claim to ride
+        // and no notification_log row at all, which is precisely the silence
+        // that used to be indistinguishable from success. It is written with
+        // replace:false so it records the silence once and yields to a real
+        // run if one follows.
+        if (claims > 0 || targets === 0) {
+          await recordCronRun(
+            db,
+            {
+              companyId: company.id,
+              jobKind: KIND,
+              runDate: today,
+              dueHour: sendHour,
+              ranHour: hour,
+              // The SAME instant lisbon_hour() was read at — see CronRunRecord.
+              ranAt: new Date(now).toISOString(),
+              messaged: notified,
+              skippedIdle,
+              failed,
+              excludedNoConsent: briefing.excludedNoConsent,
+              excludedUnreachable: briefing.excludedUnreachable,
+              excludedInactive: briefing.excludedInactive,
+              managersNoConsent,
+              noManagerAccount,
+            },
+            { replace: claims > 0 },
+          );
         }
       } else {
         sends.push({ audience: 'thread', locale: eventLocale, text: eventText });
       }
 
-      report.push({ company: company.name, counts: briefing.counts, notified, sends });
+      report.push({
+        company: company.name,
+        // What this company's send was aimed at and how wide its window is —
+        // the first thing to check when a dry run shows nobody due.
+        dueHour: sendHour,
+        windowEnd,
+        counts: briefing.counts,
+        notified,
+        skippedIdle,
+        failed,
+        excluded: {
+          noConsent: briefing.excludedNoConsent,
+          unreachable: briefing.excludedUnreachable,
+          inactive: briefing.excludedInactive,
+          managersNoConsent,
+        },
+        noManagerAccount,
+        sends,
+      });
     } catch (err) {
       // A broken company must not stop the rest of the estate being briefed.
       console.error(`cron/reminders: company ${company.id} failed:`, err);

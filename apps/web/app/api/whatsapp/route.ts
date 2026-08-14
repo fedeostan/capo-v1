@@ -24,6 +24,7 @@ import {
   type BsuidRotation,
   type WhatsAppSendConfig,
   type WhatsAppSender,
+  type WhatsAppStatus,
   type WhatsAppWebhookEnvelope,
 } from '@capo/core/channels/whatsapp';
 import { resolveProposal } from '@capo/core/capabilities/propose';
@@ -566,6 +567,100 @@ async function applyBsuidRotation(db: Db, rotation: BsuidRotation): Promise<void
     logEvent('whatsapp.bsuid_rotation_failed', {
       error: err instanceof Error ? err.message : String(err),
     });
+  }
+}
+
+/**
+ * Record what Meta says actually happened to a message we sent (issue #51, B4).
+ *
+ * ── WHY THIS EXISTS ────────────────────────────────────────────────────────
+ * Until now `notification_log.status = 'sent'` meant "Meta accepted it" and
+ * nothing more, because these callbacks were acked and dropped. On 13 August
+ * that is what made a briefing which arrived 49 minutes late impossible to tell
+ * apart from one that never arrived at all: the ledger said "sent" in both
+ * cases, and there was no other record anywhere.
+ *
+ * ── SHAPE, AND WHAT IT IS NOT ──────────────────────────────────────────────
+ * A status is not a message. It carries no sender, no text, nothing anybody
+ * typed — so nothing here reaches a model, an agent, or readSender. It is
+ * deliberately handled on its own path for exactly the reason AGENTS.md keeps
+ * the template quick reply (`type: 'button'`) and the approval-card reply
+ * (`type: 'interactive'`) non-overlapping: three shapes, three paths,
+ * conflating any two of them is the mistake to watch for.
+ *
+ * ── THE UPDATE ─────────────────────────────────────────────────────────────
+ * Blind, keyed on provider_message_id, one column per state and NEVER derived
+ * from another. Meta sends several callbacks per message and does not order
+ * them — a `read` genuinely can arrive before its `delivered` — so writing
+ * `delivered_at` when a `read` lands would invent a timestamp. A missing
+ * `delivered_at` next to a present `read_at` is honest; a fabricated one is not.
+ *
+ * `sent` is dropped on the floor: the send path already wrote that status
+ * synchronously from the Graph response, and re-stamping it would only add
+ * write traffic.
+ *
+ * NOT scoped by company, and it cannot be — a status callback carries no tenant
+ * context. That is safe because provider_message_id is a `wamid` MINTED BY META
+ * FOR A MESSAGE WE SENT: it is already ours, the row it matches is the row that
+ * recorded that send, and nothing about the payload chooses which company it
+ * lands on. The same argument applyBsuidRotation makes for a key rewrite.
+ *
+ * Swallows everything. A missing column (a deploy landing before 0036) or a
+ * missing row (a send from before this shipped) must never cost the webhook its
+ * 200 — Meta retries a non-200, which would replay the whole batch including
+ * real inbound messages.
+ */
+async function recordDeliveryStatuses(db: Db, statuses: WhatsAppStatus[]): Promise<void> {
+  for (const status of statuses) {
+    if (status.state === 'sent') continue;
+
+    // Meta's seconds → our timestamptz. A null falls back to now(), because a
+    // delivery whose exact second we could not read is still a delivery.
+    const stamp = status.timestamp
+      ? new Date(status.timestamp * 1000).toISOString()
+      : new Date().toISOString();
+
+    const patch =
+      status.state === 'delivered'
+        ? { delivered_at: stamp }
+        : status.state === 'read'
+          ? { read_at: stamp }
+          : {
+              failed_at: stamp,
+              delivery_error_code: status.errorCode,
+              delivery_error: status.errorTitle,
+            };
+
+    try {
+      const { data, error } = await db
+        .from('notification_log')
+        .update(patch)
+        .eq('provider_message_id', status.id)
+        .select('id');
+      if (error) {
+        logEvent('whatsapp.delivery_status_failed', {
+          state: status.state,
+          error: error.message,
+          code: error.code,
+        });
+        continue;
+      }
+      // A zero-row update is a fully successful statement in Postgres, so it
+      // has to be checked by hand — the same trap the billing webhook fell into
+      // (AGENTS.md). It is not an error here: an unmatched wamid is an ordinary
+      // outcome for any message sent outside the two crons (an agent reply, a
+      // progress note), none of which have a ledger row at all.
+      if ((data ?? []).length === 0) continue;
+      logEvent('whatsapp.delivery_status', {
+        state: status.state,
+        errorCode: status.errorCode,
+      });
+    } catch (err) {
+      logEvent('whatsapp.delivery_status_failed', {
+        state: status.state,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 }
 
@@ -1968,6 +2063,16 @@ export async function POST(request: NextRequest) {
   }
   if (routed.unreadableRotations > 0) {
     logEvent('whatsapp.bsuid_rotation_unreadable', { count: routed.unreadableRotations });
+  }
+  if (routed.unreadableStatuses > 0) {
+    logEvent('whatsapp.delivery_status_unreadable', { count: routed.unreadableStatuses });
+  }
+
+  // Delivery receipts (issue #51, B4). After the response, like the rotations
+  // above: nothing here answers anybody, and Meta retries a non-200, so a slow
+  // ledger write must never hold up the ack.
+  if (routed.statuses.length > 0) {
+    after(() => recordDeliveryStatuses(db, routed.statuses));
   }
 
   // Registered before the message loop so rotations are applied first where the

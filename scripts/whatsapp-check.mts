@@ -75,6 +75,7 @@ import {
   planAssistantMessages,
   planWorkerMessages,
   proposalButtonId,
+  readMetaErrorCode,
   readSender,
   routeWebhookChanges,
   senderLabel,
@@ -814,6 +815,114 @@ eq('no rotations', empty.rotations.length, 0);
 eq('and nothing unhandled', empty.unhandledFields.length, 0);
 const noField = routeWebhookChanges<Fixture>(changes({ value: {} }));
 eq('a change with neither field nor messages is reported, not dropped', noField.unhandledFields.join(','), '(missing)');
+
+// ── delivery statuses (issue #51, B4) ───────────────────────────────────────
+// THE THIRD SHAPE, and the one that was silently discarded for the whole life
+// of the product: a status arrives on `field: 'messages'` with `statuses` and
+// NO `messages`, so the old router flat-mapped an absent array and found
+// nothing. That is why notification_log.status = 'sent' could only ever mean
+// "Meta accepted it".
+const delivered = routeWebhookChanges<Fixture>(
+  changes({
+    field: 'messages',
+    value: {
+      statuses: [
+        { id: 'wamid.A', status: 'delivered', timestamp: '1755100000', recipient_id: waId },
+        { id: 'wamid.B', status: 'read', timestamp: '1755100060' },
+        {
+          id: 'wamid.C',
+          status: 'failed',
+          timestamp: '1755100120',
+          errors: [{ code: 132001, title: 'Template name does not exist in the translation' }],
+        },
+      ],
+    },
+  }),
+);
+eq('a statuses-only change yields ZERO messages', delivered.messages.length, 0);
+eq('and is NOT reported as an unhandled field', delivered.unhandledFields.length, 0);
+eq('all three statuses are read', delivered.statuses.length, 3);
+eq('the wamid is carried', delivered.statuses[0]?.id, 'wamid.A');
+eq('the state is carried', delivered.statuses[0]?.state, 'delivered');
+eq('the timestamp parses from Meta’s string seconds', delivered.statuses[0]?.timestamp, 1755100000);
+eq('a failure carries its code', delivered.statuses[2]?.errorCode, 132001);
+check(
+  'and its title, for the raw line next to the plain-language one',
+  (delivered.statuses[2]?.errorTitle ?? '').startsWith('Template name'),
+  String(delivered.statuses[2]?.errorTitle),
+);
+
+// A batch really does mix a person writing with receipts for messages we sent,
+// and one must never cost the other.
+const withBoth = routeWebhookChanges<Fixture>(
+  changes({
+    field: 'messages',
+    value: {
+      messages: [{ id: 'wamid.in' }],
+      statuses: [{ id: 'wamid.out', status: 'sent', timestamp: '1755100000' }],
+    },
+  }),
+);
+eq('a mixed messages/statuses change keeps the message', withBoth.messages.length, 1);
+eq('and the status', withBoth.statuses.length, 1);
+
+// The compatibility branch has to cover statuses too, or a payload with no
+// `field` and only statuses would be reported as a surprise rather than
+// recorded.
+const fieldlessStatus = routeWebhookChanges<Fixture>(
+  changes({ value: { statuses: [{ id: 'wamid.D', status: 'read', timestamp: '1' }] } }),
+);
+eq('a field-less statuses change is still read', fieldlessStatus.statuses.length, 1);
+eq('and is not reported as unhandled', fieldlessStatus.unhandledFields.length, 0);
+
+// Counted, never dropped — same reasoning as unreadableRotations. A status we
+// silently discard is a delivery the product then claims never happened.
+const badStatuses = routeWebhookChanges<Fixture>(
+  changes({
+    field: 'messages',
+    value: {
+      statuses: [
+        { status: 'delivered' }, // no id
+        { id: 'wamid.E', status: 'accepted' }, // not a state we know
+        null,
+      ],
+    },
+  }),
+);
+eq('an unreadable status is not invented', badStatuses.statuses.length, 0);
+eq('and all three are counted', badStatuses.unreadableStatuses, 3);
+
+// An unparseable timestamp must NOT make the status vanish; the applier falls
+// back to its own clock, because a delivery whose second we cannot read is
+// still a delivery.
+const noStamp = routeWebhookChanges<Fixture>(
+  changes({ field: 'messages', value: { statuses: [{ id: 'wamid.F', status: 'delivered' }] } }),
+);
+eq('a status with no timestamp survives', noStamp.statuses.length, 1);
+eq('with a null timestamp rather than a guess', noStamp.statuses[0]?.timestamp, null);
+
+// ── Meta's numeric codes, pulled back out of our own prose ──────────────────
+// notification_log.error stores describeSendError(err), which is a
+// WhatsAppSendError message. The screen has to render "the template is not
+// approved for this language yet" rather than a wall of English, and that
+// needs the code back.
+eq(
+  'the code is recovered from a stored send error',
+  readMetaErrorCode('WhatsApp send failed (400, code 132001): Template name does not exist'),
+  132001,
+);
+eq(
+  'the allow-list code from the old test tier still reads',
+  readMetaErrorCode('WhatsApp send failed (400, code 131030): recipient not in allowed list'),
+  131030,
+);
+eq('a message with no code yields null', readMetaErrorCode('fetch failed'), null);
+eq('and so does an absent error', readMetaErrorCode(null), null);
+eq(
+  'a bare status line is not mistaken for a code',
+  readMetaErrorCode('WhatsApp send failed (503): upstream unavailable'),
+  null,
+);
 
 // ── template parameters ─────────────────────────────────────────────────────
 // toTemplateParam is the single easiest way to earn a 132000 and was asserted

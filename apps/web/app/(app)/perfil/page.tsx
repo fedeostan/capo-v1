@@ -465,6 +465,18 @@ export default async function PerfilPage({
           </Link>
         </Card>
 
+        {/* Federico's own words for issue #51: "you go to profile, then you
+            have the cron jobs section. You press on the cron jobs section, and
+            then you go inside." Directly under the inbox because both are
+            about what Capo is doing on its own — the difference being that the
+            inbox is what it told YOU and this is what it told the CREW. */}
+        <Card title={t.automations.title}>
+          <p className="text-xs text-zinc-500">{t.automations.subtitle}</p>
+          <Link href="/perfil/automacoes" className="inline-block text-sm text-orange-600 underline">
+            {t.automations.profileLink}
+          </Link>
+        </Card>
+
         <Card title={t.profile.subscription}>
           <p className="text-sm">
             {!billing.enabled
