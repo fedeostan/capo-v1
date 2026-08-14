@@ -497,7 +497,18 @@ export async function loadDispatchLog(): Promise<{ rows: DispatchRow[]; companyN
 // Inventing an attribution (per company, per message, per seat) would produce a
 // confident number with nothing behind it. The page says so in words instead.
 
-/** Read every page of a window rather than trusting PostgREST's 1000-row cap. */
+/**
+ * Read every page of a window rather than trusting PostgREST's 1000-row cap.
+ *
+ * Paged by CURSOR (`order by id` + `.gt('id', last)`), never by `.range()`.
+ * `.range()` is `LIMIT/OFFSET`, and both ledgers are written by live traffic
+ * while the report is being paged. Because `id` is a random `gen_random_uuid()`,
+ * a row inserted between two fetches lands at an arbitrary point in the `order
+ * by id` sequence and shifts every later offset — silently double-counting or
+ * skipping rows at the page boundaries. A cursor has no such window: rows that
+ * arrive mid-read either sort after the cursor and are picked up, or sort before
+ * it and are simply outside this snapshot. Neither is a miscount.
+ */
 const COST_PAGE_SIZE = 1000;
 /** Hard ceiling on pages, so a runaway table cannot hang the operator app. */
 const COST_MAX_PAGES = 25;
@@ -588,8 +599,11 @@ function lisbonDateNDaysAgo(days: number): string {
   return d.toLocaleDateString('en-CA', { timeZone: 'Europe/Lisbon' });
 }
 
+type SendRow = Pick<Tables<'notification_log'>, 'id' | 'company_id' | 'worker_id' | 'profile_id'>;
+
 type UsageRow = Pick<
   Tables<'ai_usage'>,
+  | 'id'
   | 'company_id'
   | 'actor'
   | 'profile_id'
@@ -617,15 +631,18 @@ export async function loadCostReport(windowDays = 30): Promise<CostReport> {
   let ledgerError: string | null = null;
   let truncated = false;
 
+  let usageCursor: string | null = null;
+
   for (let page = 0; page < COST_MAX_PAGES; page++) {
-    const { data, error } = await db
+    const query = db
       .from('ai_usage')
       .select(
-        'company_id, actor, profile_id, worker_id, surface, model_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens',
+        'id, company_id, actor, profile_id, worker_id, surface, model_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens',
       )
       .gte('usage_date', fromDate)
       .order('id')
-      .range(page * COST_PAGE_SIZE, page * COST_PAGE_SIZE + COST_PAGE_SIZE - 1);
+      .limit(COST_PAGE_SIZE);
+    const { data, error } = await (usageCursor ? query.gt('id', usageCursor) : query);
 
     if (error) {
       // Two different facts, kept apart on purpose. 42P01 ("relation does not
@@ -642,6 +659,7 @@ export async function loadCostReport(windowDays = 30): Promise<CostReport> {
     const rows = (data ?? []) as UsageRow[];
     usage.push(...rows);
     if (rows.length < COST_PAGE_SIZE) break;
+    usageCursor = rows[rows.length - 1].id;
     if (page === COST_MAX_PAGES - 1) truncated = true;
   }
 
@@ -653,21 +671,26 @@ export async function loadCostReport(windowDays = 30): Promise<CostReport> {
   // Paged for the same reason ai_usage is: two sends per worker per day means a
   // 30-day window over a real crew passes 1000 rows quickly, and a capped read
   // would understate the WhatsApp bill with nothing on screen to say so.
-  const sends: { company_id: string; worker_id: string | null; profile_id: string | null }[] = [];
+  const sends: SendRow[] = [];
+  let sendCursor: string | null = null;
 
   for (let page = 0; page < COST_MAX_PAGES; page++) {
-    const { data, error } = await db
+    const query = db
       .from('notification_log')
-      .select('company_id, worker_id, profile_id')
+      .select('id, company_id, worker_id, profile_id')
       .eq('status', 'sent')
       .gte('notification_date', fromDate)
       .order('id')
-      .range(page * COST_PAGE_SIZE, page * COST_PAGE_SIZE + COST_PAGE_SIZE - 1);
+      .limit(COST_PAGE_SIZE);
+    const { data, error } = await (sendCursor ? query.gt('id', sendCursor) : query);
 
     if (error) break;
-    const rows = data ?? [];
+    // Annotated rather than inferred: `sendCursor` is read back out of `data`
+    // on the next iteration, which makes the inference circular (TS7022).
+    const rows = (data ?? []) as SendRow[];
     sends.push(...rows);
     if (rows.length < COST_PAGE_SIZE) break;
+    sendCursor = rows[rows.length - 1].id;
     if (page === COST_MAX_PAGES - 1) truncated = true;
   }
 
