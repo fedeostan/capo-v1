@@ -90,6 +90,22 @@ export interface CompanyBriefing {
    * number somewhere that explains it.
    */
   excludedUnreachable: number;
+  /**
+   * Crew rows marked `active = false`. Counted because they were, until #54,
+   * the ONE way to disappear from both daily sends with no trace anywhere: the
+   * `active` filter ran in the SQL, so an inactive worker was gone before
+   * `excludedUnreachable` and `excludedNoConsent` could ever see them, and
+   * appeared in no signal at all.
+   *
+   * That is exactly how issue #51 lost half a day. Federico's own crew row on
+   * Ostan construcciones is inactive, so a task assigned to it produces no
+   * 07:00 briefing and no afternoon check-in — correct behaviour, invisibly
+   * applied, and indistinguishable from a broken cron.
+   *
+   * Deliberately NOT a filter change: an inactive worker must keep being
+   * skipped. This only makes the skip countable, and both cron routes log it.
+   */
+  excludedInactive: number;
 }
 
 // Tasks a worker should be told about. `blocked` is excluded on purpose: the
@@ -121,7 +137,14 @@ export async function loadCompanyBriefing(
     // unknown-column error instead of degrading. Degrading here means every
     // worker reads as "no consent on record" and nothing is sent — the
     // fail-closed direction, and a loud one.
-    db.from('workers').select('*').eq('company_id', companyId).eq('active', true),
+    //
+    // The `active` filter moved OUT of this query and into TypeScript below
+    // (#54). Not to change who is messaged — an inactive crew row is still
+    // skipped, and must be — but so that the skip can be COUNTED. Filtered in
+    // SQL, an inactive worker vanished before either exclusion counter could
+    // see them, which is why issue #51's silent worker took a log dive and a
+    // database session to explain.
+    db.from('workers').select('*').eq('company_id', companyId),
   ]);
   if (boardError) throw new Error(`task_board read failed: ${boardError.message}`);
   if (crewError) throw new Error(`workers read failed: ${crewError.message}`);
@@ -155,7 +178,13 @@ export async function loadCompanyBriefing(
   // number for. It cannot be populated out of thin air: a BSUID is revealed only
   // on an inbound message, so a worker reaches this branch only after having
   // written to us at least once (see captureBsuid in the webhook route).
-  const reachable = (crew ?? []).flatMap(w => {
+  // `active !== true`, not `active === false`: the column is typed nullable, and
+  // a null must fall on the skipped side exactly as `.eq('active', true)` used
+  // to put it there. Everything downstream reads `active`, never `crew`.
+  const allCrew = crew ?? [];
+  const active = allCrew.filter(w => w.active === true);
+
+  const reachable = active.flatMap(w => {
     const recipient = recipientFor(w);
     return recipient ? [{ worker: w, recipient }] : [];
   });
@@ -183,7 +212,11 @@ export async function loadCompanyBriefing(
     companyLocale,
     workers,
     excludedNoConsent: reachable.length - consenting.length,
-    excludedUnreachable: (crew ?? []).length - reachable.length,
+    // Against `active`, not `allCrew` — otherwise every inactive worker would
+    // also be counted as unreachable and the two numbers would double-count the
+    // same person.
+    excludedUnreachable: active.length - reachable.length,
+    excludedInactive: allCrew.length - active.length,
     counts: {
       today: todayRows.length,
       unassigned: todayRows.filter(r => !r.assignee_worker_id).length,

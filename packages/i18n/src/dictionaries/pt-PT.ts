@@ -570,6 +570,11 @@ const dict: Catalog = {
     checkinDoneButton: 'Sim, terminei',
     checkinNotDoneButton: 'Ainda não',
     checkinDone: 'Boa, obrigado. Fica registado que terminaste hoje.',
+    checkinDoneAwaiting:
+      'Boa, obrigado. Já avisei o teu encarregado — falta ele confirmar, por isso a tarefa ainda fica aberta até lá.',
+    checkinDoneNothing: 'Obrigado, fica registado. Já não havia nada à espera de confirmação.',
+    checkinDoneProblem:
+      'Fica registada a tua resposta, mas não consegui avisar o teu encarregado. Fala com ele.',
     checkinNotDone: 'Certo, obrigado por avisares. Fica registado.',
     checkinError: 'Não consegui registar a tua resposta. Fala com o teu encarregado.',
   },
