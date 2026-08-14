@@ -2,9 +2,12 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getDb } from '@capo/db/client';
 import {
   isOutsideWindowError,
+  sendWhatsAppList,
+  WhatsAppSendError,
   sendWhatsAppTemplate,
   sendWhatsAppText,
   withinFreeFormWindow,
+  type WhatsAppList,
   type WhatsAppRecipient,
 } from '@capo/core/channels/whatsapp';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
@@ -37,6 +40,7 @@ import {
   renderWorkerBriefing,
   renderWorkerFreeForm,
 } from '../../../notifications/briefing';
+import { buildWorkerMenu } from '../../../notifications/worker-menu';
 import { recordThreadEvent, threadLocale } from '../../../notifications/thread';
 
 // The daily 07:00 Europe/Lisbon briefing.
@@ -83,8 +87,15 @@ const NOTIFY_IDLE_WORKERS = false;
 
 const KIND = 'daily_briefing';
 
-/** Which envelope a briefing actually went out in. */
-type SendPath = 'free_form' | 'template';
+/**
+ * Which envelope a briefing actually went out in.
+ *
+ * `menu` is the free-form briefing sent as an INTERACTIVE LIST (issue #49): the
+ * identical text, with each of today's tasks behind a native tappable row that
+ * returns its address, description, materials and dependencies. It is a session
+ * message, so it costs exactly what plain free-form text costs — nothing.
+ */
+type SendPath = 'menu' | 'free_form' | 'template';
 
 interface BriefingDelivery {
   path: SendPath;
@@ -93,6 +104,11 @@ interface BriefingDelivery {
    *  template picked it up. Logged, because it means the stored
    *  `last_inbound_at` and Meta's own view of the window disagreed. */
   fellBack: boolean;
+  /** True when the list was attempted and Meta rejected it for a reason that
+   *  was NOT the window, so the plain-text briefing picked it up. That is a bug
+   *  in our payload rather than a fact about the recipient, and it must not be
+   *  allowed to cost anybody their morning message. */
+  listRejected?: boolean;
 }
 
 /**
@@ -128,6 +144,13 @@ async function deliverBriefing(args: {
   freeForm: boolean;
   /** The multi-line text body. Only read when `freeForm` is true. */
   freeFormBody: string;
+  /**
+   * The SAME body, wrapped in an interactive list whose rows are today's tasks
+   * (issue #49). Null when there is nothing to offer — a manager, an idle
+   * worker, or a day too rich to fit Meta's interactive-body cap, in which case
+   * the plain text below carries more than the list could have.
+   */
+  list: WhatsAppList | null;
   templateLanguage: string;
   templateParams: [string, string];
 }): Promise<BriefingDelivery> {
@@ -147,13 +170,48 @@ async function deliverBriefing(args: {
     return { path: 'template', providerMessageId, fellBack: false };
   }
 
+  // ── the guided briefing (issue #49) ────────────────────────────────────────
+  // Tried FIRST, because it is the same message plus a way to ask about it, at
+  // the same price. Two failure directions and they are treated differently on
+  // purpose:
+  //
+  //   out of window   → the recipient cannot be reached free-form AT ALL, so
+  //                     plain text would fail identically. Straight to the paid
+  //                     template, exactly as before this branch existed.
+  //   any other 4xx   → META REJECTED OUR LIST. That is a defect in the payload
+  //                     and not a fact about the recipient, so fall through to
+  //                     plain text: nobody loses their morning message over a
+  //                     shape bug, and the log line says it happened.
+  //   anything else   → rethrown, and the caller records a `failed` row.
+  //
+  // ⚠ The 4xx narrowing is load-bearing and is NOT defensive tidiness. A socket
+  // reset or a response timeout can happen AFTER Meta has already queued the
+  // message, and falling through on one of those delivers the list AND the
+  // plain text — two 07:00 pushes for one worker. A 4xx is the only failure
+  // class that proves nothing was sent.
+  let listRejected = false;
+  if (args.list) {
+    try {
+      const { providerMessageId } = await sendWhatsAppList(args.list, config);
+      return { path: 'menu', providerMessageId, fellBack: false };
+    } catch (err) {
+      if (isOutsideWindowError(err)) {
+        const { providerMessageId } = await template();
+        return { path: 'template', providerMessageId, fellBack: true };
+      }
+      const rejected = err instanceof WhatsAppSendError && err.status >= 400 && err.status < 500;
+      if (!rejected) throw err;
+      listRejected = true;
+    }
+  }
+
   try {
     const { providerMessageId } = await sendWhatsAppText(args.freeFormBody, config);
-    return { path: 'free_form', providerMessageId, fellBack: false };
+    return { path: 'free_form', providerMessageId, fellBack: false, listRejected };
   } catch (err) {
     if (!isOutsideWindowError(err)) throw err;
     const { providerMessageId } = await template();
-    return { path: 'template', providerMessageId, fellBack: true };
+    return { path: 'template', providerMessageId, fellBack: true, listRejected };
   }
 }
 
@@ -257,7 +315,27 @@ export async function GET(request: NextRequest) {
 
       // ── workers ──────────────────────────────────────────────────────────
       for (const worker of briefing.workers) {
-        const [name, summary] = renderWorkerBriefing(worker);
+        // ── THE LANGUAGE LINE, ONCE (issue #49, complaint 2) ─────────────────
+        // "Responde PT, ES ou EN para mudar de idioma" used to be part of the
+        // approved template body, so it went out with every briefing, to
+        // everybody, every morning, and nothing in this repository could stop
+        // it. It is now a suffix on the {{2}} parameter, decided here.
+        //
+        // Two facts, both already loaded, and BOTH must hold:
+        //   hasChosenLanguage  — they have never picked one (workers.language
+        //                        is null, i.e. still inheriting the company's).
+        //   lastInboundAt      — they have never written to us at all.
+        // The second is what makes this "first contact" rather than "forever
+        // for anyone happy in Portuguese": the moment they reply anything —
+        // the keyword itself, a question, a menu tap — it stops for good.
+        //
+        // It can only ever appear on the TEMPLATE path, and that falls out of
+        // the same fact rather than being enforced twice: being inside the
+        // free-form window means an inbound exists, which means lastInboundAt
+        // is not null. #46 had already banned the line from the free-form
+        // briefing for the same reason.
+        const languageHint = !worker.hasChosenLanguage && worker.lastInboundAt === null;
+        const [name, summary] = renderWorkerBriefing(worker, { languageHint });
         const taskIds = worker.tasks.map(t => t.id);
         const idle = worker.tasks.length === 0;
 
@@ -266,6 +344,16 @@ export async function GET(request: NextRequest) {
         // envelope this person was going to get.
         const freeForm = withinFreeFormWindow(worker.lastInboundAt, now);
         const freeFormBody = renderWorkerFreeForm(worker);
+
+        // ── the guided briefing (issue #49, complaint 3) ─────────────────────
+        // The same body, with today's tasks behind native tappable rows. Null
+        // for an idle worker (nothing to tap) and null when the day is too rich
+        // to fit Meta's interactive-body cap — in which case the plain text
+        // holds MORE than the list could have, which is the right trade at
+        // 07:00. The AJUDA keyword still summons the menu afterwards.
+        const list = idle
+          ? null
+          : buildWorkerMenu({ tasks: worker.tasks, body: freeFormBody, locale: worker.locale });
 
         if (dryRun) {
           // `to` keeps its old meaning — the address as sent — and `address`
@@ -283,8 +371,12 @@ export async function GET(request: NextRequest) {
             // The two fields an operator needs to answer "why did this cost
             // money?" before it does. `body` is what would actually be sent on
             // the free-form path — the template path sends `summary`.
-            path: freeForm ? 'free_form' : 'template',
+            path: freeForm ? (list ? 'menu' : 'free_form') : 'template',
             body: freeForm ? freeFormBody : undefined,
+            // What a tap would offer. The operator's only pre-flight way to see
+            // whether a rich day fell back to plain text for want of room.
+            menuRows: list?.rows.map(r => r.title),
+            languageHint,
           });
           continue;
         }
@@ -312,6 +404,7 @@ export async function GET(request: NextRequest) {
             recipient: worker.recipient,
             freeForm,
             freeFormBody,
+            list,
             templateLanguage: getCatalog(worker.locale).reminders.templateLanguage,
             templateParams: [name, summary],
           });
@@ -330,6 +423,10 @@ export async function GET(request: NextRequest) {
             workerId: worker.workerId,
             path: delivery.path,
             fellBack: delivery.fellBack,
+            // A defect in OUR payload, not a fact about this recipient — the
+            // briefing still went out as text. Nothing else would show it.
+            listRejected: delivery.listRejected,
+            languageHint,
           });
           notified += 1;
           notifiedNames.push(worker.name);
@@ -441,6 +538,10 @@ export async function GET(request: NextRequest) {
             recipient,
             freeForm,
             freeFormBody,
+            // No menu for the manager, ever. The list offers a crew member's
+            // OWN tasks; a manager's picture is the whole board, and the board
+            // is one tap away in the app.
+            list: null,
             templateLanguage: getCatalog(locale).reminders.templateLanguage,
             templateParams: [name, summary],
           });

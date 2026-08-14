@@ -60,14 +60,30 @@ const CHECKIN_EXAMPLE: Record<Locale, [name: string, taskList: string]> = {
 // for a worker and renderManagerBriefing for the manager — so the wording has
 // to read correctly for either.
 //
-// The trailing sentence is the self-service control surface: it is the only
-// place a worker is ever told that PT/ES/EN switches their language and that
-// STOP opts them out. Both are handled deterministically in handleWorkerReply,
-// and Meta expects a utility template to state its opt-out.
+// ── THE LANGUAGE LINE IS GONE FROM HERE (issue #49, complaint 2) ────────────
+// It used to read "Responde PT, ES ou EN para mudar de idioma, ou STOP para
+// deixar de receber." Federico's complaint was that the first half was on EVERY
+// single message — and it was, unavoidably, because a template body is fixed at
+// approval time and no code in this repository can make part of it conditional.
+//
+// So it moved into the {{2}} PARAMETER, which is ours. reminders.languageHint
+// carries the sentence and renderWorkerBriefing appends it only for a crew
+// member who has never chosen a language AND has never written to us. The STOP
+// half stays: Meta expects a utility template to state its opt-out, and it is
+// one clause rather than two.
+//
+// ⚠ THIS IS A MANUAL GO-LIVE STEP. Meta has no API to rewrite an approved
+// name+language pair, so editing these strings changes NOTHING live until the
+// three locales are updated by hand in WhatsApp Manager and re-approved.
+// `pnpm whatsapp-template status` prints a WARN for every one that has not been.
+// Until then a first-contact worker reads the language options twice — which is
+// strictly better than every worker reading them every morning, and it heals
+// itself the moment the template is updated. See
+// docs/whatsapp-cloud-api-runbook.md.
 const BRIEFING_BODY: Record<Locale, string> = {
-  'pt-PT': 'Bom dia {{1}}. Hoje tens: {{2}}. Responde PT, ES ou EN para mudar de idioma, ou STOP para deixar de receber.',
-  'es-ES': 'Buenos días {{1}}. Hoy tienes: {{2}}. Responde PT, ES o EN para cambiar de idioma, o STOP para dejar de recibir.',
-  'en-US': 'Good morning {{1}}. Today you have: {{2}}. Reply PT, ES or EN to change language, or STOP to unsubscribe.',
+  'pt-PT': 'Bom dia {{1}}. Hoje tens: {{2}}. Responde STOP para deixar de receber.',
+  'es-ES': 'Buenos días {{1}}. Hoy tienes: {{2}}. Responde STOP para dejar de recibir.',
+  'en-US': 'Good morning {{1}}. Today you have: {{2}}. Reply STOP to unsubscribe.',
 };
 
 const BRIEFING_EXAMPLE: Record<Locale, [name: string, summary: string]> = {
@@ -92,9 +108,16 @@ const BRIEFING_EXAMPLE: Record<Locale, [name: string, summary: string]> = {
  * row reading `template name (capo_daily_briefing) does not exist in en_US` for
  * any recipient on that locale.
  *
- * No BUTTONS component — replies to the briefing are free text (PT/ES/EN/STOP),
- * not quick replies. Only capo_task_checkin declares buttons, and
- * scripts/whatsapp-check.mts pins that asymmetry.
+ * No BUTTONS component — replies to the briefing are free text (PT/ES/EN/STOP,
+ * and since issue #49 also AJUDA/MENU), not quick replies. Only
+ * capo_task_checkin declares buttons, and scripts/whatsapp-check.mts pins that
+ * asymmetry.
+ *
+ * Note what this template is NOT used for any more, most mornings: a crew
+ * member who has written to us in the last 23 hours gets the free-form
+ * briefing, or the interactive LIST version of it, both of which say far more
+ * than a one-line parameter can and cost nothing. This template is the envelope
+ * for people we have never heard from.
  */
 export function capoDailyBriefing(): TemplateDefinition[] {
   return LOCALES.map(locale => ({

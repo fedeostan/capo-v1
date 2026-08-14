@@ -12,9 +12,11 @@ import {
   isBsuid,
   parseCheckinPayload,
   parseProposalButtonId,
+  parseWorkerMenuRowId,
   readSender,
   routeWebhookChanges,
   senderLabel,
+  sendWhatsAppList,
   sendWhatsAppText,
   whatsappSink,
   workerSink,
@@ -36,6 +38,12 @@ import {
   type ClaimOutcome,
 } from '../../../lib/checkin-claim';
 import { logEvent } from '../../../lib/log';
+import { consentCommand, languageCommand, menuCommand } from '../../../lib/worker-keywords';
+import {
+  findWorkerTask,
+  loadWorkerMenu,
+  renderTaskDetail,
+} from '../../notifications/worker-menu';
 import { type WhatsAppEnv } from '../../../lib/whatsapp';
 import { acknowledgeInbound, withProgressNote } from '../../../lib/whatsapp-feedback';
 import { renderCheckinAnswerEvent } from '../../notifications/briefing';
@@ -182,6 +190,17 @@ interface WhatsAppMessage {
   interactive?: {
     type: string;
     button_reply?: { id: string; title: string };
+    // A tap on a row of the GUIDED MENU's interactive list (issue #49). Only
+    // ever arrives from a WORKER, and is handled on the worker path in
+    // handleWorkerReply → handleWorkerMenuTap.
+    //
+    // The SAME `type: 'interactive'` envelope as button_reply above and a
+    // DIFFERENT member of it, which is the shape most likely to be conflated in
+    // this file. What actually keeps the two apart is not this branch: the
+    // manager's card path is below sender resolution on the manager side, and
+    // the two id prefixes (`capo:approve|reject:` and `capo:wm:`) are
+    // non-overlapping, so neither parser can accept the other's value.
+    list_reply?: { id: string; title: string; description?: string };
   };
   // A tap on a TEMPLATE quick-reply button — the late-afternoon check-in. A DIFFERENT
   // shape from `interactive` above and easy to conflate: `payload` is the string
@@ -208,65 +227,18 @@ interface WhatsAppMessage {
   system?: { type?: string } & Record<string, unknown>;
 }
 
-// Reply one of these, alone, and your briefing language changes.
+// ── THE DETERMINISTIC LAYER IN FRONT OF THE WORKER AGENT ────────────────────
+// The three keyword tables — language, STOP/START, and the guided menu — used
+// to be written out here. They moved to apps/web/lib/worker-keywords.ts when
+// issue #49 added the third one: three sets that must stay pairwise disjoint
+// cannot be checked by reading them, and a Next route cannot be imported by a
+// credential-free check script. `pnpm whatsapp-check` now asserts the
+// disjointness, and asserts that a bare "ES" still resolves to Spanish with
+// zero model calls.
 //
-// This lookup STAYS IN FRONT OF THE WORKER AGENT and must keep resolving "ES"
-// with zero model calls. It is free, instant, and the command surface every
-// briefing has trained the crew on; routing it through a model would be a
-// regression in cost and latency for the one thing that already works. The
-// agent has `set_my_language` for the sentence a lookup cannot answer
-// ("podes falar comigo em espanhol?").
-//
-// Whole-message exact match only. A worker writing "es que falta material"
-// must not be read as "switch to Spanish", and a substring match would do
-// exactly that.
-const LANGUAGE_KEYWORDS: Record<string, Locale> = {
-  pt: 'pt-PT',
-  'pt-pt': 'pt-PT',
-  portugues: 'pt-PT',
-  português: 'pt-PT',
-  es: 'es-ES',
-  'es-es': 'es-ES',
-  espanol: 'es-ES',
-  español: 'es-ES',
-  en: 'en-US',
-  'en-us': 'en-US',
-  english: 'en-US',
-  ingles: 'en-US',
-  inglês: 'en-US',
-};
-
-function languageCommand(text: string | undefined): Locale | null {
-  if (!text) return null;
-  return LANGUAGE_KEYWORDS[text.trim().toLowerCase()] ?? null;
-}
-
-/**
- * Unsubscribe keywords, matched with the SAME whole-message discipline as the
- * language keywords above and for the same reason: "stop, o Zé não vem hoje" is
- * a sentence, not a withdrawal of consent, and a substring match would read it
- * as one. Someone who means it sends the word alone — that is the convention
- * every WhatsApp business number has trained them on.
- *
- * Meta's business-messaging policy requires honouring opt-outs, and after 0025
- * this is the mechanism. `start` is the counterpart, so a worker who leaves can
- * come back without going through their manager.
- *
- * Deliberately no Portuguese "pare"/"parar" beyond the two below: the more
- * ordinary the word, the likelier a real sentence collides with it.
- */
-const OPT_OUT_KEYWORDS = new Set(['stop', 'parar', 'baja', 'sair', 'cancelar', 'unsubscribe']);
-const OPT_IN_KEYWORDS = new Set(['start', 'comecar', 'começar', 'alta', 'subscribe']);
-
-type ConsentCommand = 'opt_out' | 'opt_in';
-
-function consentCommand(text: string | undefined): ConsentCommand | null {
-  if (!text) return null;
-  const word = text.trim().toLowerCase();
-  if (OPT_OUT_KEYWORDS.has(word)) return 'opt_out';
-  if (OPT_IN_KEYWORDS.has(word)) return 'opt_in';
-  return null;
-}
+// What did NOT move is the ORDER they are consulted in. That lives in
+// handleWorkerReply below, next to the branches it governs, and it is the order
+// — not the tables — that keeps the model last.
 
 /** notification_log.kind for the late-afternoon ask. Must match /api/cron/checkin. */
 const CHECKIN_KIND = 'task_checkin';
@@ -892,6 +864,142 @@ async function handleCheckinTap(
 }
 
 /**
+ * A tap on the GUIDED MENU — issue #49's "pre-made boxes".
+ *
+ * Returns true when this was a menu row AND the worker has been answered;
+ * false to fall through to the ordinary path, which is where an interactive
+ * reply of any other shape goes.
+ *
+ * ── NO MODEL IS INVOLVED, IN EITHER DIRECTION ──────────────────────────────
+ * The row id is one this route minted itself, and the answer is rendered from
+ * the task row. That is the whole point of the feature: "what am I doing on the
+ * Casa de Paco?" is a database read, and paying a model to perform one is how
+ * the crew channel became slow, expensive and occasionally wrong.
+ *
+ * ── THE TENANT BOUNDARY ON THIS PATH ───────────────────────────────────────
+ * Everything runs on the SERVICE-ROLE client, so RLS enforces nothing.
+ * findWorkerTask reads THIS worker's own open tasks — scoped by the company_id
+ * and worker_id that the sender's phone/BSUID resolved to, never by anything on
+ * the wire — and then looks for the tapped id IN that result. A guessed uuid,
+ * including a colleague's real one, therefore never reaches the database as a
+ * lookup and cannot be timed as an existence oracle. Same shape and same
+ * reasoning as handleCheckinTap's notification_log read above; do not replace
+ * it with a query on the tapped id.
+ *
+ * ── THE THREE BUTTON SHAPES ────────────────────────────────────────────────
+ * This is the third tappable thing on this webhook and the second under
+ * `type: 'interactive'`. An approval card's `button_reply` belongs to a
+ * MANAGER and is handled far below, on a path sender resolution never routes a
+ * worker to. What keeps them apart is that the id prefixes are pairwise
+ * non-overlapping (`capo:approve|reject:`, `capo:checkin:`, `capo:wm:`), which
+ * scripts/whatsapp-check.mts asserts in every direction.
+ */
+async function handleWorkerMenuTap(
+  db: Db,
+  message: WhatsAppMessage,
+  worker: WorkerMatch,
+  locale: Locale,
+  sendConfig: WhatsAppSendConfig,
+): Promise<boolean> {
+  const listReply = message.interactive?.list_reply;
+  if (!listReply) return false;
+
+  const row = parseWorkerMenuRowId(listReply.id);
+  if (!row) {
+    logEvent('whatsapp.unknown_menu_row', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      messageId: message.id,
+    });
+    return false;
+  }
+
+  const t = getCatalog(locale).whatsapp;
+
+  // "Talk to the boss" — the deterministic answer to everything Capo cannot do
+  // from here, and issue #49's "off-topic questions should get 'talk to your
+  // manager', not an answer". It carries no id, so there is nothing to look up
+  // and nothing to leak.
+  if (row.kind === 'manager') {
+    logEvent('whatsapp.menu_manager_row', { companyId: worker.company_id, workerId: worker.id });
+    await sendWhatsAppText(t.workerMenuManagerReply, sendConfig).catch(() => {});
+    return true;
+  }
+
+  let body: string;
+  try {
+    const task = await findWorkerTask(db, worker, row.taskId);
+    // ONE sentence for "not yours" and for "no longer open" alike. Telling them
+    // apart would answer a question the tapper is not entitled to ask, and a
+    // crew member cannot act on the difference either way.
+    body = task ? renderTaskDetail(task, locale) : t.workerMenuUnknownTask;
+    logEvent('whatsapp.menu_task_opened', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      found: !!task,
+    });
+  } catch (err) {
+    logEvent('whatsapp.menu_task_failed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    body = t.workerAgentFailed;
+  }
+
+  // Silence after a tap reads as "Capo is broken" — the same rule the check-in
+  // tap and the approval button both follow.
+  await sendWhatsAppText(body, sendConfig).catch(err => {
+    logEvent('whatsapp.menu_reply_failed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+  return true;
+}
+
+/**
+ * Send the guided menu because the worker ASKED for it (AJUDA, MENU, ?).
+ *
+ * Free, and free by SHAPE rather than by policy: an interactive message is a
+ * session message, so Meta bills nothing for it — but it is refused outright
+ * outside the 24-hour window, which is why this only ever runs in reply to an
+ * inbound message that opened one seconds ago.
+ *
+ * A worker with no open tasks gets a plain sentence instead of a list whose
+ * only row is "talk to the boss".
+ */
+async function sendWorkerMenu(
+  db: Db,
+  worker: WorkerMatch,
+  locale: Locale,
+  sendConfig: WhatsAppSendConfig,
+): Promise<void> {
+  const t = getCatalog(locale).whatsapp;
+  try {
+    const menu = await loadWorkerMenu(db, worker, locale);
+    if (!menu) {
+      await sendWhatsAppText(t.workerMenuEmpty, sendConfig);
+      return;
+    }
+    await sendWhatsAppList(menu.list, sendConfig);
+    logEvent('whatsapp.menu_sent', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      tasks: menu.tasks.length,
+    });
+  } catch (err) {
+    logEvent('whatsapp.menu_send_failed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    await sendWhatsAppText(t.workerAgentFailed, sendConfig).catch(() => {});
+  }
+}
+
+/**
  * Take in the photos attached to ONE inbound message.
  *
  * Downloaded synchronously, here and now, exactly as audio is: hop 1's media
@@ -1175,6 +1283,12 @@ async function handleWorkerReply(
   const current = worker.language ? coerceLocale(worker.language) : coerceLocale(worker.company?.language);
   const requested = message.type === 'text' ? languageCommand(message.text?.body) : null;
   const consent = message.type === 'text' ? consentCommand(message.text?.body) : null;
+  // Computed here beside the other two rather than at its branch, for the two
+  // reasons they are: the `type === 'text'` guard is written once, and the log
+  // line below can record which of the three deterministic branches a message
+  // took. Without that, "the agent answered a message that should have been a
+  // menu" is invisible.
+  const wantsMenu = message.type === 'text' ? menuCommand(message.text?.body) : false;
 
   logEvent('whatsapp.worker_reply', {
     companyId: worker.company_id,
@@ -1185,6 +1299,7 @@ async function handleWorkerReply(
     // These two are the recognised keywords, not the text, so they are safe.
     languageCommand: requested ?? undefined,
     consentCommand: consent ?? undefined,
+    menuCommand: wantsMenu || undefined,
   });
 
   // Send-, not sink-config: a worker ack carries no approval buttons, and
@@ -1239,6 +1354,18 @@ async function handleWorkerReply(
   // on two companies' crews still gets silence rather than an answer recorded
   // against a guessed tenant.
   if (message.type === 'button' && (await handleCheckinTap(db, message, worker, current, sendConfig))) {
+    return true;
+  }
+
+  // The GUIDED MENU tap (issue #49). Sits beside the check-in tap because it is
+  // the same kind of thing — a tap on something we sent, answered from a lookup
+  // with no model anywhere in the loop — and below it because the two shapes
+  // are disjoint (`type: 'button'` vs `type: 'interactive'`), so the order only
+  // decides which check pays for the miss.
+  //
+  // ABOVE the agent branch far below, which is the whole design: "what am I
+  // doing on the Casa de Paco?" is a database read, and a tap says which row.
+  if (message.type === 'interactive' && (await handleWorkerMenuTap(db, message, worker, current, sendConfig))) {
     return true;
   }
 
@@ -1298,10 +1425,27 @@ async function handleWorkerReply(
     return true;
   }
 
+  // THE MENU KEYWORD — AJUDA / MENU / TAREFAS / ? (issue #49).
+  //
+  // BELOW the language keyword deliberately, even though the two sets are
+  // disjoint and the order cannot change any outcome. Keeping `requested`
+  // first is what makes the invariant visible where it is enforced: a bare
+  // "ES" resolves to Spanish above this line, with zero model calls, and no
+  // later branch can take it.
+  //
+  // ABOVE the agent, which is the change this issue is about. Before it, every
+  // text a crew member sent bought a model turn — including "ajuda", which is
+  // a request for a list we can render from a table.
+  if (wantsMenu) {
+    await sendWorkerMenu(db, worker, current, sendConfig);
+    return true;
+  }
+
   // ── the restricted agent (PRD 4) ──────────────────────────────────────────
   // BELOW every deterministic branch above, and that ordering is the design:
-  // the check-in tap, STOP/START and the language keyword are free, instant and
-  // already right, so a model must never be able to get at them first.
+  // the check-in tap, the menu tap, the menu keyword, STOP/START and the
+  // language keyword are free, instant and already right, so a model must never
+  // be able to get at them first.
   //
   // Text and photos only. A voice note from a worker is deliberately NOT
   // transcribed here — that would add a second model call to every message and

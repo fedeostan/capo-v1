@@ -118,7 +118,10 @@ and say what the alternative would be — he is the one who decides.
   deny-all check on the two send ledgers, and a set of adversarial cross-tenant
   attacks (cross-company FKs, billing self-upgrade, forging a translation undo
   snapshot, forging a worker check-in answer, claiming another tenant's worker's
-  BSUID, the two task-review RPCs, and the
+  BSUID, the two task-review RPCs, the guided menu's read
+  (`checkWorkerMenuScope`, #49 — the one boundary in the file that is a
+  TypeScript filter rather than a Postgres policy, hand-copied here because this
+  file is plain `.mjs`, so change one and change the other), and the
   Supabase Storage surface — signing, downloading, listing and writing another
   tenant's task photos, and the worker thread a tenant may read but never
   write). Since #22 it also carries `checkWorkerTextIsolation`, the one check in
@@ -579,12 +582,84 @@ Structural invariants (do not regress):
   task photo's object key contains the task id and the task is not known until
   the tool names it. "Photo, then a separate message saying which task" loses
   the photo. A staging area keyed on the worker is the fix, and is out of scope.
+- **The crew channel is GUIDED FIRST and conversational second** (issue #49).
+  Federico's complaint was three complaints and the fixes are independent, so
+  they are recorded separately — but they share one shape: the cheap
+  deterministic thing happens in front of the model, never instead of it.
+  - **The 07:00 briefing shows the site ADDRESS and what a task waits on.**
+    `job_address` (appended to `task_board` by 0027) and `depends_on_titles`
+    were both in the view and read by nothing that spoke to a crew member. They
+    render through `taskDetailLines` in `notifications/briefing.ts` — **one
+    function, two surfaces**: the free-form briefing and the guided menu's task
+    sheet. Two renderers would drift, and a crew member reading both would have
+    no way to tell which was right. `BRIEFABLE` is **UNCHANGED**: still an
+    allowlist of `pending`/`in_progress`, so both daily sends are untouched.
+  - **The language line is CONDITIONAL, and half the fix is not in this repo.**
+    "Responde PT, ES ou EN" lived in the approved template BODY, which is fixed
+    at approval time — that is why it was on every message and why no code could
+    stop it. It moved into the `{{2}}` parameter
+    (`reminders.languageHint` + `renderWorkerBriefing`'s `languageHint` option),
+    shown only when `!hasChosenLanguage && lastInboundAt === null`. Both facts
+    were already loaded, so **no migration**. It can only ever appear on the
+    TEMPLATE path, and that falls out of the same predicate rather than being
+    enforced twice. ⚠ The live template still carries the old sentence until
+    it is re-approved by hand in WhatsApp Manager; until then a first-contact
+    worker reads it twice (runbook §6a).
+  - **The guided menu is an interactive LIST, answered with zero model calls.**
+    `notifications/worker-menu.ts` builds it; `handleWorkerMenuTap` answers a
+    row. Reached by the `MENU_KEYWORDS` keyword or by tapping the 07:00
+    briefing when it went out as a list. Five load-bearing things:
+    - **It is the THIRD tappable shape and the SECOND under
+      `type: 'interactive'`.** Nothing about the handler layout keeps it apart
+      from a manager's approval card — only that `capo:wm:`, `capo:checkin:`
+      and `capo:approve|reject:` are pairwise non-overlapping. `pnpm
+      whatsapp-check` asserts all six directions; a fourth codec must extend
+      them rather than assume them.
+    - **The tenant boundary is a TypeScript filter, and RLS backstops nothing.**
+      No `auth.uid()` on the webhook, so `findWorkerTask` reads this worker's
+      own rows (company_id + assignee_worker_id, both phone-derived) and looks
+      for the tapped id INSIDE that result. Never `.eq('id', tappedId)` — that
+      would be an existence oracle. `checkWorkerMenuScope` in
+      `scripts/rls-isolation-matrix.mjs` attacks it, including from a COLLEAGUE
+      in the same company, which is the case only `assignee_worker_id` refuses.
+      That check is a hand-copied duplicate of the real query (the matrix is
+      plain `.mjs`); change one, change the other.
+    - **`MAX_LIST_BODY` is the CONSERVATIVE 1024.** Meta's own reference page
+      says 4096 and every third-party summary says 1024. Being wrong downward
+      costs a briefing that degrades to plain text; being wrong upward is a 400
+      at 07:00 and a crew that hears nothing. `listFits` exists so the send
+      decides BEFORE building rather than catching a throw, and
+      `buildListPayload` THROWS on structural overruns while CLAMPING cosmetic
+      ones — the same split `toTemplateParam`/`assertQuickReplyPayload` make.
+    - **An interactive message is a session message, so it is FREE** — and
+      refused outright (131047) outside the 24h window, exactly like free-form
+      text. `deliverBriefing` therefore falls back list → text → template, and
+      only the out-of-window error reaches the paid template; any other list
+      failure is a bug in OUR payload and must cost plain text, never silence.
+    - **The menu reads `is_open` (a denylist) while the briefing reads
+      `BRIEFABLE` (an allowlist)**, so a task already declared finished appears
+      in the menu — marked as waiting on the manager — and in neither daily
+      send. That asymmetry is the board's own and is deliberate.
+  - The three keyword tables moved out of the route into
+    `apps/web/lib/worker-keywords.ts` so `pnpm whatsapp-check` can assert they
+    stay pairwise disjoint. **Only the location moved.** The ORDER still lives
+    in `handleWorkerReply`, and it is the order that keeps the model last.
+  - Known and NOT fixed: **a person who is BOTH a manager and an active crew row
+    gets silence on a menu tap.** Sender resolution tries `profiles` first, so
+    their `list_reply` lands on the manager's `interactive` branch, finds no
+    `button_reply`, logs `whatsapp.unsupported_interactive` and stops. This is
+    the same dead end the check-in's `type: 'button'` tap already has for that
+    person, not a new class — but it is the configuration a pilot foreman is
+    most likely to be in, and the symptom is a button that does nothing.
 - **`workers.language` is the third dial** (see the top of this file).
   Nullable, and the null means "inherit `companies.language`" — do not give it
   a default. A worker sets it themselves by replying `PT`/`ES`/`EN` to their
   briefing. Since #22 they can also just ask in words (`set_my_language`), but
   the deterministic `LANGUAGE_KEYWORDS` lookup stays IN FRONT of the agent: `ES`
-  must keep resolving with zero model calls.
+  must keep resolving with zero model calls. Since #49 the table lives in
+  `apps/web/lib/worker-keywords.ts` beside the other two, and `pnpm
+  whatsapp-check` asserts both halves — that a bare `ES` resolves to `es-ES`,
+  and that neither of the other two tables claims the word.
 - **`pending_review` is the completion claim, and the surfaces that see it
   split into denylists and allowlists on purpose.** A worker (PRD 4) or the
   manager declares a task finished; it

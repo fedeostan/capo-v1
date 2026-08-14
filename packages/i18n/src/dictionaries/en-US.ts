@@ -559,8 +559,21 @@ const dict: Catalog = {
     proposalNotPending: 'That one was already decided.',
     proposalError: "I couldn't record that decision. Do it in the app.",
     approvalFallback: "I couldn't show the buttons. Approve or reject it in the app.",
-    workerAck: 'Got it, thanks. Any questions, talk to your foreman. To change language reply PT, ES or EN.',
+    workerAck: 'Got it, thanks. Any questions, talk to your foreman.',
     workerLanguageChanged: "Done — I'll write to you in English from now on.",
+    workerMenuButton: 'View task',
+    workerMenuSection: 'Your tasks',
+    workerMenuBody: (shown, total) =>
+      shown < total
+        ? `You have ${total} open tasks — here are the ${shown} closest. Pick one to see the details.`
+        : total === 1
+          ? 'You have 1 open task. Pick it to see the details.'
+          : `You have ${total} open tasks. Pick one to see the details.`,
+    workerMenuEmpty: "You don't have any open tasks right now. If you think you should, talk to your foreman.",
+    workerMenuManagerRow: 'Talk to the boss',
+    workerMenuManagerNote: "For anything I can't sort out from here",
+    workerMenuManagerReply: "You'll want your foreman for that — from here I can only see your tasks and answer technical questions.",
+    workerMenuUnknownTask: "I can't open that task any more. Reply HELP to see the list again.",
     workerOptedOut: "You're unsubscribed — I won't message you again. Reply START if you change your mind.",
     workerOptedIn: "Great, you'll get the daily messages again. Reply STOP whenever you want to stop.",
     workerBudgetReached: "I can't answer any more messages today. I'll be back to normal tomorrow morning — if it's urgent, talk to your supervisor.",
@@ -623,6 +636,14 @@ const dict: Catalog = {
     freeFormDescription: text => text,
     freeFormMaterials: items => `Materials: ${items}`,
     freeFormMaterialSeparator: ', ',
+    freeFormAddress: text => `Address: ${text}`,
+    freeFormWaitingOn: items => `Waiting on: ${items}`,
+    freeFormAwaitingReview: 'You already said this was finished — waiting on the boss to confirm.',
+    detailHeader: title => `📋 ${title}`,
+    detailDue: date => `Due: ${date}`,
+    detailNothingMore: "I don't have any more detail on this one. Ask your foreman if you need it.",
+    detailOverdue: title => `${title} — overdue`,
+    languageHint: 'Reply PT, ES or EN to change language',
   },
 };
 

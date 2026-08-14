@@ -55,9 +55,11 @@
 
 import type { UIMessage } from 'ai';
 import {
+  buildListPayload,
   buildReceiptBody,
   buildSendBody,
   buildTemplatePayload,
+  listFits,
   checkinPayload,
   mayNarrateProgress,
   PROGRESS_NOTE_AFTER_MS,
@@ -69,6 +71,7 @@ import {
   OUTSIDE_WINDOW_ERROR_CODE,
   parseCheckinPayload,
   parseProposalButtonId,
+  parseWorkerMenuRowId,
   planAssistantMessages,
   planWorkerMessages,
   proposalButtonId,
@@ -78,6 +81,7 @@ import {
   splitForWhatsApp,
   toTemplateParam,
   toWhatsAppMarkdown,
+  workerMenuRowId,
   WhatsAppSendError,
   withinFreeFormWindow,
   type ApprovalLabels,
@@ -94,10 +98,29 @@ import {
   renderCheckinAnswerEvent,
   renderCheckinEvent,
   renderManagerEvent,
+  renderWorkerBriefing,
   renderWorkerFreeForm,
   type BriefingTask,
   type WorkerBriefing,
 } from '../apps/web/app/notifications/briefing.ts';
+// The GUIDED MENU (issue #49). Pure renderers over the same rows the briefing
+// reads, reached the same way — no Db, no clock, no network.
+import {
+  buildWorkerMenu,
+  renderTaskDetail,
+} from '../apps/web/app/notifications/worker-menu.ts';
+// The three keyword tables that sit IN FRONT of the worker agent. They moved
+// out of the Next route precisely so this file could assert them: three sets
+// that must stay pairwise disjoint cannot be checked by reading.
+import {
+  LANGUAGE_KEYWORDS,
+  MENU_KEYWORDS,
+  OPT_IN_KEYWORDS,
+  OPT_OUT_KEYWORDS,
+  consentCommand,
+  languageCommand,
+  menuCommand,
+} from '../apps/web/lib/worker-keywords.ts';
 // The pure half of "a worker tapped Sim, terminei" (issue #54). Same reasoning
 // as the briefing import above: no Db, no clock, no network.
 import {
@@ -961,6 +984,10 @@ check('an unparseable opt-in → no consent', !hasWhatsAppConsent({ whatsapp_opt
       days_overdue: 0,
       description: 'Substituir os tubos da cozinha.',
       materials: ['tubo PVC 50mm', 'cola', 'fita'],
+      job_address: 'Rua das Flores 12, Lisboa',
+      waiting_on: ['Demolir parede'],
+      awaiting_review: false,
+      due_date: '2026-08-20',
       ...over,
     };
   }
@@ -970,6 +997,7 @@ check('an unparseable opt-in → no consent', !hasWhatsAppConsent({ whatsapp_opt
       name: 'Miguel',
       recipient: { kind: 'phone', waId },
       locale: 'pt-PT',
+      hasChosenLanguage: false,
       tasks,
       lastInboundAt: null,
     };
@@ -1270,6 +1298,392 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     threw = true;
   }
   check('a proposal on the worker path THROWS rather than being dropped', threw);
+}
+
+// ── the guided menu (issue #49) ─────────────────────────────────────────────
+// Federico's complaint was three complaints. This section covers all three,
+// and every one of them is a place where being wrong is SILENT:
+//
+//  13. The 07:00 briefing named a task and nothing else — no address, no
+//      description, no materials. Every one of those was already in task_board
+//      and read by nobody who talks to the crew. A renderer that quietly stops
+//      including one of them produces a message that still looks fine.
+//  14. "Reply PT, ES or EN to change language" was on EVERY send, because it
+//      was baked into an approved template body. It now lives in the {{2}}
+//      parameter and must appear ONLY when the caller asks for it. Getting the
+//      default wrong reinstates the complaint with no error anywhere.
+//  15. The guided list is the THIRD tappable shape on one webhook and the
+//      SECOND under `type: 'interactive'`. Nothing about the handler layout
+//      keeps them apart — only the fact that the three id prefixes are pairwise
+//      non-overlapping, so each of the six directions is asserted below.
+//  16. Three keyword tables now sit in front of the worker agent, and they must
+//      stay disjoint. The one that must never move is `es`: a bare "ES" has to
+//      keep resolving to Spanish with ZERO model calls, and a collision would
+//      route it to a menu or an opt-out instead, cheerfully.
+//  17. Meta's interactive-list limits are enforced by clamping (cosmetic) and
+//      throwing (structural). The body cap is deliberately the conservative
+//      figure — Meta's own page and every third-party summary disagree — because
+//      being wrong upward is a 400 at 07:00 and a crew that hears nothing.
+
+// ── the three id codecs, pairwise ───────────────────────────────────────────
+{
+  const menuTask = workerMenuRowId({ kind: 'task', taskId: uuid });
+  const menuManager = workerMenuRowId({ kind: 'manager' });
+  const checkin = checkinPayload('done', uuid);
+  const approve = proposalButtonId('approve', uuid);
+
+  eq('a menu task row round-trips (kind)', parseWorkerMenuRowId(menuTask)?.kind, 'task');
+  eq(
+    'a menu task row round-trips (task id)',
+    parseWorkerMenuRowId(menuTask)?.kind === 'task' ? parseWorkerMenuRowId(menuTask)?.taskId : null,
+    uuid,
+  );
+  eq('the manager row round-trips', parseWorkerMenuRowId(menuManager)?.kind, 'manager');
+  // The uuid is validated for the same reason the other two codecs validate
+  // theirs: taskId goes straight into a comparison against uuid columns.
+  eq('a malformed task uuid is rejected', parseWorkerMenuRowId('capo:wm:task:not-a-uuid'), null);
+  eq('a foreign prefix is rejected', parseWorkerMenuRowId(`evil:wm:task:${uuid}`), null);
+  eq('an empty row id is rejected', parseWorkerMenuRowId(''), null);
+  // The manager row carries NO id, so nothing can be looked up from it and
+  // nothing can leak through it.
+  check('the manager row id contains no uuid', !menuManager.includes(uuid), menuManager);
+
+  // Six directions, all of which must refuse. Two of these three shapes arrive
+  // under `type: 'interactive'`, so this is the whole of what keeps a manager's
+  // approval from being read as a crew member's menu tap.
+  eq('a check-in payload is not a menu row', parseWorkerMenuRowId(checkin), null);
+  eq('a proposal id is not a menu row', parseWorkerMenuRowId(approve), null);
+  eq('a menu row is not a check-in payload', parseCheckinPayload(menuTask), null);
+  eq('the manager row is not a check-in payload', parseCheckinPayload(menuManager), null);
+  eq('a menu row is not a proposal id', parseProposalButtonId(menuTask), null);
+  eq('the manager row is not a proposal id', parseProposalButtonId(menuManager), null);
+}
+
+// ── the keyword tables in front of the agent ────────────────────────────────
+{
+  const tables: [string, Iterable<string>][] = [
+    ['language', Object.keys(LANGUAGE_KEYWORDS)],
+    ['opt-out', OPT_OUT_KEYWORDS],
+    ['opt-in', OPT_IN_KEYWORDS],
+    ['menu', MENU_KEYWORDS],
+  ];
+  for (let i = 0; i < tables.length; i += 1) {
+    for (let j = i + 1; j < tables.length; j += 1) {
+      const [nameA, a] = tables[i];
+      const [nameB, b] = tables[j];
+      const setB = new Set(b);
+      const shared = [...a].filter(word => setB.has(word));
+      check(`${nameA} and ${nameB} keywords are disjoint`, shared.length === 0, shared.join(', '));
+    }
+  }
+
+  // THE INVARIANT. A bare "ES" resolves to Spanish from a lookup table — no
+  // model, no network, no database. If any of these four ever change, the
+  // cheapest and most-used control the crew has just became a paid model turn.
+  eq('a bare ES resolves to Spanish', languageCommand('ES'), 'es-ES');
+  eq('and is case- and whitespace-insensitive', languageCommand('  es  '), 'es-ES');
+  eq('the menu never claims it', menuCommand('ES'), false);
+  eq('and neither does consent', consentCommand('ES'), null);
+  eq('PT and EN resolve too', `${languageCommand('pt')}/${languageCommand('EN')}`, 'pt-PT/en-US');
+
+  // Whole-message only, in all three tables. A substring match would read a
+  // sentence as a command, silently, in the direction that costs somebody their
+  // message.
+  eq('a sentence starting with es is not a language switch', languageCommand('es que falta material'), null);
+  eq('a sentence starting with stop is not an opt-out', consentCommand('stop, o Zé não vem hoje'), null);
+  eq('a sentence starting with ajuda is not a menu request', menuCommand('ajuda-me a perceber isto'), false);
+  eq('an empty message is no command at all', menuCommand(''), false);
+  eq('and neither is undefined', menuCommand(undefined), false);
+}
+
+// ── the interactive list payload ────────────────────────────────────────────
+{
+  const rows = [
+    { id: workerMenuRowId({ kind: 'task', taskId: uuid }), title: 'Canalização', description: 'Casa de Paco' },
+    { id: workerMenuRowId({ kind: 'manager' }), title: 'Falar com o chefe' },
+  ];
+  const payload = buildListPayload({ body: 'Bom dia, Miguel.', button: 'Ver tarefa', section: 'As tuas tarefas', rows });
+  const interactive = payload.interactive as Record<string, unknown>;
+  const action = interactive.action as Record<string, unknown>;
+  const sections = action.sections as { title: string; rows: { id: string; title: string; description?: string }[] }[];
+
+  eq('a list is an interactive message', payload.type, 'interactive');
+  eq('of subtype list', interactive.type, 'list');
+  eq('with exactly one section', sections.length, 1);
+  eq('carrying both rows', sections[0].rows.length, 2);
+  // No header and no footer — a footer is exactly where a standing "reply
+  // PT/ES/EN" sentence would grow back, which is the complaint being fixed.
+  check('a list has no header', !('header' in interactive), JSON.stringify(Object.keys(interactive)));
+  check('and no footer', !('footer' in interactive), JSON.stringify(Object.keys(interactive)));
+  // A row with no description must OMIT the key rather than send an empty one.
+  check('a description-less row omits the key', !('description' in sections[0].rows[1]), JSON.stringify(sections[0].rows[1]));
+
+  // Cosmetic overruns CLAMP: a long task title is still tappable.
+  const clamped = buildListPayload({
+    body: 'x',
+    button: 'B'.repeat(60),
+    section: 'S'.repeat(60),
+    rows: [{ id: 'capo:wm:manager', title: 'T'.repeat(60), description: 'D'.repeat(200) }],
+  });
+  const clampedAction = ((clamped.interactive as Record<string, unknown>).action) as Record<string, unknown>;
+  const clampedSections = clampedAction.sections as { title: string; rows: { title: string; description?: string }[] }[];
+  check('a long button label is clamped to 20', (clampedAction.button as string).length <= 20, clampedAction.button as string);
+  check('a long section title is clamped to 24', clampedSections[0].title.length <= 24, clampedSections[0].title);
+  check('a long row title is clamped to 24', clampedSections[0].rows[0].title.length <= 24, clampedSections[0].rows[0].title);
+  check('a long row description is clamped to 72', (clampedSections[0].rows[0].description ?? '').length <= 72);
+
+  // Structural overruns THROW. A truncated body would silently drop half a
+  // briefing; a truncated id comes back unparseable and the tap vanishes.
+  function throws(fn: () => unknown): boolean {
+    try {
+      fn();
+      return false;
+    } catch {
+      return true;
+    }
+  }
+  check('an oversized body throws', throws(() => buildListPayload({ body: 'x'.repeat(1025), button: 'b', section: 's', rows })));
+  check('an empty body throws', throws(() => buildListPayload({ body: '', button: 'b', section: 's', rows })));
+  check('zero rows throws', throws(() => buildListPayload({ body: 'x', button: 'b', section: 's', rows: [] })));
+  check(
+    'eleven rows throws',
+    throws(() =>
+      buildListPayload({
+        body: 'x',
+        button: 'b',
+        section: 's',
+        rows: Array.from({ length: 11 }, () => ({ id: 'capo:wm:manager', title: 't' })),
+      }),
+    ),
+  );
+  check(
+    'an over-long row id throws',
+    throws(() => buildListPayload({ body: 'x', button: 'b', section: 's', rows: [{ id: 'i'.repeat(201), title: 't' }] })),
+  );
+
+  // listFits is the seam that keeps the 07:00 send out of that throw: the
+  // briefing asks BEFORE building, and a day that does not fit is sent as
+  // ordinary text, which holds four times as much.
+  check('listFits accepts a 1024-char body', listFits('x'.repeat(1024)));
+  check('and refuses 1025', !listFits('x'.repeat(1025)));
+  check('and refuses an empty one', !listFits(''));
+
+  // Exactly one addressing field, the same property buildSendBody guarantees
+  // for every other send: `to` XOR `recipient`, never both, because Meta lets
+  // `to` win silently and a BSUID send would go to a stale phone number and
+  // report success.
+  const bsuidBody = buildSendBody(payload, { kind: 'bsuid', userId: 'PT.13491208655302741918' });
+  check('a list to a BSUID uses recipient', 'recipient' in bsuidBody && !('to' in bsuidBody), JSON.stringify(Object.keys(bsuidBody)));
+  const phoneBody = buildSendBody(payload, { kind: 'phone', waId });
+  check('and a list to a phone uses to', 'to' in phoneBody && !('recipient' in phoneBody), JSON.stringify(Object.keys(phoneBody)));
+}
+
+// ── the briefing content, the language line, and the menu rows ──────────────
+{
+  function task(over: Partial<BriefingTask> = {}): BriefingTask {
+    return {
+      id: uuid,
+      title: 'Canalização',
+      job_name: 'Casa de Paco',
+      overdue: false,
+      days_overdue: 0,
+      description: 'Substituir os tubos da cozinha.',
+      materials: ['tubo PVC 50mm', 'cola'],
+      due_date: '2026-08-20',
+      job_address: 'Rua das Flores 12, Lisboa',
+      waiting_on: ['Demolir parede'],
+      awaiting_review: false,
+      due_date: '2026-08-20',
+      ...over,
+    };
+  }
+  function briefing(over: Partial<WorkerBriefing> = {}): WorkerBriefing {
+    return {
+      workerId: uuid,
+      name: 'Miguel',
+      recipient: { kind: 'phone', waId },
+      locale: 'pt-PT',
+      hasChosenLanguage: false,
+      tasks: [task()],
+      lastInboundAt: null,
+      ...over,
+    };
+  }
+
+  // COMPLAINT 1. The two facts #46 did not add, both of which had been sitting
+  // in task_board all along.
+  const body = renderWorkerFreeForm(briefing());
+  check('the briefing now says WHERE', body.includes('Rua das Flores 12, Lisboa'), body);
+  check('and what the task waits on', body.includes('Demolir parede'), body);
+  check('while keeping the description', body.includes('Substituir os tubos da cozinha.'), body);
+  check('and the materials', body.includes('tubo PVC 50mm'), body);
+  // A task with none of them degrades to its title, exactly as before.
+  const bare = renderWorkerFreeForm(
+    briefing({ tasks: [task({ description: null, materials: [], job_address: null, waiting_on: [] })] }),
+  );
+  check('a bare task invents no empty address line', !bare.includes('Morada'), bare);
+  check('and no empty dependency line', !bare.includes('Depende de'), bare);
+
+  // COMPLAINT 2. Off by default, everywhere, in every locale.
+  for (const locale of LOCALES) {
+    const hint = getCatalog(locale).reminders.languageHint;
+    const [, off] = renderWorkerBriefing(briefing({ locale }));
+    const [, on] = renderWorkerBriefing(briefing({ locale }), { languageHint: true });
+    check(`${locale} — the template summary carries no language line by default`, !off.includes(hint), off);
+    check(`${locale} — and carries it when the caller asks`, on.includes(hint), on);
+    // Appended, never prepended: the work comes first.
+    check(`${locale} — the hint is at the end`, on.endsWith(hint), on);
+    // An idle worker gets it too — first contact is first contact whether or
+    // not there is anything on that day.
+    const [, idle] = renderWorkerBriefing(briefing({ locale, tasks: [] }), { languageHint: true });
+    check(`${locale} — an idle first-contact worker gets it`, idle.includes(hint), idle);
+    // The FREE-FORM briefing never carries it, in any configuration: being
+    // inside that window is itself proof this person has written to us.
+    check(
+      `${locale} — the free-form briefing never carries it`,
+      !renderWorkerFreeForm(briefing({ locale })).includes(hint),
+      locale,
+    );
+  }
+  // THE PUNCTUATION, which is only ever visible on a live send to a crew
+  // member on their first ever contact. {{2}} is dropped into the middle of the
+  // approved body — "Hoje tens: {{2}}. Responde STOP…" — so the hint must carry
+  // no full stop of its own, and the text it is appended to must not keep one
+  // either. Both directions produce a message that reads broken and nothing
+  // else in this repo would notice.
+  for (const locale of LOCALES) {
+    const hint = getCatalog(locale).reminders.languageHint;
+    check(`${locale} — the hint carries no trailing full stop`, !/[.。]$/.test(hint), hint);
+    const [, listed] = renderWorkerBriefing(briefing({ locale }), { languageHint: true });
+    const [, nothing] = renderWorkerBriefing(briefing({ locale, tasks: [] }), { languageHint: true });
+    // `workerNothing` ends in a full stop and a task list does not; both must
+    // land on exactly one before the hint.
+    check(`${locale} — no doubled full stop after a task list`, !listed.includes('..'), listed);
+    check(`${locale} — nor after "nothing today"`, !nothing.includes('..'), nothing);
+    check(`${locale} — and the hint is still a separate sentence`, nothing.includes(`. ${hint}`), nothing);
+  }
+
+  // A template parameter is one line. toTemplateParam flattens whitespace, so
+  // the hint must survive that rather than be the thing that breaks it.
+  const [, withHint] = renderWorkerBriefing(briefing(), { languageHint: true });
+  check('the hinted summary survives toTemplateParam', toTemplateParam(withHint).includes(getCatalog('pt-PT').reminders.languageHint));
+  check('and stays newline-free', !/[\n\t]/.test(toTemplateParam(withHint)));
+
+  // The approved template body must no longer state it — that is the half of
+  // complaint 2 this repository owns.
+  for (const def of allTemplates().filter(d => d.name === 'capo_daily_briefing')) {
+    const text = String((def.components.find(c => c.type === 'BODY') as { text?: string } | undefined)?.text ?? '');
+    check(`${def.language} — the briefing template no longer offers PT/ES/EN`, !/\bPT\b/.test(text), text);
+    // STOP stays: Meta expects a utility template to state its opt-out.
+    check(`${def.language} — but still states the opt-out`, /STOP/i.test(text), text);
+  }
+
+  // COMPLAINT 3. The menu, built from the same rows the briefing renders.
+  const menu = buildWorkerMenu({ tasks: [task()], body: 'Bom dia, Miguel.', locale: 'pt-PT' });
+  check('a menu is built', !!menu);
+  eq('with one row per task plus the manager row', menu?.rows.length, 2);
+  eq('and the manager row is ALWAYS last', menu?.rows.at(-1)?.id, workerMenuRowId({ kind: 'manager' }));
+  check('the task row carries its id', menu!.rows[0].id === workerMenuRowId({ kind: 'task', taskId: uuid }), menu!.rows[0].id);
+  check('and names the obra in its sub-line', (menu!.rows[0].description ?? '').includes('Casa de Paco'), menu!.rows[0].description ?? '');
+
+  // Row limits are respected at the SOURCE as well as at the payload, so a
+  // dictionary can reason about the shape it will actually produce.
+  const longMenu = buildWorkerMenu({
+    tasks: Array.from({ length: 20 }, (_, i) => task({ id: uuid, title: `Uma tarefa com um título muito longo ${i}` })),
+    body: 'x',
+    locale: 'pt-PT',
+  });
+  check('no more than ten rows ever', (longMenu?.rows.length ?? 0) <= 10, String(longMenu?.rows.length));
+  check('every row title fits 24 chars', longMenu!.rows.every(r => r.title.length <= 24));
+  check('every row description fits 72', longMenu!.rows.every(r => (r.description ?? '').length <= 72));
+  // And the whole thing still builds — the payload builder is the last word.
+  check('the capped menu still builds a payload', !!buildListPayload(longMenu!));
+
+  // A body that does not fit is NOT an error: the caller sends plain text,
+  // which holds four times as much. A rich morning beats a menu.
+  eq('an oversized body yields no menu', buildWorkerMenu({ tasks: [task()], body: 'x'.repeat(1025), locale: 'pt-PT' }), null);
+
+  // Overdue first, the same ordering both briefing renderers use — the list and
+  // the text of the SAME message must not disagree about what is urgent.
+  const ordered = buildWorkerMenu({
+    tasks: [task({ title: 'A tempo' }), task({ title: 'Atrasada', overdue: true })],
+    body: 'x',
+    locale: 'pt-PT',
+  });
+  eq('the overdue task is the first row', ordered?.rows[0].title, 'Atrasada');
+
+  // The task sheet behind a tap. Same facts, same renderer, no surrounding day.
+  const sheet = renderTaskDetail(task(), 'pt-PT');
+  check('the sheet names the task and obra', sheet.includes('Canalização') && sheet.includes('Casa de Paco'), sheet);
+  check('and the address', sheet.includes('Rua das Flores 12, Lisboa'), sheet);
+  check('and the materials', sheet.includes('tubo PVC 50mm'), sheet);
+  // A task with nothing recorded says so and points at a person, rather than
+  // echoing a lonely title that reads like a broken feature.
+  const emptySheet = renderTaskDetail(
+    task({ description: null, materials: [], job_address: null, waiting_on: [], due_date: null }),
+    'pt-PT',
+  );
+  check('an empty task says there is nothing more', emptySheet.includes(getCatalog('pt-PT').reminders.detailNothingMore), emptySheet);
+  // A task already declared finished is SHOWN in the menu (is_open is a
+  // denylist) and says it is waiting on the manager, rather than vanishing.
+  const inReview = renderTaskDetail(task({ awaiting_review: true }), 'pt-PT');
+  check('a declared task says it is waiting on the manager', inReview.includes(getCatalog('pt-PT').reminders.freeFormAwaitingReview), inReview);
+
+  // THE DEADLINE, and lateness. The sheet has no surrounding day — the briefing
+  // does — so a task opened from the menu must say when it is due and whether
+  // it is already late. Without it the crew read where/what/materials and have
+  // no idea which task to start.
+  {
+    const due = renderTaskDetail(task({ due_date: '2026-08-20' }), 'pt-PT');
+    check('the sheet states the deadline', due.includes('20/08'), due);
+    // A stored date is a DATE, not an instant. Formatting it in the runtime's
+    // zone reports 2026-08-20 as the 19th anywhere west of Greenwich.
+    check('and never shifts it by a day', !due.includes('19/08'), due);
+    check('an unparseable date is passed through, never "Invalid Date"', !renderTaskDetail(task({ due_date: 'soon' }), 'pt-PT').includes('Invalid'));
+    check('a task with no deadline says nothing about one', !renderTaskDetail(task({ due_date: null }), 'pt-PT').includes('Prazo'));
+
+    const late = renderTaskDetail(task({ overdue: true }), 'pt-PT');
+    check('an overdue task says so on the sheet', late.includes(getCatalog('pt-PT').reminders.detailOverdue('')), late);
+    // …and NEVER with a day count. This projection has no days_overdue, and
+    // `0` must not be rendered as "atrasada 0d".
+    check('but never invents a day count', !/atrasada\s*0/.test(late), late);
+  }
+
+  // A whitespace-only title must not produce an empty row title. clamp()
+  // flattens whitespace, so `title || fallback` evaluated BEFORE the clamp
+  // yields '' — which Meta answers with a 400, and on the keyword path that
+  // means this worker can never open their menu again.
+  {
+    const blank = buildWorkerMenu({ tasks: [task({ title: '   ' })], body: 'x', locale: 'pt-PT' });
+    check('a whitespace-only title still yields a non-empty row', (blank?.rows[0].title ?? '').length > 0, JSON.stringify(blank?.rows[0]));
+    check('and the payload still builds', !!buildListPayload(blank!));
+    // The backstop, where every other list limit lives.
+    let threwOnEmptyTitle = false;
+    try {
+      buildListPayload({ body: 'x', button: 'b', section: 's', rows: [{ id: 'capo:wm:manager', title: '   ' }] });
+    } catch {
+      threwOnEmptyTitle = true;
+    }
+    check('an empty row title throws in buildListPayload', threwOnEmptyTitle);
+  }
+
+  // The keyword menu must not claim more tasks than it shows. `is_open` returns
+  // up to 40; the list shows six. Telling somebody "you have 11" above six rows
+  // sends them hunting for five that are not there.
+  for (const locale of LOCALES) {
+    const t2 = getCatalog(locale).whatsapp;
+    check(`${locale} — a truncated menu body differs from a complete one`, t2.workerMenuBody(6, 11) !== t2.workerMenuBody(6, 6), t2.workerMenuBody(6, 11));
+    check(`${locale} — and names both numbers`, t2.workerMenuBody(6, 11).includes('6') && t2.workerMenuBody(6, 11).includes('11'), t2.workerMenuBody(6, 11));
+    check(`${locale} — a complete menu names the count once`, t2.workerMenuBody(3, 3).includes('3'), t2.workerMenuBody(3, 3));
+  }
+
+  for (const locale of LOCALES) {
+    const s2 = renderTaskDetail(task(), locale);
+    check(`${locale} — the task sheet renders`, s2.length > 0);
+    check(`${locale} — and leaks no undefined`, !s2.includes('undefined'), s2);
+    const m = buildWorkerMenu({ tasks: [task()], body: 'x', locale });
+    check(`${locale} — the menu labels leak no undefined`, !JSON.stringify(m).includes('undefined'), JSON.stringify(m));
+  }
 }
 
 // ── report ──────────────────────────────────────────────────────────────────
