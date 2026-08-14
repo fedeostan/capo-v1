@@ -10,6 +10,7 @@
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@capo/core": "workspace:*",
     "@capo/db": "workspace:*",
     "@capo/ui": "workspace:*",
     "next": "16.2.10",

@@ -115,6 +115,23 @@
 //     into a 42703 on every worker turn.
 //
 // Regenerate this file after 0027 is applied and diff the three additions.
+//
+// ── ai_usage (0032), WRITTEN BY HAND, NOT YET APPLIED ──────────────────────
+// The token ledger from 0032_ai_usage.sql (issue #53), added here in
+// alphabetical position for the same reason `notifications` and the worker
+// tables once were: generating against a project that lacks the table would
+// silently DELETE this block rather than add it.
+//
+// One consequence while the migration is unapplied, and the code is written to
+// survive it: every insert answers 42P01 ("relation does not exist"), which
+// packages/core/src/agent/usage.ts swallows into a single `ai_usage.write_failed`
+// warning line by design — recording a cost must never break a conversation.
+// The operator cost page then reads an empty table and says so.
+//
+// Note what is INVISIBLE here, as always: nothing about writability survives
+// into TypeScript. `usage_date` is typed as an ordinary optional Insert field
+// and tsc will happily let you set it, but it is absent from the tenant's
+// column-scoped INSERT grant and comes from lisbon_today(). Do not send one.
 export type Json =
   | string
   | number
@@ -131,6 +148,82 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_usage: {
+        Row: {
+          actor: string
+          cache_read_tokens: number
+          cache_write_tokens: number
+          company_id: string
+          created_at: string
+          id: string
+          input_tokens: number
+          model_id: string
+          model_role: string
+          output_tokens: number
+          profile_id: string | null
+          provider: string
+          surface: string
+          usage_date: string
+          worker_id: string | null
+        }
+        Insert: {
+          actor: string
+          cache_read_tokens?: number
+          cache_write_tokens?: number
+          company_id: string
+          created_at?: string
+          id?: string
+          input_tokens?: number
+          model_id: string
+          model_role: string
+          output_tokens?: number
+          profile_id?: string | null
+          provider: string
+          surface: string
+          usage_date?: string
+          worker_id?: string | null
+        }
+        Update: {
+          actor?: string
+          cache_read_tokens?: number
+          cache_write_tokens?: number
+          company_id?: string
+          created_at?: string
+          id?: string
+          input_tokens?: number
+          model_id?: string
+          model_role?: string
+          output_tokens?: number
+          profile_id?: string | null
+          provider?: string
+          surface?: string
+          usage_date?: string
+          worker_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_usage_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_usage_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_usage_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       companies: {
         Row: {
           created_at: string

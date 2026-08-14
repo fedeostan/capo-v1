@@ -25,6 +25,8 @@ export async function POST(req: Request) {
     const text = await transcribeAudio({
       db: auth.db,
       companyId: auth.companyId,
+      // Whose token spend this is (issue #53) — the manager holding the mic.
+      profileId: auth.userId,
       locale: auth.locale,
       audio: new Uint8Array(await audio.arrayBuffer()),
       // iOS Safari sends audio/mp4, Chrome audio/webm — pass through whatever

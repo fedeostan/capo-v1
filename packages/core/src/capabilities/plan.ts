@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { generateObject } from 'ai';
 import { getModel } from '../agent/models';
+import { managerOrSystem } from '../agent/usage';
 import { embedQuery } from '../agent/embeddings';
 import { buildPlannerPrompt } from '../agent/prompts/planner';
 import { createProposal } from './propose';
@@ -171,7 +172,19 @@ export const generatePlan: CapoTool<z.infer<typeof generatePlanInput>> = {
     let relativePlan: z.infer<typeof relativePlanSchema>;
     try {
       const result = await generateObject({
-        model: getModel('planner'),
+        // Billed to the manager who asked for the plan (issue #53). Generating
+        // a plan is the single most expensive model call in the product, so it
+        // gets its own surface rather than folding into manager_chat.
+        model: getModel('planner', {
+          db: ctx.db,
+          companyId: ctx.companyId,
+          surface: 'planner',
+          // ToolContext.userId is nullable — it is null when a tool runs from
+          // an APPROVED PROPOSAL, where there is no live user. `generate_plan`
+          // is a roster tool and always has one today, but inventing a profile
+          // id to satisfy the type would put a fabricated name on a bill.
+          actor: managerOrSystem(ctx.userId),
+        }),
         schema: relativePlanSchema,
         // The COMPANY dial: plan task titles become stored rows on the shared
         // dashboard, not speech to this manager.

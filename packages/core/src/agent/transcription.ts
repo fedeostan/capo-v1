@@ -2,6 +2,7 @@ import { generateText } from 'ai';
 import type { Db } from '@capo/db/client';
 import type { Locale } from '@capo/i18n/locale';
 import { getModel } from './models';
+import { managerOrSystem } from './usage';
 
 // Speech → text, shared by the web mic button and inbound WhatsApp voice notes.
 //
@@ -117,6 +118,16 @@ export interface TranscribeAudioInput {
   /** Bare MIME type, no parameters. WhatsApp voice notes arrive as
    *  "audio/ogg; codecs=opus" and MUST be stripped to "audio/ogg" first. */
   mediaType: string;
+  /**
+   * profiles.id of whoever spoke, for the token ledger (issue #53). Both
+   * callers are manager paths — the web mic button and a manager's inbound
+   * WhatsApp voice note — and a crew member never reaches here, because the
+   * worker loop takes text and images only.
+   *
+   * Nullable rather than required so a future caller without a session records
+   * the spend against the company instead of being unable to record it at all.
+   */
+  profileId?: string | null;
 }
 
 /** Returns the trimmed transcript, or '' when there was no discernible speech. */
@@ -125,7 +136,12 @@ export async function transcribeAudio(input: TranscribeAudioInput): Promise<stri
   const vocab = await fetchTranscriptionVocabulary(input.db, input.companyId).catch(() => EMPTY_VOCABULARY);
 
   const { text } = await generateText({
-    model: getModel('transcription'),
+    model: getModel('transcription', {
+      db: input.db,
+      companyId: input.companyId,
+      surface: 'transcription',
+      actor: managerOrSystem(input.profileId),
+    }),
     messages: [
       {
         role: 'user',

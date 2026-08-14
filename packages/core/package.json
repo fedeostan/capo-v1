@@ -9,6 +9,8 @@
     "./capabilities": "./src/capabilities/index.ts",
     "./capabilities/worker": "./src/capabilities/worker/index.ts",
     "./models": "./src/agent/models.ts",
+    "./agent/usage": "./src/agent/usage.ts",
+    "./agent/pricing": "./src/agent/pricing.ts",
     "./agent/cache": "./src/agent/cache.ts",
     "./agent/context": "./src/agent/context.ts",
     "./agent/worker-context": "./src/agent/worker-context.ts",

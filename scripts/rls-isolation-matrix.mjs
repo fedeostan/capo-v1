@@ -467,6 +467,8 @@ async function cleanupTenant(t) {
   // Reverse dependency order; every delete is scoped to this run's rows only.
   const companyEq = (q) => q.eq('company_id', t.companyId);
   await companyEq(admin.from('task_photos').delete());
+  // Before profiles and workers: ai_usage.profile_id / .worker_id are both FKs.
+  await companyEq(admin.from('ai_usage').delete());
   // Before profiles: notifications.profile_id and push_subscriptions.profile_id
   // are both FKs (on delete cascade, but the deletes are explicit here so a
   // leftover row is never mistaken for one the app wrote).
@@ -609,6 +611,24 @@ async function runMatrix(self, other) {
   {
     const { data, error } = await db.from('notification_log').select('id');
     check(`${L}: notification_log deny-all (bonus)`, !error && (data ?? []).length === 0,
+      error ? error.message : `${(data ?? []).length} rows`);
+  }
+
+  // ai_usage (0032) — the THIRD ledger, and the only one with a tenant policy
+  // at all. It has an INSERT policy scoped to the caller's own company, because
+  // the write happens inside a tenant request on that tenant's own RLS-scoped
+  // client (AGENTS.md's system-vs-user split forbids getDb() there). What it
+  // deliberately does NOT have is a SELECT policy: cross-company cost is an
+  // operator question, read on the service role.
+  //
+  // Note what this specific check can and cannot prove. It asserts that a
+  // tenant sees NOTHING — not their own rows, not anyone's — which is the whole
+  // read posture. It says nothing about the INSERT policy; the adversarial
+  // suite below attacks that separately, because "denied everyone" would pass
+  // here and break the dashboard silently.
+  {
+    const { data, error } = await db.from('ai_usage').select('id');
+    check(`${L}: ai_usage read deny-all (bonus)`, !error && (data ?? []).length === 0,
       error ? error.message : `${(data ?? []).length} rows`);
   }
 }
@@ -1281,6 +1301,149 @@ async function runAdversarial(attacker, victim) {
       error ? `REFUSED (${error.code ?? 'err'}) — add_worker is broken` : 'accepted',
     );
     if (data?.id) await admin.from('workers').delete().eq('id', data.id);
+  }
+
+  // ── ai_usage, the token ledger (0032, issue #53) ──────────────────────────
+  // The one ledger in the schema with a tenant policy, and the only reason it
+  // has one is WHERE the write happens: inside a tenant's own request, on that
+  // tenant's own RLS-scoped client. So the boundary here is not "no tenant may
+  // touch this table" — it is "a tenant may add rows for THEMSELVES, and read
+  // nothing at all". Four checks and a positive control.
+
+  // Attack: write another company's spend. company_id is the only thing the
+  // INSERT policy constrains, so this is the entire cross-tenant claim.
+  {
+    const { error } = await db.from('ai_usage').insert({
+      company_id: victim.companyId,
+      actor: 'system',
+      surface: 'manager_chat',
+      model_role: 'conversation',
+      model_id: 'claude-sonnet-5',
+      provider: 'anthropic',
+      input_tokens: 999999,
+    });
+    check(
+      "adversarial: tenant cannot file spend against another company",
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — cross-tenant cost forgery',
+    );
+    if (!error) {
+      await admin.from('ai_usage').delete()
+        .eq('company_id', victim.companyId).eq('input_tokens', 999999);
+    }
+  }
+
+  // Attack: own company, but blaming another tenant's manager. RLS checks the
+  // row's OWN company_id and never the company of the rows its foreign keys
+  // point at — the ai_usage_fks_same_company trigger is the only thing here.
+  {
+    const { error } = await db.from('ai_usage').insert({
+      company_id: attacker.companyId,
+      actor: 'manager',
+      profile_id: victim.userId,
+      surface: 'manager_chat',
+      model_role: 'conversation',
+      model_id: 'claude-sonnet-5',
+      provider: 'anthropic',
+      input_tokens: 999998,
+    });
+    check(
+      "adversarial: ai_usage cannot name a foreign profile (FK guard trigger)",
+      error?.code === '23514',
+      error ? `code=${error.code}` : 'INSERT SUCCEEDED (cross-company attribution)',
+    );
+    if (!error) {
+      await admin.from('ai_usage').delete()
+        .eq('company_id', attacker.companyId).eq('input_tokens', 999998);
+    }
+  }
+
+  // Attack: read the ledger. There is NO select policy, so even a tenant's OWN
+  // rows are invisible — cost comparison across companies is an operator
+  // question and lives behind the operator deploy.
+  //
+  // Every forgery above was refused, so at this point the table holds nothing
+  // for either tenant and a naive read check would report green against an
+  // empty table, proving nothing. Seed one row for EACH side on the service
+  // role first — the attacker's own included, since "your own rows are hidden
+  // too" is the specific claim.
+  {
+    const seeded = [attacker, victim].map(t => ({
+      company_id: t.companyId,
+      actor: 'system',
+      surface: 'manager_chat',
+      model_role: 'conversation',
+      model_id: 'claude-sonnet-5',
+      provider: 'anthropic',
+      input_tokens: 999996,
+    }));
+    const { data: rows, error: seedError } = await admin.from('ai_usage').insert(seeded).select('id');
+    const { data, error } = await db.from('ai_usage').select('id, company_id');
+    check(
+      'adversarial: tenant cannot read ai_usage at all, own rows included (no SELECT policy)',
+      !seedError && (rows ?? []).length === 2 && !error && (data ?? []).length === 0,
+      seedError
+        ? `seed failed (${seedError.message}) — check is untestable`
+        : error
+          ? error.message
+          : `${(data ?? []).length} rows visible`,
+    );
+    if ((rows ?? []).length > 0) {
+      await admin.from('ai_usage').delete().in('id', rows.map(r => r.id));
+    }
+  }
+
+  // Attack: backdate spend out of the current reporting period. `usage_date` is
+  // absent from the column-scoped INSERT grant and defaults to lisbon_today(),
+  // which is what makes "the last 30 days" mean the same thing to the ledger as
+  // it does to the board.
+  {
+    const { error } = await db.from('ai_usage').insert({
+      company_id: attacker.companyId,
+      actor: 'system',
+      surface: 'manager_chat',
+      model_role: 'conversation',
+      model_id: 'claude-sonnet-5',
+      provider: 'anthropic',
+      input_tokens: 999997,
+      usage_date: '2020-01-01',
+    });
+    check(
+      'adversarial: tenant cannot backdate their own spend (usage_date not granted)',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — spend can be hidden in the past',
+    );
+    if (!error) {
+      await admin.from('ai_usage').delete()
+        .eq('company_id', attacker.companyId).eq('input_tokens', 999997);
+    }
+  }
+
+  // POSITIVE CONTROL. Every check above asserts a REFUSAL, so a table with the
+  // INSERT policy dropped, or the grant revoked, would pass all four — and the
+  // whole cost dashboard would silently stop filling up, because
+  // packages/core/src/agent/usage.ts swallows the rejection by design. This is
+  // the shape handleInbound actually writes.
+  {
+    const { data, error } = await db.from('ai_usage').insert({
+      company_id: attacker.companyId,
+      actor: 'manager',
+      profile_id: attacker.userId,
+      surface: 'manager_chat',
+      model_role: 'conversation',
+      model_id: 'claude-sonnet-5',
+      provider: 'anthropic',
+      input_tokens: 300,
+      output_tokens: 120,
+      cache_read_tokens: 5000,
+      cache_write_tokens: 0,
+    }).select('id').single();
+    check(
+      'adversarial: a real turn can still record its own usage (positive control)',
+      !error && data?.id != null,
+      error ? `REFUSED (${error.code ?? 'err'}) — the cost ledger records NOTHING` : 'accepted',
+    );
+    if (data?.id) await admin.from('ai_usage').delete().eq('id', data.id);
   }
 }
 

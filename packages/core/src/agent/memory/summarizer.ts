@@ -19,7 +19,16 @@ export const KEEP_RECENT = 10; // most recent messages always left verbatim
 // later turns, so it should be in the language Capo is speaking. A thread that
 // switched language mid-way gets a summary in the NEW language over older
 // content in the old one — acceptable, and self-correcting as the thread moves on.
-export async function maybeSummarize(db: Db, conversationId: string, locale: Locale): Promise<void> {
+export async function maybeSummarize(
+  db: Db,
+  conversationId: string,
+  locale: Locale,
+  // Whose token spend this is (issue #53). A separate parameter rather than a
+  // widened `db` argument, and required: this function is called from exactly
+  // one place, which already knows both ids, so there is no case where the
+  // honest answer is "unattributed".
+  usage: { companyId: string; profileId: string },
+): Promise<void> {
   const window = await loadWindow(db, conversationId);
   if (window.rows.length <= SUMMARIZE_AFTER) return;
 
@@ -39,7 +48,12 @@ export async function maybeSummarize(db: Db, conversationId: string, locale: Loc
 
   // Scaffolding in English (model-facing), output language named explicitly.
   const { text } = await generateText({
-    model: getModel('summarizer'),
+    model: getModel('summarizer', {
+      db,
+      companyId: usage.companyId,
+      surface: 'summarizer',
+      actor: { kind: 'manager', profileId: usage.profileId },
+    }),
     system: [
       `You compress a conversation between a construction company manager (${t.speakers.user}) and his AI foreman (Capo).`,
       `Write the summary in ${localeName(locale)}.`,

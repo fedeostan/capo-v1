@@ -79,7 +79,15 @@ export async function handleInbound(opts: HandleInboundOptions): Promise<void> {
   // prefix. The roster is applied through the wrapper rather than inside
   // toAiTools so ../capabilities stays unaware of the provider.
   const agent = new ToolLoopAgent({
-    model: getModel('conversation'),
+    // Usage accounting (issue #53): attributed to THIS manager, on the client
+    // the caller already handed us. Every step of the loop below writes its own
+    // ai_usage row — a twelve-step turn is twelve rows, which is the point.
+    model: getModel('conversation', {
+      db,
+      companyId,
+      surface: 'manager_chat',
+      actor: { kind: 'manager', profileId: userId },
+    }),
     instructions: await buildSystemPrompt(db, companyId, thread.summary, locales),
     tools: withToolCacheBreakpoint(toAiTools(ctx)),
     stopWhen: stepCountIs(12),
@@ -103,5 +111,10 @@ export async function handleInbound(opts: HandleInboundOptions): Promise<void> {
   // ctx.locales.user, not the parameter: set_language may have changed it
   // mid-loop, and the summary should be written in the language the manager
   // ended the turn in.
-  await maybeSummarize(db, conversationId, ctx.locales.user);
+  //
+  // The summarizer's tokens are billed to the manager whose turn triggered it,
+  // not to 'system'. Nobody asks for a summary, but it is caused by exactly one
+  // person's traffic and a per-person cost figure that hid it would understate
+  // a chatty manager by a whole model call every ~40 messages.
+  await maybeSummarize(db, conversationId, ctx.locales.user, { companyId, profileId: userId });
 }

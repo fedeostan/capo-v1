@@ -1542,6 +1542,10 @@ export async function POST(request: NextRequest) {
           text = await transcribeAudio({
             db,
             companyId,
+            // Whose token spend this is (issue #53). This branch is the
+            // MANAGER's voice note: the worker path never reaches here, because
+            // the restricted loop takes text and images only.
+            profileId: userId,
             locale: locales.user,
             audio: media.bytes,
             mediaType: media.mediaType,
