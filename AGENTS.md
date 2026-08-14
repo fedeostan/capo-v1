@@ -121,7 +121,13 @@ and say what the alternative would be — he is the one who decides.
   BSUID, the two task-review RPCs, the guided menu's read
   (`checkWorkerMenuScope`, #49 — the one boundary in the file that is a
   TypeScript filter rather than a Postgres policy, hand-copied here because this
-  file is plain `.mjs`, so change one and change the other), and the
+  file is plain `.mjs`, so change one and change the other), the run-history
+  reader (`checkSendHistoryScope`, #51 — the only tenant window into
+  `notification_log`, SECURITY DEFINER, attacked cross-tenant AND from the
+  orphan for the 0021 null-guard trap, with a positive control), the schedule
+  (`company_schedules`: writing another company's, switching off their
+  briefing, forging `updated_by`, plus an owner-can-still-save control), the
+  run log (`cron_runs`: forging or rewriting a run), and the
   Supabase Storage surface — signing, downloading, listing and writing another
   tenant's task photos, and the worker thread a tenant may read but never
   write). Since #22 it also carries `checkWorkerTextIsolation`, the one check in
@@ -395,8 +401,9 @@ Structural invariants (do not regress):
   rejection writes no row and raises no error.
 - **The hour gate is a WINDOW, not an equality check** (#51). `withinSendWindow`
   in `apps/web/lib/cron.ts` is the one seam both send routes ask, and it accepts
-  `SEND_WINDOW_HOURS` (2) Lisbon hours starting at the route's `SEND_HOUR`: 7–8
-  for the briefing, 16–17 for the check-in. Four things about it:
+  `SEND_WINDOW_HOURS` (2) Lisbon hours starting at the company's chosen send
+  hour — 7–8 for the briefing and 16–17 for the check-in by default, though
+  since #51 part B those are defaults rather than constants. Four things:
   - **The equality check was 11 minutes from total silence.** It passes only
     while drift stays under 60 minutes and drift hit 49 on 2026-08-13. Past the
     hour the route answers 200 with `{skipped}`, writes no `notification_log`
@@ -410,16 +417,82 @@ Structural invariants (do not regress):
   - **The window never wraps past midnight** — `sendWindowEnd` clamps at 23. A
     wrapped run would roll `lisbon_today()` over and the lock would read it as a
     fresh unclaimed day, messaging everybody twice.
-  - **`vercel.json` carries the UNION of UTC hours that land in the window under
-    both DST offsets** — `0 6/7/8` and `0 15/16/17`. JSON has no comments, so the
-    season-by-season table lives on `withinSendWindow`, and `pnpm
-    scheduler-check` reads `vercel.json` and asserts it (plus the `:00` rule).
-  - Consequence to remember: **two invocations now pass the gate every day.**
-    Anything the briefing route does outside a claim must therefore be
-    idempotent — which is why its chat-thread event note is now written only by
-    the invocation that won the claims.
+  - **`vercel.json` is an HOURLY HEARTBEAT for both hour-gated routes** —
+    `0 * * * *` each — and no longer a hand-computed union of UTC hours. That
+    changed with #51 part B: the send hour became DATA (see below), so a static
+    file baked into the deployment cannot know what hour a tenant chose.
+    `0 * * * *` covers every Lisbon hour in both seasons by construction, is at
+    `:00` by construction, and puts TWO entries inside every window (the target
+    hour and the one behind it). `pnpm scheduler-check` reads `vercel.json` and
+    asserts exactly that, for every hour a manager may pick, season by season.
+  - Consequence to remember: **two invocations pass the gate every day, and the
+    route is now invoked 24 times.** Anything a route does outside a claim must
+    be idempotent — which is why the briefing's chat-thread event note and its
+    `cron_runs` row are written only by the invocation that won the claims. And
+    the per-company window filter must stay AHEAD of `loadCompanyBriefing`: an
+    out-of-window tick is meant to cost the clock, the company list and one
+    schedule read, never a `task_board` read per company.
+- **The schedule is DATA, in `company_schedules` (0036, #51 part B), and its
+  ABSENCE is the default.** There is deliberately no backfill: a company with no
+  row uses `DEFAULT_SEND_HOURS` in `apps/web/lib/schedule.ts` (7 and 16), which
+  is byte-identical to the pre-0036 product. `readCompanySchedules` **degrades
+  and never throws** — a deploy landing before the migration answers 42P01,
+  logs `schedule.read_failed`, and every company falls back to the defaults.
+  Neither route has a `SEND_HOUR` constant any more. Four things:
+  - **`MIN_SEND_HOUR`/`MAX_SEND_HOUR` (5..21) bound a DOUBLE-BILLING risk, not
+    a taste.** `sendWindowEnd` clamps at 23 and must never wrap; at 21 the
+    window is 21–22 and cannot. The same pair is a CHECK constraint in 0036 and
+    `pnpm scheduler-check` derives the no-wrap property from the constants.
+  - **`enabled` may be switched off; a send may NOT be added.** A proactive
+    send needs a Meta-approved template, so manager-authored wording cannot go
+    out at all — and a *second* run of an existing kind on one day is refused by
+    `notification_log`'s unique key `(kind, audience, worker_id, profile_id,
+    notification_date)`, which would have to grow a `schedule_id` to allow it.
+    That key is the only thing preventing a double-billed send; do not widen it
+    to ship an "add a send" button. The screen says this out loud rather than
+    greying out a control.
+  - The tenant's INSERT/UPDATE grants are **column-scoped**; `updated_at` and
+    `updated_by` are stamped by triggers from `auth.uid()`, so who moved the
+    crew's morning is unforgeable at the grant layer.
+- **`cron_runs` (0036) is the run log, and `notification_log` stays deny-all.**
+  One row per company per job per day, carrying `due_hour` vs `ran_hour`/`ran_at`
+  — the column that would have answered 2026-08-13 without a Vercel log — plus
+  every exclusion count. It exists as its own table precisely because the
+  interesting people have NO `notification_log` row: a worker without consent, an
+  inactive crew row, a company with no manager account are never claimed, so no
+  query over the send ledger can count them. Written by `recordCronRun`, which
+  **swallows every failure** (it is a visibility record; a lost one must never
+  cost a crew their morning) and rides the same `claims > 0` signal as the
+  chat-thread note, with a `replace: false` write for the "nobody was claimable"
+  case so estate-wide silence is recorded once.
+  Tenants have SELECT and nothing else — a run row a tenant could write is not
+  evidence of anything.
+- **`company_send_history()` (0036) is the ONLY window into
+  `notification_log`, and it is SECURITY DEFINER.** That table keeps its posture
+  — RLS on, zero policies, direct `select` returns nothing to anybody — so the
+  function's `auth.uid()`/company check is the ENTIRE tenant boundary, same
+  shape as `open_task_review` and `set_task_collaborators`. **It checks the null
+  case FIRST and RAISES**, never `if auth.uid() is not null and <company
+  check>`, which fails OPEN on a null company and was exploit-confirmed against
+  production (0021). For a READER, falling open hands an unonboarded stranger
+  the whole estate's send ledger. `scripts/rls-isolation-matrix.mjs` carries
+  `checkSendHistoryScope` — with a **positive control**, because every other
+  check in that file asserts a refusal and a function returning nothing to
+  anybody would pass all of them — plus the orphan attack on the null guard.
+- **Meta's delivery statuses are persisted (0036, #51 B4), on a THIRD webhook
+  shape.** `value.statuses` arrives on `field: 'messages'` with no `messages`
+  array, which is why the pre-#51 router dropped every one silently and
+  `status = 'sent'` could only ever mean "Meta accepted it".
+  `routeWebhookChanges` now drains both arrays; `recordDeliveryStatuses` stamps
+  `delivered_at` / `read_at` / `failed_at` / `delivery_error_code` on
+  `notification_log`, **one column per callback and never derived from
+  another** — Meta does not order them, so a `read` genuinely can precede its
+  `delivered`. Those five columns are safe on that table for one specific
+  reason: **they are never in `claimNotification`'s INSERT**, only in an UPDATE
+  inside a catch, so a deploy landing before 0036 loses a status and sends
+  nothing differently. Do not add any of them to the claim.
 - **There is a second daily send: the late-afternoon check-in**, from
-  `apps/web/app/api/cron/checkin`, same three-entry/window shape. It asks
+  `apps/web/app/api/cron/checkin`, same heartbeat/window/schedule shape. It asks
   "did you finish today's tasks?" as a template with two quick-reply buttons and
   records the tap in `worker_checkins`. Three things about it are load-bearing:
   it is **deterministic in both directions** (no model is called on this path at

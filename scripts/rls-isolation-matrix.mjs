@@ -466,6 +466,26 @@ async function seedTenant(label) {
     }).select().single(),
     `notification_log(${label})`,
   );
+  // The SCHEDULE and the RUN LOG (0036, issue #51). Both are ordinary
+  // company-scoped tenant tables — the schedule is readable AND writable by its
+  // owner (it is the control on /perfil/automacoes), the run log is read-only
+  // (the cron writes it on the service role). Seeded so the per-tenant sweep
+  // below can assert BOTH halves: own rows visible, foreign rows absent. A
+  // company-scoped check against an empty table passes for the wrong reason.
+  await must(
+    admin.from('company_schedules').insert({
+      company_id: companyId, job_kind: 'daily_briefing', send_hour: 7, enabled: true,
+    }).select().single(),
+    `company_schedule(${label})`,
+  );
+  await must(
+    admin.from('cron_runs').insert({
+      company_id: companyId, job_kind: 'daily_briefing', run_date: '2026-01-05',
+      due_hour: 7, ran_hour: 7, messaged: 1, excluded_no_consent: 1,
+    }).select().single(),
+    `cron_run(${label})`,
+  );
+
   const photoRequest = await must(
     admin.from('checkin_photo_requests').insert({
       company_id: companyId, worker_id: worker.id, notification_id: checkinAsk.id,
@@ -562,6 +582,10 @@ async function cleanupTenant(t) {
   // leftover row is never mistaken for one the app wrote).
   await companyEq(admin.from('notifications').delete());
   await companyEq(admin.from('push_subscriptions').delete());
+  // Before profiles: company_schedules.updated_by is a FK to it (0036). Both of
+  // these are plain company-scoped rows with no dependants of their own.
+  await companyEq(admin.from('company_schedules').delete());
+  await companyEq(admin.from('cron_runs').delete());
   await companyEq(admin.from('translation_items').delete());
   await companyEq(admin.from('translation_batches').delete());
   await companyEq(admin.from('proposals').delete());
@@ -615,7 +639,7 @@ async function runMatrix(self, other) {
   // own, so this check would report green on that exact regression. Both
   // tables get their own dedicated block below instead, asserting on
   // profile_id too. Read those before adding another per-profile table here.
-  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'task_assignees', 'worker_checkins', 'task_photos', 'worker_conversations', 'worker_messages']) {
+  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'task_assignees', 'worker_checkins', 'task_photos', 'worker_conversations', 'worker_messages', 'company_schedules', 'cron_runs']) {
     const { data, error } = await db.from(table).select('*');
     const rows = data ?? [];
     const ownKey = table === 'companies' ? 'id' : 'company_id';
@@ -1748,6 +1772,145 @@ async function runAdversarial(attacker, victim) {
     );
     await admin.from('task_assignees').delete().eq('task_id', attacker.taskIds[1]);
   }
+
+  // ── the schedule and the run log (0036, issue #51) ───────────────────────
+  // Two new tenant-writable/readable surfaces, and they are deliberately
+  // asymmetric: a manager MAY move their own send hour (it is the whole
+  // feature) and may NEVER write a run row (that is the cron's record of what
+  // it actually did, and a forgeable one is worthless as evidence).
+
+  // Moving ANOTHER company's morning message. RLS's with-check on company_id is
+  // the whole guard here, and the consequence of it failing is not a leak but a
+  // sabotage: a competitor's crew silently stops being briefed, or is briefed
+  // at 21:00.
+  {
+    const { error } = await db.from('company_schedules').insert({
+      company_id: victim.companyId, job_kind: 'task_checkin', send_hour: 21, enabled: false,
+    });
+    const { data: after } = await admin
+      .from('company_schedules')
+      .select('id')
+      .eq('company_id', victim.companyId)
+      .eq('job_kind', 'task_checkin');
+    check(
+      "adversarial: writing another company's schedule blocked",
+      error != null && (after ?? []).length === 0,
+      error == null ? 'INSERT SUCCEEDED (cross-tenant schedule sabotage!)' : `rejected (${error.code ?? 'err'})`,
+    );
+  }
+
+  // Switching off another company's existing briefing. The seeded row is
+  // daily_briefing, so a fall-open here would silence a whole crew.
+  {
+    await db
+      .from('company_schedules')
+      .update({ enabled: false, send_hour: 21 })
+      .eq('company_id', victim.companyId);
+    const { data: after } = await admin
+      .from('company_schedules')
+      .select('enabled, send_hour')
+      .eq('company_id', victim.companyId)
+      .eq('job_kind', 'daily_briefing')
+      .single();
+    check(
+      "adversarial: switching off another company's briefing blocked",
+      after?.enabled === true && after?.send_hour === 7,
+      after ? `enabled=${after.enabled} send_hour=${after.send_hour}` : 'row missing',
+    );
+  }
+
+  // `updated_by` is stamped by a trigger from auth.uid() and is ABSENT from the
+  // tenant's column grant, so "who moved the crew's morning" cannot be
+  // attributed to somebody else. Aimed at the attacker's OWN row: this is not a
+  // tenant-boundary question, it is a forgery question, and it must fail even
+  // inside your own company.
+  {
+    const { error } = await db
+      .from('company_schedules')
+      .update({ updated_by: victim.userId })
+      .eq('company_id', attacker.companyId);
+    const { data: after } = await admin
+      .from('company_schedules')
+      .select('updated_by')
+      .eq('company_id', attacker.companyId)
+      .single();
+    check(
+      'adversarial: forging who last changed a schedule blocked',
+      error != null || after?.updated_by !== victim.userId,
+      error ? `rejected (${error.code ?? 'err'})` : `updated_by=${after?.updated_by}`,
+    );
+  }
+
+  // Manufacturing a morning that never happened, in your own company. cron_runs
+  // is SELECT-only for tenants: it is the answer to "did Capo actually message
+  // my crew today?", and a row a tenant can write is not an answer to anything.
+  {
+    const { error } = await db.from('cron_runs').insert({
+      company_id: attacker.companyId, job_kind: 'daily_briefing', run_date: '2026-01-06',
+      due_hour: 7, ran_hour: 7, messaged: 99,
+    });
+    const { data: after } = await admin
+      .from('cron_runs')
+      .select('id')
+      .eq('company_id', attacker.companyId)
+      .eq('run_date', '2026-01-06');
+    check(
+      'adversarial: forging a cron run row blocked',
+      error != null && (after ?? []).length === 0,
+      error == null ? 'INSERT SUCCEEDED (a run that never happened!)' : `rejected (${error.code ?? 'err'})`,
+    );
+  }
+
+  // Editing the evidence: rewriting how many people a real run reached.
+  {
+    await db.from('cron_runs').update({ messaged: 42 }).eq('company_id', attacker.companyId);
+    const { data: after } = await admin
+      .from('cron_runs')
+      .select('messaged')
+      .eq('company_id', attacker.companyId)
+      .single();
+    check(
+      'adversarial: rewriting a cron run row blocked',
+      after?.messaged === 1,
+      `messaged=${after?.messaged} (expected 1)`,
+    );
+  }
+
+  // POSITIVE CONTROL. Every schedule check above asserts a REFUSAL, so a
+  // migration that granted nothing would pass all of them while making
+  // /perfil/automacoes a screen whose Save button never works. The owner must
+  // still be able to move their OWN send hour, and it is restored immediately
+  // so the visibility sweep's expectations are unaffected.
+  {
+    const { error } = await db
+      .from('company_schedules')
+      .update({ send_hour: 8 })
+      .eq('company_id', attacker.companyId)
+      .eq('job_kind', 'daily_briefing');
+    const { data: after } = await admin
+      .from('company_schedules')
+      .select('send_hour, updated_by')
+      .eq('company_id', attacker.companyId)
+      .eq('job_kind', 'daily_briefing')
+      .single();
+    check(
+      'adversarial: owner can still move their OWN send hour (positive control)',
+      !error && after?.send_hour === 8,
+      error ? `REFUSED (${error.code ?? 'err'}) — the screen is unusable` : `send_hour=${after?.send_hour}`,
+    );
+    // And the trigger attributed it to the person who actually did it, without
+    // the client ever naming the column.
+    check(
+      'adversarial: the schedule records WHO changed it, unforgeably (positive control)',
+      after?.updated_by === attacker.userId,
+      `updated_by=${after?.updated_by}`,
+    );
+    await admin
+      .from('company_schedules')
+      .update({ send_hour: 7 })
+      .eq('company_id', attacker.companyId)
+      .eq('job_kind', 'daily_briefing');
+  }
 }
 
 /**
@@ -1969,6 +2132,98 @@ async function checkWorkerMenuScope(attacker, victim) {
   }
 }
 
+/**
+ * company_send_history (0036, issue #51) — THE NEWEST READ SURFACE IN THE
+ * SCHEMA, and the one that needs the most care.
+ *
+ * `notification_log` is RLS-enabled with DELIBERATELY ZERO POLICIES: it is the
+ * outbound send ledger, written by the cron on the service role, and until this
+ * migration no tenant could read a single row of it. The Cron jobs screen needs
+ * one — "who got this morning's message, and what did Meta say?" — so 0036 adds
+ * exactly one window, a SECURITY DEFINER function scoped to auth.uid()'s
+ * company.
+ *
+ * SECURITY DEFINER means RLS does NOT apply inside it. The auth.uid() and
+ * company checks are therefore the ENTIRE tenant boundary, the same shape (and
+ * the same danger) as open_task_review, revert_translation_batch and
+ * set_task_collaborators — all of which are attacked in this file for the same
+ * reason.
+ *
+ * FOUR things are asserted here, and the FIRST is the one this file's own
+ * header warns about: every other check in the suite asserts an ABSENCE, so a
+ * function that returned nothing to anybody would pass all of them while
+ * silently breaking the screen. The positive control is what makes the three
+ * refusals mean something.
+ */
+async function checkSendHistoryScope(self, other) {
+  const db = self.client;
+  const L = self.label;
+  // The seeded notification_log row is dated 2026-01-05. The range is short
+  // because the function caps it at 92 days and refuses anything wider.
+  const FROM = '2026-01-01';
+  const TO = '2026-01-31';
+
+  // POSITIVE CONTROL. The owner's own read must work, or every refusal below
+  // is vacuous.
+  const own = await db.rpc('company_send_history', { p_from: FROM, p_to: TO });
+  const ownRows = own.data ?? [];
+  check(
+    `${L}: company_send_history returns this company's OWN sends (positive control)`,
+    !own.error && ownRows.length > 0,
+    own.error ? `${own.error.code ?? 'err'}: ${own.error.message}` : `${ownRows.length} rows`,
+  );
+
+  // Cross-tenant: the other company's ledger row must not appear. There is no
+  // company parameter to forge — the scoping is entirely internal — so this is
+  // the assertion that the internal scoping is real rather than assumed.
+  {
+    const leaked = ownRows.filter(r => r.id === other.checkinAskId);
+    check(
+      `${L}: company_send_history never returns another company's send`,
+      leaked.length === 0,
+      leaked.length ? `LEAKED ${leaked.map(r => r.id).join(', ')}` : 'none',
+    );
+  }
+
+  // The worker ids on every returned row must be this tenant's. A function that
+  // scoped by profile but not by company, or that forgot the predicate
+  // entirely, would show foreign crew here.
+  {
+    const foreign = ownRows.filter(
+      r => r.worker_id != null && r.worker_id !== self.workerId && r.worker_id !== self.helperWorkerId,
+    );
+    check(
+      `${L}: every send row belongs to this company's own crew`,
+      foreign.length === 0,
+      foreign.length ? `${foreign.length} foreign worker rows` : `${ownRows.length} rows`,
+    );
+  }
+
+  // The direct read stays dead. 0036 must not have relaxed notification_log's
+  // deny-all posture as a side effect of adding the function — the generic
+  // sweep asserts this too, and it is repeated here because THIS is the change
+  // that would have caused it.
+  {
+    const { data, error } = await db.from('notification_log').select('id');
+    check(
+      `${L}: notification_log is STILL deny-all on a direct read`,
+      !error && (data ?? []).length === 0,
+      error ? error.message : `${(data ?? []).length} rows`,
+    );
+  }
+
+  // The range cap. A browser is the caller, so "give me everything" has to be
+  // refused by the function rather than trusted not to be asked.
+  {
+    const { error } = await db.rpc('company_send_history', { p_from: '2000-01-01', p_to: '2030-01-01' });
+    check(
+      `${L}: company_send_history refuses an unbounded date range`,
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED a 30-year range',
+    );
+  }
+}
+
 // Runs LAST on purpose. If a boundary is broken these calls genuinely mutate
 // the victim's rows, and every earlier check has already read the state it
 // needed by then — so a failure here reports one clean defect instead of
@@ -2121,6 +2376,38 @@ async function runOrphanAttack(orphan, victim) {
           : `rejected (${error.code ?? 'err'})`,
     );
   }
+
+  // ── company_send_history and THE NULL-GUARD TRAP (0036, issue #51) ────────
+  // This is the attack the whole third actor exists for, aimed at the newest
+  // SECURITY DEFINER function in the schema.
+  //
+  // The shape that fails OPEN is
+  //     if auth.uid() is not null and v_company is distinct from …
+  // because `private.current_company_id()` is NULL for a user with no profiles
+  // row, `uuid <> NULL` is NULL, `true and NULL` is NULL, and `if NULL` does
+  // not fire — so the guard is skipped and the function runs UNSCOPED. That is
+  // not hypothetical: the identical hole in revert_translation_batch was
+  // confirmed exploitable against this production database, returned
+  // {"reverted": 1}, and looked like a success.
+  //
+  // For a reader rather than a writer, falling open means handing an
+  // unonboarded stranger the entire estate's send ledger — every company's
+  // recipients, message ids and failures. 0036 therefore checks the null FIRST
+  // and RAISES, which is what this asserts.
+  {
+    const { data, error } = await db.rpc('company_send_history', {
+      p_from: '2026-01-01',
+      p_to: '2026-01-31',
+    });
+    const rows = data ?? [];
+    check(
+      'adversarial: orphan (no profiles row) company_send_history blocked',
+      error != null && rows.length === 0,
+      error == null
+        ? `RPC SUCCEEDED and returned ${rows.length} row(s) — the whole estate's send ledger`
+        : `rejected (${error.code ?? 'err'})`,
+    );
+  }
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
@@ -2143,6 +2430,13 @@ try {
   // WORKER path, where there is no auth.uid() and RLS backstops nothing.
   await checkWorkerMenuScope(tenantA, tenantB);
   await checkWorkerMenuScope(tenantB, tenantA);
+  // The newest SECURITY DEFINER read in the schema (0036, #51). Beside the two
+  // above because it shares their shape — a boundary enforced inside a function
+  // rather than by a policy — and because, like them, it needs a POSITIVE
+  // CONTROL: it opens a window into a table that has no tenant policy at all,
+  // so "returns nothing to anybody" would pass every refusal in this file.
+  await checkSendHistoryScope(tenantA, tenantB);
+  await checkSendHistoryScope(tenantB, tenantA);
   await runOrphanAttack(orphan, tenantB);
 
   // Positive controls are an ALLOW, not a refusal, so they don't belong in

@@ -132,6 +132,100 @@ const dict: Catalog = {
     pushNudgeLink: 'Ligar alertas',
   },
 
+  automations: {
+    title: 'Mensagens automáticas',
+    subtitle: 'O que o Capo envia à equipa sozinho, a que horas, e o que aconteceu em cada dia.',
+    profileLink: 'Ver mensagens automáticas',
+    costNote:
+      'Cada pessoa que recebe uma destas mensagens conta como um envio pago no WhatsApp. Mais pessoas na equipa, ou mais mensagens por dia, é mais custo.',
+
+    job: {
+      daily_briefing: {
+        name: 'Mensagem da manhã',
+        what: 'Diz a cada pessoa o que tem para fazer hoje: obra, morada, material e do que depende.',
+        who: 'Toda a equipa activa com WhatsApp autorizado, e cada responsável da empresa.',
+      },
+      task_checkin: {
+        name: 'Pergunta do fim do dia',
+        what: 'Pergunta “acabaste as tarefas de hoje?”, com dois botões para responder.',
+        who: 'Só quem é responsável por uma tarefa hoje. Quem só está a ajudar não recebe.',
+      },
+    },
+
+    aimedAt: (hour: string) => `Apontada para as ${hour}`,
+    window: (from: string, to: string) => `Chega entre as ${from} e as ${to}`,
+    nextRun: (when: string) => `Próxima: ${when}`,
+    usingDefault: 'A usar a hora de origem — ninguém mexeu nesta.',
+    on: 'Ligada',
+    off: 'Desligada',
+    enabledLabel: 'Enviar esta mensagem',
+    hourLabel: 'Hora',
+    saved: 'Guardado.',
+    saveFailed: 'Não consegui guardar. Tenta outra vez.',
+    invalidHour: 'Escolhe uma hora entre as 05:00 e as 21:00.',
+
+    addTitle: 'Adicionar outra mensagem',
+    addExplanation:
+      'Ainda não dá para criar uma mensagem nova a partir daqui, e a razão é do lado do WhatsApp: uma mensagem que o Capo envia sem ninguém ter escrito primeiro tem de usar um texto aprovado pela Meta com antecedência. Um texto escrito por ti não sairia. Enquanto isso não existir, o que podes fazer é mudar a hora destas duas ou desligar a que não queres.',
+
+    historyTitle: 'O que aconteceu',
+    historyHint:
+      'Uma linha por dia e por mensagem: a que horas estava marcada e a que horas saiu mesmo. O sítio onde alojamos o Capo costuma tocar à porta com algum atraso, por isso as duas horas raramente são iguais.',
+    historyEmpty: 'Ainda não há nada registado.',
+    due: 'Marcada',
+    ran: 'Saiu',
+    lateBy: (minutesLabel: string) => `${minutesLabel} de atraso`,
+    onTime: 'À hora',
+    messagedCount: (n: number) => (n === 1 ? '1 pessoa avisada' : `${n} pessoas avisadas`),
+    failedCount: (n: number) => (n === 1 ? '1 falhou' : `${n} falharam`),
+    skippedCount: (n: number) => (n === 1 ? '1 sem nada para dizer' : `${n} sem nada para dizer`),
+    nothingSent: 'Não saiu nada neste dia.',
+
+    debugTitle: 'Pessoa a pessoa',
+    debugHint: 'Quem recebeu, quem não recebeu, e porquê.',
+    recipientWorker: 'Equipa',
+    recipientManager: 'Responsável',
+    outcome: {
+      sent: 'Entregue à Meta',
+      delivered: 'Chegou ao telemóvel',
+      read: 'Lida',
+      failed: 'Falhou',
+      skipped: 'Não enviada',
+      pending: 'Por confirmar',
+    },
+    outcomeHint: {
+      sent: 'A Meta aceitou a mensagem, mas ainda não confirmou que chegou.',
+      delivered: 'A Meta confirmou que a mensagem chegou ao telemóvel.',
+      read: 'A pessoa abriu a mensagem.',
+      failed: 'A Meta recusou ou não conseguiu entregar.',
+      skipped: 'Não havia nada para dizer a esta pessoa neste dia.',
+      pending: 'O envio começou e não chegou a terminar.',
+    },
+
+    reasonTitle: 'Quem não recebe nada, e porquê',
+    reason: {
+      noConsent: 'Não autorizou receber WhatsApp.',
+      unreachable: 'Não tem número nem outra forma de ser contactado.',
+      inactive: 'Está marcado como inactivo na equipa.',
+      managerNoConsent: 'O responsável não autorizou receber WhatsApp.',
+      noManagerAccount: 'Esta empresa não tem nenhuma conta de responsável, por isso o resumo diário não vai a lado nenhum.',
+    },
+    reasonNamesHint:
+      'Os nomes aqui em baixo são de agora, não do dia em causa — as contas de cada dia ficam guardadas, os nomes não.',
+    reasonNobody: 'Ninguém está a ficar de fora.',
+
+    metaError: {
+      '132001': 'O texto aprovado ainda não existe neste idioma.',
+      '131030': 'O número não está na lista de teste. Isto já não devia acontecer.',
+      '131026': 'Este número não tem WhatsApp.',
+      '131047': 'Passaram mais de 24 horas desde a última mensagem desta pessoa, por isso só sai texto aprovado.',
+      '131021': 'Tentámos enviar para o nosso próprio número.',
+      '132000': 'O texto enviado não encaixa no formato aprovado.',
+    },
+    metaErrorUnknown: 'A Meta recusou o envio.',
+    metaErrorLabel: (code: number) => `Código ${code}`,
+  },
+
   push: {
     title: 'Alertas no telemóvel',
     subtitle: 'Recebe um aviso assim que alguém disser que acabou uma tarefa — mesmo com a app fechada.',

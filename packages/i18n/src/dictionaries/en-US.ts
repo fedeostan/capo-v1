@@ -131,6 +131,100 @@ const dict: Catalog = {
     pushNudgeLink: 'Turn on alerts',
   },
 
+  automations: {
+    title: 'Automatic messages',
+    subtitle: 'What Capo sends your crew on its own, at what time, and what happened each day.',
+    profileLink: 'See automatic messages',
+    costNote:
+      'Every person who receives one of these counts as a paid WhatsApp send. A bigger crew, or more messages a day, means more cost.',
+
+    job: {
+      daily_briefing: {
+        name: 'Morning message',
+        what: "Tells each person what they have today: the job, the address, the materials and what it depends on.",
+        who: 'Every active crew member with WhatsApp permission, and each manager on the account.',
+      },
+      task_checkin: {
+        name: 'End-of-day question',
+        what: 'Asks “did you finish today’s tasks?”, with two buttons to answer.',
+        who: 'Only the person leading a task today. Someone who is only helping is not asked.',
+      },
+    },
+
+    aimedAt: (hour: string) => `Aimed at ${hour}`,
+    window: (from: string, to: string) => `Arrives between ${from} and ${to}`,
+    nextRun: (when: string) => `Next: ${when}`,
+    usingDefault: 'Using the built-in time — nobody has changed this one.',
+    on: 'On',
+    off: 'Off',
+    enabledLabel: 'Send this message',
+    hourLabel: 'Time',
+    saved: 'Saved.',
+    saveFailed: 'Could not save. Try again.',
+    invalidHour: 'Pick a time between 05:00 and 21:00.',
+
+    addTitle: 'Add another message',
+    addExplanation:
+      'You cannot create a new message from here yet, and the reason is on WhatsApp’s side: a message Capo sends without anyone having written first has to use wording Meta approved in advance. Wording you type would not go out. Until that exists, what you can do is change the time of these two, or switch off the one you do not want.',
+
+    historyTitle: 'What happened',
+    historyHint:
+      'One line per day per message: the time it was due and the time it actually went out. The company that hosts Capo tends to knock late, so the two times are rarely the same.',
+    historyEmpty: 'Nothing recorded yet.',
+    due: 'Due',
+    ran: 'Ran',
+    lateBy: (minutesLabel: string) => `${minutesLabel} late`,
+    onTime: 'On time',
+    messagedCount: (n: number) => (n === 1 ? '1 person messaged' : `${n} people messaged`),
+    failedCount: (n: number) => (n === 1 ? '1 failed' : `${n} failed`),
+    skippedCount: (n: number) => (n === 1 ? '1 with nothing to say' : `${n} with nothing to say`),
+    nothingSent: 'Nothing went out on this day.',
+
+    debugTitle: 'Person by person',
+    debugHint: 'Who got it, who did not, and why.',
+    recipientWorker: 'Crew',
+    recipientManager: 'Manager',
+    outcome: {
+      sent: 'Handed to Meta',
+      delivered: 'Reached the phone',
+      read: 'Read',
+      failed: 'Failed',
+      skipped: 'Not sent',
+      pending: 'Unconfirmed',
+    },
+    outcomeHint: {
+      sent: 'Meta accepted the message but has not confirmed it arrived.',
+      delivered: 'Meta confirmed the message reached the phone.',
+      read: 'The person opened it.',
+      failed: 'Meta refused it or could not deliver it.',
+      skipped: 'There was nothing to tell this person that day.',
+      pending: 'The send started and never finished.',
+    },
+
+    reasonTitle: 'Who gets nothing, and why',
+    reason: {
+      noConsent: 'Has not given permission to receive WhatsApp.',
+      unreachable: 'Has no number and no other way to be reached.',
+      inactive: 'Is marked inactive on the crew.',
+      managerNoConsent: 'The manager has not given permission to receive WhatsApp.',
+      noManagerAccount: 'This company has no manager account at all, so the daily summary goes nowhere.',
+    },
+    reasonNamesHint:
+      'The names below are from right now, not from the day in question — each day’s counts are kept, the names are not.',
+    reasonNobody: 'Nobody is being left out.',
+
+    metaError: {
+      '132001': 'The approved wording does not exist in this language yet.',
+      '131030': 'The number is not on the test list. This should no longer happen.',
+      '131026': 'This number is not on WhatsApp.',
+      '131047': 'More than 24 hours have passed since this person last wrote, so only approved wording can go out.',
+      '131021': 'We tried to message our own number.',
+      '132000': 'The text sent does not fit the approved format.',
+    },
+    metaErrorUnknown: 'Meta refused the send.',
+    metaErrorLabel: (code: number) => `Code ${code}`,
+  },
+
   push: {
     title: 'Phone alerts',
     subtitle: 'Get an alert the moment someone says a task is finished — even with the app closed.',

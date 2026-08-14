@@ -38,6 +38,18 @@ import {
 // pure enough to load here: it touches no env at module scope and opens no
 // connection, so this check still needs no credentials and no network.
 import { SEND_WINDOW_HOURS, sendWindowEnd, withinSendWindow } from '../apps/web/lib/cron';
+// Same reasoning, and since #51 part B this one is IMPORTED rather than
+// restated: the send hour stopped being a module-local const in a route file
+// and became data, with its defaults and its legal range in this module. A copy
+// here would be a second statement of the range that bounds whether a window
+// can wrap past midnight, which is the one number in this file that must not be
+// allowed to drift.
+import {
+  DEFAULT_SEND_HOURS,
+  MAX_SEND_HOUR,
+  MIN_SEND_HOUR,
+  SEND_HOUR_CHOICES,
+} from '../apps/web/lib/schedule';
 
 let failures = 0;
 const lines: string[] = [];
@@ -411,14 +423,17 @@ check('a self-dependency throws RescheduleError', selfCycleThrew);
 // Nothing else in the repo can catch a regression here: there are no route
 // tests, and the symptom in production is an absence rather than a failure.
 
-// Restated here rather than imported: each route's SEND_HOUR is a module-local
-// const in a Next route file, and exporting arbitrary symbols from a route.ts
-// is not something to do for a script's convenience. The cost is that moving a
-// route's SEND_HOUR without touching this file leaves the two disagreeing — but
-// the vercel.json sweep below is checked against THESE numbers, so a route that
-// moved alone would still have to move its UTC entries or fail on the next PR.
-const BRIEFING_HOUR = 7;
-const CHECKIN_HOUR = 16;
+// The DEFAULTS, not constants any more (issue #51 part B). Every company uses
+// these until a manager moves them on /perfil/automacoes, so they are still the
+// hours the whole estate runs on today — but the sweep below deliberately
+// checks the vercel.json heartbeat against EVERY legal hour rather than only
+// these two, because a schedule that only worked at 07:00 would look perfectly
+// healthy right up until somebody used the feature.
+const BRIEFING_HOUR = DEFAULT_SEND_HOURS.daily_briefing;
+const CHECKIN_HOUR = DEFAULT_SEND_HOURS.task_checkin;
+
+eq('the briefing still defaults to 07:00 Lisbon', BRIEFING_HOUR, 7);
+eq('the check-in still defaults to 16:00 Lisbon', CHECKIN_HOUR, 16);
 
 eq('the send window is two Lisbon hours wide', SEND_WINDOW_HOURS, 2);
 eq('the 07:00 briefing window ends at Lisbon 08', sendWindowEnd(BRIEFING_HOUR), 8);
@@ -455,13 +470,46 @@ eq('a 23:00 send hour is clamped rather than wrapped', sendWindowEnd(23), 23);
 check('a 23:00 send hour still accepts its own hour', withinSendWindow(23, 23));
 check('a 23:00 send hour does NOT spill into hour 0 the next day', !withinSendWindow(0, 23));
 
+// ── the legal range of a chosen send hour (issue #51, part B1) ──────────────
+// The send hour is DATA now — a manager picks it on /perfil/automacoes — so the
+// dangerous number is no longer "7", it is the RANGE. Two properties matter and
+// neither is obvious from the screen:
+//
+//   * no chosen hour may produce a window that wraps past midnight. A wrapped
+//     run rolls lisbon_today() over, which turns notification_log's unique
+//     constraint from an idempotency lock into a fresh unclaimed day and
+//     messages the entire crew a second time — a DOUBLE-BILLED send, silently.
+//   * no chosen hour may be in the middle of the night.
+//
+// Both are also CHECK constraints in 0036. Asserted here from the constants the
+// app actually reads, so widening one without the other fails on the next PR.
+check(
+  'no legal send hour can produce a window that wraps past midnight',
+  SEND_HOUR_CHOICES.every(h => sendWindowEnd(h) <= 23 && sendWindowEnd(h) >= h),
+  `MAX_SEND_HOUR ${MAX_SEND_HOUR} → window ends ${sendWindowEnd(MAX_SEND_HOUR)}`,
+);
+check(
+  'the latest legal send hour still gets its full window',
+  sendWindowEnd(MAX_SEND_HOUR) === MAX_SEND_HOUR + SEND_WINDOW_HOURS - 1,
+  `${MAX_SEND_HOUR} → ${sendWindowEnd(MAX_SEND_HOUR)}`,
+);
+check('no send may be aimed at the small hours', MIN_SEND_HOUR >= 5, `MIN_SEND_HOUR ${MIN_SEND_HOUR}`);
+check(
+  'both defaults are inside the range a manager may choose',
+  SEND_HOUR_CHOICES.includes(BRIEFING_HOUR) && SEND_HOUR_CHOICES.includes(CHECKIN_HOUR),
+  `choices ${MIN_SEND_HOUR}..${MAX_SEND_HOUR}`,
+);
+
 // ── the UTC entries that feed the window ────────────────────────────────────
 // vercel.json is the other half of the mechanism and is JSON, so nothing in it
-// can explain itself and nothing in CI reads it. Lisbon is UTC+0 in winter and
-// UTC+1 in summer, so each hour-gated route needs the UNION of the UTC hours
-// that land inside its window under BOTH offsets — and in each season one of
-// them must land exactly on the target hour, or the route starts the day
-// already one hour into its own window with no headroom left.
+// can explain itself and nothing in CI reads it.
+//
+// It used to name the exact UTC hours each route needed — the union over both
+// DST offsets, hand-computed from a fixed SEND_HOUR. That is no longer possible:
+// vercel.json is baked into the deployment and cannot know what hour any tenant
+// chose. Both hour-gated routes are an HOURLY HEARTBEAT now, and the sweep below
+// proves the property that replaces the old table — that for EVERY hour a
+// manager may pick, in BOTH seasons, an entry lands exactly on it.
 
 interface CronEntry {
   path: string;
@@ -474,17 +522,40 @@ const crons = (
   }
 ).crons;
 
+/**
+ * The UTC hours one path actually fires at.
+ *
+ * Deliberately narrow: it understands `0 *` and `0 H` and `0 A,B` and NOTHING
+ * else. A step or a range (`4-22`) in the hour field would silently parse as
+ * NaN and turn every assertion below into a vacuous pass, which is the failure
+ * mode this whole file exists to prevent — so an unrecognised field is a loud
+ * failure rather than a clever parse.
+ */
 function scheduledUtcHours(path: string): number[] {
   const entries = crons.filter(c => c.path === path);
   check(`${path} has at least one schedule`, entries.length > 0);
-  return entries.map(entry => {
+  const hours: number[] = [];
+  for (const entry of entries) {
     const [minute, hour] = entry.schedule.split(' ');
     // The :00 rule (AGENTS.md). A :30 entry has thirty minutes of headroom
     // before the Lisbon hour rolls over instead of sixty, and that is exactly
-    // how the check-in shipped and then never sent a single message.
+    // how the check-in shipped and then never sent a single message. `0 * * * *`
+    // satisfies it by construction; a half-hourly heartbeat would not.
     check(`${path} "${entry.schedule}" fires at :00`, minute === '0', `minute field is "${minute}"`);
-    return Number(hour);
-  });
+    if (hour === '*') {
+      for (let h = 0; h < 24; h += 1) hours.push(h);
+      continue;
+    }
+    const parts = hour.split(',');
+    const parsed = parts.map(Number);
+    check(
+      `${path} "${entry.schedule}" has an hour field this check can read`,
+      parsed.every(h => Number.isInteger(h) && h >= 0 && h < 24),
+      `hour field is "${hour}" — ranges and steps are not supported here on purpose`,
+    );
+    hours.push(...parsed.filter(h => Number.isInteger(h) && h >= 0 && h < 24));
+  }
+  return hours;
 }
 
 const SEASONS = [
@@ -492,19 +563,28 @@ const SEASONS = [
   ['summer (UTC+1)', 1],
 ] as const;
 
-for (const [path, sendHour] of [
-  ['/api/cron/reminders', BRIEFING_HOUR],
-  ['/api/cron/checkin', CHECKIN_HOUR],
-] as const) {
+for (const path of ['/api/cron/reminders', '/api/cron/checkin'] as const) {
   const utcHours = scheduledUtcHours(path);
   for (const [season, offset] of SEASONS) {
-    const inWindow = utcHours.map(h => (h + offset) % 24).filter(h => withinSendWindow(h, sendHour));
-    const detail = `in-window Lisbon hours: [${inWindow.join(', ')}] from UTC [${utcHours.join(', ')}]`;
-    check(`${path} has an entry inside its window in ${season}`, inWindow.length > 0, detail);
+    const lisbonHours = utcHours.map(h => (h + offset) % 24);
+    // The whole property, in one assertion per season: whatever hour a manager
+    // chooses, an entry lands exactly on it (so the send starts the day with
+    // its FULL window of drift headroom, not one hour into it) and a second
+    // entry lands inside the window behind it (so a dispatch late enough to
+    // miss the first still has a second chance).
+    const uncovered = SEND_HOUR_CHOICES.filter(sendHour => !lisbonHours.includes(sendHour));
     check(
-      `${path} has an entry landing ON the target hour in ${season}, so a late dispatch keeps the full window`,
-      inWindow.includes(sendHour),
-      detail,
+      `${path} has an entry landing ON the target hour in ${season}, for every hour a manager may pick`,
+      uncovered.length === 0,
+      uncovered.length ? `uncovered target hours: [${uncovered.join(', ')}]` : `${MIN_SEND_HOUR}..${MAX_SEND_HOUR} all covered`,
+    );
+    const thin = SEND_HOUR_CHOICES.filter(
+      sendHour => lisbonHours.filter(h => withinSendWindow(h, sendHour)).length < 2,
+    );
+    check(
+      `${path} has a SECOND in-window entry behind every target hour in ${season}`,
+      thin.length === 0,
+      thin.length ? `single-entry target hours: [${thin.join(', ')}]` : 'every window carries two entries',
     );
   }
 }

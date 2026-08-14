@@ -147,6 +147,99 @@ export interface Catalog {
     pushNudgeLink: string;
   };
 
+  /**
+   * ── FEDERICO: Perfil → Mensagens automáticas (issue #51). ──
+   *
+   * The screen that answers "what does Capo send my crew, when, and did it
+   * actually go out?" On 13 August the morning message arrived 49 minutes late
+   * and nothing in the product could say so — the answer took a hosting-company
+   * log. Every string below exists to make one of those facts readable.
+   *
+   * The COST copy is the important product judgement here and it is stated
+   * twice on purpose: every recipient of every send is a paid WhatsApp
+   * template, so a schedule screen is also a spending screen.
+   */
+  automations: {
+    title: string;
+    subtitle: string;
+    /** The row on /perfil that leads here. */
+    profileLink: string;
+    /** Standing note at the top: what a scheduled message costs. */
+    costNote: string;
+
+    /** Plain-language name and purpose of each predefined send. Keyed by the
+     *  job_kind CHECK in 0036, so adding a job without adding copy in all
+     *  three dictionaries is a tsc error. */
+    job: Record<'daily_briefing' | 'task_checkin', { name: string; what: string; who: string }>;
+
+    /** "Aimed at 07:00, arrives between 07:00 and 08:59." The window is said
+     *  out loud because the platform's dispatch really does drift by up to an
+     *  hour, and promising a precision we do not have is what made a late
+     *  message read as a broken one. */
+    aimedAt(hour: string): string;
+    window(from: string, to: string): string;
+    nextRun(when: string): string;
+    /** Shown when the company has never chosen — i.e. everybody, today. */
+    usingDefault: string;
+    on: string;
+    off: string;
+    /** The switch. Turning a send off is the one control here that can only
+     *  ever reduce spend. */
+    enabledLabel: string;
+    hourLabel: string;
+    saved: string;
+    saveFailed: string;
+    invalidHour: string;
+
+    /** Why a manager cannot add a third send. Stated rather than hidden: a
+     *  greyed-out button with no explanation is worse than an honest
+     *  paragraph. */
+    addTitle: string;
+    addExplanation: string;
+
+    historyTitle: string;
+    historyHint: string;
+    historyEmpty: string;
+    /** The one column this whole issue exists for. */
+    due: string;
+    ran: string;
+    lateBy(minutesLabel: string): string;
+    onTime: string;
+    /** Per-run tallies. */
+    messagedCount(n: number): string;
+    failedCount(n: number): string;
+    skippedCount(n: number): string;
+    /** The liveness signal: a day on which a paying company sent nothing. */
+    nothingSent: string;
+
+    debugTitle: string;
+    debugHint: string;
+    /** One line per person, per run. */
+    recipientWorker: string;
+    recipientManager: string;
+    /** Plain-language outcome for one recipient. */
+    outcome: Record<'sent' | 'delivered' | 'read' | 'failed' | 'skipped' | 'pending', string>;
+    outcomeHint: Record<'sent' | 'delivered' | 'read' | 'failed' | 'skipped' | 'pending', string>;
+
+    /** Why somebody got nothing at all — the reasons that never produce a send
+     *  record, and were therefore invisible from inside the product. */
+    reasonTitle: string;
+    reason: Record<
+      'noConsent' | 'unreachable' | 'inactive' | 'managerNoConsent' | 'noManagerAccount',
+      string
+    >;
+    /** Named right now, from the current crew — the counts are historical, the
+     *  names are today's. Said out loud so the two are not confused. */
+    reasonNamesHint: string;
+    reasonNobody: string;
+
+    /** Meta's numeric failure codes, explained. The bare code is shown
+     *  alongside, because it is what a support conversation needs. */
+    metaError: Record<'132001' | '131030' | '131026' | '131047' | '131021' | '132000', string>;
+    metaErrorUnknown: string;
+    metaErrorLabel(code: number): string;
+  };
+
   /** The /perfil opt-in card for lock-screen alerts. Every state is spelled
    *  out because the failure modes here are all SILENT: an iPhone that was
    *  never installed, and a permission that was denied once and can never be

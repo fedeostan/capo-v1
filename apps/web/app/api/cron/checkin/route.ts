@@ -14,6 +14,8 @@ import {
   sendWindowEnd,
   withinSendWindow,
 } from '../../../../lib/cron';
+import { readCompanySchedules, scheduleFor } from '../../../../lib/schedule';
+import { recordCronRun } from '../../../notifications/cron-runs';
 import {
   loadCompanyBriefing,
   renderCheckinEvent,
@@ -23,8 +25,10 @@ import { readThreadLocale, recordThreadEvent } from '../../../notifications/thre
 
 // The late-afternoon Europe/Lisbon check-in: "did you finish today's tasks?",
 // asked as a template with two quick-reply buttons and answered by tapping one.
-// It goes out inside the 16:00–17:59 Lisbon window — see SEND_HOUR below for
-// why the schedule is deliberately not pinned to a prettier minute.
+// It goes out inside a two-hour window starting at the company's chosen hour —
+// 16:00 unless they moved it on /perfil/automacoes (issue #51). See KIND below
+// for where the hour lives now and why the schedule is deliberately not pinned
+// to a prettier minute.
 //
 // DETERMINISTIC END TO END, in both directions. The message is rendered by
 // renderWorkerBriefing — the same function the 07:00 briefing uses, so the two
@@ -71,30 +75,6 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 /**
- * The Lisbon hour this check-in TARGETS, not the only hour it may go out in.
- * Vercel schedules in UTC and Lisbon is UTC+0 in winter and UTC+1 in summer, so
- * apps/web/vercel.json registers THREE entries — 15:00, 16:00 and 17:00 UTC —
- * and `withinSendWindow` accepts whichever of them lands inside 16:00–17:59
- * Lisbon. The season-by-season table and the reasoning for the window's width
- * live on that function; only the hour is ever compared.
- *
- * ⚠ EVERY ENTRY MUST FIRE AT :00, and this is the whole reason the feature was
- * dead on arrival. They used to be 15:30/16:30, and Vercel's cron dispatch
- * drifts — observed at 33–49 minutes on this project, with every daily_briefing
- * row stamped ~06:45 UTC for an entry scheduled at 06:00. A :00 schedule has a
- * full hour of headroom before the Lisbon hour rolls over; a :30 schedule has
- * thirty minutes, so both check-in entries drifted past the boundary, this gate
- * rejected them, and not one check-in was ever sent. The 07:00 briefing
- * survived the identical drift purely because it was scheduled at :00.
- *
- * The window added on top of that buys a second hour of headroom, but it does
- * NOT retire the :00 rule — it shifts the cliff from 60 minutes of drift to
- * 120. So: do not "tidy" these back to a nicer-looking wall-clock time. The
- * send lands somewhere in 16:00–17:59 Lisbon by design.
- */
-const SEND_HOUR = 16;
-
-/**
  * The Meta template. Must already be approved for every locale in @capo/i18n —
  * `pnpm whatsapp-template status` is the check. Two body parameters ({{1}} the
  * worker's name, {{2}} the task list) and TWO quick-reply buttons.
@@ -112,6 +92,23 @@ const TEMPLATE_NAME = 'capo_task_checkin';
  * (kind, audience, worker_id, profile_id, notification_date), so collapsing the
  * two kinds gives a late-afternoon run that claims nothing, skips everyone, and reports
  * success with no error anywhere.
+ *
+ * ── WHERE 16:00 WENT (issue #51, part B1) ──────────────────────────────────
+ * There is no `SEND_HOUR` constant here any more. 16:00 is the DEFAULT in
+ * apps/web/lib/schedule.ts and the hour that applies is per company, in
+ * `company_schedules` (0036). vercel.json is a static file baked into the
+ * deployment, so while the schedule lived there no manager could ever move it.
+ *
+ * ⚠ THE :00 RULE STILL STANDS, and this route is why it exists. The entries
+ * used to be 15:30/16:30, and Vercel's cron dispatch drifts — 33 to 49 minutes,
+ * reproducibly, on this project. A :00 schedule has a full hour of headroom
+ * before the Lisbon hour rolls over; a :30 schedule has thirty minutes, so both
+ * check-in entries drifted past the boundary, the gate rejected them, and NOT
+ * ONE CHECK-IN WAS EVER SENT. The 07:00 briefing survived the identical drift
+ * purely because it was scheduled at :00. The two-hour window bought a second
+ * hour of headroom on top; it did not retire the rule, and neither does the
+ * hourly heartbeat that replaced the fixed entries — `0 * * * *` is at :00 by
+ * construction and must stay that way.
  */
 const KIND = 'task_checkin';
 
@@ -128,23 +125,10 @@ export async function GET(request: NextRequest) {
   const clock = await readLisbonClock(db, 'cron/checkin');
   if (!clock) return new NextResponse('clock unavailable', { status: 500 });
   const { hour, today } = clock;
-  const windowEnd = sendWindowEnd(SEND_HOUR);
-  if (!dryRun && !withinSendWindow(hour, SEND_HOUR)) {
-    // Logged, not just returned. A rejection here writes no notification_log
-    // row and raises no error, so before this line the only symptom of the
-    // schedule bug above was an empty table. `windowEnd` is in the payload so
-    // the line records what was actually required, not only what was aimed at.
-    logEvent('checkin.outside_send_hour', { lisbonHour: hour, sendHour: SEND_HOUR, windowEnd });
-    return NextResponse.json({
-      skipped: 'outside the send window',
-      lisbonHour: hour,
-      sendHour: SEND_HOUR,
-      windowEnd,
-    });
-  }
-
-  const env = whatsappSendEnv();
-  if (!env && !dryRun) return new NextResponse('whatsapp not configured', { status: 503 });
+  // Captured next to the clock read, and written onto every cron_runs row this
+  // invocation produces. See CronRunRecord.ranAt for why the pair has to come
+  // from the same moment.
+  const startedAt = new Date().toISOString();
 
   let companies;
   try {
@@ -154,9 +138,55 @@ export async function GET(request: NextRequest) {
     return new NextResponse('company read failed', { status: 500 });
   }
 
+  // ── the per-company gate (issue #51, part B1) ─────────────────────────────
+  // Deliberately the same shape as the 07:00 route's, and for the same two
+  // reasons: the hour is per company now, and an invocation that is nobody's
+  // hour must cost the clock, the company list and one read of this table
+  // rather than a task_board read per company. The hourly heartbeat in
+  // vercel.json is only affordable because of this filter.
+  const schedules = await readCompanySchedules(db, KIND);
+  const due: { company: (typeof companies)[number]; sendHour: number }[] = [];
+  let disabledInWindow = 0;
+  for (const company of companies) {
+    const schedule = scheduleFor(schedules, company.id, KIND);
+    if (!dryRun && !withinSendWindow(hour, schedule.sendHour)) continue;
+    if (!schedule.enabled) {
+      disabledInWindow += 1;
+      logEvent('checkin.schedule_disabled', { companyId: company.id, sendHour: schedule.sendHour });
+      continue;
+    }
+    due.push({ company, sendHour: schedule.sendHour });
+  }
+
+  if (due.length === 0) {
+    // The SAME event name the single-hour gate wrote. A rejected invocation
+    // writes no notification_log row, no cron_runs row and raises no error, so
+    // this line is still its only trace anywhere — and an empty table was
+    // exactly the symptom of the :30 schedule bug that kept this feature dead
+    // for two days.
+    logEvent('checkin.outside_send_hour', {
+      lisbonHour: hour,
+      companies: companies.length,
+      disabledInWindow,
+    });
+    return NextResponse.json({
+      skipped: 'outside the send window',
+      lisbonHour: hour,
+      companies: companies.length,
+      disabledInWindow,
+    });
+  }
+
+  // Read AFTER the window gate, for the reason given in the 07:00 route: a
+  // preview deployment with no WhatsApp credentials must answer the same
+  // 200-with-{skipped} an out-of-hours run always did, not twenty-four 503s.
+  const env = whatsappSendEnv();
+  if (!env && !dryRun) return new NextResponse('whatsapp not configured', { status: 503 });
+
   const report: unknown[] = [];
 
-  for (const company of companies) {
+  for (const { company, sendHour } of due) {
+    const windowEnd = sendWindowEnd(sendHour);
     try {
       const briefing = await loadCompanyBriefing(db, company.id, company.language);
       const sends: unknown[] = [];
@@ -175,6 +205,12 @@ export async function GET(request: NextRequest) {
       // asked the question, and later runs stay quiet.
       const askedNames: string[] = [];
       let claims = 0;
+
+      // The tallies that become the cron_runs row (issue #51, part B2). No
+      // `skippedIdle` counter here and no manager counters: this route writes
+      // no claim at all for an idle worker (there is nothing to skip) and has
+      // no manager audience.
+      let failed = 0;
 
       // The consent gate lives inside loadCompanyBriefing, so it applies to this
       // send without this route implementing anything. All that is left to do is
@@ -305,6 +341,7 @@ export async function GET(request: NextRequest) {
           // business number itself. The allow-list 131030 belonged to the test
           // tier and should no longer appear.
           await resolveNotification(db, claimed.id, 'failed', { error: describeSendError(err) });
+          failed += 1;
           logEvent('checkin.worker_send_failed', {
             companyId: company.id,
             workerId: worker.workerId,
@@ -354,7 +391,49 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      report.push({ company: company.name, asked, sends });
+      // ── the run row (issue #51, part B2) ─────────────────────────────────
+      // Written on EVERY in-window invocation that reaches here, unlike the
+      // thread note above, but only the claiming one replaces. A quiet
+      // afternoon — nobody with a task they lead — is the ordinary case here
+      // rather than the alarming one, and the `replace: false` row is what
+      // makes "we looked, and there was nobody to ask" visible without writing
+      // "I asked nobody anything" into the manager's chat every evening.
+      if (!dryRun) {
+        await recordCronRun(
+          db,
+          {
+            companyId: company.id,
+            jobKind: KIND,
+            runDate: today,
+            dueHour: sendHour,
+            ranHour: hour,
+            ranAt: startedAt,
+            messaged: asked,
+            skippedIdle: 0,
+            failed,
+            excludedNoConsent: briefing.excludedNoConsent,
+            excludedUnreachable: briefing.excludedUnreachable,
+            excludedInactive: briefing.excludedInactive,
+            managersNoConsent: 0,
+            noManagerAccount: false,
+          },
+          { replace: claims > 0 },
+        );
+      }
+
+      report.push({
+        company: company.name,
+        dueHour: sendHour,
+        windowEnd,
+        asked,
+        failed,
+        excluded: {
+          noConsent: briefing.excludedNoConsent,
+          unreachable: briefing.excludedUnreachable,
+          inactive: briefing.excludedInactive,
+        },
+        sends,
+      });
     } catch (err) {
       // One broken company must not cost every other company its check-in.
       console.error(`cron/checkin: company ${company.id} failed:`, err);

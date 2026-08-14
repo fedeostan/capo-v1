@@ -196,25 +196,44 @@ export function sendWindowEnd(sendHour: number, windowHours = SEND_WINDOW_HOURS)
  *
  * ── The UTC schedules that feed it ─────────────────────────────────────────
  * apps/web/vercel.json is JSON and cannot carry a comment, so its reasoning
- * lives here. Lisbon is UTC+0 in winter and UTC+1 in summer, so each route
- * registers the UNION of the UTC hours landing inside its window under both
- * offsets (L = the resulting Lisbon hour at zero drift):
+ * lives here.
  *
- *   /api/cron/reminders — SEND_HOUR 7, window 7–8 → `0 6`, `0 7`, `0 8` UTC
- *     summer (+1):  06→L07 ✓   07→L08 ✓   08→L09 ✗
- *     winter (+0):  06→L06 ✗   07→L07 ✓   08→L08 ✓
- *   /api/cron/checkin  — SEND_HOUR 16, window 16–17 → `0 15`, `0 16`, `0 17` UTC
- *     summer (+1):  15→L16 ✓   16→L17 ✓   17→L18 ✗
- *     winter (+0):  15→L15 ✗   16→L16 ✓   17→L17 ✓
+ * It used to name the exact UTC hours each route needed — the UNION over both
+ * DST offsets, three entries per route, computed by hand from a fixed
+ * SEND_HOUR. That stopped being possible the moment the send hour became DATA
+ * (issue #51, part B1): a manager may aim a send at any hour in
+ * MIN_SEND_HOUR..MAX_SEND_HOUR, and vercel.json is a static file baked into the
+ * deployment, so it cannot know what anybody chose.
  *
- * So in either season two entries pass the gate, the earlier of the two lands
- * on the target hour, and only whichever runs first claims anything. Every
- * entry stays at :00 — a :30 entry has thirty minutes of headroom instead of
- * sixty, and that is exactly how the check-in shipped and then never sent a
- * single message (AGENTS.md).
+ * So both hour-gated routes are now an HOURLY HEARTBEAT:
+ *
+ *   /api/cron/reminders — `0 * * * *`
+ *   /api/cron/checkin   — `0 * * * *`
+ *
+ * and the schedule itself lives in company_schedules, resolved per company in
+ * apps/web/lib/schedule.ts. Three properties fall out of that, and
+ * `pnpm scheduler-check` asserts all three from vercel.json itself:
+ *
+ *   * Every hour is covered in BOTH seasons, for EVERY legal target hour, by
+ *     construction — the season-by-season hand-computed table cannot go stale
+ *     because there is nothing left in it to get wrong.
+ *   * In every window there are TWO entries that pass this gate: the one on
+ *     the target hour and the one an hour later. The first lands on the target
+ *     hour and claims everything; the second claims nothing (23505).
+ *   * Every entry is still at :00. `0 * * * *` satisfies the rule by
+ *     construction — a half-hourly heartbeat would put half its ticks thirty
+ *     minutes into the hour, which is exactly the headroom arithmetic that made
+ *     the check-in ship and then never send a single message (AGENTS.md).
+ *
+ * Why hourly and not every 10 or 15 minutes: this gate's resolution is one
+ * Lisbon HOUR, so a finer tick cannot make a send land more precisely, while
+ * multiplying platform invocations 4–6×. What protects against drift is the
+ * WINDOW, not the tick rate. The full argument, including why the tick rate
+ * cannot change the number of PAID sends at all, is in apps/web/lib/schedule.ts.
  *
  * /api/cron/push is not in this scheme and must stay out of it: it is meant to
- * run all day and has no hour gate at all.
+ * run all day and has no hour gate at all. /api/cron/welcome has an hour gate
+ * but an eleven-hour window, which is why a minute-based schedule is safe there.
  */
 export function withinSendWindow(
   hour: number,

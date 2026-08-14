@@ -603,12 +603,74 @@ export interface BsuidRotation {
   waId?: string;
 }
 
+// ── delivery statuses ───────────────────────────────────────────────────────
+// THE THIRD SHAPE ON THIS WEBHOOK, and it is deliberately none of the other
+// two. A template quick reply is a MESSAGE with `type: 'button'` from a worker;
+// an approval-card tap is a MESSAGE with `type: 'interactive'` from a manager;
+// a delivery status is not a message at all. It arrives under
+// `value.statuses` on a change whose `field` is still 'messages', which is
+// exactly why the pre-#51 router — which read `value.messages` and nothing
+// else — flat-mapped an absent array, found nothing, and dropped every one
+// without a trace.
+//
+// The consequence was that `notification_log.status = 'sent'` could only ever
+// mean "Meta accepted it", never "it arrived". On 13 August that ambiguity is
+// what made a 49-minute-late briefing indistinguishable from a lost one.
+//
+// Meta sends several of these per message and they are NOT ordered: a `read`
+// can arrive before its `delivered`. The applier therefore stamps one column
+// per status and never derives one from another.
+
+/** Meta's delivery lifecycle for one outbound message. */
+export type WhatsAppDeliveryState = 'sent' | 'delivered' | 'read' | 'failed';
+
+export interface WhatsAppStatus {
+  /** The `wamid` we stored as notification_log.provider_message_id. */
+  id: string;
+  state: WhatsAppDeliveryState;
+  /** Unix seconds, as Meta sends it. Null when unreadable. */
+  timestamp: number | null;
+  /** Present on `failed` only. */
+  errorCode: number | null;
+  errorTitle: string | null;
+}
+
+const DELIVERY_STATES = new Set<string>(['sent', 'delivered', 'read', 'failed']);
+
+function readStatus(value: unknown): WhatsAppStatus | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const entry = value as { id?: unknown; status?: unknown; timestamp?: unknown; errors?: unknown };
+  if (typeof entry.id !== 'string' || !entry.id) return null;
+  if (typeof entry.status !== 'string' || !DELIVERY_STATES.has(entry.status)) return null;
+
+  // Meta sends the timestamp as a STRING of unix seconds. Anything that does
+  // not parse becomes null and the applier falls back to its own clock —
+  // a delivery whose exact second is unknown is still a delivery.
+  const raw = typeof entry.timestamp === 'string' ? Number(entry.timestamp) : entry.timestamp;
+  const timestamp = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : null;
+
+  // `errors` is an array; only the first is worth recording. A code with no
+  // title is normal, a title with no code is not — both degrade to null rather
+  // than to a guess.
+  let errorCode: number | null = null;
+  let errorTitle: string | null = null;
+  if (Array.isArray(entry.errors) && entry.errors.length > 0) {
+    const first = entry.errors[0] as { code?: unknown; title?: unknown; message?: unknown };
+    if (typeof first?.code === 'number') errorCode = first.code;
+    const text = typeof first?.title === 'string' ? first.title : first?.message;
+    if (typeof text === 'string' && text) errorTitle = text;
+  }
+
+  return { id: entry.id, state: entry.status as WhatsAppDeliveryState, timestamp, errorCode, errorTitle };
+}
+
 export interface WhatsAppWebhookEnvelope<M> {
   entry?: {
     changes?: {
       field?: string;
       value?: {
         messages?: M[];
+        statuses?: unknown[];
         user_id_update?: unknown[];
       };
     }[];
@@ -618,6 +680,12 @@ export interface WhatsAppWebhookEnvelope<M> {
 export interface RoutedWebhook<M> {
   messages: M[];
   rotations: BsuidRotation[];
+  /**
+   * Delivery receipts for messages WE sent. Never a person writing to us, and
+   * therefore never fed to a model, never routed to an agent, and never used to
+   * resolve a sender — see readSender, which this deliberately does not touch.
+   */
+  statuses: WhatsAppStatus[];
   /**
    * Field names this router does not handle, in arrival order. A change with no
    * `field` at all and no messages is reported as '(missing)'. Duplicates are
@@ -631,6 +699,12 @@ export interface RoutedWebhook<M> {
    * public source quotes it verbatim — so a shape surprise has to be findable.
    */
   unreadableRotations: number;
+  /**
+   * `statuses` entries whose shape we could not read. Same reasoning as
+   * unreadableRotations: a status we silently drop is a delivery the product
+   * then claims never happened.
+   */
+  unreadableStatuses: number;
 }
 
 // parent_user_id is deliberately never read, here or anywhere. Meta issues a
@@ -656,8 +730,10 @@ function readRotation(value: unknown): BsuidRotation | null {
 export function routeWebhookChanges<M>(body: WhatsAppWebhookEnvelope<M>): RoutedWebhook<M> {
   const messages: M[] = [];
   const rotations: BsuidRotation[] = [];
+  const statuses: WhatsAppStatus[] = [];
   const unhandledFields: string[] = [];
   let unreadableRotations = 0;
+  let unreadableStatuses = 0;
 
   for (const entry of body.entry ?? []) {
     for (const change of entry.changes ?? []) {
@@ -666,8 +742,22 @@ export function routeWebhookChanges<M>(body: WhatsAppWebhookEnvelope<M>): Routed
       // payload that works today must keep working — including one from a test
       // harness that omits it. Dispatching on a missing field alone would drop
       // real messages, which is the one regression this change must not have.
-      if (change.field === 'messages' || (change.field === undefined && change.value?.messages)) {
+      //
+      // ⚠ A delivery status arrives on this SAME field, with `statuses` and no
+      // `messages`. So both arrays are drained here, and the field-absent
+      // compatibility branch tests both — a payload carrying only statuses and
+      // no `field` would otherwise fall through to unhandledFields and be
+      // reported as a surprise rather than recorded.
+      if (
+        change.field === 'messages' ||
+        (change.field === undefined && (change.value?.messages || change.value?.statuses))
+      ) {
         messages.push(...(change.value?.messages ?? []));
+        for (const raw of change.value?.statuses ?? []) {
+          const status = readStatus(raw);
+          if (status) statuses.push(status);
+          else unreadableStatuses += 1;
+        }
         continue;
       }
 
@@ -684,7 +774,27 @@ export function routeWebhookChanges<M>(body: WhatsAppWebhookEnvelope<M>): Routed
     }
   }
 
-  return { messages, rotations, unhandledFields, unreadableRotations };
+  return { messages, rotations, statuses, unhandledFields, unreadableRotations, unreadableStatuses };
+}
+
+// ── Meta's numeric failure codes, for a screen that has to explain one ───────
+//
+// `notification_log.error` is `describeSendError(err)`, i.e. a
+// WhatsAppSendError message of the shape
+//   "WhatsApp send failed (400, code 132001): <detail>"
+// so the code is already in the row — just buried in prose that means nothing
+// to a manager. Extracted HERE rather than in the screen so scripts/
+// whatsapp-check.mts can pin it offline, and so the two places that need a code
+// (a send-time failure and a delivery-time failure) read it the same way.
+//
+// Returns null rather than guessing. An unrecognised message renders as its
+// raw text, which is worse to read but never wrong.
+export function readMetaErrorCode(message: string | null | undefined): number | null {
+  if (!message) return null;
+  const match = /\bcode (\d{3,7})\b/.exec(message);
+  if (!match) return null;
+  const code = Number(match[1]);
+  return Number.isSafeInteger(code) ? code : null;
 }
 
 // ── outbound planning ───────────────────────────────────────────────────────
