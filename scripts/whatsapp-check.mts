@@ -134,6 +134,7 @@ import {
 // failure that took the real answer down with it, would both be invisible
 // everywhere else. Exercised below with millisecond delays.
 import { withProgressNote } from '../apps/web/lib/whatsapp-feedback.ts';
+import { buildWhatsAppLink } from '../apps/web/lib/whatsapp-handshake.ts';
 import type { Db } from '@capo/db/client';
 
 let failures = 0;
@@ -1683,6 +1684,41 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     check(`${locale} — and leaks no undefined`, !s2.includes('undefined'), s2);
     const m = buildWorkerMenu({ tasks: [task()], body: 'x', locale });
     check(`${locale} — the menu labels leak no undefined`, !JSON.stringify(m).includes('undefined'), JSON.stringify(m));
+  }
+}
+
+// ── the onboarding handshake link (issue #84) ───────────────────────────────
+// The wa.me URL a freshly signed-up manager taps or scans. Pure, so it is
+// checkable here — and it needs checking, because every way it can be wrong is
+// silent: a link with no digits opens WhatsApp with no recipient, and a link
+// whose text was not encoded loses everything after the first '&'.
+{
+  const NUMBER = '+351911097383';
+  const link = buildWhatsAppLink(NUMBER, 'Olá Capo!');
+  eq('handshake — the link strips the + and keeps every digit', link?.split('?')[0], 'https://wa.me/351911097383');
+  check('handshake — the link is https', link!.startsWith('https://'), link!);
+  check('handshake — exactly one query separator', (link!.match(/\?/g) ?? []).length === 1, link!);
+  check('handshake — no raw spaces survive encoding', !buildWhatsAppLink(NUMBER, 'a b c')!.includes(' '));
+
+  // Formatting a human might paste in is tolerated; anything that is not E.164
+  // is refused outright rather than guessed at.
+  eq('handshake — spaces and dashes in the number are tolerated', buildWhatsAppLink('+351 911-097 383', 'x'), link!.replace(/\?.*$/, '?text=x'));
+  eq('handshake — a number without a + is refused', buildWhatsAppLink('351911097383', 'x'), null);
+  eq('handshake — an empty number is refused', buildWhatsAppLink('', 'x'), null);
+  eq('handshake — a too-short number is refused', buildWhatsAppLink('+351', 'x'), null);
+
+  // THE ONE THAT MATTERS. toSendTarget in apps/web/lib/whatsapp.ts is
+  // deliberately unexported so no BSUID can reach phone-digit surgery; this
+  // builder is a second front door onto the same hazard and must refuse the
+  // same shape. A BSUID in a wa.me link would silently address nobody.
+  eq('handshake — a BSUID is refused, never digit-stripped', buildWhatsAppLink('PT.13491208655302741918', 'x'), null);
+
+  // Accents and punctuation must survive the round trip. Uses a literal rather
+  // than the catalog: the copy arrives in Task 2, and this task must end green.
+  {
+    const accented = 'Olá! Acabei de me registar. Ajudas-me a começar?';
+    const url = new URL(buildWhatsAppLink(NUMBER, accented)!);
+    eq('handshake — accented text round-trips through the link', url.searchParams.get('text'), accented);
   }
 }
 
