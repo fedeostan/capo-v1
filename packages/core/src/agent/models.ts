@@ -12,6 +12,7 @@ import { withUsageRecording, type UsageAttribution } from './usage';
 export type ModelRole =
   | 'conversation'
   | 'summarizer'
+  | 'consolidation'
   | 'transcription'
   | 'extraction'
   | 'planner'
@@ -25,6 +26,14 @@ export type ModelRole =
 const registry: Record<ModelRole, () => Exclude<LanguageModel, string>> = {
   conversation: () => anthropic('claude-sonnet-5'),
   summarizer: () => anthropic('claude-haiku-4-5-20251001'),
+  // The nightly memory review (issue #48). Sonnet rather than the summarizer's
+  // Haiku, and the asymmetry is the point: a summary is prose the next few turns
+  // read and each pass launders the last one, while a MEMORY is a row injected
+  // into every future prompt that nothing ever re-checks. Judging what is
+  // durable is the whole task, getting it wrong is permanent, and it runs once
+  // per company per night — so the cheap model is a false economy here in a way
+  // it is not one message downstream.
+  consolidation: () => anthropic('claude-sonnet-5'),
   transcription: () => google('gemini-3.5-flash'),
   // Vocab learning: pulls corrected terms out of (heard, sent) pairs. Same
   // model as summarizer today, but its own role — swapping one must never
@@ -51,6 +60,7 @@ const registry: Record<ModelRole, () => Exclude<LanguageModel, string>> = {
 export const MODEL_PROVIDERS: Record<ModelRole, 'anthropic' | 'google'> = {
   conversation: 'anthropic',
   summarizer: 'anthropic',
+  consolidation: 'anthropic',
   transcription: 'google',
   extraction: 'anthropic',
   planner: 'anthropic',
@@ -109,6 +119,7 @@ export const MIN_CACHEABLE_PREFIX_TOKENS: Record<string, number> = {
 export const MODEL_IDS: Record<ModelRole, string> = {
   conversation: 'claude-sonnet-5',
   summarizer: 'claude-haiku-4-5-20251001',
+  consolidation: 'claude-sonnet-5',
   transcription: 'gemini-3.5-flash',
   extraction: 'claude-haiku-4-5-20251001',
   planner: 'claude-sonnet-5',
@@ -130,7 +141,15 @@ export const MODEL_IDS: Record<ModelRole, string> = {
  *   summarizer    ❌ NOT CACHED. Haiku 4.5, 4096-token minimum. Its whole
  *                 system prompt is five lines (~100 tokens): a breakpoint here
  *                 would be a silent no-op, not a saving. It also runs once per
- *                 ~40 messages, so there is nothing to reuse either.
+ *                 ~50 messages (SUMMARIZE_AFTER 80 / KEEP_RECENT 30 since #48),
+ *                 so there is nothing to reuse either.
+ *
+ *   consolidation ❌ NOT CACHED. Sonnet 5, so the 1024-token floor is within
+ *                 reach — but a run is ONE generateObject call per company per
+ *                 night and the prompt carries that company's own memories and
+ *                 transcript, so there is no prefix shared with anything and
+ *                 nothing to read a written entry back from. A breakpoint here
+ *                 would buy a 1.25x write and zero reads, every night.
  *
  *   extraction    ❌ NOT CACHED. Haiku 4.5, same 4096-token floor, same
  *                 short prompt, and one call per transcription correction.

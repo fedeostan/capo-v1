@@ -3,6 +3,11 @@ import type { Db } from '@capo/db/client';
 import type { Locale, LocaleContext } from '@capo/i18n/locale';
 import { promptBlocks } from '../i18n';
 import { cachedInstructions } from './cache';
+import {
+  MEMORY_READ_LIMIT,
+  formatMemoryLine,
+  selectPromptMemories,
+} from './memory/prompt-memories';
 import { personas } from './persona';
 import orchestration from './prompts/orchestration';
 import { buildLanguageDirective } from './prompts/language';
@@ -45,6 +50,14 @@ import { buildLanguageDirective } from './prompts/language';
 //     language directive varies with both dials — so each combination warms
 //     its own entry. The tool schemas carry their own, earlier breakpoint
 //     precisely because they are the one part that does NOT vary that way.
+//
+// Since #48 the memory block is CAPPED rather than injected wholesale (40 rows
+// / 6000 chars, see ./memory/prompt-memories.ts) and is filtered per profile.
+// Both facts reinforce the placement above rather than complicating it: a block
+// that grows on a nightly schedule is the textbook "breakpoint on content that
+// changes every request" mistake if it sits in the cached half, and a
+// per-profile block up there would fragment the prefix per manager exactly as
+// the manager's own name would.
 //
 // The knowledge index is the obvious candidate for promotion into the cached
 // half (it changes only when the operator ingests documents). It is left below
@@ -210,19 +223,33 @@ export async function buildSystemPrompt({
   const today = new Date().toISOString().slice(0, 10);
   const t = promptBlocks[locales.user];
 
-  // Memory tier 2 (durable/semantic), injected wholesale — trivially fits at
-  // one-company scale. A recall tool comes when this outgrows context.
-  const { data: memories } = await db
+  // Memory tier 2 (durable/semantic). No longer injected wholesale (issue #48):
+  // the nightly consolidation pass writes memories on a SCHEDULE, so growth is
+  // now automatic, and an automatic growth curve on a block re-sent with every
+  // message is a cost bug that compounds silently. `selectPromptMemories` is the
+  // ceiling — 40 rows / 6000 chars, newest first — and it is also what applies
+  // the per-profile visibility rule.
+  //
+  // `select('*')` rather than a column list, deliberately: `profile_id` is a
+  // column migration 0037 adds, and naming a pending column makes a deploy
+  // landing first answer 42703 on every single turn (the 0031 reasoning, and
+  // the view-extension rule in AGENTS.md). An absent field reads as `undefined`,
+  // which `memoryVisibleTo` treats as "belongs to the whole company" — i.e.
+  // exactly the pre-0037 product.
+  //
+  // RLS enforces the same visibility rule on the web, but NOT on the WhatsApp
+  // path, where this runs on the service role and auth.uid() is null. The
+  // TypeScript filter is the only one there is on that path.
+  const { data: memoryRows } = await db
     .from('memories')
-    .select('kind, content, created_at')
+    .select('*')
     .eq('company_id', companyId)
     .eq('active', true)
-    .order('created_at');
+    .order('created_at', { ascending: false })
+    .limit(MEMORY_READ_LIMIT);
 
-  const memoryBlock =
-    memories && memories.length > 0
-      ? memories.map(m => `- [${m.kind}] (${m.created_at.slice(0, 10)}) ${m.content}`).join('\n')
-      : t.memoryEmpty;
+  const { carried } = selectPromptMemories(memoryRows ?? [], userId);
+  const memoryBlock = carried.length > 0 ? carried.map(formatMemoryLine).join('\n') : t.memoryEmpty;
 
   const [snapshot, knowledgeBlock, managerName] = await Promise.all([
     loadCompanySnapshot(db, companyId),

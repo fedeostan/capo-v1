@@ -225,6 +225,45 @@ const dict: Catalog = {
     metaErrorLabel: (code: number) => `Code ${code}`,
   },
 
+  memory: {
+    title: 'Memory',
+    subtitle: 'What Capo remembers about you and the company — and how to make it forget.',
+    profileLink: 'See what Capo remembers',
+    explainer:
+      "Capo doesn't learn on its own: everything it knows from one conversation to the next is written down here, as separate sentences, and this is what it re-reads before every reply. If anything on this list is wrong or no longer true, delete it — it stops counting straight away.",
+
+    companyHeading: 'About the company',
+    companyHint: 'Everyone with an account at this company sees these.',
+    personalHeading: 'About you',
+    personalHint: 'Only you see these. Nobody else at the company can touch them.',
+    empty: 'Nothing stored yet.',
+
+    capTitle: 'What Capo carries',
+    capHint: (carried: number, limit: number) =>
+      `Capo carries the ${limit} most recent notes into each conversation. Right now it carries ${carried}.`,
+    storedNotCarried: 'Stored, but outside the most recent — Capo is not reading this one.',
+
+    forget: 'Forget',
+    forgotten: 'Forgotten.',
+    forgetFailed: "Couldn't delete that. Try again.",
+    forgetNote:
+      'Forgetting takes the note out of Capo\'s head for good. The record that it once existed is kept, in case you ever want to understand why it answered a certain way.',
+
+    kind: {
+      company: 'Company',
+      job: 'Job',
+      worker: 'Crew',
+      preference: 'Preference',
+      fact: 'Fact',
+    },
+
+    reviewTitle: 'The night review',
+    lastReviewed: (when: string) => `Last reviewed: ${when}`,
+    neverReviewed: 'No review has run yet.',
+    reviewHint:
+      'Every night, in the small hours, Capo re-reads your conversation and decides whether anything is worth keeping for three months from now. Most nights there is nothing, and that is normal.',
+  },
+
   push: {
     title: 'Phone alerts',
     subtitle: 'Get an alert the moment someone says a task is finished — even with the app closed.',

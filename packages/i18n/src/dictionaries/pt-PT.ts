@@ -226,6 +226,45 @@ const dict: Catalog = {
     metaErrorLabel: (code: number) => `Código ${code}`,
   },
 
+  memory: {
+    title: 'Memória',
+    subtitle: 'O que o Capo se lembra de ti e da empresa — e como o fazer esquecer.',
+    profileLink: 'Ver o que o Capo se lembra',
+    explainer:
+      'O Capo não “aprende” sozinho: tudo o que ele sabe de uma conversa para a outra está escrito aqui, em frases soltas, e é isto que ele volta a ler antes de cada resposta. Se algo nesta lista estiver errado ou já não fizer sentido, apaga — deixa de contar imediatamente.',
+
+    companyHeading: 'Sobre a empresa',
+    companyHint: 'Toda a gente com conta nesta empresa vê estas.',
+    personalHeading: 'Sobre ti',
+    personalHint: 'Só tu vês estas. Ninguém mais na empresa lhes toca.',
+    empty: 'Ainda não há nada guardado.',
+
+    capTitle: 'O que o Capo leva consigo',
+    capHint: (carried: number, limit: number) =>
+      `O Capo leva as ${limit} notas mais recentes para cada conversa. Agora leva ${carried}.`,
+    storedNotCarried: 'Guardada, mas fora das mais recentes — o Capo não a está a ler.',
+
+    forget: 'Esquecer',
+    forgotten: 'Esquecido.',
+    forgetFailed: 'Não consegui apagar. Tenta outra vez.',
+    forgetNote:
+      'Esquecer tira a nota da cabeça do Capo para sempre. O registo de que existiu fica guardado, para se um dia quiseres perceber porque é que ele respondeu de certa maneira.',
+
+    kind: {
+      company: 'Empresa',
+      job: 'Obra',
+      worker: 'Equipa',
+      preference: 'Preferência',
+      fact: 'Facto',
+    },
+
+    reviewTitle: 'Revisão da noite',
+    lastReviewed: (when: string) => `Última revisão: ${when}`,
+    neverReviewed: 'Ainda não houve nenhuma revisão.',
+    reviewHint:
+      'Todas as noites, de madrugada, o Capo relê a vossa conversa e decide se há alguma coisa que valha a pena guardar para daqui a três meses. Na maioria das noites não há, e isso é normal.',
+  },
+
   push: {
     title: 'Alertas no telemóvel',
     subtitle: 'Recebe um aviso assim que alguém disser que acabou uma tarefa — mesmo com a app fechada.',

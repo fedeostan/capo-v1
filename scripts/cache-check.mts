@@ -49,6 +49,12 @@ import {
 import { buildSystemPrompt, managerStableBlocks } from '@capo/core/agent/context';
 import { buildWorkerSystemPrompt, workerStableBlocks } from '@capo/core/agent/worker-context';
 import { CACHED_ROLES, MIN_CACHEABLE_PREFIX_TOKENS, MODEL_IDS, getModel } from '@capo/core/models';
+import {
+  MEMORY_PROMPT_MAX_CHARS,
+  MEMORY_PROMPT_ROWS,
+  memoryVisibleTo,
+  selectPromptMemories,
+} from '@capo/core/memory/prompt';
 import { toAiTools } from '@capo/core/capabilities';
 import { toWorkerAiTools } from '@capo/core/capabilities/worker';
 import type { ToolContext } from '@capo/core/capabilities/types';
@@ -116,8 +122,18 @@ const db = stubDb({
   workers: { count: 7, error: null },
   tasks: { count: 12, error: null },
   proposals: { count: 1, error: null },
+  // Three rows covering the three cases #48 introduces: a company memory (the
+  // only shape that existed before 0037), one belonging to THIS manager, and one
+  // belonging to a colleague. The third is the assertion that matters — on the
+  // WhatsApp path the client is the service role, so RLS is bypassed and
+  // `selectPromptMemories`' filter is the only thing keeping a colleague's
+  // private note out of this manager's context.
   memories: {
-    data: [{ kind: 'preference', content: 'Prefere obras a norte', created_at: '2026-01-02T00:00:00Z' }],
+    data: [
+      { kind: 'preference', content: 'Prefere obras a norte', created_at: '2026-01-02T00:00:00Z', profile_id: null },
+      { kind: 'preference', content: 'Trata-me por tu', created_at: '2026-01-03T00:00:00Z', profile_id: 'profile-1' },
+      { kind: 'preference', content: 'SEGREDO DO COLEGA', created_at: '2026-01-04T00:00:00Z', profile_id: 'profile-2' },
+    ],
     error: null,
   },
   knowledge_documents: {
@@ -158,7 +174,17 @@ const db = stubDb({
 // different kind of volatility: the clock, the tenant's counts, the tenant's
 // rows, the individual PROFILE (issue #62 — a name above the line would
 // fragment the cached prefix per manager), and the conversation itself.
-const VOLATILE_MARKERS = ["Today's date", 'Construções Silva', 'Aníbal Gatsby', 'Prefere obras a norte'];
+const VOLATILE_MARKERS = [
+  "Today's date",
+  'Construções Silva',
+  'Aníbal Gatsby',
+  'Prefere obras a norte',
+  // A per-PROFILE memory (issue #48). Below the line for the same reason the
+  // manager's name is: above it, each manager of one company would warm a
+  // separate cached prefix, and every memory written at 03:00 would invalidate
+  // it — the textbook "breakpoint on content that changes every request".
+  'Trata-me por tu',
+];
 
 for (const locale of LOCALES) {
   const locales: LocaleContext = { user: locale, company: locale };
@@ -192,6 +218,15 @@ for (const locale of LOCALES) {
   check(
     `manager/${locale}: the language-directive carve-out survives the split intact`,
     cached.includes('manager_instruction'),
+  );
+  // Issue #48. A colleague's PERSONAL memory must appear in neither half. It is
+  // asserted here, in the cache check, because this is the only credential-free
+  // place the REAL prompt builder runs end to end — and because the WhatsApp
+  // path builds this prompt on the service role, where RLS is bypassed by design
+  // and this filter is the entire boundary.
+  check(
+    `manager/${locale}: a colleague's personal memory reaches NEITHER half`,
+    !cached.includes('SEGREDO DO COLEGA') && !uncached.includes('SEGREDO DO COLEGA'),
   );
 
   const tokens = estTokens(cached);
@@ -431,6 +466,83 @@ for (const locale of LOCALES) {
       JSON.stringify(sent.messages ?? []).includes('cache_control') === false,
     );
   }
+}
+
+// ── the memory ceiling (issue #48) ──────────────────────────────────────────
+//
+// The memory block lives in the UN-cached half, so it never invalidates a cached
+// prefix — but it is re-sent at FULL PRICE on every one of the up-to-twelve
+// requests a single manager message costs, and since #48 it grows on a nightly
+// schedule with nobody watching. The cap is the only thing bounding that, and
+// this is the credential-free place to pin it.
+{
+  const row = (i: number, profileId: string | null = null, content = `memory ${i}`) => ({
+    kind: 'fact',
+    content,
+    // Ascending timestamps, so `${i}` is also the recency order. Milliseconds
+    // rather than seconds, zero-padded to three digits: these are compared as
+    // STRINGS (they come out of Postgres as ISO text), and a two-digit seconds
+    // field silently stops being monotonic past 59.
+    created_at: `2026-01-01T00:00:00.${String(i).padStart(3, '0')}Z`,
+    profile_id: profileId,
+  });
+
+  // ── visibility ───────────────────────────────────────────────────────────
+  check('a company memory (null owner) is visible to everyone', memoryVisibleTo(row(1), 'profile-1'));
+  check(
+    'an ABSENT profile_id reads as company-wide',
+    memoryVisibleTo({ kind: 'fact', content: 'x', created_at: '2026-01-01T00:00:00Z' }, 'profile-1'),
+    'a deploy landing before 0037 must degrade, never hide every memory',
+  );
+  check('my own memory is visible to me', memoryVisibleTo(row(1, 'profile-1'), 'profile-1'));
+  check("a colleague's memory is NOT visible to me", !memoryVisibleTo(row(1, 'profile-2'), 'profile-1'));
+  check(
+    "a colleague's memory is not visible to a NULL reader either",
+    !memoryVisibleTo(row(1, 'profile-2'), null),
+    'the nightly pass reads with profileId=null and must see company memories only',
+  );
+
+  // ── the row cap ──────────────────────────────────────────────────────────
+  {
+    const many = Array.from({ length: MEMORY_PROMPT_ROWS * 3 }, (_, i) => row(i));
+    const { carried, dropped } = selectPromptMemories(many, 'profile-1');
+    eq('the row cap binds at MEMORY_PROMPT_ROWS', carried.length, MEMORY_PROMPT_ROWS);
+    eq('and everything else is reported dropped', dropped, MEMORY_PROMPT_ROWS * 2);
+    // NEWEST kept, OLDEST dropped: a memory written last night is likelier to be
+    // true than one written in March.
+    check(
+      'the NEWEST rows are the ones carried',
+      carried.every(r => Number(r.content.split(' ')[1]) >= MEMORY_PROMPT_ROWS * 2),
+      carried[0]?.content,
+    );
+    // …and rendered oldest-first, which is the order buildSystemPrompt has
+    // always produced.
+    check(
+      'the carried rows are rendered chronologically',
+      carried.every((r, i) => i === 0 || carried[i - 1].created_at <= r.created_at),
+    );
+  }
+
+  // ── the character cap ────────────────────────────────────────────────────
+  {
+    // Ten rows well under the row cap but far over the character budget.
+    const long = Array.from({ length: 10 }, (_, i) => row(i, null, 'x'.repeat(1000)));
+    const { carried } = selectPromptMemories(long, 'profile-1');
+    const chars = carried.reduce((n, r) => n + r.content.length + 1, 0);
+    check('the character cap binds before the row cap when rows are long', carried.length < 10, `${carried.length} rows`);
+    check(`and the carried block stays within ${MEMORY_PROMPT_MAX_CHARS} chars`, chars <= MEMORY_PROMPT_MAX_CHARS, `${chars} chars`);
+  }
+
+  // ── one enormous row ─────────────────────────────────────────────────────
+  // A single row over the whole budget must still be carried. Returning NOTHING
+  // would mean one bad row silently erasing all memory — and 0037's CHECK caps a
+  // row at 240 chars anyway, so this can only arise from pre-0037 history.
+  {
+    const { carried } = selectPromptMemories([row(1, null, 'y'.repeat(MEMORY_PROMPT_MAX_CHARS * 2))], 'profile-1');
+    eq('one over-budget row is still carried rather than erasing memory', carried.length, 1);
+  }
+
+  eq('no visible memories carries nothing', selectPromptMemories([], 'profile-1').carried.length, 0);
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

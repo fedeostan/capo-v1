@@ -752,6 +752,7 @@ export type Database = {
           created_at: string
           id: string
           kind: string
+          profile_id: string | null
           subject_id: string | null
           subject_type: string | null
           updated_at: string
@@ -763,6 +764,7 @@ export type Database = {
           created_at?: string
           id?: string
           kind: string
+          profile_id?: string | null
           subject_id?: string | null
           subject_type?: string | null
           updated_at?: string
@@ -774,6 +776,7 @@ export type Database = {
           created_at?: string
           id?: string
           kind?: string
+          profile_id?: string | null
           subject_id?: string | null
           subject_type?: string | null
           updated_at?: string
@@ -781,6 +784,60 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "memories_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "memories_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      memory_consolidations: {
+        Row: {
+          company_id: string
+          completed_at: string | null
+          covers_until_at: string | null
+          created_at: string
+          error: string | null
+          id: string
+          memories_written: number
+          messages_read: number
+          run_date: string
+          status: string
+        }
+        Insert: {
+          company_id: string
+          completed_at?: string | null
+          covers_until_at?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          memories_written?: number
+          messages_read?: number
+          run_date: string
+          status?: string
+        }
+        Update: {
+          company_id?: string
+          completed_at?: string | null
+          covers_until_at?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          memories_written?: number
+          messages_read?: number
+          run_date?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "memory_consolidations_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"

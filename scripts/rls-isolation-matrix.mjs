@@ -302,9 +302,38 @@ async function seedTenant(label) {
     }).select(),
     `conversation_summary(${label})`,
   );
-  await must(
-    admin.from('memories').insert({ company_id: companyId, kind: 'fact', content: `memory ${label}` }).select(),
+  // THREE memories, one per scope 0037 allows (issue #48). Before it, every
+  // memory belonged to the company and a colleague was indistinguishable from
+  // the owner — so the two personal rows are what make the new per-profile
+  // policy testable at all, exactly as the colleague's notification and push
+  // registration do for 0024 and 0026.
+  const companyMemory = await must(
+    admin.from('memories').insert({ company_id: companyId, kind: 'fact', content: `memory ${label}` }).select().single(),
     `memory(${label})`,
+  );
+  const ownMemory = await must(
+    admin.from('memories').insert({
+      company_id: companyId, profile_id: userId, kind: 'preference',
+      content: `own memory ${label} ${run}`,
+    }).select().single(),
+    `memory_own(${label})`,
+  );
+  const colleagueMemory = await must(
+    admin.from('memories').insert({
+      company_id: companyId, profile_id: colleagueId, kind: 'preference',
+      content: `colleague secret ${label} ${run}`,
+    }).select().single(),
+    `memory_colleague(${label})`,
+  );
+
+  // The nightly review's ledger (0037). Written by the service role in
+  // production too — the cron — and tenants have SELECT and nothing else.
+  await must(
+    admin.from('memory_consolidations').insert({
+      company_id: companyId, run_date: '2026-01-05', status: 'done',
+      covers_until_at: '2026-01-05T02:00:00Z', messages_read: 12, memories_written: 1,
+    }).select(),
+    `memory_consolidation(${label})`,
   );
   await must(
     admin.from('proposals').insert({
@@ -508,6 +537,7 @@ async function seedTenant(label) {
     conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
     photoPath, checkinAskId: checkinAsk.id, photoRequestId: photoRequest.id,
     colleagueId, ownNotificationId, colleagueNotificationId,
+    companyMemoryId: companyMemory.id, ownMemoryId: ownMemory.id, colleagueMemoryId: colleagueMemory.id,
     pushEndpoint, colleaguePushEndpoint,
     workerConversationId: workerConversation.id, workerMessageId: workerMessage.id, workerSecret,
   };
@@ -603,6 +633,7 @@ async function cleanupTenant(t) {
   await admin.from('task_dependencies').delete().in('task_id', t.taskIds);
   await companyEq(admin.from('tasks').delete());
   await companyEq(admin.from('memories').delete());
+  await companyEq(admin.from('memory_consolidations').delete());
   await companyEq(admin.from('transcription_vocab').delete());
   await companyEq(admin.from('conversations').delete());
   // Before workers: worker_checkins.worker_id is a FK.
@@ -639,7 +670,14 @@ async function runMatrix(self, other) {
   // own, so this check would report green on that exact regression. Both
   // tables get their own dedicated block below instead, asserting on
   // profile_id too. Read those before adding another per-profile table here.
-  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'task_assignees', 'worker_checkins', 'task_photos', 'worker_conversations', 'worker_messages', 'company_schedules', 'cron_runs']) {
+  //
+  // `memories` is a THIRD case and stays in the list on purpose: since 0037 it
+  // is company-scoped OR per-profile, row by row, and the seeded company-scoped
+  // row is what keeps `ownVisible` meaningful here. Its per-profile half is
+  // asserted by checkMemoryScope, which is where a dropped
+  // `profile_id = auth.uid()` clause would fail. This loop cannot see that
+  // regression — a colleague's memory carries the caller's own company_id.
+  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'task_assignees', 'worker_checkins', 'task_photos', 'worker_conversations', 'worker_messages', 'company_schedules', 'cron_runs', 'memory_consolidations']) {
     const { data, error } = await db.from(table).select('*');
     const rows = data ?? [];
     const ownKey = table === 'companies' ? 'id' : 'company_id';
@@ -2155,6 +2193,188 @@ async function checkWorkerMenuScope(attacker, victim) {
  * silently breaking the screen. The positive control is what makes the three
  * refusals mean something.
  */
+/**
+ * Memory scope (0037, issue #48) — the SECOND per-profile relation in the
+ * schema, and the first one that a model writes to unattended.
+ *
+ * Until 0037 every memory belonged to the company and the policies 0007
+ * generated in a loop were correct. A memory can now belong to ONE PROFILE, and
+ * a colleague is in your company — so the company predicate alone is no longer a
+ * boundary. This is the same trap `notifications` (0024) has, with a worse
+ * payoff: a memory is injected into the manager's agent context on every single
+ * turn, so a leaked one is not a row somebody could go and find, it is a
+ * sentence Capo reads out.
+ *
+ * ── THE POSITIVE CONTROL IS NOT OPTIONAL HERE ──────────────────────────────
+ * Every other assertion in this file is a REFUSAL, so a policy that denied
+ * everybody would pass all of them — and for this table "denied everybody" has a
+ * plausible failure mode: `profile_id = auth.uid()` without the `profile_id is
+ * null or` in front of it hides every company memory ever written, silently, and
+ * Capo simply forgets the business. So the owner's own reads and their own
+ * "forget" are asserted too.
+ */
+async function checkMemoryScope(self, other) {
+  const db = self.client;
+  const L = self.label;
+
+  // ── POSITIVE CONTROL: the two scopes the owner MUST see ──────────────────
+  {
+    const { data, error } = await db.from('memories').select('id, profile_id').eq('active', true);
+    const ids = new Set((data ?? []).map(r => r.id));
+    check(
+      `${L}: the owner reads their company's shared memories (positive control)`,
+      !error && ids.has(self.companyMemoryId),
+      error ? error.message : `${ids.size} rows`,
+    );
+    check(
+      `${L}: the owner reads their OWN personal memory (positive control)`,
+      !error && ids.has(self.ownMemoryId),
+      error ? error.message : `${ids.size} rows`,
+    );
+
+    // ── THE ATTACK THE COLLEAGUE EXISTS FOR ────────────────────────────────
+    check(
+      `${L}: a colleague's PERSONAL memory is invisible to the owner`,
+      !ids.has(self.colleagueMemoryId),
+      ids.has(self.colleagueMemoryId) ? 'LEAKED — per-profile scoping broken' : 'hidden',
+    );
+    // And the ordinary tenant boundary, for completeness.
+    check(
+      `${L}: another company's memories are invisible`,
+      !ids.has(other.companyMemoryId) && !ids.has(other.ownMemoryId),
+      'hidden',
+    );
+  }
+
+  // ── forgetting: the owner's own row ──────────────────────────────────────
+  // POSITIVE CONTROL for the column-scoped UPDATE grant 0037 introduces. If
+  // `active` were left out of that grant, /perfil/memoria's Forget button would
+  // silently do nothing and the screen would still say "Forgotten."
+  //
+  // Restored immediately, because later checks in this file read this row.
+  {
+    const { data, error } = await db
+      .from('memories').update({ active: false }).eq('id', self.ownMemoryId).select('id');
+    check(
+      `${L}: the owner can forget their own memory (positive control)`,
+      !error && (data ?? []).length === 1,
+      error ? `${error.code ?? 'err'}: ${error.message}` : `${(data ?? []).length} rows`,
+    );
+    await admin.from('memories').update({ active: true }).eq('id', self.ownMemoryId);
+  }
+
+  // ── forgetting somebody else's ───────────────────────────────────────────
+  // RLS filters rows, it does not raise, so a blocked UPDATE returns no error at
+  // all. The victim row's own state is the only truthful signal — the same
+  // reasoning as attack 21 on notifications.
+  {
+    await db.from('memories').update({ active: false }).eq('id', self.colleagueMemoryId);
+    const { data: after } = await admin
+      .from('memories').select('active').eq('id', self.colleagueMemoryId).single();
+    check(
+      `${L}: forgetting a COLLEAGUE's personal memory blocked`,
+      after?.active === true,
+      after?.active === true ? 'no row matched' : 'ACCEPTED — per-profile scoping broken',
+    );
+  }
+  {
+    await db.from('memories').update({ active: false }).eq('id', other.companyMemoryId);
+    const { data: after } = await admin
+      .from('memories').select('active').eq('id', other.companyMemoryId).single();
+    check(
+      `${L}: forgetting another company's memory blocked`,
+      after?.active === true,
+      after?.active === true ? 'no row matched' : 'ACCEPTED — boundary broken',
+    );
+  }
+
+  // ── filing a memory AGAINST a colleague ──────────────────────────────────
+  // The INSERT policy's second predicate. `memories` must keep an INSERT policy
+  // (the `remember` tool runs on the tenant's own client on the web), so unlike
+  // notifications the predicate is what does the work. Without it a manager
+  // could put attacker-chosen text into a colleague's agent context — read out
+  // by Capo, in the colleague's own conversation, under the app's own chrome.
+  {
+    const { error } = await db.from('memories').insert({
+      company_id: self.companyId, profile_id: self.colleagueId,
+      kind: 'preference', content: 'planted in a colleague context',
+    });
+    check(
+      `${L}: filing a memory against a COLLEAGUE blocked`,
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — insert predicate missing',
+    );
+  }
+
+  // ── the cross-company FK trigger ─────────────────────────────────────────
+  // A row whose company_id is honest but whose profile_id names ANOTHER
+  // tenant's user satisfies neither select policy, so it would be a row naming
+  // a stranger that nobody can see and therefore nobody can find. RLS cannot
+  // catch it — it only ever checks the row's own company_id — so 0037's
+  // BEFORE INSERT trigger is the whole defence. Same seam as 0024's.
+  {
+    const { error } = await db.from('memories').insert({
+      company_id: self.companyId, profile_id: other.userId,
+      kind: 'preference', content: 'cross-company profile_id',
+    });
+    check(
+      `${L}: a memory pointing at another tenant's profile blocked`,
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — FK guard missing',
+    );
+  }
+
+  // ── the column grant ─────────────────────────────────────────────────────
+  // 0037 revokes the table-wide grant `memories` has carried since 0001 and
+  // re-grants (content, active, updated_at). The policy alone would pass this —
+  // it is the attacker's own row, in their own company — so this is purely a
+  // column-grant check. If it leaks, a manager can move their own memory into a
+  // colleague's private scope by hand.
+  {
+    const { error } = await db
+      .from('memories').update({ profile_id: self.colleagueId }).eq('id', self.companyMemoryId);
+    check(
+      `${L}: rewriting a memory's OWNER blocked at the grant layer`,
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — column grant leaked',
+    );
+  }
+  {
+    const { error } = await db
+      .from('memories').update({ kind: 'company' }).eq('id', self.companyMemoryId);
+    check(
+      `${L}: rewriting a memory's KIND blocked at the grant layer`,
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — column grant leaked',
+    );
+  }
+
+  // ── the nightly ledger ───────────────────────────────────────────────────
+  // SELECT and nothing else, the cron_runs posture. A run row a tenant could
+  // write is not evidence of anything — and a forged watermark would make the
+  // next night skip a window of the conversation entirely.
+  {
+    const { error } = await db.from('memory_consolidations').insert({
+      company_id: self.companyId, run_date: '2026-02-02', status: 'done',
+      covers_until_at: '2030-01-01T00:00:00Z',
+    });
+    check(
+      `${L}: forging a memory_consolidations run blocked`,
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a tenant can skip its own night',
+    );
+  }
+  {
+    const { data } = await db
+      .from('memory_consolidations').select('company_id').eq('company_id', other.companyId);
+    check(
+      `${L}: another company's consolidation runs are invisible`,
+      (data ?? []).length === 0,
+      `${(data ?? []).length} rows`,
+    );
+  }
+}
+
 async function checkSendHistoryScope(self, other) {
   const db = self.client;
   const L = self.label;
@@ -2437,6 +2657,12 @@ try {
   // so "returns nothing to anybody" would pass every refusal in this file.
   await checkSendHistoryScope(tenantA, tenantB);
   await checkSendHistoryScope(tenantB, tenantA);
+
+  // Memory scope (0037). Runs in both directions like every other paired check,
+  // so a policy that happened to work for whichever tenant was seeded first is
+  // not mistaken for a correct one.
+  await checkMemoryScope(tenantA, tenantB);
+  await checkMemoryScope(tenantB, tenantA);
   await runOrphanAttack(orphan, tenantB);
 
   // Positive controls are an ALLOW, not a refusal, so they don't belong in

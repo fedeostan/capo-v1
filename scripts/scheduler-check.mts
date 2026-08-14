@@ -37,7 +37,13 @@ import {
 // prettier would put it somewhere neither route naturally reads. The module is
 // pure enough to load here: it touches no env at module scope and opens no
 // connection, so this check still needs no credentials and no network.
-import { SEND_WINDOW_HOURS, sendWindowEnd, withinSendWindow } from '../apps/web/lib/cron';
+import {
+  CONSOLIDATE_HOUR,
+  CONSOLIDATE_WINDOW_HOURS,
+  SEND_WINDOW_HOURS,
+  sendWindowEnd,
+  withinSendWindow,
+} from '../apps/web/lib/cron';
 // Same reasoning, and since #51 part B this one is IMPORTED rather than
 // restated: the send hour stopped being a module-local const in a route file
 // and became data, with its defaults and its legal range in this module. A copy
@@ -638,6 +644,71 @@ check(
   'the welcome window is wide enough that cron drift cannot close it',
   WELCOME_WINDOW_HOURS >= 4,
   `${WELCOME_WINDOW_HOURS} hours`,
+);
+
+// ── the nightly memory review (issue #48) ───────────────────────────────────
+// The FOURTH shape, and the first that sends nothing to anybody. It still has
+// an hour gate, because reviewing a day only makes sense once the day has
+// finished — but the gate is four Lisbon hours wide and, crucially, the pass
+// carries a WATERMARK (memory_consolidations.covers_until_at), so a night it
+// misses is covered by the next one. That is what makes an hour gate acceptable
+// here at all: the failure mode is lateness, not the silence that was eleven
+// minutes from taking the crew's morning on 13 August 2026.
+//
+// Unlike WELCOME_HOUR above, these are IMPORTED rather than re-declared: they
+// live in lib/cron.ts precisely so this file and the route cannot drift.
+eq('the nightly review window ends at Lisbon 04', sendWindowEnd(CONSOLIDATE_HOUR, CONSOLIDATE_WINDOW_HOURS), 4);
+check(
+  'the nightly review may run at its target hour',
+  withinSendWindow(CONSOLIDATE_HOUR, CONSOLIDATE_HOUR, CONSOLIDATE_WINDOW_HOURS),
+);
+check(
+  'the nightly review still runs two hours late',
+  withinSendWindow(4, CONSOLIDATE_HOUR, CONSOLIDATE_WINDOW_HOURS),
+);
+// The direction the gate exists for: never while the manager is using Capo.
+check('no nightly review at 05:00', !withinSendWindow(5, CONSOLIDATE_HOUR, CONSOLIDATE_WINDOW_HOURS));
+check('no nightly review at 06:00', !withinSendWindow(6, CONSOLIDATE_HOUR, CONSOLIDATE_WINDOW_HOURS));
+check('no nightly review at 14:00', !withinSendWindow(14, CONSOLIDATE_HOUR, CONSOLIDATE_WINDOW_HOURS));
+check('no nightly review at 01:00', !withinSendWindow(1, CONSOLIDATE_HOUR, CONSOLIDATE_WINDOW_HOURS));
+// The window must close before the EARLIEST hour a manager may aim a send at,
+// or a company could be mid-consolidation while its crew is being messaged —
+// two jobs contending for the same 300-second ceiling, one of them paid. This
+// assertion is not decoration: it is what caught the first version of this
+// window, which ran 02–05 and touched MIN_SEND_HOUR exactly.
+check(
+  'the nightly review closes before the earliest legal send hour',
+  sendWindowEnd(CONSOLIDATE_HOUR, CONSOLIDATE_WINDOW_HOURS) < MIN_SEND_HOUR,
+  `review ends at ${sendWindowEnd(CONSOLIDATE_HOUR, CONSOLIDATE_WINDOW_HOURS)}, sends may start at ${MIN_SEND_HOUR}`,
+);
+// The window never wraps past midnight, for the same reason the sends' never
+// does — lisbon_today() would roll over and the (company_id, run_date) claim
+// would read as a fresh unclaimed night.
+check(
+  'the nightly review window cannot wrap past midnight',
+  CONSOLIDATE_HOUR + CONSOLIDATE_WINDOW_HOURS - 1 <= 23,
+  `${CONSOLIDATE_HOUR}..${sendWindowEnd(CONSOLIDATE_HOUR, CONSOLIDATE_WINDOW_HOURS)}`,
+);
+// Wide enough that Vercel's measured 33–49 minutes of dispatch drift cannot
+// close it. Asserted with the same >= 4 shape the welcome sweep uses… except
+// this one is bounded ABOVE by MIN_SEND_HOUR, so the honest floor here is 2.
+check(
+  'the nightly review window survives more than an hour of cron drift',
+  CONSOLIDATE_WINDOW_HOURS >= 2,
+  `${CONSOLIDATE_WINDOW_HOURS} hours`,
+);
+
+const consolidateEntries = crons.filter(c => c.path === '/api/cron/consolidate');
+eq('/api/cron/consolidate is scheduled exactly once', consolidateEntries.length, 1);
+// An HOURLY HEARTBEAT AT :00, like the two hour-gated send routes and unlike the
+// welcome sweep. `0 * * * *` covers every Lisbon hour in both DST offsets by
+// construction, puts four ticks inside the window, and satisfies the
+// ":00, never :30" rule with nothing left to compute by hand.
+eq('/api/cron/consolidate is an hourly heartbeat', consolidateEntries[0]?.schedule, '0 * * * *');
+check(
+  '/api/cron/consolidate fires at :00, never :30',
+  /^0 /.test(consolidateEntries[0]?.schedule ?? ''),
+  consolidateEntries[0]?.schedule ?? 'missing',
 );
 
 // ── report ──────────────────────────────────────────────────────────────────

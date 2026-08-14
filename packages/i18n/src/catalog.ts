@@ -240,6 +240,58 @@ export interface Catalog {
     metaErrorLabel(code: number): string;
   };
 
+  /**
+   * Perfil → Memória (issue #48): what Capo remembers, and how to make it
+   * forget.
+   *
+   * This screen exists because memory the manager cannot inspect is a trust
+   * problem, not a feature. Everything here is written to be readable by
+   * somebody who has never heard the words "context window" — the explainer is
+   * the screen's main job, and the list is the evidence for it.
+   */
+  memory: {
+    title: string;
+    subtitle: string;
+    /** The row on /perfil that leads here. */
+    profileLink: string;
+    /** One paragraph teaching what "memory" means here. */
+    explainer: string;
+
+    companyHeading: string;
+    companyHint: string;
+    personalHeading: string;
+    personalHint: string;
+    empty: string;
+
+    /**
+     * The cap, said out loud rather than applied silently. A screen that hid
+     * the fact that older notes stop being carried would make Capo look
+     * forgetful for no visible reason.
+     */
+    capTitle: string;
+    capHint(carried: number, limit: number): string;
+    storedNotCarried: string;
+
+    forget: string;
+    forgotten: string;
+    forgetFailed: string;
+    /** What "forget" actually does — marked, not erased. */
+    forgetNote: string;
+
+    /**
+     * Keyed by the `kind` CHECK in 0001, so adding a kind without adding copy
+     * in all three dictionaries is a tsc error — the same device
+     * notifications.kind uses.
+     */
+    kind: Record<'company' | 'job' | 'worker' | 'preference' | 'fact', string>;
+
+    /** The night shift's liveness signal. */
+    reviewTitle: string;
+    lastReviewed(when: string): string;
+    neverReviewed: string;
+    reviewHint: string;
+  };
+
   /** The /perfil opt-in card for lock-screen alerts. Every state is spelled
    *  out because the failure modes here are all SILENT: an iPhone that was
    *  never installed, and a permission that was denied once and can never be
