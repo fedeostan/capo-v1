@@ -477,6 +477,19 @@ export default async function PerfilPage({
           </Link>
         </Card>
 
+        {/* Third in the "what Capo is doing on its own" run, and the newest
+            (issue #48). The inbox is what Capo told YOU, Automations is what it
+            told the CREW, and this is what it decided to REMEMBER — including
+            what it wrote down by itself at 03:00. It sits here rather than
+            inside the Language card because it is not a setting: it is a list of
+            facts about the manager and his company that he can delete. */}
+        <Card title={t.memory.title}>
+          <p className="text-xs text-zinc-500">{t.memory.subtitle}</p>
+          <Link href="/perfil/memoria" className="inline-block text-sm text-orange-600 underline">
+            {t.memory.profileLink}
+          </Link>
+        </Card>
+
         <Card title={t.profile.subscription}>
           <p className="text-sm">
             {!billing.enabled

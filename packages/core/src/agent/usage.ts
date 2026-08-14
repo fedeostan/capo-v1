@@ -43,6 +43,12 @@ export type UsageSurface =
   | 'manager_chat'
   | 'worker_chat'
   | 'summarizer'
+  // The nightly memory review (issue #48). Its own surface rather than sharing
+  // 'summarizer': the two run on different models, on different schedules, and
+  // answer different questions about the money — "what does compressing a
+  // conversation cost" and "what does the night shift cost" are the two figures
+  // most likely to be tuned independently.
+  | 'consolidation'
   | 'planner'
   | 'translation'
   | 'transcription'

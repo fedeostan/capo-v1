@@ -16,13 +16,16 @@
 //      line in pricing.ts would make the whole bill appear to fall.
 //   3. THE CACHE MULTIPLIERS DRIFTING from the 1.25x / 0.1x that cache.ts's
 //      whole break-even argument rests on.
-//   4. THE SURFACE LIST DRIFTING from the CHECK constraint in migration 0032.
+//   4. THE SURFACE LIST DRIFTING from the ai_usage `surface` CHECK constraint.
 //      Two edits are required and only one is enforced by tsc; the other shows
-//      up as a surface that silently records nothing.
+//      up as a surface that silently records nothing. Since #48 that constraint
+//      can be REDEFINED by a later migration (0037 adds 'consolidation'), so the
+//      check below reads the newest migration that declares it rather than 0032
+//      alone — reading 0032 would be an assertion about history.
 //
 // Run with `pnpm cost-check`. Exit 0 = green, 1 = at least one failure.
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -209,12 +212,33 @@ eq('the write multiplier cache.ts argues from is 1.25', ANTHROPIC_CACHE_WRITE_MU
 // rejected and the rejection is deliberately swallowed.
 {
   const here = dirname(fileURLToPath(import.meta.url));
-  const sql = readFileSync(join(here, '..', 'supabase', 'migrations', '0032_ai_usage.sql'), 'utf8');
-  const block = /surface text not null check \(surface in \(([\s\S]*?)\)\)/.exec(sql);
-  check('0032 declares a surface CHECK constraint', block != null);
+  const migrations = join(here, '..', 'supabase', 'migrations');
+  const sql = readFileSync(join(migrations, '0032_ai_usage.sql'), 'utf8');
 
-  if (block) {
-    const inSql = [...block[1].matchAll(/'([a-z_]+)'/g)].map(m => m[1]).sort();
+  // ── the CHECK is read from the LAST migration that redefines it ───────────
+  // 0032 declares the constraint inline on the column; a later migration adding
+  // a surface must DROP and re-ADD it (0037 is the first, for #48's nightly
+  // review). Reading 0032 alone would have made this assertion a statement about
+  // history rather than about the live schema — it would go green while the
+  // deployed constraint said something else entirely, which is the exact
+  // silent-drift failure this section exists to catch.
+  //
+  // So: scan every migration for either shape, in filename order, and assert
+  // against the newest. The alphabetical sort is safe while the files are
+  // zero-padded four-digit numbers, which they have been since 0001.
+  const SURFACE_RE = /check \(surface in \(([\s\S]*?)\)\)/g;
+  let latestSurfaceSql: { file: string; body: string } | null = null;
+  for (const file of readdirSync(migrations).filter(f => f.endsWith('.sql')).sort()) {
+    const body = readFileSync(join(migrations, file), 'utf8');
+    if (!/\bai_usage\b/.test(body)) continue;
+    const matches = [...body.matchAll(SURFACE_RE)];
+    const last = matches[matches.length - 1];
+    if (last) latestSurfaceSql = { file, body: last[1] };
+  }
+  check('a migration declares the ai_usage surface CHECK', latestSurfaceSql != null);
+
+  if (latestSurfaceSql) {
+    const inSql = [...latestSurfaceSql.body.matchAll(/'([a-z_]+)'/g)].map(m => m[1]).sort();
     // Written out rather than derived from the type: a union is erased at
     // runtime, so listing it here is what makes the two sides comparable at
     // all. Adding a surface therefore fails HERE until all three are updated.
@@ -222,12 +246,17 @@ eq('the write multiplier cache.ts argues from is 1.25', ANTHROPIC_CACHE_WRITE_MU
       'manager_chat',
       'worker_chat',
       'summarizer',
+      'consolidation',
       'planner',
       'translation',
       'transcription',
       'vocab_extraction',
     ];
-    eq('0032 CHECK lists exactly the UsageSurface union', inSql.join(','), [...inTs].sort().join(','));
+    eq(
+      `${latestSurfaceSql.file} CHECK lists exactly the UsageSurface union`,
+      inSql.join(','),
+      [...inTs].sort().join(','),
+    );
     check('there is no "briefing" surface (the daily sends call no model)', !inSql.includes('briefing'));
   }
 

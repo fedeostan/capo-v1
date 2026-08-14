@@ -80,9 +80,9 @@ jobs:
       # the quietest in the repo: reading `inputTokens.total` instead of
       # `.noCache` double-bills every cached prompt token, producing a cost
       # report that is plausible, too high, and impossible to falsify by
-      # looking. It also pins the surface list against migration 0032's CHECK
-      # constraint, and refuses a model with no price (which would otherwise
-      # make the whole bill appear to fall).
+      # looking. It also pins the surface list against the NEWEST migration that
+      # declares ai_usage's `surface` CHECK constraint, and refuses a model with
+      # no price (which would otherwise make the whole bill appear to fall).
       - name: Cost ledger check
         run: pnpm cost-check
 
@@ -94,3 +94,13 @@ jobs:
       # just a number.
       - name: Billing trial check
         run: pnpm billing-check
+
+      # The gate between the nightly memory review's model output and the
+      # database (issue #48). Everything that gets through is injected into every
+      # future system prompt for that company and is never re-checked, so a
+      # defect here is not a wrong answer once — it is a wrong answer for ever,
+      # at a cost per message, with no error anywhere. Covers the name guard
+      # (issue #62's failure, re-armed for memories), deduplication against both
+      # history and the run itself, and the per-run write cap.
+      - name: Memory consolidation check
+        run: pnpm memory-check

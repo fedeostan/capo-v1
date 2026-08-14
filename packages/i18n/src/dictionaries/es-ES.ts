@@ -225,6 +225,45 @@ const dict: Catalog = {
     metaErrorLabel: (code: number) => `Código ${code}`,
   },
 
+  memory: {
+    title: 'Memoria',
+    subtitle: 'Lo que Capo recuerda de ti y de la empresa — y cómo hacer que lo olvide.',
+    profileLink: 'Ver lo que Capo recuerda',
+    explainer:
+      'Capo no “aprende” solo: todo lo que sabe de una conversación a otra está escrito aquí, en frases sueltas, y es esto lo que vuelve a leer antes de cada respuesta. Si algo de esta lista está mal o ya no tiene sentido, bórralo — deja de contar al momento.',
+
+    companyHeading: 'Sobre la empresa',
+    companyHint: 'Todas las personas con cuenta en esta empresa las ven.',
+    personalHeading: 'Sobre ti',
+    personalHint: 'Solo tú las ves. Nadie más en la empresa las toca.',
+    empty: 'Todavía no hay nada guardado.',
+
+    capTitle: 'Lo que Capo lleva consigo',
+    capHint: (carried: number, limit: number) =>
+      `Capo lleva las ${limit} notas más recientes a cada conversación. Ahora lleva ${carried}.`,
+    storedNotCarried: 'Guardada, pero fuera de las más recientes — Capo no la está leyendo.',
+
+    forget: 'Olvidar',
+    forgotten: 'Olvidado.',
+    forgetFailed: 'No he podido borrarlo. Inténtalo otra vez.',
+    forgetNote:
+      'Olvidar saca la nota de la cabeza de Capo para siempre. El registro de que existió se conserva, por si algún día quieres entender por qué respondió de cierta manera.',
+
+    kind: {
+      company: 'Empresa',
+      job: 'Obra',
+      worker: 'Equipo',
+      preference: 'Preferencia',
+      fact: 'Hecho',
+    },
+
+    reviewTitle: 'Revisión de la noche',
+    lastReviewed: (when: string) => `Última revisión: ${when}`,
+    neverReviewed: 'Todavía no ha habido ninguna revisión.',
+    reviewHint:
+      'Cada noche, de madrugada, Capo relee vuestra conversación y decide si hay algo que merezca la pena guardar para dentro de tres meses. La mayoría de las noches no lo hay, y eso es normal.',
+  },
+
   push: {
     title: 'Alertas en el móvil',
     subtitle: 'Recibe un aviso en cuanto alguien diga que ha acabado una tarea — incluso con la app cerrada.',

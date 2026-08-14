@@ -127,7 +127,12 @@ and say what the alternative would be — he is the one who decides.
   orphan for the 0021 null-guard trap, with a positive control), the schedule
   (`company_schedules`: writing another company's, switching off their
   briefing, forging `updated_by`, plus an owner-can-still-save control), the
-  run log (`cron_runs`: forging or rewriting a run), and the
+  run log (`cron_runs`: forging or rewriting a run), memory scope
+  (`checkMemoryScope`, #48 — the SECOND per-profile relation: a colleague's
+  personal memory read, forgotten or forged, plus the cross-company
+  `profile_id`, the column grant, the nightly ledger, and a positive control,
+  because a policy that hid every COMPANY memory would pass every refusal in
+  this file while making Capo forget the business), and the
   Supabase Storage surface — signing, downloading, listing and writing another
   tenant's task photos, and the worker thread a tenant may read but never
   write). Since #22 it also carries `checkWorkerTextIsolation`, the one check in
@@ -154,13 +159,23 @@ and say what the alternative would be — he is the one who decides.
   provider through a stubbed global `fetch` — that `cache_control` lands on the
   wire where we think it does. Credential-free, so it runs in CI
   (`pnpm cache-check`).
+- `scripts/memory-check.mts` — the gate between the nightly memory review's
+  model output and the database (#48): the name guard, deduplication against
+  both stored history and the run itself, the per-run write cap, and the length
+  cap. Everything that gets through is injected into every future system prompt
+  for that company and is never re-checked, so a defect there is a wrong answer
+  for ever rather than once. Credential-free, in CI (`pnpm memory-check`). The
+  READ-side cap and the per-profile visibility filter live in `cache-check`
+  instead, beside the prompt they bound.
 - `scripts/cost-check.mts` — the token ledger and the rate card (#53). Pins the
   provider-payload → four-bucket mapping against hand-written
   `LanguageModelV4Usage` shapes (the double-counting bug is silent and
   plausible), asserts every model in `MODEL_IDS` has a price, checks the
   cache multipliers against the 1.25×/0.1× `cache.ts` argues from, and reads
-  `0032_ai_usage.sql` to assert its `surface` CHECK matches the `UsageSurface`
-  union. Credential-free, so it runs in CI (`pnpm cost-check`).
+  the NEWEST migration that declares `ai_usage`'s `surface` CHECK (0032,
+  redefined by 0037) to assert it matches the `UsageSurface` union — reading
+  0032 alone would be an assertion about history rather than about the live
+  schema. Credential-free, so it runs in CI (`pnpm cost-check`).
 - `scripts/agent-smoke.mts` — drives `handleInbound()` against a throwaway
   seeded tenant. Needs real API keys, so it is a manual gate
   (`pnpm agent-smoke`).
@@ -1198,6 +1213,154 @@ Structural invariants (do not regress):
     path deletes or rewrites a stored summary on rename — a summary is a record
     of what was said, and rewriting history to fix a display bug is the worse
     trade. The precedence rule is what makes the stale copy harmless.
+- **Memory has THREE tiers now, an OWNER, and a CEILING** (`memories.profile_id`,
+  `memory_consolidations`, migration `0037`, issue #48). Before it there were two
+  thin tiers — a rolling summary and a company-wide `memories` table — and the
+  table was injected WHOLESALE into the system prompt on every turn. Both facts
+  had to change together: the nightly pass below writes memories on a SCHEDULE,
+  so growth became automatic, and an automatic growth curve on a block re-sent
+  with every message is a cost bug and a #58 cache bug at the same time.
+
+  **Whose memory it is, and whose it is ABOUT, are different questions.**
+  `subject_type`/`subject_id` (0001) say what a memory is about — a job, a
+  worker. `profile_id` (0037) says who it belongs to, and **NULL means the whole
+  company**, which is what every pre-0037 row is. Do not give it a default and do
+  not invert the null: the whole reason no backfill was needed is that the absent
+  value is the inherit case, exactly as `workers.language` is.
+  A memory ABOUT a worker still belongs to the company — one that belonged to a
+  single manager would be invisible to the colleague who most needs it.
+  - **Per-profile rows need PER-PROFILE RLS**, and this is the schema's SECOND
+    such relation after `notifications` (0024). All three policies carry
+    `company_id = current_company_id() AND (profile_id is null OR profile_id =
+    auth.uid())`, and the company half **must stay first in the OR** — it is what
+    keeps every pre-0037 row readable. 0007's company-only triple was DROPPED
+    rather than added to: two permissive policies on one command are ORed, so
+    leaving the wider one in place would have left it in force and made the
+    narrower one decorative.
+  - **The INSERT policy's second predicate is load-bearing**, unlike
+    `notifications`, which solves the same problem by having no INSERT policy at
+    all. `remember` runs on the tenant's own client on the web, so an INSERT
+    policy is unavoidable; without the predicate a manager could file a memory
+    AGAINST a colleague — attacker-chosen text that Capo then reads out inside
+    that colleague's own conversation.
+  - **`memories` lost its Supabase default `grant all`** (carried since 0001,
+    never revoked). Column grants now: INSERT `(company_id, profile_id, kind,
+    content, subject_type, subject_id)`, UPDATE `(content, active, updated_at)`.
+    `content` is there because `runTranslationBatch` rewrites it on the tenant's
+    own client; `active` because "forget this" does. `active` is absent from
+    INSERT so a memory cannot be born already forgotten.
+  - **The cross-company FK trigger is the only defence against a row whose
+    `company_id` is honest and whose `profile_id` is a stranger's.** Such a row
+    satisfies NEITHER select policy, so it names another tenant's user and no
+    tenant can find it. Same seam as 0024's.
+  - **There is still no DELETE policy. "Forget" sets `active = false`**, uniform
+    with the translation undo (0015) and a read notification (0024). Nothing on
+    the request path reads an inactive row, so the promise to the manager is
+    total; the row survives so "why did Capo say that in March" stays answerable.
+
+  **The ceiling is a READ-time cap, and it is the bound that matters**
+  (`packages/core/src/agent/memory/prompt-memories.ts`): 40 rows AND 6000
+  characters, newest first, then reversed so the rendered block stays
+  chronological. Four things about it:
+  - **Read-time, not write-time, on purpose.** A write cap means refusing to
+    record something true and makes the nightly pass' behaviour depend on how
+    full the table already is; a read cap means recording it and choosing what to
+    CARRY. The second is reversible and the manager can watch it working.
+  - **`select('*')` + a TypeScript filter, never `.eq('profile_id', …)`.**
+    `profile_id` is a column 0037 adds, and naming it in the query makes a deploy
+    landing first answer 42703 on EVERY turn. An absent field reads as
+    `undefined`, which `memoryVisibleTo` treats as company-wide — i.e. the
+    pre-0037 product. Same rule as the view-extension one below.
+  - **On the WhatsApp path that filter is the ONLY boundary.** No `auth.uid()`
+    there, so RLS is bypassed by design and `selectPromptMemories` is what keeps
+    a colleague's private note out of this manager's context. `pnpm cache-check`
+    drives the real prompt builder against a colleague-owned fixture for exactly
+    that reason.
+  - **Memories stay BELOW the cache breakpoint**, in the uncached half. Above it
+    they would be the textbook "breakpoint on content that changes every request"
+    — a nightly write invalidating the cached prefix — and a per-profile row up
+    there would fragment it per manager, the trap `loadManagerName` (#62) had to
+    avoid. `cache-check` asserts both halves.
+
+  **The nightly consolidation pass is a SECOND agent with a different job**
+  (`agent/memory/consolidate.ts`, `api/cron/consolidate`). Seven things:
+  - **It reads `messages` and nothing else. Never `worker_messages`.** This is
+    #22's boundary extended to its longest-lived surface: a worker's words must
+    not reach the manager's context, and a memory written from one would be that
+    rule broken permanently rather than for one turn. The separate-tables design
+    (0027) is what makes it structural — there is no query here that could reach
+    a worker's text. `role='event'` rows are excluded too, for a different
+    reason: since #47 they are several a day of our own copy about data already
+    in `tasks`, so consolidating them is paying a model to consider writing down
+    what the database already holds.
+  - **It writes MEMORIES, not prose**, which is what makes the manager's
+    see-and-forget screen possible at all. A paragraph cannot be deleted a
+    sentence at a time.
+  - **It NEVER writes a name, and that is enforced in CODE.**
+    `mentionsForbiddenName` rejects any candidate containing a profile
+    `full_name` or `companies.name` — full string, plus profile-name tokens of
+    four characters or more, accent- and case-insensitively. Workers are
+    deliberately ABSENT from the list: "Zé is slow on tiling" is a legitimate
+    `kind: 'worker'` memory. Over-rejecting costs one memory; under-rejecting is
+    #62 with a longer fuse, because unlike a summary nothing ever merges a
+    memory forward and launders the old name out.
+  - **"Nothing tonight" is an explicit answer**, not an absence
+    (`nothing_worth_keeping`). Taken from Mem0's NOOP branch; a reviewer that
+    must produce something will produce something, and most nights genuinely
+    hold nothing durable.
+  - **It CANNOT deactivate a memory and CANNOT write a personal one.** The first
+    is scope (a model retiring the manager's notes unattended at 03:00 is its own
+    feature); the second is a FINDING — `conversations` is per company and
+    `messages` carries no author, so at 03:00 there is no honest way to say whose
+    preference something was. Personal memories come only from `remember` (which
+    has `ctx.userId`) and the manager's own screen.
+  - **The claim is `unique (company_id, run_date)` and the WATERMARK is
+    `covers_until_at`, stamped only by a run that SUCCEEDED.** The claim makes
+    the three in-window ticks no-ops by construction (23505); the watermark makes
+    a skipped, failed or out-of-window night simply covered by the next one. Claim
+    BEFORE the model call with the watermark null and stamp after — the reverse
+    order marks a window consumed that was never read, the one failure here that
+    loses information. A too-few-messages run deliberately does NOT advance it.
+  - **It calls a model, so it is on the #53 ledger**: role `consolidation`
+    (Sonnet 5, uncached — one call per company per night with no shared prefix),
+    surface `consolidation`, actor `system`. Adding a surface is two edits and
+    0037 REDEFINES 0032's CHECK to do it.
+
+  **The hour gate: Lisbon 02–04, three hours wide, hourly heartbeat at `:00`.**
+  It has one — unlike `api/cron/push` — because reviewing a day only makes sense
+  once the day has finished. It is safe to have one, unlike the check-in, because
+  the watermark turns a missed night into lateness rather than silence; the width
+  is secondary. It ends at 04 rather than 05 because `MIN_SEND_HOUR` is 5 and a
+  review still running then would contend with a paid send for the same
+  300-second ceiling — `pnpm scheduler-check` derives that from the constants and
+  is what caught the first, four-hour version. **It is deliberately NOT in
+  `company_schedules`**: that table's `job_kind` CHECK and
+  `/perfil/automacoes`'s `Record<'daily_briefing' | 'task_checkin', …>` are what
+  keep a job that messages nobody off a screen about messages sent to people.
+
+  **The summarizer's dial moved from 40/10 to 80/30** (`SUMMARIZE_AFTER` /
+  `KEEP_RECENT`), which is the tuning the code comment had been asking Federico
+  for. Passes per N messages goes from N/30 to N/50, and each pass is a lossy
+  re-compression of an already-lossy summary — the mechanism behind #62. Two
+  further reasons: #47's event rows mean 40 can now be reached without the
+  manager typing anything, and ten messages is less than one sitting. The cost is
+  real and stated: the verbatim tail is re-sent uncached on every one of up to
+  twelve requests per turn.
+
+  **Two consequences elsewhere, neither of them designed.** A bulk
+  `translate_company_data` collects memories through the tenant's own client, so
+  after 0037 it silently skips a COLLEAGUE's personal memories — correct (they
+  are not visible) and consistent between `countTranslatable` and `collect`, but
+  it means a company that translates everything can still hold un-translated
+  personal notes. And the orchestration policy now tells the model about `scope`,
+  about never writing a name, and that the manager can see and delete all of it;
+  that text is in the CACHED half, which is fine because it is a constant of the
+  code, but it means a reword there rewrites every tenant's cached prefix once.
+
+  Known and NOT done: **no recall tool over what falls outside the 40-row
+  window.** That is the archival tier the research names, and today the window is
+  the whole of memory — `/perfil/memoria` says so out loud by labelling rows as
+  stored-but-not-carried rather than hiding them.
 - **One clock, one definition of "today".** The active-window rule
   (`lisbon_today() BETWEEN coalesce(start_date, created_at) AND
   coalesce(due_date, 'infinity')`) and every schedule-risk signal live in SQL,

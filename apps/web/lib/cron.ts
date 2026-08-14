@@ -243,6 +243,49 @@ export function withinSendWindow(
   return hour >= sendHour && hour <= sendWindowEnd(sendHour, windowHours);
 }
 
+// ── the nightly memory review (issue #48) ───────────────────────────────────
+//
+// The third hour-gated route, and the first that SENDS NOTHING. Both constants
+// live here rather than in the route so `pnpm scheduler-check` can import them
+// and assert the window from the same numbers the route runs on — the welcome
+// sweep's hour and width are re-declared inside that script, which is a copy
+// that can drift.
+//
+// ── WHY IT HAS AN HOUR GATE AT ALL ─────────────────────────────────────────
+// /api/cron/push deliberately has none, because it is meant to run all day, and
+// gating it on the hour would be the bug that made the check-in ship and never
+// send. This one is the opposite case on purpose. Reviewing a day only makes
+// sense once the day has finished: a pass at 14:00 would compress a morning the
+// manager is still in the middle of, and drop new memories into his context
+// mid-conversation. "At night" is in the issue for a reason.
+//
+// ── AND WHY THE GATE IS SAFE HERE, WHICH IT WAS NOT THERE ──────────────────
+// Two things, and the second matters far more than the first.
+//
+// THREE HOURS WIDE (Lisbon 02–04) rather than the sends' two. Nobody is waiting
+// at 02:00, so there is no cost to slack, and Vercel's measured 33–49 minutes of
+// dispatch drift cannot reach the edge of a three-hour window.
+//
+// It is three and not four because MIN_SEND_HOUR is 5: a manager may aim the
+// crew's morning message at 05:00, and a review still running then would be
+// competing with a paid send for the same 300-second function ceiling on the
+// same company. `pnpm scheduler-check` derives that bound from the two
+// constants rather than trusting this sentence — it is what caught the
+// four-hour version.
+//
+// AND THE PASS CATCHES UP. `memory_consolidations.covers_until_at` (0037) is
+// stamped only by a run that SUCCEEDED, and the next run starts from the newest
+// such stamp rather than from "yesterday". So a night that is skipped, that
+// fails, or that lands outside the window is simply covered by the following
+// night over a wider span. That converts this route's failure mode from SILENCE
+// — the thing that was eleven minutes from happening to the crew's morning on
+// 13 August 2026 — into LATENESS, which for a nightly chore costs nothing. The
+// watermark, not the width, is what makes an hour gate acceptable here.
+//
+// The window cannot wrap: sendWindowEnd() clamps at 23 and 2 + 3 - 1 = 4.
+export const CONSOLIDATE_HOUR = 2;
+export const CONSOLIDATE_WINDOW_HOURS = 3;
+
 export interface BillableCompany {
   id: string;
   name: string;
