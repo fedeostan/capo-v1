@@ -210,6 +210,29 @@ export interface Catalog {
       /** Opens a review from the task detail screen. */
       request: string;
       failed: string;
+      /** ── WHETHER THE CLAIM CAME WITH PROOF (issue #52) ──────────────────
+       *  Two doors lead into `pending_review` and they used to disagree about
+       *  evidence: the worker agent requires at least one photo at the schema
+       *  level, a check-in button tap required nothing. Now that a tap can be
+       *  followed by a photo, the manager needs to see which they are looking
+       *  at BEFORE they approve.
+       *
+       *  ⚠ THIS IS A FACT, NEVER AN ACCUSATION. "No photos attached" is a
+       *  true statement about a record. It must not read as "this worker did
+       *  not bother" — most claims have no photo for perfectly ordinary
+       *  reasons (the manager filed the check themselves, the crew member was
+       *  already off site, the task is one nobody photographs). Do not add a
+       *  warning colour, an exclamation mark, or the word "missing".
+       *
+       *  Counted from `task_photos` at READ time, so it is true whenever the
+       *  screen is looked at rather than whenever the claim was filed.
+       *
+       *  ONE pair of keys for three surfaces — the board row, the task detail
+       *  screen and the in-app inbox all read exactly these, the same way push
+       *  and inbox share one headline entry so they cannot say different
+       *  things about the same row. */
+      proofNone: string;
+      proofPhotos(n: number): string;
     };
     taskDetail: {
       /** Page title when the task cannot be named (metadata runs before the row loads). */
@@ -838,6 +861,40 @@ export interface Catalog {
      * their manager has been told.
      */
     checkinDoneProblem: string;
+    /**
+     * ── THE PHOTO FOLLOW-UP (issue #52) ─────────────────────────────────────
+     * Sent right after `checkinDoneAwaiting`, naming ONE claimed task and
+     * asking for a photo of it. FREE-FORM text inside the 24-hour window the
+     * worker's own tap opened a second earlier — never a template, so never
+     * billable, and it must stay that way: a paid template to chase a photo
+     * would make proof cost money per attempt.
+     *
+     * ⚠ IT MUST BE AN INVITATION, NOT A REQUIREMENT. The claim has ALREADY
+     * been filed and stands whether or not a photo ever arrives (that is the
+     * whole difference from `declare_task_done`, where `.min(1)` makes proof a
+     * precondition). A sentence that reads as "send a photo or this does not
+     * count" would be a lie about what just happened. Say so out loud in the
+     * copy: no photo is fine.
+     *
+     * `task` is the task's own title, stored in companies.language and never
+     * retranslated — so this must read acceptably wrapped around foreign text.
+     */
+    checkinPhotoAsk(task: string): string;
+    /**
+     * A photo landed and there is another claimed task to ask about. One task
+     * at a time, deliberately: an inbound image says nothing about which task
+     * it shows, and a photo filed as proof of the wrong job is worse than no
+     * photo at all.
+     */
+    checkinPhotoNext(task: string): string;
+    /**
+     * A photo landed and there is nothing left to ask about.
+     *
+     * ⚠ Like every other acknowledgement on this path it must NEVER say the
+     * task is done. The photo is proof attached to a claim that is still
+     * waiting for the manager.
+     */
+    checkinPhotoThanks: string;
     /** Sent after a worker taps "not yet". Never scolding — the answer is
      *  useful precisely because it is safe to give.
      *

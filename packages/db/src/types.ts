@@ -132,6 +132,25 @@
 // into TypeScript. `usage_date` is typed as an ordinary optional Insert field
 // and tsc will happily let you set it, but it is absent from the tenant's
 // column-scoped INSERT grant and comes from lisbon_today(). Do not send one.
+//
+// ── checkin_photo_requests (0034), WRITTEN BY HAND, NOT YET APPLIED ────────
+// The check-in photo request from 0034_checkin_photo_requests.sql (issue #52),
+// added here in alphabetical position for the same reason as every block above
+// it: generating against a project that lacks the table would silently DELETE
+// it rather than add it.
+//
+// One consequence while the migration is unapplied, and the code is written to
+// survive it: every query answers 42P01 ("relation does not exist"). Both
+// callers — openPhotoRequest and readOpenPhotoRequest in
+// apps/web/app/api/whatsapp/route.ts — swallow that into a log line, so the tap
+// still files its claim and still acknowledges the worker, and the photo path
+// simply falls through to the restricted worker agent exactly as it did before
+// this feature existed. Nothing about the claim depends on this table.
+//
+// Invisible here as always: this table is deny-all under RLS with ZERO
+// policies (notification_log's posture), and every grant is revoked from
+// `authenticated`. tsc will let a tenant-scoped client select from it; the
+// database returns nothing.
 export type Json =
   | string
   | number
@@ -217,6 +236,80 @@ export type Database = {
           },
           {
             foreignKeyName: "ai_usage_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      checkin_photo_requests: {
+        Row: {
+          checkin_date: string
+          close_reason: string | null
+          closed_at: string | null
+          company_id: string
+          created_at: string
+          expires_at: string
+          id: string
+          next_index: number
+          notification_id: string
+          photos_received: number
+          task_ids: Json
+          worker_id: string
+        }
+        Insert: {
+          checkin_date: string
+          close_reason?: string | null
+          closed_at?: string | null
+          company_id: string
+          created_at?: string
+          expires_at: string
+          id?: string
+          next_index?: number
+          notification_id: string
+          photos_received?: number
+          task_ids?: Json
+          worker_id: string
+        }
+        Update: {
+          checkin_date?: string
+          close_reason?: string | null
+          closed_at?: string | null
+          company_id?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          next_index?: number
+          notification_id?: string
+          photos_received?: number
+          task_ids?: Json
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "checkin_photo_requests_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "checkin_photo_requests_notification_id_fkey"
+            columns: ["notification_id"]
+            isOneToOne: false
+            referencedRelation: "notification_log"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "checkin_photo_requests_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["worker_id"]
+          },
+          {
+            foreignKeyName: "checkin_photo_requests_worker_id_fkey"
             columns: ["worker_id"]
             isOneToOne: false
             referencedRelation: "workers"

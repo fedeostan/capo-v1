@@ -138,6 +138,15 @@ import {
   classifyClaimError,
   readTaskIds,
 } from '../apps/web/lib/checkin-claim.ts';
+// The pure half of the photo follow-up to that tap (issue #52). Same reasoning
+// again — no Db, no clock beyond an argument, no network.
+import {
+  claimedTaskIds,
+  nextPhotoTaskId,
+  photoRequestExpiry,
+  photoRequestLive,
+  PHOTO_REQUEST_TTL_MS,
+} from '../apps/web/lib/checkin-photo.ts';
 // The one-shot progress-note timer (issue #50). Not pure — it schedules — but
 // it needs no credentials, no network and no model, and it is the riskiest new
 // code in that change: a timer that leaked past its request, or a feedback
@@ -362,6 +371,126 @@ eq('a check-in payload is not a proposal id', parseProposalButtonId(doneP), null
     check(`${locale}: the awaiting ack fits one WhatsApp message`,
       t.checkinDoneAwaiting.length > 0 && t.checkinDoneAwaiting.length <= 300,
       `${t.checkinDoneAwaiting.length} chars`);
+  }
+}
+
+// ── the photo follow-up to that tap (issue #52) ─────────────────────────────
+// The tap files a claim; the claim needs proof, and until #52 the button path
+// asked for none while the agent path required one at the schema level. The
+// database half cannot be exercised here, so these pin the pure decisions in
+// front of it: WHICH tasks are worth asking about, HOW LONG an unlabelled photo
+// may be believed to be about them, and the copy that must never overstate what
+// just happened.
+{
+  const t1 = '11111111-1111-4111-8111-111111111111';
+  const t2 = '22222222-2222-4222-8222-222222222222';
+  const t3 = '33333333-3333-4333-8333-333333333333';
+
+  // Only tasks now waiting for the manager are worth a photo. `already_pending`
+  // counts — same end state, reached earlier — and a worker who re-taps after
+  // remembering to photograph something must be able to send it.
+  eq(
+    'a newly filed claim is worth asking about',
+    claimedTaskIds([{ taskId: t1, outcome: 'claimed' }]).join(),
+    t1,
+  );
+  eq(
+    'so is one that was already pending',
+    claimedTaskIds([{ taskId: t1, outcome: 'already_pending' }]).join(),
+    t1,
+  );
+  // A task the manager closed at lunch, one that vanished, one that errored:
+  // there is nothing for a photo to be proof OF.
+  eq(
+    'a closed, missing or failed task is not',
+    claimedTaskIds([
+      { taskId: t1, outcome: 'closed' },
+      { taskId: t2, outcome: 'missing' },
+      { taskId: t3, outcome: 'failed' },
+    ]).length,
+    0,
+  );
+  // Order is the snapshot's own, because it is the order they will be asked
+  // about — and the ONLY reason that is safe is that the outcomes are paired
+  // with their task id at the source rather than zipped by position afterwards.
+  eq(
+    'the ask order is the snapshot order',
+    claimedTaskIds([
+      { taskId: t3, outcome: 'claimed' },
+      { taskId: t2, outcome: 'closed' },
+      { taskId: t1, outcome: 'already_pending' },
+    ]).join(','),
+    `${t3},${t1}`,
+  );
+
+  // The cursor. A stale or malformed index must read as "finished" rather than
+  // hand `undefined` to a uuid argument.
+  eq('the cursor names the task at its index', nextPhotoTaskId([t1, t2], 1), t2);
+  eq('past the end there is nothing left to ask', nextPhotoTaskId([t1, t2], 2), null);
+  eq('a negative index is not a task', nextPhotoTaskId([t1, t2], -1), null);
+  eq('a fractional index is not a task', nextPhotoTaskId([t1, t2], 1.5), null);
+  eq('an empty snapshot asks about nothing', nextPhotoTaskId([], 0), null);
+
+  // THE TTL. Nothing sweeps checkin_photo_requests, so the READER is what makes
+  // a request die — and it must fail CLOSED. Believing an unlabelled photo for
+  // too long files tomorrow's work as proof of yesterday's claim, silently and
+  // with a plausible timestamp.
+  const now = Date.UTC(2026, 7, 14, 16, 30);
+  eq('an unexpired request is live', photoRequestLive(new Date(now + 60_000).toISOString(), now), true);
+  eq('an expired request is not', photoRequestLive(new Date(now - 1).toISOString(), now), false);
+  eq('a missing expiry is not', photoRequestLive(null, now), false);
+  eq('an unparseable expiry is not', photoRequestLive('not a date', now), false);
+  eq(
+    'the expiry is exactly the TTL past now',
+    Date.parse(photoRequestExpiry(now)) - now,
+    PHOTO_REQUEST_TTL_MS,
+  );
+  // Shorter than Meta's free-form window, and that direction is load-bearing:
+  // the follow-up "and the next one?" is free-form text, so a request outliving
+  // the window could only be answered by a PAID template, which this path must
+  // never send.
+  check(
+    'the photo window closes before the free-form window does',
+    PHOTO_REQUEST_TTL_MS < FREE_FORM_WINDOW_MS,
+    `${PHOTO_REQUEST_TTL_MS} vs ${FREE_FORM_WINDOW_MS}`,
+  );
+  // And short enough that a request opened in the 16:00–17:59 send window is
+  // dead long before the next morning's 07:00 briefing.
+  check(
+    'a request cannot survive until the next briefing',
+    PHOTO_REQUEST_TTL_MS < 13 * 60 * 60 * 1000,
+    `${PHOTO_REQUEST_TTL_MS}ms`,
+  );
+
+  for (const locale of LOCALES) {
+    const t = getCatalog(locale).whatsapp;
+    const title = 'Pintura do 2.º andar';
+    const ask = t.checkinPhotoAsk(title);
+    const next = t.checkinPhotoNext(title);
+    check(`${locale}: the photo ask names the task`, ask.includes(title), ask);
+    check(`${locale}: the follow-up names the next task`, next.includes(title), next);
+    check(`${locale}: neither leaks undefined`, !`${ask}${next}`.includes('undefined'));
+    check(
+      `${locale}: all three photo strings are distinct`,
+      new Set([ask, next, t.checkinPhotoThanks]).size === 3,
+    );
+    // Each is one free-form WhatsApp message following an acknowledgement that
+    // has already been sent.
+    for (const [name, body] of [['ask', ask], ['next', next], ['thanks', t.checkinPhotoThanks]] as const) {
+      check(
+        `${locale}: the photo ${name} fits one WhatsApp message`,
+        body.length > 0 && body.length <= 300,
+        `${body.length} chars`,
+      );
+    }
+    // ⚠ THE ONE RULE EVERY ACKNOWLEDGEMENT ON THIS PATH SHARES. The claim is
+    // waiting for the manager; a worker told the task is finished who then sees
+    // it on tomorrow's 07:00 message concludes Capo is broken.
+    check(
+      `${locale}: the photo thanks does not claim the task is done`,
+      t.checkinPhotoThanks !== t.checkinDone,
+      t.checkinPhotoThanks,
+    );
   }
 }
 

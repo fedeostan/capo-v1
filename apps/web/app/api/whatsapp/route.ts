@@ -29,6 +29,7 @@ import {
 import { resolveProposal } from '@capo/core/capabilities/propose';
 import { downloadMedia } from '@capo/core/channels/whatsapp-media';
 import { TASK_PHOTO_MAX_BYTES, isTaskPhotoMime } from '@capo/core/media/photos';
+import { markTaskProofPhotos, storeWorkerTaskPhoto } from '@capo/core/media/task-photo-store';
 import { getBillingState } from '../../../lib/billing';
 import {
   checkinDoneAck,
@@ -37,6 +38,13 @@ import {
   type CheckinAck,
   type ClaimOutcome,
 } from '../../../lib/checkin-claim';
+import {
+  claimedTaskIds,
+  nextPhotoTaskId,
+  photoRequestExpiry,
+  photoRequestLive,
+  type ClaimResult,
+} from '../../../lib/checkin-photo';
 import { logEvent } from '../../../lib/log';
 import { consentCommand, languageCommand, menuCommand } from '../../../lib/worker-keywords';
 import {
@@ -645,8 +653,14 @@ async function claimCheckinTasks(
   worker: { id: string; company_id: string },
   messageId: string,
   taskIds: readonly string[],
-): Promise<ClaimOutcome[]> {
-  const outcomes: ClaimOutcome[] = [];
+): Promise<ClaimResult[]> {
+  // Paired with their task id AT THE SOURCE rather than returned as a bare list
+  // to be zipped against `taskIds` by the caller. The photo follow-up (issue
+  // #52) needs to know WHICH tasks were claimed, and "never zip two lists by
+  // position" is a rule this codebase already paid for once, in the translation
+  // applier — a single dropped element there silently attributes every later
+  // item to the wrong row.
+  const outcomes: ClaimResult[] = [];
 
   for (const taskId of taskIds) {
     let outcome: ClaimOutcome;
@@ -664,7 +678,7 @@ async function claimCheckinTasks(
       detail = err instanceof Error ? err.message : String(err);
     }
 
-    outcomes.push(outcome);
+    outcomes.push({ taskId, outcome });
     logEvent('whatsapp.checkin_claim', {
       companyId: worker.company_id,
       workerId: worker.id,
@@ -676,6 +690,363 @@ async function claimCheckinTasks(
   }
 
   return outcomes;
+}
+
+// ── THE PHOTO FOLLOW-UP (issue #52) ─────────────────────────────────────────
+// A tap files a claim; a claim with no proof is a claim the manager has to take
+// on trust. The worker agent's `declare_task_done` has required at least one
+// photo at the SCHEMA level since #22 — the button path required nothing, and
+// that asymmetry is what this section closes.
+//
+// It closes it by INVITATION, never by requirement. The claim is already filed
+// and stands whether or not a photo ever arrives; refusing to file one without
+// proof would mean a worker who cannot photograph anything (no signal, phone
+// dead, hands full) reports nothing at all, which is the state #54 existed to
+// end. What the manager gets instead is the FACT, on the board and in their
+// inbox: this claim has photos, or it does not.
+//
+// EVERY MESSAGE ON THIS PATH IS FREE-FORM TEXT inside the 24-hour window the
+// worker's own tap opened seconds earlier. Never a template. A paid template to
+// chase a photo would make proof cost money per attempt, on a channel where the
+// worker controls how many attempts there are.
+
+/** How the check-in photo request is scoped. Both fields are phone-derived. */
+interface PhotoWorker {
+  id: string;
+  company_id: string;
+}
+
+/** One task a photo may still be filed against, with the title to name it by. */
+interface PhotoTarget {
+  index: number;
+  id: string;
+  title: string;
+}
+
+/**
+ * Three outcomes, not two, and the third is the point: a transport failure is
+ * NOT "there are no tasks left". Collapsing them would close a live request on
+ * one blip, and the worker's next photo — the one they are standing there taking
+ * — would have nowhere to go, permanently.
+ */
+type PhotoTargetSearch =
+  | { kind: 'found'; target: PhotoTarget }
+  | { kind: 'exhausted' }
+  | { kind: 'error' };
+
+/**
+ * Walk forward from `from` until a task is found that is STILL this crew
+ * member's own and still waiting for the manager.
+ *
+ * ── THE SECOND TENANT BOUNDARY ─────────────────────────────────────────────
+ * Everything here runs on the SERVICE-ROLE client, so RLS enforces nothing. The
+ * `checkin_photo_requests` row was already scoped by company_id and worker_id
+ * (both phone-derived), which is the first boundary; this read is the second,
+ * and it is the one that matters for the WRITE that follows. A photo's object
+ * key is `{company_id}/{task_id}/…` and that path IS the tenant boundary
+ * (0023), so a task id that reached the request row by any route other than the
+ * intended one must still fail HERE, before a byte is written. Three filters,
+ * two of them phone-derived, in ONE query — the same shape declare_task_done
+ * and handleWorkerMenuTap both use, so a foreign id produces silence rather
+ * than a timing difference to read as an existence oracle.
+ *
+ * `status = 'pending_review'` is the third condition and is not decoration: a
+ * photo filed against a task the manager already approved, rejected or reopened
+ * is proof of nothing anybody is waiting for.
+ *
+ * SKIPPING, not stalling. A task reassigned or closed between the tap and the
+ * photo is an ordinary outcome for ONE task in a multi-task snapshot — exactly
+ * as an already-`done` task is for the claim loop above — and it must never
+ * strand the request on a task it can never satisfy.
+ */
+async function seekPhotoTarget(
+  db: Db,
+  worker: PhotoWorker,
+  taskIds: readonly string[],
+  from: number,
+): Promise<PhotoTargetSearch> {
+  for (let index = Math.max(0, from); ; index += 1) {
+    const taskId = nextPhotoTaskId(taskIds, index);
+    if (!taskId) return { kind: 'exhausted' };
+
+    const { data, error } = await db
+      .from('tasks')
+      .select('id, title, status')
+      .eq('id', taskId)
+      .eq('company_id', worker.company_id)
+      .eq('assignee_worker_id', worker.id)
+      .maybeSingle();
+    // A read failure is not "this task is unusable". Skipping on it would burn
+    // through the whole snapshot on one transport blip and then close the
+    // request as finished — after which the photo the worker is standing there
+    // taking has nowhere to go, permanently. Reported as its own outcome so the
+    // caller leaves the request alone and the next message tries again.
+    if (error) {
+      logEvent('whatsapp.checkin_photo_target_failed', {
+        companyId: worker.company_id,
+        workerId: worker.id,
+        error: error.message,
+      });
+      return { kind: 'error' };
+    }
+    if (data && data.status === 'pending_review') {
+      return { kind: 'found', target: { index, id: data.id, title: data.title } };
+    }
+  }
+}
+
+/** Mark a request finished. `next_index` is carried so the row records how far
+ *  the walk actually got, which is the only way to read afterwards whether a
+ *  request was satisfied or merely ran out of usable tasks. */
+async function closePhotoRequest(
+  db: Db,
+  requestId: string,
+  patch: { next_index: number; photos_received?: number },
+  reason: 'complete' | 'abandoned',
+): Promise<void> {
+  const { error } = await db
+    .from('checkin_photo_requests')
+    .update({ ...patch, closed_at: new Date().toISOString(), close_reason: reason })
+    .eq('id', requestId);
+  if (error) logEvent('whatsapp.checkin_photo_close_failed', { requestId, reason, error: error.message });
+}
+
+/**
+ * Open a photo request for the tasks this tap actually claimed, and ask about
+ * the first of them.
+ *
+ * ONE TASK AT A TIME. An inbound image carries nothing that says which task it
+ * shows, so a worker claiming three tasks is asked three times rather than
+ * having one photo guessed onto one of them. A photo filed as proof of the
+ * wrong job is worse than no photo at all: it is evidence, it cannot be
+ * deleted (0023 has no DELETE policy anywhere), and it is wrong.
+ *
+ * Best-effort throughout. Every failure here — an unapplied migration (42P01),
+ * a lost race, a send refused — costs the photo follow-up and nothing else. The
+ * claim is already filed, `worker_checkins` already has the answer, and the
+ * worker has already been acknowledged.
+ */
+async function openPhotoFollowUp(
+  db: Db,
+  worker: PhotoWorker,
+  ask: { id: string; notification_date: string },
+  results: readonly ClaimResult[],
+  locale: Locale,
+  sendConfig: WhatsAppSendConfig,
+): Promise<void> {
+  const taskIds = claimedTaskIds(results);
+  if (taskIds.length === 0) return;
+
+  try {
+    // The row's ORDER is the snapshot's order, and the first target is resolved
+    // before anything is written: a request whose every task is already
+    // unusable is a request worth not opening at all.
+    const first = await seekPhotoTarget(db, worker, taskIds, 0);
+    if (first.kind !== 'found') return;
+
+    // Close whatever this crew member had open before. Scoped by worker_id
+    // ALONE, deliberately: checkin_photo_requests_open_idx is unique on
+    // (worker_id) where closed_at is null, so an open row this UPDATE failed to
+    // match would make the INSERT below a 23505. A worker_id belongs to exactly
+    // one company row, so there is no tenant to widen here — company_id would
+    // narrow the sweep without narrowing what it protects.
+    const { error: sweepError } = await db
+      .from('checkin_photo_requests')
+      .update({ closed_at: new Date().toISOString(), close_reason: 'superseded' })
+      .eq('worker_id', worker.id)
+      .is('closed_at', null);
+    if (sweepError) {
+      logEvent('whatsapp.checkin_photo_open_failed', {
+        companyId: worker.company_id,
+        workerId: worker.id,
+        stage: 'sweep',
+        error: sweepError.message,
+      });
+      return;
+    }
+
+    const { error: insertError } = await db.from('checkin_photo_requests').insert({
+      company_id: worker.company_id,
+      worker_id: worker.id,
+      notification_id: ask.id,
+      checkin_date: ask.notification_date,
+      task_ids: taskIds,
+      // The FIRST usable task, not index 0: anything already skipped must not be
+      // asked about again when the photo arrives.
+      next_index: first.target.index,
+      expires_at: photoRequestExpiry(Date.now()),
+    });
+    if (insertError) {
+      // Expected, and harmless, on any deploy that lands before 0034 is
+      // applied: "relation checkin_photo_requests does not exist".
+      logEvent('whatsapp.checkin_photo_open_failed', {
+        companyId: worker.company_id,
+        workerId: worker.id,
+        stage: 'insert',
+        error: insertError.message,
+      });
+      return;
+    }
+
+    // Sent only once the row exists. Asking for a photo we have no way to
+    // attach would be a promise the next message cannot keep.
+    const t = getCatalog(locale).whatsapp;
+    await sendWhatsAppText(t.checkinPhotoAsk(first.target.title), sendConfig);
+    logEvent('whatsapp.checkin_photo_asked', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      tasks: taskIds.length,
+    });
+  } catch (err) {
+    logEvent('whatsapp.checkin_photo_open_failed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      stage: 'send',
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * An inbound photo answering that request.
+ *
+ * Returns true when the photo was taken in AND the worker answered; false to
+ * fall through to the restricted agent, which is where a photo with no open
+ * request goes — unchanged behaviour for everybody who never tapped.
+ *
+ * NO MODEL IS INVOLVED, in either direction, and that is the point: which task
+ * the photo belongs to was decided by the message Capo itself sent minutes
+ * earlier, so there is nothing left to interpret. The BYTES are never shown to
+ * a model either — an image can carry text and text is instructions, so a vision
+ * pass here would be a prompt-injection surface with nothing in front of it
+ * (0023, AGENTS.md).
+ *
+ * The photo is downloaded only AFTER a target is confirmed. Meta's media URL is
+ * short-lived and single-use, so a download with nowhere to put the result is
+ * both wasted and unrepeatable.
+ */
+async function handleCheckinPhoto(
+  db: Db,
+  message: WhatsAppMessage,
+  worker: WorkerMatch,
+  locale: Locale,
+  sendConfig: WhatsAppSendConfig,
+  accessToken: string,
+): Promise<boolean> {
+  const t = getCatalog(locale).whatsapp;
+
+  // ── the request, and the first half of the tenant boundary ────────────────
+  // Scoped by worker_id AND company_id, both phone-derived. `.is('closed_at',
+  // null)` plus the partial unique index means this is at most one row, so
+  // there is nothing to pick between.
+  const { data: request, error } = await db
+    .from('checkin_photo_requests')
+    .select('id, task_ids, next_index, photos_received, expires_at')
+    .eq('worker_id', worker.id)
+    .eq('company_id', worker.company_id)
+    .is('closed_at', null)
+    .maybeSingle();
+  if (error) {
+    // Expected on any deploy that lands before 0034: 42P01. Falling through
+    // means a bare photo reaches the agent exactly as it did before this
+    // feature existed, which is the right degradation.
+    logEvent('whatsapp.checkin_photo_read_failed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      error: error.message,
+    });
+    return false;
+  }
+  if (!request) return false;
+
+  const taskIds = readTaskIds(request.task_ids);
+
+  // Expiry is enforced by the READER, because nothing sweeps this table. A
+  // request still live at 07:00 tomorrow would attach a photo of TOMORROW's
+  // work to yesterday's claim, silently and with a plausible timestamp.
+  if (!photoRequestLive(request.expires_at, Date.now())) {
+    await closePhotoRequest(db, request.id, { next_index: request.next_index }, 'abandoned');
+    return false;
+  }
+
+  const search = await seekPhotoTarget(db, worker, taskIds, request.next_index);
+  // A read failure leaves the request EXACTLY as it was and falls through: the
+  // photo goes to the agent this once, and the next one tries again. Only
+  // 'exhausted' — every remaining task reassigned, closed or resolved while we
+  // waited — closes it.
+  if (search.kind === 'error') return false;
+  if (search.kind === 'exhausted') {
+    await closePhotoRequest(db, request.id, { next_index: taskIds.length }, 'complete');
+    return false;
+  }
+  const target = search.target;
+
+  const { photos, failed } = await takeInboundPhotos(message, worker, accessToken);
+  const photo = photos[0];
+  if (failed || !photo) {
+    // The cursor does NOT move. The worker is standing there holding the phone
+    // that took it, and the honest thing is to let them send it again against
+    // the same task.
+    await sendWhatsAppText(t.workerPhotoFailed, sendConfig).catch(() => {});
+    return true;
+  }
+
+  const stored = await storeWorkerTaskPhoto(db, {
+    companyId: worker.company_id,
+    taskId: target.id,
+    workerId: worker.id,
+    photo,
+  });
+  if (!stored) {
+    logEvent('whatsapp.checkin_photo_store_failed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      taskId: target.id,
+    });
+    await sendWhatsAppText(t.workerPhotoFailed, sendConfig).catch(() => {});
+    return true;
+  }
+
+  // The denormalised bit, written after the evidence rather than instead of it.
+  // Never touches `status`: an update of status would fire tasks_supersede_review
+  // (0020) and supersede the very claim this photo is proof for.
+  await markTaskProofPhotos(db, worker.company_id, target.id);
+
+  logEvent('whatsapp.checkin_photo_stored', {
+    companyId: worker.company_id,
+    workerId: worker.id,
+    taskId: target.id,
+  });
+
+  const photosReceived = request.photos_received + 1;
+  const next = await seekPhotoTarget(db, worker, taskIds, target.index + 1);
+  if (next.kind === 'found') {
+    const { error: moveError } = await db
+      .from('checkin_photo_requests')
+      .update({ next_index: next.target.index, photos_received: photosReceived })
+      .eq('id', request.id);
+    if (moveError) {
+      logEvent('whatsapp.checkin_photo_move_failed', { requestId: request.id, error: moveError.message });
+    }
+    await sendWhatsAppText(t.checkinPhotoNext(next.target.title), sendConfig).catch(() => {});
+    return true;
+  }
+
+  // 'error' lands here with 'exhausted', and that is the right call ONLY at this
+  // point: the photo is already stored, so the worst case is a follow-up we
+  // never send about a task that may still be open. Leaving the request pointing
+  // at a task whose photo has just been filed would ask for the same photo again.
+  await closePhotoRequest(
+    db,
+    request.id,
+    { next_index: target.index + 1, photos_received: photosReceived },
+    'complete',
+  );
+  // Never says "done". The photo is proof attached to a claim that is still
+  // waiting for the manager — the same rule every other acknowledgement on this
+  // path follows.
+  await sendWhatsAppText(t.checkinPhotoThanks, sendConfig).catch(() => {});
+  return true;
 }
 
 /**
@@ -820,7 +1191,7 @@ async function handleCheckinTap(
   if (redelivery) return true;
 
   await sendWhatsAppText(
-    parsed.answer === 'done' ? doneAckBody(t, checkinDoneAck(outcomes)) : t.checkinNotDone,
+    parsed.answer === 'done' ? doneAckBody(t, checkinDoneAck(outcomes.map(o => o.outcome))) : t.checkinNotDone,
     sendConfig,
   ).catch(err => {
     logEvent('whatsapp.checkin_ack_failed', {
@@ -829,6 +1200,20 @@ async function handleCheckinTap(
       error: err instanceof Error ? err.message : String(err),
     });
   });
+
+  // ── "…and a photo of it?" (issue #52) ──────────────────────────────────────
+  // AFTER the acknowledgement, so the two messages arrive in the order a person
+  // would say them, and inside the "done" branch only: "Ainda não" files
+  // nothing and therefore has nothing to photograph. It sends AT MOST one extra
+  // free-form message, and only when at least one task is genuinely waiting for
+  // the manager — a tap that claimed nothing asks for nothing.
+  //
+  // Below the redelivery return above, deliberately. A Meta retry must not
+  // re-ask (or re-open a request and reset the cursor) on a worker who is
+  // already halfway through sending photos.
+  if (parsed.answer === 'done') {
+    await openPhotoFollowUp(db, worker, ask, outcomes, locale, sendConfig);
+  }
 
   // ── the manager's thread (issue #47) ───────────────────────────────────────
   // The other half of the check-in. The cron writes "I asked these four people
@@ -1084,6 +1469,14 @@ async function takeInboundPhotos(
  * own table, RLS and cleanup. That is a design, not a patch, and it is out of
  * this PRD's scope — but this is the first thing to build if the crew trips
  * over it.
+ *
+ * ── WHAT #52 DID AND DID NOT CHANGE ABOUT THAT ──────────────────────────────
+ * `checkin_photo_requests` (0034) is a staging area, and it stages the
+ * EXPECTATION — "the next bare photo from this person is of task X" — never the
+ * BYTES. So the limit above is unchanged on THIS path: a photo reaching the
+ * agent still lives for exactly one turn. What #52 added is a second path that
+ * does not need the bytes to survive, because the task is known before the
+ * photo arrives instead of after.
  */
 async function runWorkerTurn(
   db: Db,
@@ -1438,6 +1831,32 @@ async function handleWorkerReply(
   // a request for a list we can render from a table.
   if (wantsMenu) {
     await sendWorkerMenu(db, worker, current, sendConfig);
+    return true;
+  }
+
+  // ── THE CHECK-IN PHOTO (issue #52) ─────────────────────────────────────────
+  // A BARE photo — no caption — while Capo is waiting for one it asked for by
+  // name. Which task it belongs to was decided by the message Capo itself sent
+  // minutes ago, so this is a lookup and a write, with no model anywhere in the
+  // loop. Same family as the check-in tap and the menu tap, and here for the
+  // same reason: the deterministic thing happens in front of the model, never
+  // instead of it.
+  //
+  // ⚠ A CAPTIONED photo is deliberately EXCLUDED and falls through to the
+  // agent. A caption is words, and words can say something this branch cannot
+  // read — "esta é da outra tarefa", "acabei mas falta o rodapé". The agent has
+  // `declare_task_done`, which names its own task and attaches photos to it, so
+  // the captioned flow already works and taking it over here would answer a
+  // sentence by ignoring it.
+  //
+  // Returns false when there is no open request, which is every crew member who
+  // never tapped — their photos reach the agent exactly as before.
+  if (
+    message.type === 'image' &&
+    !!message.image?.id &&
+    !message.image.caption?.trim() &&
+    (await handleCheckinPhoto(db, message, worker, current, sendConfig, env.accessToken))
+  ) {
     return true;
   }
 

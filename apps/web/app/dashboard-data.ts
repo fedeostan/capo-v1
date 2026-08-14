@@ -522,14 +522,36 @@ export interface PendingReview {
    *  did but their name did not resolve. Branch on `declaredByWorker`, not on
    *  this, to tell those two apart. */
   declaredByName: string | null;
+  /**
+   * How many photos are attached to the task this claim is about (issue #52).
+   *
+   * ── WHY IT IS COUNTED HERE AND NOT STORED ON THE REVIEW ──────────────────
+   * A photo can arrive MINUTES AFTER the claim: the check-in tap files the
+   * claim, Capo then asks for a photo, and the worker sends it whenever they
+   * get to it. Anything denormalised onto `task_reviews` at insert time would
+   * say "no photo" forever, be wrong three minutes later, and be wrong
+   * invisibly. Counted at read time it is true whenever the screen is looked
+   * at, which is the only moment it is read.
+   *
+   * EVERY photo on the task, with no time filter and no source filter, and
+   * both of those are deliberate. A time filter would break the agent path,
+   * where photos are written BEFORE the review by design (proof with no claim
+   * is untidy; a claim with no proof is the state the requirement exists to
+   * prevent) and therefore carry an earlier `created_at` than the review they
+   * belong to. A source filter would hide the manager's own photos, which are
+   * evidence about the same work. The copy is correspondingly literal — "3
+   * photos attached", a statement about the task — rather than a claim about
+   * who took them or when.
+   */
+  photoCount: number;
 }
 
 /**
  * Pending reviews for a set of board rows, keyed by task id.
  *
- * Two reads rather than one PostgREST embed: the worker name comes through a
+ * Three reads rather than one PostgREST embed: the worker name comes through a
  * nullable FK whose embed alias depends on the constraint's generated name,
- * and a rename would break it silently at runtime. Two explicit queries cannot
+ * and a rename would break it silently at runtime. Explicit queries cannot
  * drift that way, and the second is skipped entirely when no review names a
  * worker (the manager-initiated case).
  *
@@ -564,6 +586,11 @@ export async function loadPendingReviews(
     for (const w of crew ?? []) names.set(w.id, w.name);
   }
 
+  const photos = await countTaskPhotos(
+    { db, companyId },
+    rows.map(r => r.task_id),
+  );
+
   // task_reviews_one_pending_idx guarantees at most one pending row per task,
   // so a plain Map keyed by task id cannot lose anything.
   return new Map(
@@ -576,9 +603,48 @@ export async function loadPendingReviews(
         declaredAt: r.declared_at,
         declaredByWorker: Boolean(r.declared_by_worker_id),
         declaredByName: r.declared_by_worker_id ? (names.get(r.declared_by_worker_id) ?? null) : null,
+        photoCount: photos.get(r.task_id) ?? 0,
       },
     ]),
   );
+}
+
+/**
+ * How many photos each of these tasks has, keyed by task id. Tasks with none
+ * are simply absent from the map.
+ *
+ * Ids only — no urls, no bytes, no signed anything. This answers "is there
+ * proof", which is a count; showing the photos themselves is
+ * `loadTaskPhotos()`'s job and lives behind a dynamic segment because a signed
+ * URL is a bearer token (see the note there).
+ *
+ * Shared by the board (loadPendingReviews) and the in-app inbox, so the two
+ * cannot disagree about the same claim — the same reason push and inbox share
+ * one headline catalog entry.
+ */
+export async function countTaskPhotos(
+  { db, companyId }: Pick<AuthContext, 'db' | 'companyId'>,
+  taskIds: string[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  const ids = [...new Set(taskIds)];
+  if (ids.length === 0) return counts;
+
+  const { data, error } = await db
+    .from('task_photos')
+    .select('task_id')
+    .eq('company_id', companyId)
+    .in('task_id', ids);
+  // Soft failure, unlike the reads above: "how much proof is attached" is a
+  // detail ON a review, and losing it must never take down the board the review
+  // is rendered on. An empty map reads as "no photos", which under-reports
+  // rather than inventing evidence — the safe direction to be wrong in.
+  if (error) return counts;
+
+  for (const row of data ?? []) {
+    counts.set(row.task_id, (counts.get(row.task_id) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /** One photo attached to a task, with a URL that works for the next few minutes. */

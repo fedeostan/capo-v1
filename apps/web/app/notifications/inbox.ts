@@ -9,6 +9,7 @@
 // explicit filters below are belt-and-braces on top of it, the same posture
 // dashboard-data.ts takes.
 import type { AuthContext } from '@capo/db/session';
+import { countTaskPhotos } from '../dashboard-data';
 
 /** One row of the inbox, already resolved to something renderable. */
 export interface InboxItem {
@@ -29,6 +30,26 @@ export interface InboxItem {
    *  resolves. A notification is a pointer; a pointer to nowhere is a dead
    *  end, so the renderer drops the link rather than linking to a 404. */
   href: string | null;
+  /**
+   * How many photos are attached to the task this row is about (issue #52), or
+   * null for a row whose subject is not a task review — there is nothing for a
+   * photo to be proof of.
+   *
+   * ── WHY THE ROW ITSELF CANNOT CARRY THIS ──────────────────────────────────
+   * A `notifications` row is written by a TRIGGER at the moment the claim is
+   * filed (0024), and on the check-in path a photo cannot possibly have arrived
+   * yet — Capo has not even asked for one. Anything stamped into the row would
+   * say "no photo" forever and be wrong minutes later, invisibly. Counted at
+   * read time instead, from the SAME helper the board uses, so the inbox and
+   * the board cannot say different things about one claim.
+   *
+   * ⚠ THE PUSH NOTIFICATION DELIBERATELY DOES NOT CARRY IT. A push is
+   * dispatched seconds after the claim, from `after()` in the producer's own
+   * request, which is exactly the window in which "no photo" is guaranteed true
+   * and guaranteed uninformative. A lock-screen alert that always says the same
+   * thing teaches the manager to ignore it.
+   */
+  photoCount: number | null;
 }
 
 /**
@@ -96,6 +117,11 @@ export async function loadInbox(ctx: AuthContext, limit = 50): Promise<InboxItem
     for (const r of reviews ?? []) taskByReview.set(r.id, r.task_id);
   }
 
+  // Whether each of those claims came with proof (issue #52). Same helper the
+  // board's loadPendingReviews calls, so the two surfaces cannot disagree about
+  // one claim — the same reason push and inbox share one headline entry.
+  const photos = await countTaskPhotos(ctx, [...taskByReview.values()]);
+
   return rows.map(row => {
     const taskId = row.subject_type === 'task_review' && row.subject_id ? taskByReview.get(row.subject_id) : undefined;
     return {
@@ -106,6 +132,7 @@ export async function loadInbox(ctx: AuthContext, limit = 50): Promise<InboxItem
       readAt: row.read_at,
       createdAt: row.created_at,
       href: taskId ? `/tarefas/${taskId}` : null,
+      photoCount: taskId ? (photos.get(taskId) ?? 0) : null,
     };
   });
 }
