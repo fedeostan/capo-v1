@@ -1595,6 +1595,95 @@ async function checkWorkerTextIsolation(tenant) {
 // same defect in revert_translation_batch, which is where open_task_review
 // inherited it from.
 //
+/**
+ * ── THE GUIDED MENU'S TENANT BOUNDARY (issue #49) ──────────────────────────
+ *
+ * The odd one out in this file, alongside checkWorkerTextIsolation, and worth
+ * saying why out loud: it asserts a filter in TypeScript, not a policy in
+ * Postgres, and it runs on the SERVICE ROLE on purpose.
+ *
+ * A crew member taps a row of a WhatsApp list and gets that task's address,
+ * description and materials back. The webhook is a system caller — auth.uid()
+ * is null — so RLS enforces NOTHING on that read. The entire boundary is the
+ * shape of the query the menu runs: `task_board` scoped by the company_id AND
+ * assignee_worker_id that the sender's PHONE (or BSUID) resolved to, and then
+ * the tapped id looked for INSIDE that result rather than queried directly.
+ *
+ * So this reproduces that query verbatim, on the service role, and asserts that
+ * neither another company's task nor a COLLEAGUE's task in the same company can
+ * come back through it. It cannot import loadWorkerTasks (this file is plain
+ * .mjs, run by node, with no TypeScript loader), which means the query below is
+ * a COPY and can drift from the real one. That is stated rather than hidden: if
+ * apps/web/app/notifications/worker-menu.ts ever changes how it scopes the
+ * read, this check must change with it, and the review that changes one should
+ * grep for the other.
+ *
+ * The colleague half is the one that would otherwise be missed. Every other
+ * check in this file asks about two COMPANIES; here the interesting attacker is
+ * somebody in the same company holding a valid uuid for a task that is not
+ * theirs, and only `assignee_worker_id` refuses them.
+ */
+async function checkWorkerMenuScope(attacker, victim) {
+  const L = attacker.label;
+
+  const menuRead = async (companyId, workerId) => {
+    const { data, error } = await admin
+      .from('task_board')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('assignee_worker_id', workerId)
+      .eq('is_open', true)
+      .limit(40);
+    return { rows: data ?? [], error };
+  };
+
+  // POSITIVE CONTROL. Every check below asserts an ABSENCE, so a query that
+  // returned nothing at all would pass all of them — the trap this file's
+  // header warns about. This proves the read works for its owner first.
+  const own = await menuRead(attacker.companyId, attacker.workerId);
+  check(
+    `${L}: the worker menu read returns this worker's OWN tasks (positive control)`,
+    !own.error && own.rows.length > 0,
+    own.error ? own.error.message : `${own.rows.length} rows`,
+  );
+
+  // Cross-tenant: the victim's task ids must not appear, so a tapped row id
+  // belonging to another company can never be FOUND and therefore never
+  // rendered.
+  {
+    const ids = own.rows.map(r => r.id);
+    const leaked = victim.taskIds.filter(id => ids.includes(id));
+    check(
+      `${L}: the worker menu never surfaces another company's task`,
+      leaked.length === 0,
+      leaked.length ? `LEAKED ${leaked.join(', ')}` : 'none',
+    );
+  }
+
+  // Same company, different crew member. The company_id filter alone would pass
+  // this; only assignee_worker_id refuses it.
+  {
+    const colleague = await menuRead(attacker.companyId, victim.workerId);
+    check(
+      `${L}: the worker menu never surfaces a colleague's task`,
+      !colleague.error && colleague.rows.length === 0,
+      colleague.error ? colleague.error.message : `${colleague.rows.length} rows`,
+    );
+  }
+
+  // And the cross-product: the victim's worker id read against the attacker's
+  // company must be empty in both directions, which is what makes a forged pair
+  // useless rather than merely unlikely.
+  {
+    const crossed = await menuRead(victim.companyId, attacker.workerId);
+    check(
+      `${L}: a mismatched company/worker pair returns nothing`,
+      !crossed.error && crossed.rows.length === 0,
+      crossed.error ? crossed.error.message : `${crossed.rows.length} rows`,
+    );
+  }
+}
+
 // Runs LAST on purpose. If a boundary is broken these calls genuinely mutate
 // the victim's rows, and every earlier check has already read the state it
 // needed by then — so a failure here reports one clean defect instead of
@@ -1725,6 +1814,10 @@ try {
   // broken — this sweep wants a clean state to read.
   await checkWorkerTextIsolation(tenantA);
   await checkWorkerTextIsolation(tenantB);
+  // Beside the worker-text sweep for the same reason: both ask about the
+  // WORKER path, where there is no auth.uid() and RLS backstops nothing.
+  await checkWorkerMenuScope(tenantA, tenantB);
+  await checkWorkerMenuScope(tenantB, tenantA);
   await runOrphanAttack(orphan, tenantB);
 
   // Positive controls are an ALLOW, not a refusal, so they don't belong in

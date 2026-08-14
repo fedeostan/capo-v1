@@ -34,6 +34,46 @@ export interface BriefingTask {
    */
   description: string | null;
   materials: string[];
+  /**
+   * WHERE (issue #49, complaint 1). `jobs.address`, appended to the task_board
+   * view by 0027 and — until this change — read by nothing that ever spoke to a
+   * crew member. It is the first thing somebody standing in a van at 07:00
+   * needs and the only reason left to phone the manager before starting.
+   *
+   * OPTIONAL on the row, `null` here, for the reason AGENTS.md gives for
+   * `select('*')`: a deploy landing before 0027 simply has no such column, and
+   * the line is then omitted rather than the read failing.
+   */
+  job_address: string | null;
+  /**
+   * The titles of the tasks this one is waiting on (`depends_on_titles`).
+   *
+   * Shown because "I turned up and the floor wasn't ready" is a wasted morning
+   * that the board already knew about. It is NOT a claim that those tasks are
+   * unfinished — the view lists every predecessor — so the copy says "depends
+   * on", never "blocked by".
+   */
+  waiting_on: string[];
+  /**
+   * This task is `pending_review`: somebody already declared it finished and
+   * the manager has not confirmed yet.
+   *
+   * Never in the 07:00 briefing — BRIEFABLE is an allowlist of
+   * pending/in_progress and is deliberately UNCHANGED by this issue, so a task
+   * in review is not nagged about in either daily send. It reaches a worker
+   * only through the guided menu, which reads `is_open` (a denylist) so the
+   * task is visible rather than vanished. See AGENTS.md on pending_review.
+   */
+  awaiting_review: boolean;
+  /**
+   * The task's own deadline, as stored (`YYYY-MM-DD`), or null.
+   *
+   * Read only by the guided menu's task sheet, which has no surrounding day to
+   * put a task in context — the 07:00 briefing does not need it, because
+   * everything in it is today by construction. Formatted at the point of use;
+   * never at 07:00.
+   */
+  due_date: string | null;
 }
 
 export interface WorkerBriefing {
@@ -47,6 +87,17 @@ export interface WorkerBriefing {
    */
   recipient: WhatsAppRecipient;
   locale: Locale;
+  /**
+   * Has this crew member ever CHOSEN their language, rather than inheriting the
+   * company's? `workers.language is not null` — the third dial, which is
+   * nullable precisely so that null means "inherit" (AGENTS.md).
+   *
+   * Read for one reason: with `lastInboundAt` it is the whole of what we know
+   * about whether this person has ever engaged with Capo, and therefore the
+   * whole basis for showing the language line once instead of forever. See
+   * renderWorkerBriefing.
+   */
+  hasChosenLanguage: boolean;
   tasks: BriefingTask[];
   /**
    * When this worker last wrote to us (0030), or null when there is no inbound
@@ -166,6 +217,14 @@ export async function loadCompanyBriefing(
       // `materials` is a Postgres text[]; null and an empty array mean the same
       // thing to a reader, so they are collapsed here rather than at each use.
       materials: Array.isArray(row.materials) ? row.materials.filter(Boolean) : [],
+      // Read through an index for the same reason readLastInboundAt is: 0027
+      // APPENDS this column to the view, the generated types lead the live
+      // schema, and a deploy landing first must drop the address line rather
+      // than fail the whole morning read.
+      job_address: readOptionalText(row, 'job_address'),
+      waiting_on: Array.isArray(row.depends_on_titles) ? row.depends_on_titles.filter(Boolean) : [],
+      awaiting_review: row.status === 'pending_review',
+      due_date: row.due_date ?? null,
     });
     byWorker.set(row.assignee_worker_id, list);
   }
@@ -203,6 +262,7 @@ export async function loadCompanyBriefing(
     // NULL means "inherit the company"; the worker sets this themselves by
     // replying a keyword to their briefing.
     locale: worker.language ? coerceLocale(worker.language) : companyLocale,
+    hasChosenLanguage: !!worker.language,
     tasks: byWorker.get(worker.id) ?? [],
     lastInboundAt: readLastInboundAt(worker),
   }));
@@ -237,7 +297,19 @@ export async function loadCompanyBriefing(
  * pointing the safe way.
  */
 export function readLastInboundAt(row: object): string | null {
-  const value = (row as Record<string, unknown>).last_inbound_at;
+  return readOptionalText(row, 'last_inbound_at');
+}
+
+/**
+ * Read a text column off a row that may not have it yet.
+ *
+ * The general form of readLastInboundAt's narrow cast, extracted when
+ * `job_address` needed the same treatment (0027 APPENDS it to `task_board`).
+ * Anything that is not a non-empty string reads as absent, which every caller
+ * treats as "say nothing" rather than "say something wrong".
+ */
+function readOptionalText(row: object, column: string): string | null {
+  const value = (row as Record<string, unknown>)[column];
   return typeof value === 'string' && value ? value : null;
 }
 
@@ -265,9 +337,58 @@ const MAX_LISTED = 5;
  *     per day; `status: 'skipped'` in notification_log exists for that case.
  *     Silence, though, reads as "the system forgot me".
  */
-export function renderWorkerBriefing(briefing: WorkerBriefing): [name: string, taskList: string] {
+export interface WorkerBriefingOptions {
+  /**
+   * Append "reply PT, ES or EN to change language" to the task-list parameter.
+   *
+   * ── ISSUE #49, COMPLAINT 2, AND WHY IT LIVES HERE ──────────────────────────
+   * That sentence used to be part of the APPROVED TEMPLATE BODY, which meant it
+   * went out with every single briefing, to everybody, forever, and no code in
+   * this repository could do anything about it. It has been removed from
+   * BRIEFING_BODY (scripts/whatsapp-templates.ts) and moved into the {{2}}
+   * parameter, where a caller can decide.
+   *
+   * The caller's rule is in /api/cron/reminders and is deliberately strict:
+   * this is true only for a crew member who has NEVER chosen a language and has
+   * NEVER written to us. Both facts are already loaded, so it needs no new
+   * column and no migration — and the moment they reply anything at all,
+   * including the keyword itself, the line stops for good.
+   *
+   * ⚠ It goes out ONLY on the template path. The free-form briefing never
+   * carries it, because being inside the free-form window is itself proof that
+   * this person has written to us. That was already #46's rule and it is
+   * unchanged.
+   *
+   * ⚠ The live Meta template still carries the old sentence until it is
+   * re-approved by hand. Until then a first-contact worker reads it twice. That
+   * is strictly better than every worker reading it every day, and it heals
+   * itself the moment the template is updated — see the runbook.
+   */
+  languageHint?: boolean;
+}
+
+export function renderWorkerBriefing(
+  briefing: WorkerBriefing,
+  options: WorkerBriefingOptions = {},
+): [name: string, taskList: string] {
   const t = getCatalog(briefing.locale).reminders;
-  if (briefing.tasks.length === 0) return [briefing.name, t.workerNothing];
+
+  /**
+   * Appended, never prepended: what the person needs is their work, and a
+   * control-surface note that pushed the task list down the message would be
+   * the same defect in a different place.
+   *
+   * The trailing full stop is normalised rather than assumed. `workerNothing`
+   * ends in one and a task list does not, and the hint itself deliberately
+   * carries none — because the approved template continues with a sentence of
+   * its own right after {{2}}. Get this wrong in either direction and the
+   * message reads "…de idioma.. Responde STOP…" or "…hoje Responde PT…", and
+   * only on the live send, to a crew member, on their first ever contact.
+   */
+  const withHint = (base: string): string =>
+    options.languageHint ? `${base.replace(/\.\s*$/, '')}. ${t.languageHint}` : base;
+
+  if (briefing.tasks.length === 0) return [briefing.name, withHint(t.workerNothing)];
 
   const ordered = [...briefing.tasks].sort((a, b) => Number(b.overdue) - Number(a.overdue));
   const shown = ordered.slice(0, MAX_LISTED);
@@ -278,7 +399,7 @@ export function renderWorkerBriefing(briefing: WorkerBriefing): [name: string, t
   });
   if (ordered.length > shown.length) parts.push(t.andMore(ordered.length - shown.length));
 
-  return [briefing.name, parts.join(t.taskSeparator)];
+  return [briefing.name, withHint(parts.join(t.taskSeparator))];
 }
 
 // ── the free-form briefing (issue #46) ──────────────────────────────────────
@@ -305,6 +426,58 @@ export function renderWorkerBriefing(briefing: WorkerBriefing): [name: string, t
 /** Materials shown per task before the rest becomes "+N". A van load, not an order form. */
 const MAX_MATERIALS = 6;
 
+/** Predecessors named before the rest becomes "+N". Beyond this it is a plan, not a warning. */
+const MAX_WAITING_ON = 3;
+
+/** The `reminders` slice, in the reader's own language. */
+export type RemindersCopy = ReturnType<typeof getCatalog>['reminders'];
+
+/**
+ * Everything worth saying about ONE task, one fact per line, in the order
+ * somebody about to start work needs them.
+ *
+ * ── FEDERICO: this is the dial for issue #49's first complaint. ──
+ * "It names a task and nothing else." Every line below is a reason not to
+ * phone the manager, and every one of them is already sitting in the database.
+ * Adding another means adding a column to this function, a key to all three
+ * dictionaries, and nothing else.
+ *
+ * ONE function, TWO surfaces, on purpose: the 07:00 briefing and the guided
+ * menu's task sheet render from it identically. Two renderers would eventually
+ * disagree about what a task is, and the crew member reading both would have no
+ * way to tell which was right — the same reasoning that keeps the briefing and
+ * the check-in on one renderer.
+ *
+ * Returns bare lines with NO indentation. The caller indents.
+ */
+export function taskDetailLines(task: BriefingTask, t: RemindersCopy): string[] {
+  const lines: string[] = [];
+  if (task.job_address) lines.push(t.freeFormAddress(clamp(task.job_address, 120)));
+  if (task.description) lines.push(t.freeFormDescription(clamp(task.description, MAX_DESCRIPTION)));
+
+  if (task.materials.length > 0) {
+    const listed = task.materials.slice(0, MAX_MATERIALS);
+    const names = listed.map(m => clamp(m, 60));
+    if (task.materials.length > listed.length) names.push(t.andMore(task.materials.length - listed.length));
+    lines.push(t.freeFormMaterials(names.join(t.freeFormMaterialSeparator)));
+  }
+
+  if (task.waiting_on.length > 0) {
+    const listed = task.waiting_on.slice(0, MAX_WAITING_ON);
+    const names = listed.map(w => clamp(w, 60));
+    if (task.waiting_on.length > listed.length) names.push(t.andMore(task.waiting_on.length - listed.length));
+    lines.push(t.freeFormWaitingOn(names.join(t.freeFormMaterialSeparator)));
+  }
+
+  // Last, and never in the 07:00 briefing (BRIEFABLE excludes pending_review).
+  // It is here for the guided menu, where a task the worker already declared
+  // finished IS shown — and where seeing it without this line would read as
+  // Capo having forgotten.
+  if (task.awaiting_review) lines.push(t.freeFormAwaitingReview);
+
+  return lines;
+}
+
 /** A task description is a note, not a spec. Longer than this and it stops being scannable. */
 const MAX_DESCRIPTION = 200;
 
@@ -316,7 +489,7 @@ const MAX_DESCRIPTION = 200;
  */
 const FREE_FORM_MAX_CHARS = 3000;
 
-function clamp(value: string, max: number): string {
+export function clamp(value: string, max: number): string {
   const flat = value.replace(/\s+/g, ' ').trim();
   return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
 }
@@ -333,14 +506,20 @@ function clamp(value: string, max: number): string {
  *   Hoje tens 2 tarefas:
  *
  *   1. Canalização (Casa de Paco)
+ *      Morada: Rua das Flores 12, Lisboa
  *      Substituir os tubos da cozinha e ligar a máquina.
  *      Material: tubo PVC 50mm, cola, fita
+ *      Depende de: Demolir parede
  *
  *   2. Pintar tecto (Casa de Paco) — atrasada 3d
  *
- * A task with no description and no materials is just its numbered line, which
- * is exactly what the template used to send — so this is never worse than what
- * it replaces, only better when the data is there.
+ * A task with no description, address, materials or dependencies is just its
+ * numbered line, which is exactly what the template used to send — so this is
+ * never worse than what it replaces, only better when the data is there.
+ *
+ * The ORDER of those lines is a judgement about a person standing next to a
+ * van: where first (you cannot start anywhere else), then what, then what to
+ * bring, then what might stop you.
  */
 export function renderWorkerFreeForm(briefing: WorkerBriefing): string {
   const t = getCatalog(briefing.locale).reminders;
@@ -358,18 +537,7 @@ export function renderWorkerFreeForm(briefing: WorkerBriefing): string {
     const labelled = task.job_name ? t.taskWithJob(task.title, task.job_name) : task.title;
     const headline =
       task.overdue && task.days_overdue > 0 ? t.taskOverdue(labelled, task.days_overdue) : labelled;
-    const lines = [`${index + 1}. ${headline}`];
-
-    if (task.description) lines.push(`   ${t.freeFormDescription(clamp(task.description, MAX_DESCRIPTION))}`);
-
-    if (task.materials.length > 0) {
-      const listed = task.materials.slice(0, MAX_MATERIALS);
-      const names = listed.map(m => clamp(m, 60));
-      if (task.materials.length > listed.length) names.push(t.andMore(task.materials.length - listed.length));
-      lines.push(`   ${t.freeFormMaterials(names.join(t.freeFormMaterialSeparator))}`);
-    }
-
-    return lines.join('\n');
+    return [`${index + 1}. ${headline}`, ...taskDetailLines(task, t).map(line => `   ${line}`)].join('\n');
   });
 
   if (ordered.length > shown.length) blocks.push(t.andMore(ordered.length - shown.length));

@@ -436,6 +436,50 @@ export function parseCheckinPayload(
   return { answer: match[1].toLowerCase() as CheckinAnswer, notificationId: match[2] };
 }
 
+// ── worker menu row ids (issue #49) ─────────────────────────────────────────
+// The THIRD tappable shape in this file, and the one most likely to be confused
+// with the other two. Read the three together once:
+//
+//   approval card   `interactive.button_reply.id`  `capo:approve|reject:<uuid>`  MANAGER
+//   check-in        `button.payload`               `capo:checkin:done|not_done:` WORKER
+//   worker menu     `interactive.list_reply.id`    `capo:wm:…`                   WORKER
+//
+// All three arrive on the same webhook and two of them arrive under
+// `type: 'interactive'`. What keeps them apart is not the handler layout — it
+// is that the three prefixes are pairwise non-overlapping, so no parser can
+// ever accept another's value. scripts/whatsapp-check.mts asserts that in every
+// direction, and a fourth codec must extend those assertions rather than
+// assume them.
+//
+// A list row id gets 200 chars from Meta, far more than the 41 used here. It is
+// still validated on the way IN, for the same reason parseProposalButtonId
+// validates the uuid it returns: `taskId` goes straight into `.eq('id', …)` on
+// a uuid column, where a malformed value is a Postgres 22P02 rather than a
+// clean "not one of ours".
+
+const WORKER_MENU_TASK =
+  /^capo:wm:task:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const WORKER_MENU_MANAGER = 'capo:wm:manager';
+
+/**
+ * One row of the crew menu.
+ *
+ * `manager` carries no id on purpose: "I need a person, not an answer" is not
+ * about any particular task, and giving it one would invite a handler that
+ * looked the task up and leaked whether it existed.
+ */
+export type WorkerMenuRow = { kind: 'task'; taskId: string } | { kind: 'manager' };
+
+export function workerMenuRowId(row: WorkerMenuRow): string {
+  return row.kind === 'manager' ? WORKER_MENU_MANAGER : `capo:wm:task:${row.taskId}`;
+}
+
+export function parseWorkerMenuRowId(id: string): WorkerMenuRow | null {
+  if (id.toLowerCase() === WORKER_MENU_MANAGER) return { kind: 'manager' };
+  const match = WORKER_MENU_TASK.exec(id);
+  return match ? { kind: 'task', taskId: match[1] } : null;
+}
+
 // ── business-scoped user ids ────────────────────────────────────────────────
 // Meta's answer to WhatsApp usernames. When a person adopts a username, the
 // inbound message's `from` (their phone) is OMITTED entirely and `from_user_id`
@@ -967,6 +1011,138 @@ async function sendInteractive(
     },
     config,
   );
+}
+
+// ── the interactive LIST (issue #49) ────────────────────────────────────────
+//
+// A different interactive subtype from the reply-buttons card above, and it
+// exists for a different job: a card offers up to THREE buttons and is a
+// decision, a list offers up to TEN rows behind a native "menu" affordance and
+// is a choice. The crew menu — "which task do you want the details of?" — does
+// not fit in three buttons and must not become a sentence asking them to type a
+// number.
+//
+// ── FREE, AND ONLY INSIDE THE WINDOW ────────────────────────────────────────
+// An interactive message is a session message, exactly like plain text: Meta
+// bills templates and nothing else, so this can never turn a guided prompt into
+// a paid send. The flip side is the same as text: outside the 24 hours the
+// recipient's own inbound message opened, it is REFUSED (131047) rather than
+// charged. Every caller must therefore have established the window first, and
+// must have a template or a silence to fall back to.
+//
+// ── THE LIMITS ARE ENFORCED HERE, AND THEY SPLIT IN TWO ─────────────────────
+// Cosmetic overruns CLAMP (a long task title becomes a shorter one; a worker
+// can still tap it). Structural overruns THROW (a body that does not fit, no
+// rows, eleven rows, an id Meta would truncate) — the same split
+// toTemplateParam and assertQuickReplyPayload already make, and for the same
+// reason: a truncated LABEL is ugly, a truncated ID comes back unparseable and
+// the tap disappears with nothing but a log line.
+//
+// MAX_LIST_BODY is deliberately the CONSERVATIVE figure. Meta's own reference
+// page currently reads 4096 for a list body while every third-party summary and
+// every older revision of the same page says 1024. The cost of being wrong
+// downward is a briefing that degrades to plain text; the cost of being wrong
+// upward is a 400 at 07:00 and a crew that hears nothing. `listFits` exists so
+// callers make that decision BEFORE sending rather than catching a throw.
+const MAX_LIST_BODY = 1024;
+const MAX_LIST_ROWS = 10;
+const MAX_LIST_BUTTON = 20;
+const MAX_LIST_SECTION_TITLE = 24;
+const MAX_LIST_ROW_TITLE = 24;
+const MAX_LIST_ROW_DESCRIPTION = 72;
+const MAX_LIST_ROW_ID = 200;
+
+export interface WhatsAppListRow {
+  /** Echoed back verbatim on `interactive.list_reply.id`. Build with workerMenuRowId. */
+  id: string;
+  title: string;
+  description?: string;
+}
+
+export interface WhatsAppList {
+  body: string;
+  /** The label on the native button that OPENS the list. Max 20 chars. */
+  button: string;
+  /** Section heading above the rows. Max 24 chars. */
+  section: string;
+  rows: WhatsAppListRow[];
+}
+
+/**
+ * Does this body fit in a list message?
+ *
+ * Exported so a caller can choose the envelope up front. The 07:00 briefing
+ * uses it exactly that way: a rich day that overruns is sent as ordinary text
+ * with no menu rather than trimmed down to fit one.
+ */
+export function listFits(body: string): boolean {
+  return body.length > 0 && body.length <= MAX_LIST_BODY;
+}
+
+function clampTo(value: string, max: number): string {
+  const flat = value.replace(/\s+/g, ' ').trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
+}
+
+/**
+ * Pure: list in, Graph payload out. Split out for the same reason
+ * buildTemplatePayload is — scripts/whatsapp-check.mts asserts the shape and
+ * every limit with no credentials and no network.
+ *
+ * No header and no footer. A header would duplicate the body's first line, and
+ * a footer is exactly the place a standing "reply PT/ES/EN" sentence would grow
+ * back (issue #49's second complaint).
+ */
+export function buildListPayload(list: WhatsAppList): Record<string, unknown> {
+  if (!listFits(list.body)) {
+    throw new Error(`interactive list body must be 1..${MAX_LIST_BODY} chars, got ${list.body.length}`);
+  }
+  if (list.rows.length === 0 || list.rows.length > MAX_LIST_ROWS) {
+    throw new Error(`interactive list needs 1..${MAX_LIST_ROWS} rows, got ${list.rows.length}`);
+  }
+  for (const row of list.rows) {
+    if (!row.id || row.id.length > MAX_LIST_ROW_ID) {
+      throw new Error(`list row id must be 1..${MAX_LIST_ROW_ID} chars, got ${row.id.length}`);
+    }
+    // Checked POST-clamp, because clampTo flattens whitespace: a title of three
+    // spaces is truthy at the call site and empty by the time it reaches Meta,
+    // which answers 400. That is a structural overrun even though it looks
+    // cosmetic — there is no shorter valid title to degrade to.
+    if (!clampTo(row.title, MAX_LIST_ROW_TITLE)) {
+      throw new Error('list row title must not be empty');
+    }
+  }
+
+  return {
+    type: 'interactive',
+    interactive: {
+      type: 'list',
+      body: { text: list.body },
+      action: {
+        button: clampTo(list.button, MAX_LIST_BUTTON),
+        sections: [
+          {
+            title: clampTo(list.section, MAX_LIST_SECTION_TITLE),
+            rows: list.rows.map(row => ({
+              id: row.id,
+              title: clampTo(row.title, MAX_LIST_ROW_TITLE),
+              ...(row.description
+                ? { description: clampTo(row.description, MAX_LIST_ROW_DESCRIPTION) }
+                : {}),
+            })),
+          },
+        ],
+      },
+    },
+  };
+}
+
+/** Session message, never billable — and refused outright outside the window. */
+export async function sendWhatsAppList(
+  list: WhatsAppList,
+  config: WhatsAppSendConfig,
+): Promise<{ providerMessageId: string | null }> {
+  return await post(buildListPayload(list), config);
 }
 
 // Public: the webhook needs a direct send for the voice-note failure path and

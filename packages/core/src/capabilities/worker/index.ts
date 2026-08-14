@@ -56,3 +56,9 @@ export function toWorkerAiTools(ctx: WorkerContext): ToolSet {
 
 export type { WorkerContext, WorkerTool, PendingPhoto } from './types';
 export { loadWorkerTasks, toWorkerTaskView } from './tasks';
+// The ROW shape, exported for the web app's guided menu (issue #49), which
+// renders it into a crew member's own copy catalog. Deliberately the row and
+// not `toWorkerTaskView`'s output: that projection is MODEL-FACING and its
+// field names are part of a prompt, so a renderer reading it would couple the
+// two and a prompt tweak would silently change what a worker sees on WhatsApp.
+export type { WorkerTaskRow } from './tasks';

@@ -671,6 +671,56 @@ export interface Catalog {
     /** Sent after a worker switches language — always in the NEW language. */
     workerLanguageChanged: string;
 
+    // ── the guided menu (issue #49) ─────────────────────────────────────────
+    // Federico's third complaint, in his words: "not a free-flowing
+    // conversation, but just these pre-made boxes". A crew member picks a task
+    // from a native WhatsApp list and gets its full detail back, rendered from
+    // the row — no model, no cost, no chance of an invented curing time.
+    //
+    // Every string here has a HARD LIMIT set by Meta, and the send clamps
+    // rather than failing, so an over-long translation degrades to a truncated
+    // word instead of a 400. The limits are still worth respecting in the
+    // dictionaries: a clamped label reads as a bug to the person holding the
+    // phone.
+
+    /** The native button that OPENS the list. Max 20 chars. */
+    workerMenuButton: string;
+    /** The heading above the rows. Max 24 chars. */
+    workerMenuSection: string;
+    /**
+     * The body of the menu when it is sent in REPLY to a keyword. The 07:00
+     * briefing supplies its own body — the whole rich briefing — and never uses
+     * this one.
+     *
+     * TWO numbers, and the second is not decoration. The menu shows at most six
+     * rows while `is_open` can return forty, so a worker on a long obra can be
+     * told "you have 11 tasks" above a list of six with nothing saying the rest
+     * were dropped. They then scroll, do not find the task they asked about,
+     * and conclude the menu is broken. When `shown < total`, say so.
+     */
+    workerMenuBody(shown: number, total: number): string;
+    /** No open tasks at all, so there is no menu to show. Plain text. */
+    workerMenuEmpty: string;
+    /** Row title for "I need a person, not an answer". Max 24 chars. */
+    workerMenuManagerRow: string;
+    /** That row's sub-line. Max 72 chars. */
+    workerMenuManagerNote: string;
+    /**
+     * Sent when that row is tapped. This is issue #49's "off-topic questions
+     * should get 'talk to your manager', not an answer", made deterministic:
+     * a tap on this row never reaches a model at all.
+     */
+    workerMenuManagerReply: string;
+    /**
+     * A tapped row we could not match to one of THIS worker's own open tasks —
+     * a stale menu from last week, or a row id that is not theirs.
+     *
+     * Deliberately one sentence for both cases. Telling the two apart would
+     * turn the reply into an oracle for which task ids exist, and a crew member
+     * cannot act on the difference anyway.
+     */
+    workerMenuUnknownTask: string;
+
     /**
      * Sent after a worker replies STOP, confirming they have been unsubscribed
      * from the proactive sends (the 07:00 briefing and the late-afternoon
@@ -910,5 +960,65 @@ export interface Catalog {
     freeFormMaterials(items: string): string;
     /** Joins the material names inside that line. */
     freeFormMaterialSeparator: string;
+
+    // ── what the briefing was still not saying (issue #49, complaint 1) ──────
+    // #46 added the description and the materials. What a crew member still had
+    // to phone somebody for was WHERE — `jobs.address`, appended to the
+    // task_board view by 0027 and read by nothing that talks to them — and what
+    // a task is waiting on, which is why "I turned up and the floor wasn't
+    // ready" happens.
+    //
+    // Both are optional per task and both are omitted entirely when empty: an
+    // empty "Morada: —" line is worse than no line.
+
+    /** The site address line under one task. */
+    freeFormAddress(text: string): string;
+    /** What this task is waiting on. `items` is already joined and capped. */
+    freeFormWaitingOn(items: string): string;
+    /** A task the worker has already declared finished, awaiting the manager. */
+    freeFormAwaitingReview: string;
+
+    // ── the guided menu's task detail (issue #49, complaint 3) ───────────────
+    /** Headline of one task's detail sheet. `title` already carries the obra. */
+    detailHeader(title: string): string;
+    /** Due date line, when the task has one. */
+    detailDue(date: string): string;
+    /** Shown when a task carries no description, materials or address at all. */
+    detailNothingMore: string;
+    /**
+     * An overdue task on the guided menu's detail sheet.
+     *
+     * Separate from `taskOverdue` because it carries NO number of days: the
+     * menu reads task_board through the worker projection, which does not
+     * expose `days_overdue`, and inventing one is worse than omitting it. The
+     * 07:00 briefing, which does have the number, still uses `taskOverdue`.
+     */
+    detailOverdue(title: string): string;
+
+    // ── the language line (issue #49, complaint 2) ───────────────────────────
+    /**
+     * "Reply PT, ES or EN to change language."
+     *
+     * Federico's second complaint was that this sentence was on EVERY single
+     * message. It was, because it lived in the approved Meta template body —
+     * baked in, unconditional, and unreadable from here.
+     *
+     * It now lives in this string instead, appended to the template's own {{2}}
+     * parameter, and the caller decides. See renderWorkerBriefing: it goes out
+     * only to a crew member who has never chosen a language AND has never
+     * written to us, which is as close to "first contact only" as the data
+     * allows without a new column. Everyone else never sees it again.
+     *
+     * ⚠ NO TRAILING FULL STOP. This string is appended INSIDE {{2}}, and the
+     * approved template body continues with its own sentence straight
+     * afterwards ("… Responde STOP para deixar de receber."). A full stop here
+     * renders as ".." in the message that actually goes out — visible only on
+     * the live send, to a crew member, on their first ever contact.
+     *
+     * ⚠ The other half of that fix is NOT in this repo. The live
+     * `capo_daily_briefing` template still carries the old sentence until it is
+     * re-approved in WhatsApp Manager — see docs/whatsapp-cloud-api-runbook.md.
+     */
+    languageHint: string;
   };
 }

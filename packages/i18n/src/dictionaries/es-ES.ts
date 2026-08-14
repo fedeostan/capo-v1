@@ -560,8 +560,21 @@ const dict: Catalog = {
     proposalNotPending: 'Esa propuesta ya estaba decidida.',
     proposalError: 'No he podido registrar esa decisión. Hazlo desde la app.',
     approvalFallback: 'No he podido mostrar los botones. Apruébalo o recházalo en la app.',
-    workerAck: 'Recibido, gracias. Si tienes dudas habla con tu encargado. Para cambiar de idioma responde PT, ES o EN.',
+    workerAck: 'Recibido, gracias. Si tienes dudas habla con tu encargado.',
     workerLanguageChanged: 'Hecho — a partir de ahora te escribo en español.',
+    workerMenuButton: 'Ver tarea',
+    workerMenuSection: 'Tus tareas',
+    workerMenuBody: (shown, total) =>
+      shown < total
+        ? `Tienes ${total} tareas abiertas — te enseño las ${shown} más próximas. Elige una para ver los detalles.`
+        : total === 1
+          ? 'Tienes 1 tarea abierta. Elígela para ver los detalles.'
+          : `Tienes ${total} tareas abiertas. Elige una para ver los detalles.`,
+    workerMenuEmpty: 'Ahora mismo no tienes ninguna tarea abierta. Si crees que deberías tenerla, habla con tu encargado.',
+    workerMenuManagerRow: 'Hablar con el jefe',
+    workerMenuManagerNote: 'Para todo lo que yo no puedo resolver desde aquí',
+    workerMenuManagerReply: 'Para eso habla con tu encargado — desde aquí solo puedo ver tus tareas y responder dudas técnicas.',
+    workerMenuUnknownTask: 'Ya no puedo abrir esa tarea. Escribe AYUDA para ver la lista otra vez.',
     workerOptedOut: 'Listo, no te envío más mensajes. Si cambias de idea responde START.',
     workerOptedIn: 'Genial, vuelves a recibir los mensajes del día. Responde STOP cuando quieras parar.',
     workerBudgetReached: 'Por hoy ya no puedo responder a más mensajes. Mañana por la mañana vuelvo a la normalidad — si es urgente, habla con tu encargado.',
@@ -624,6 +637,14 @@ const dict: Catalog = {
     freeFormDescription: text => text,
     freeFormMaterials: items => `Material: ${items}`,
     freeFormMaterialSeparator: ', ',
+    freeFormAddress: text => `Dirección: ${text}`,
+    freeFormWaitingOn: items => `Depende de: ${items}`,
+    freeFormAwaitingReview: 'Ya dijiste que habías acabado — a la espera de que lo confirme el jefe.',
+    detailHeader: title => `📋 ${title}`,
+    detailDue: date => `Plazo: ${date}`,
+    detailNothingMore: 'No tengo más detalles de esta tarea. Si te hace falta, habla con tu encargado.',
+    detailOverdue: title => `${title} — retrasada`,
+    languageHint: 'Responde PT, ES o EN para cambiar de idioma',
   },
 };
 

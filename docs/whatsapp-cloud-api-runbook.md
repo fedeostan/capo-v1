@@ -283,12 +283,47 @@ If you are creating it from scratch instead:
      `reminders.templateLanguage` in `packages/i18n`, which sends Meta's
      underscore codes `pt_PT` / `es_ES` / `en_US`.
 2. Body: exactly **two** parameters, in this order — `{{1}}` the recipient's
-   name, `{{2}}` the one-line summary. For example:
-   `Bom dia {{1}}. Hoje: {{2}}. Responde PT, ES ou EN para mudar de idioma.`
-   Meta rejects a body that starts or ends with a parameter, and requires
-   sample values for each.
+   name, `{{2}}` the one-line summary. Copy the body from `BRIEFING_BODY` in
+   `scripts/whatsapp-templates.ts` — that file is the source of truth. Meta
+   rejects a body that starts or ends with a parameter, and requires sample
+   values for each.
 3. Approval usually takes minutes; the send fails with **132001** until it
    lands.
+
+#### ⚠ OUTSTANDING MANUAL STEP: the language line (issue #49)
+
+The repo's `BRIEFING_BODY` **no longer contains** "Responde PT, ES ou EN para
+mudar de idioma". The live templates still do, in all three locales, and no code
+in this repository can change that: Meta has no API to rewrite an approved
+name+language pair.
+
+Why it moved: that sentence was on **every single briefing, to everybody,
+forever**, because a template body is fixed at approval time. It now lives in
+the `{{2}}` PARAMETER (`reminders.languageHint`), which is ours, and
+`renderWorkerBriefing` appends it only for a crew member who has **never chosen
+a language and has never written to us** — first contact, and then never again.
+
+Until the live templates are updated by hand:
+
+- Everyone still reads the line on the template path, exactly as before. No
+  regression.
+- A **first-contact** worker reads the language options **twice** in one
+  message — once from the baked body, once from the parameter. Ugly, harmless,
+  and it heals itself the moment the template is updated.
+
+To finish the job, for each of `pt_PT`, `es_ES`, `en_US`:
+
+1. WhatsApp Manager → Message templates → `capo_daily_briefing` → Edit.
+2. Replace the body with the matching string from `BRIEFING_BODY`. The
+   STOP clause **stays** — Meta expects a Utility template to state its opt-out.
+3. Re-submit; approval is usually minutes.
+4. `pnpm whatsapp-template status` should stop printing its WARN for that
+   locale.
+
+**Most mornings this template is not used at all any more.** Since #46 a
+recipient who wrote to us in the last 23 hours gets the free-form briefing, and
+since #49 they get it as an interactive list. The template is the envelope for
+people we have never heard from.
 
 ### 6b. `capo_task_checkin`
 
@@ -462,22 +497,67 @@ manager to a string that is not a valid wa_id. The helper is deleted. If a
 ### Worker replies
 
 Inbound senders are matched against `profiles.phone` first (the manager, full
-agent loop) and then `workers.phone` (a worker). A worker's text **never**
-reaches the model and is never persisted to `messages` — it is answered
-deterministically. Three whole-message keyword families, in this order:
+agent loop) and then `workers.phone` (a worker).
 
-1. **`STOP` / `PARAR` / `BAJA` / `SAIR` / `CANCELAR` / `UNSUBSCRIBE`** → records
+> A worker's text **does** now reach a model — a second, restricted one
+> (`handleWorkerInbound`, PRD 4 / issue #22) with four tools and its own
+> conversation tables. What it never reaches is the **manager's** agent context:
+> worker turns are persisted to `worker_messages`, never to `messages`. Earlier
+> revisions of this runbook said "never reaches the model"; that promise was
+> deliberately narrowed. See AGENTS.md.
+
+Everything below sits **in front of** that agent, is answered from a lookup, and
+costs zero model calls. The order in `handleWorkerReply` is the design — a model
+must never be able to get at these first:
+
+1. A **check-in button tap** (`type: 'button'`, §6b).
+2. A **guided-menu row tap** (`type: 'interactive'` → `list_reply`, below).
+3. **`STOP` / `PARAR` / `BAJA` / `SAIR` / `CANCELAR` / `UNSUBSCRIBE`** → records
    `whatsapp_opt_out_at` and confirms. **`START` / `COMEÇAR` / `ALTA` /
    `SUBSCRIBE`** → records a fresh `whatsapp_opt_in_at`. A withdrawal that fails
    to save is **not** acked — an "you're unsubscribed" followed by tomorrow's
    briefing is worse than silence, and Meta redelivers the webhook on a non-200.
-2. **`PT` / `ES` / `EN`** (or `português`/`español`/`english`) → switches
+4. **`PT` / `ES` / `EN`** (or `português`/`español`/`english`) → switches
    `workers.language`.
-3. Anything else → the canned ack.
+5. **`AJUDA` / `AYUDA` / `HELP` / `MENU` / `TAREFAS` / `TAREAS` / `?`** → sends
+   the guided menu.
+6. Text or a photo → the restricted worker agent.
+7. Anything else (a sticker, a video, a location) → the canned ack.
 
-All three match the **whole message**, never a substring: "stop, o Zé não vem
-hoje" is a sentence, not a withdrawal of consent, and "es que não percebi" must
-not be read as "switch to Spanish".
+Every keyword table matches the **whole message**, never a substring: "stop, o
+Zé não vem hoje" is a sentence, not a withdrawal of consent; "es que não
+percebi" must not be read as "switch to Spanish"; "ajuda-me a perceber isto" is
+a question for the agent, not a request for a menu. The three tables live in
+`apps/web/lib/worker-keywords.ts` and `pnpm whatsapp-check` asserts they stay
+pairwise disjoint — and that a bare `ES` still resolves to Spanish with zero
+model calls.
+
+### The guided menu (issue #49)
+
+An **interactive list**: up to six of the crew member's own open tasks as
+tappable rows, plus a final "talk to the boss" row that is never a task.
+Tapping a task row returns everything Capo knows about it — obra, site address,
+description, materials, what it is waiting on — rendered from the row, with **no
+model in either direction**.
+
+- It is a **session message**, so it is free, and it is **refused outright**
+  (131047) outside the 24-hour window. It is only ever sent in reply to an
+  inbound message, or as the envelope for a free-form 07:00 briefing.
+- The 07:00 briefing uses it when the recipient is inside the window **and** the
+  briefing body fits Meta's interactive-body cap. A richer day falls back to
+  plain text, which holds four times as much, and the `AJUDA` keyword still
+  summons the menu afterwards. `reminders.briefing_sent` logs `path` as
+  `menu` / `free_form` / `template`, and `listRejected: true` when Meta refused
+  our list shape and plain text picked it up.
+- Row ids are `capo:wm:task:<uuid>` and `capo:wm:manager`. That prefix is
+  deliberately non-overlapping with `capo:approve|reject:` (a manager's approval
+  card, the OTHER `type: 'interactive'` shape) and `capo:checkin:` (a template
+  quick reply). `pnpm whatsapp-check` asserts all six cross-parse directions.
+- **The tenant boundary is a TypeScript filter, not RLS.** The webhook is a
+  system caller with no `auth.uid()`, so the tapped id is looked for inside a
+  read already scoped to this worker's own company and assignee id — never
+  queried directly. `pnpm rls-matrix`'s `checkWorkerMenuScope` asserts it,
+  including against a colleague in the same company.
 
 The opt-out ack is free-form text and that is legal — the worker's own message
 opened the 24-hour window a moment earlier. It is also why opting out does not
