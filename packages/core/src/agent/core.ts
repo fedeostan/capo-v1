@@ -12,6 +12,7 @@ import type { ConfirmPosture } from '@capo/db/posture';
 import type { LocaleContext } from '@capo/i18n/locale';
 import type { ToolContext } from '../capabilities/types';
 import type { InboundMessage, OutboundSink } from '../channels/types';
+import { withToolCacheBreakpoint } from './cache';
 import { buildSystemPrompt } from './context';
 import { getModel } from './models';
 import {
@@ -71,10 +72,16 @@ export async function handleInbound(opts: HandleInboundOptions): Promise<void> {
     locales,
   };
 
+  // Prompt caching (issue #58): the tool schemas and the stable half of the
+  // system prompt each carry a cache breakpoint. This matters most HERE rather
+  // than across turns — stopWhen(12) means one manager message can cost twelve
+  // API requests seconds apart, every one of them re-sending that identical
+  // prefix. The roster is applied through the wrapper rather than inside
+  // toAiTools so ../capabilities stays unaware of the provider.
   const agent = new ToolLoopAgent({
     model: getModel('conversation'),
     instructions: await buildSystemPrompt(db, companyId, thread.summary, locales),
-    tools: toAiTools(ctx),
+    tools: withToolCacheBreakpoint(toAiTools(ctx)),
     stopWhen: stepCountIs(12),
   });
 

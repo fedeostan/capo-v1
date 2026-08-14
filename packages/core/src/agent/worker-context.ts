@@ -1,5 +1,7 @@
+import type { SystemModelMessage } from 'ai';
 import type { Db } from '@capo/db/client';
 import type { Locale } from '@capo/i18n/locale';
+import { cachedInstructions } from './cache';
 import { workerPersonas } from './persona';
 import workerOrchestration from './prompts/worker-orchestration';
 import { localeName } from './prompts/language';
@@ -113,18 +115,33 @@ export interface WorkerPromptInput {
   pendingPhotos: readonly PendingPhoto[];
 }
 
-export async function buildWorkerSystemPrompt(input: WorkerPromptInput): Promise<string> {
+/**
+ * The half of the worker prompt that is a constant of the code — who they are
+ * talking to, what that agent may do, and which language to answer in. Nothing
+ * dated, nothing about this particular crew member.
+ *
+ * Same shape and same purpose as `managerStableBlocks` in ./context.ts, and
+ * deliberately a SEPARATE function rather than a shared one: the two prompts
+ * are different documents built from different pieces, and the only thing they
+ * have in common is that both are cut in the same place.
+ */
+export function workerStableBlocks(locale: Locale): string[] {
+  return [workerPersonas[locale], workerOrchestration, buildWorkerLanguageDirective(locale)];
+}
+
+// Returned as two system messages with a cache breakpoint between them (see
+// ./cache.ts). The cut sits immediately before the date line, so the cached
+// half is persona ⊕ policy ⊕ language and everything about THIS crew member —
+// their tasks, the knowledge index, how many photos just arrived — stays
+// uncached below it. A worker's task list changes constantly and is unique to
+// them; caching it would write an entry per worker per change and read none.
+export async function buildWorkerSystemPrompt(input: WorkerPromptInput): Promise<SystemModelMessage[]> {
   const knowledgeBlock = await loadKnowledgeIndex(input.db, input.locale);
 
-  return [
-    workerPersonas[input.locale],
-    workerOrchestration,
-    buildWorkerLanguageDirective(input.locale),
+  return cachedInstructions(workerStableBlocks(input.locale), [
     `# Today's date\n${input.today}`,
     buildTaskBlock(input.tasks),
     knowledgeBlock,
     buildPhotoBlock(input.pendingPhotos),
-  ]
-    .filter(Boolean)
-    .join('\n\n---\n\n');
+  ]);
 }

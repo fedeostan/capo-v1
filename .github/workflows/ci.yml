@@ -65,3 +65,13 @@ jobs:
       # in the queue and re-sweeps for the rest of its life.
       - name: Push rules check
         run: pnpm push-check
+
+      # Provider prompt caching (issue #58). The one optimisation in the repo
+      # that fails silently in BOTH directions: a breakpoint in the wrong place
+      # bills 25% more instead of 90% less, and a breakpoint that stops being
+      # emitted just makes the product quietly more expensive. This asserts the
+      # split is byte-identical to the prompt we used to send, that the cut sits
+      # above the daily date line, and — driving the real provider against a
+      # stubbed fetch — that cache_control lands on the wire where we think.
+      - name: Prompt caching check
+        run: pnpm cache-check

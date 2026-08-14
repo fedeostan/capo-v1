@@ -136,6 +136,13 @@ and say what the alternative would be — he is the one who decides.
   (`withinSendWindow`) and the UTC entries in `apps/web/vercel.json` that feed
   it, which it reads and asserts season by season. Needs **no credentials
   and no network**, so it runs in CI on every PR (`pnpm scheduler-check`).
+- `scripts/cache-check.mts` — provider prompt caching (#58). Asserts the
+  system-prompt split is byte-identical to the single string it replaced, that
+  the breakpoint sits ABOVE the daily date line, that exactly one tool
+  definition carries one, and — by driving the real `@ai-sdk/anthropic`
+  provider through a stubbed global `fetch` — that `cache_control` lands on the
+  wire where we think it does. Credential-free, so it runs in CI
+  (`pnpm cache-check`).
 - `scripts/agent-smoke.mts` — drives `handleInbound()` against a throwaway
   seeded tenant. Needs real API keys, so it is a manual gate
   (`pnpm agent-smoke`).
@@ -732,6 +739,59 @@ Structural invariants (do not regress):
   Known and accepted: a manually pinned date gets stomped, defensible **only
   because** the card shows `from → to` per row and the CAS refuses stale rows.
   The long-term fix is a `schedule_locked boolean` on `tasks`.
+- **Provider prompt caching is ON, and the system prompt's block ORDER is now
+  load-bearing** (`packages/core/src/agent/cache.ts`, issue #58). Anthropic
+  caches a PREFIX — `tools` → `system` → `messages` — so a `cache_control`
+  marker means "everything before this point is one entry", and any byte that
+  changes earlier invalidates it. Both agent prompts are therefore returned as
+  **two system messages** with one breakpoint between them, and a second
+  breakpoint sits on the last tool definition. Five things are load-bearing:
+  - **The cut is immediately ABOVE the daily date line, in both prompts.**
+    Cached: persona ⊕ orchestration ⊕ language directive. Uncached: date ⊕
+    snapshot ⊕ onboarding ⊕ knowledge index ⊕ memories ⊕ summary (manager),
+    date ⊕ tasks ⊕ knowledge ⊕ photos (worker). A breakpoint below the date
+    caches a prefix guaranteed to be stale tomorrow: you pay the 1.25× write
+    every day and never read it. **Anything added to the cached half must be a
+    constant of the CODE, not of the clock or the tenant.**
+  - **The split must stay byte-identical to the single string it replaced.**
+    `cachedInstructions` joins the halves with the same `\n\n---\n\n` the
+    blocks inside each half use, and `pnpm cache-check` asserts the rejoin
+    against the real builders. This was a caching change, never a prompt
+    rewrite — in particular the language directive's `manager_instruction`
+    carve-out crosses no boundary and is asserted present in the cached half.
+  - **Only the `conversation` role is cached, and the reason is per-MODEL.**
+    Anthropic's minimum cacheable prefix is not monotonic across generations:
+    Sonnet 5 is 1024 tokens, Haiku 4.5 is **4096**. Below the floor a marker is
+    a silent no-op that still bills the write. `summarizer` / `extraction` /
+    `translation` are all Haiku 4.5 with prompts of a few hundred tokens, and
+    `planner` is Sonnet 5 with a ~900-token prompt and one call per plan — so
+    all four are deliberately uncached. `MIN_CACHEABLE_PREFIX_TOKENS`,
+    `MODEL_IDS` and `CACHED_ROLES` in `agent/models.ts` record this and
+    `cache-check` asserts it, so moving a role to another model re-opens the
+    decision loudly instead of silently.
+  - **The economics are paid inside one turn, not across traffic.** A write
+    costs 1.25× and a read 0.1×, so break-even is two requests on the same
+    prefix within the 5-minute TTL. `stopWhen(12)` (manager) and `(6)` (worker)
+    mean one inbound message is up to twelve API requests seconds apart, all
+    re-sending the identical prefix. Do **not** switch to the 1-hour TTL: it
+    costs 2× to write and needs three reads.
+  - **`cache.ts` may serve both agents only because it is provider plumbing**,
+    exactly like `models.ts`. Its whole vocabulary is `string` and the AI SDK's
+    `ToolSet` — no `CapoTool`/`WorkerTool`, no `ToolContext`/`WorkerContext`,
+    no roster, no persona, no policy. If something wants to pass a Capo type
+    through it, that is the manager/worker isolation failing, not this file
+    growing. The tool breakpoint is applied at the two agent cores
+    (`withToolCacheBreakpoint(toAiTools(ctx))`) rather than inside `toAiTools`,
+    so `capabilities/` stays unaware of the provider and the two rosters keep
+    no shared import.
+
+  Known and NOT done: the conversation history carries no breakpoint. Within a
+  tool-heavy turn the loop re-sends the accumulated thread on every step at full
+  price, and that is now the largest remaining uncached span. It was left out
+  because it is the one marker that MOVES between requests (it rides the last
+  message), which brings Anthropic's 20-block lookback window into play — a
+  single turn can add more than 20 blocks and silently stop finding the previous
+  entry. Worth doing, deliberately not done here.
 - Views may only be extended with `create or replace view` **appending**
   columns (Postgres forbids reorder/retype). Code reading a view that a
   pending migration extends should `select('*')` and treat the new fields as
