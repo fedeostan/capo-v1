@@ -137,19 +137,13 @@ Then the block:
   // same shape. A BSUID in a wa.me link would silently address nobody.
   eq('handshake — a BSUID is refused, never digit-stripped', buildWhatsAppLink('PT.13491208655302741918', 'x'), null);
 
-  // The text must survive the round trip intact, in every locale — accents,
-  // punctuation and the '?' that ends two of the three greetings.
-  for (const locale of LOCALES) {
-    const prefill = getCatalog(locale).whatsappHandshake.prefill;
-    const url = new URL(buildWhatsAppLink(NUMBER, prefill)!);
-    eq(`${locale} — the prefilled text round-trips through the link`, url.searchParams.get('text'), prefill);
-    check(`${locale} — the prefill is not empty`, prefill.trim().length > 0, prefill);
+  // Accents and punctuation must survive the round trip. Uses a literal rather
+  // than the catalog: the copy arrives in Task 2, and this task must end green.
+  {
+    const accented = 'Olá! Acabei de me registar. Ajudas-me a começar?';
+    const url = new URL(buildWhatsAppLink(NUMBER, accented)!);
+    eq('handshake — accented text round-trips through the link', url.searchParams.get('text'), accented);
   }
-
-  // Three languages, three different messages. A copy-paste that left two
-  // locales identical would be invisible in review and wrong in production.
-  const prefills = LOCALES.map(l => getCatalog(l).whatsappHandshake.prefill);
-  check('handshake — all three prefills differ', new Set(prefills).size === LOCALES.length, prefills.join(' | '));
 }
 ```
 
@@ -159,7 +153,7 @@ Then the block:
 pnpm whatsapp-check
 ```
 
-Expected: FAIL — the module `apps/web/lib/whatsapp-handshake.ts` does not exist, so `tsx` throws on the import before any assertion runs. (The catalog key does not exist yet either; that is Task 2 and is expected.)
+Expected: FAIL — the module `apps/web/lib/whatsapp-handshake.ts` does not exist, so `tsx` throws on the import before any assertion runs.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -221,7 +215,7 @@ export function buildWhatsAppLink(businessNumber: string, text: string): string 
 pnpm whatsapp-check
 ```
 
-Expected: the link assertions PASS. The four `${locale}` assertions and the "all three prefills differ" assertion still FAIL with a TypeScript error on `whatsappHandshake` — that key arrives in Task 2. Do not fix it here and do not delete those assertions.
+Expected: `0 failures`. This task ends green — it depends on no copy that does not yet exist.
 
 - [ ] **Step 5: Commit**
 
@@ -364,18 +358,40 @@ In `packages/i18n/src/dictionaries/en-US.ts`, in the same position:
   },
 ```
 
-- [ ] **Step 5: Run the check and the typecheck**
+- [ ] **Step 5: Assert the copy in `whatsapp-check`**
+
+Now that the keys exist, extend the `// ── the onboarding handshake link (issue #84) ───` block added in Task 1. Insert this immediately **before** that block's closing `}`:
+
+```ts
+  // The prefilled text must survive the round trip intact in EVERY locale —
+  // accents, punctuation, and the '?' that ends all three greetings.
+  for (const locale of LOCALES) {
+    const prefill = getCatalog(locale).whatsappHandshake.prefill;
+    const url = new URL(buildWhatsAppLink(NUMBER, prefill)!);
+    eq(`${locale} — the prefilled text round-trips through the link`, url.searchParams.get('text'), prefill);
+    check(`${locale} — the prefill is not empty`, prefill.trim().length > 0, prefill);
+  }
+
+  // Three languages, three different messages. A copy-paste that left two
+  // locales identical would be invisible in review and wrong in production.
+  const prefills = LOCALES.map(l => getCatalog(l).whatsappHandshake.prefill);
+  check('handshake — all three prefills differ', new Set(prefills).size === LOCALES.length, prefills.join(' | '));
+```
+
+`LOCALES`, `getCatalog`, `check` and `eq` are all already imported or defined in that file; `NUMBER` is the const declared at the top of the Task 1 block.
+
+- [ ] **Step 6: Run the check and the typecheck**
 
 ```bash
 pnpm whatsapp-check && pnpm turbo typecheck
 ```
 
-Expected: `whatsapp-check` prints `0 failures` — including the four per-locale assertions and the "all three prefills differ" assertion from Task 1. `typecheck` passes. If a dictionary is missing a key, `tsc` names it; that is the interface doing its job.
+Expected: `whatsapp-check` prints `0 failures`, including the five new assertions. `typecheck` passes. If a dictionary is missing a key, `tsc` names it; that is the interface doing its job.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add packages/i18n/src/catalog.ts packages/i18n/src/dictionaries
+git add packages/i18n/src/catalog.ts packages/i18n/src/dictionaries scripts/whatsapp-check.mts
 git commit -m "feat(i18n): copy for the WhatsApp handshake screen (#84)
 
 The prefilled message greets and states an intent, so Capo's existing
@@ -1076,10 +1092,10 @@ And the end of the function becomes:
 - [ ] **Step 2: Confirm no `/instalar` redirect is left in that file**
 
 ```bash
-grep -n "instalar\|whatsapp" "apps/web/app/(public)/onboarding/actions.ts"
+grep -n "redirect('/" "apps/web/app/(public)/onboarding/actions.ts"
 ```
 
-Expected: two `redirect('/whatsapp')` lines, and no `/instalar`.
+Expected: exactly two `redirect('/whatsapp')` lines plus the three unchanged `redirect('/onboarding?erro=…')` validation lines — and **no** `redirect('/instalar')`. The prose comment added in Step 1 does mention `/instalar`, which is correct and must stay; this grep matches redirect calls only, so it does not trip on it.
 
 - [ ] **Step 3: Run the whole merge gate**
 
