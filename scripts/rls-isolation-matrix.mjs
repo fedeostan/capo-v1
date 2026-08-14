@@ -144,6 +144,27 @@ function check(name, ok, detail = '') {
   if (!ok) failures += 1;
 }
 
+/**
+ * "The tenant saw nothing" — spread straight into `check(name, ...)`.
+ *
+ * Returns `[ok, detail]`. A read counts as denied when it returned zero rows,
+ * OR when it was refused outright with 42501 (insufficient_privilege), which is
+ * what a table with its SELECT grant revoked answers. See the long comment on
+ * the deny-all block below for which tables are in which camp and why.
+ *
+ * Any OTHER error is a failure, not a pass. 42P01 in particular must never
+ * count as denied: a dropped table would report as secure.
+ */
+function readIsDenied(data, error) {
+  if (error) {
+    return error.code === '42501'
+      ? [true, 'refused at the grant layer (42501)']
+      : [false, `unexpected error ${error.code ?? '?'}: ${error.message}`];
+  }
+  const n = (data ?? []).length;
+  return [n === 0, n === 0 ? '0 rows' : `${n} rows LEAKED`];
+}
+
 async function must(promise, what) {
   const { data, error } = await promise;
   if (error) throw new Error(`${what}: ${error.message}`);
@@ -761,15 +782,33 @@ async function runMatrix(self, other) {
   // system actor — dispatch_log by the external n8n workflow, notification_log
   // by the reminder cron. A tenant reading either would see every company's
   // send history, since neither is scoped by a policy.
+  //
+  // ── WHY THESE FOUR GO THROUGH readIsDenied AND THE OTHER 24 DO NOT ────────
+  // "A tenant sees nothing" has TWO legitimate shapes in this schema, and the
+  // deny-all tables are split across both:
+  //
+  //   0 rows, no error   — dispatch_log, notification_log. RLS is on with no
+  //                        policy, but the tenant still holds a SELECT GRANT,
+  //                        so PostgREST runs the query and it matches nothing.
+  //   42501, no rows     — ai_usage, checkin_photo_requests. These additionally
+  //                        `revoke all ... from authenticated`, so the read is
+  //                        refused at the GRANT layer before RLS is consulted.
+  //
+  // The second is strictly stronger. Asserting only the first marked the two
+  // safest tables in the schema as failures — which is how this file first ran
+  // red on a completely healthy database, and exactly the way a security gate
+  // stops being read.
+  //
+  // 42P01 (undefined_table) is deliberately NOT accepted: a dropped or renamed
+  // table would otherwise report as perfectly secure, which is the one false
+  // green worth fearing here.
   {
     const { data, error } = await db.from('dispatch_log').select('id');
-    check(`${L}: dispatch_log deny-all (bonus)`, !error && (data ?? []).length === 0,
-      error ? error.message : `${(data ?? []).length} rows`);
+    check(`${L}: dispatch_log deny-all (bonus)`, ...readIsDenied(data, error));
   }
   {
     const { data, error } = await db.from('notification_log').select('id');
-    check(`${L}: notification_log deny-all (bonus)`, !error && (data ?? []).length === 0,
-      error ? error.message : `${(data ?? []).length} rows`);
+    check(`${L}: notification_log deny-all (bonus)`, ...readIsDenied(data, error));
   }
 
   // checkin_photo_requests (0034) — the fourth deny-all relation, and the one
@@ -780,8 +819,7 @@ async function runMatrix(self, other) {
   // runs, so a policy that exposed every company's rows would show TWO here.
   {
     const { data, error } = await db.from('checkin_photo_requests').select('id');
-    check(`${L}: checkin_photo_requests deny-all (bonus)`, !error && (data ?? []).length === 0,
-      error ? error.message : `${(data ?? []).length} rows`);
+    check(`${L}: checkin_photo_requests deny-all (bonus)`, ...readIsDenied(data, error));
   }
 
   // ai_usage (0032) — the THIRD ledger, and the only one with a tenant policy
@@ -798,8 +836,7 @@ async function runMatrix(self, other) {
   // here and break the dashboard silently.
   {
     const { data, error } = await db.from('ai_usage').select('id');
-    check(`${L}: ai_usage read deny-all (bonus)`, !error && (data ?? []).length === 0,
-      error ? error.message : `${(data ?? []).length} rows`);
+    check(`${L}: ai_usage read deny-all (bonus)`, ...readIsDenied(data, error));
   }
 }
 
@@ -1603,14 +1640,21 @@ async function runAdversarial(attacker, victim) {
     }));
     const { data: rows, error: seedError } = await admin.from('ai_usage').insert(seeded).select('id');
     const { data, error } = await db.from('ai_usage').select('id, company_id');
+    // Two conditions, and BOTH matter. The seed must have worked (2 rows, one
+    // per tenant) or this proves nothing — a table nobody could write to would
+    // read as empty and pass. Then the tenant's read must be denied, in either
+    // of the two legitimate shapes readIsDenied accepts; here it is the 42501
+    // one, because ai_usage revokes SELECT from `authenticated` outright.
+    const [denied, deniedDetail] = readIsDenied(data, error);
+    const seeded2 = !seedError && (rows ?? []).length === 2;
     check(
       'adversarial: tenant cannot read ai_usage at all, own rows included (no SELECT policy)',
-      !seedError && (rows ?? []).length === 2 && !error && (data ?? []).length === 0,
+      seeded2 && denied,
       seedError
         ? `seed failed (${seedError.message}) — check is untestable`
-        : error
-          ? error.message
-          : `${(data ?? []).length} rows visible`,
+        : !seeded2
+          ? `seeded ${(rows ?? []).length} rows, wanted 2 — check is untestable`
+          : deniedDetail,
     );
     if ((rows ?? []).length > 0) {
       await admin.from('ai_usage').delete().in('id', rows.map(r => r.id));
@@ -1649,7 +1693,20 @@ async function runAdversarial(attacker, victim) {
   // packages/core/src/agent/usage.ts swallows the rejection by design. This is
   // the shape handleInbound actually writes.
   {
-    const { data, error } = await db.from('ai_usage').insert({
+    // NO `.select()` here, and that is the whole point of this check rather
+    // than an incidental detail. `ai_usage` is WRITE-ONLY for a tenant: the
+    // INSERT policy exists, the SELECT grant does not. supabase-js only asks
+    // PostgREST to return the inserted row when you chain `.select()`, and that
+    // RETURNING clause needs SELECT — so `.insert(...).select('id')` is refused
+    // 42501 on a perfectly healthy database, while the write itself succeeds.
+    //
+    // This check therefore mirrors packages/core/src/agent/usage.ts EXACTLY —
+    // `const { error } = await db.from('ai_usage').insert({...})` — and proves
+    // the row landed by reading it back on the SERVICE ROLE, which is the only
+    // actor that can see this table at all. Asserting on the tenant's own view
+    // is impossible here by construction.
+    const marker = 40000 + Math.floor(Math.random() * 10000);
+    const { error } = await db.from('ai_usage').insert({
       company_id: attacker.companyId,
       actor: 'manager',
       profile_id: attacker.userId,
@@ -1659,15 +1716,23 @@ async function runAdversarial(attacker, victim) {
       provider: 'anthropic',
       input_tokens: 300,
       output_tokens: 120,
-      cache_read_tokens: 5000,
+      cache_read_tokens: marker,
       cache_write_tokens: 0,
-    }).select('id').single();
+    });
+    const { data: landed } = await admin
+      .from('ai_usage')
+      .select('id')
+      .eq('company_id', attacker.companyId)
+      .eq('cache_read_tokens', marker);
+    const wrote = (landed ?? []).length;
     check(
       'adversarial: a real turn can still record its own usage (positive control)',
-      !error && data?.id != null,
-      error ? `REFUSED (${error.code ?? 'err'}) — the cost ledger records NOTHING` : 'accepted',
+      !error && wrote === 1,
+      error
+        ? `REFUSED (${error.code ?? 'err'}) — the cost ledger records NOTHING`
+        : `accepted, ${wrote} row written`,
     );
-    if (data?.id) await admin.from('ai_usage').delete().eq('id', data.id);
+    for (const row of landed ?? []) await admin.from('ai_usage').delete().eq('id', row.id);
   }
 
   // ── 0035: collaborators (issue #44) ───────────────────────────────────────
