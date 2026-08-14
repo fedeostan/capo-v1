@@ -11,6 +11,16 @@ const NAMES: Record<Locale, string> = {
   'en-US': 'American English (en-US)',
 };
 
+// The same three languages named WITHOUT the dialect caveat. The caveat in
+// NAMES is an instruction to the model ("never Brazilian Portuguese"); it is
+// correct there and nonsense in a sentence the model is being told to say out
+// loud to the manager, which is the only place this map is used.
+const PLAIN_NAMES: Record<Locale, string> = {
+  'pt-PT': 'Portuguese',
+  'es-ES': 'Spanish',
+  'en-US': 'English',
+};
+
 /** Human-readable name of a locale, for prompts that need to name a language. */
 export function localeName(locale: Locale): string {
   return NAMES[locale];
@@ -26,6 +36,20 @@ export function buildLanguageDirective(locales: LocaleContext): string {
   if (locales.user !== locales.company) {
     lines.push(
       `- These two DIFFER right now. You talk in ${NAMES[locales.user]} but you WRITE STORED TEXT in ${NAMES[locales.company]}: translate the manager's wording when you fill a title, name, or content field, and translate it back when you read those rows out to him.`,
+      // Issue #55: the manager reported "tasks are created in Portuguese" while
+      // reading English. Nothing was broken — the two dials had drifted apart —
+      // but nothing anywhere told him that, so he had to infer a setting he did
+      // not know existed from the output of it. The screens now carry a notice
+      // (apps/web .../language-drift.tsx); this is the same fact said at the
+      // moment it happens, by the only participant who is present for it.
+      //
+      // ONCE, and only on a write. Said on every turn it becomes noise the
+      // manager reads past, which costs the signal exactly when it matters —
+      // and the split is a legitimate configuration, not a fault to nag about.
+      // This is a nudge, not a boundary: the model may over- or under-say it,
+      // and the deterministic screen notice is what guarantees the message
+      // lands at all.
+      `- He may not KNOW they differ — they are two separate settings and he may only ever have moved one. So the FIRST time in a conversation that you store new text or raise a card that will store it, end that reply with ONE plain sentence: name the text you saved, and say that the company's stored language is ${PLAIN_NAMES[locales.company]} while you are talking to him in ${PLAIN_NAMES[locales.user]}. Say it once and then stop: no repeat on later writes in the same conversation, nothing when you are merely reading rows back to him, and never a lecture about the setting. If he asks about it, tell him he can put both on the same language on the Perfil (profile) screen under Language, and that doing it there also offers to translate what is already stored.`,
     );
   }
 

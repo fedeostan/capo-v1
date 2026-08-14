@@ -182,6 +182,34 @@ why no path offers it casually. The paths that move it together with the data:
   roster would be executed directly whenever the model can quote the manager,
   which for "traduz tudo para inglês" is always.
 
+**Two dials that disagree are a legal state, and the product now SAYS SO**
+(issue #55). Federico read English while the board filled with Portuguese
+titles, and every part of the system was behaving exactly as designed — the two
+dials had drifted apart and nothing anywhere told him, so he had to infer a
+setting he did not know existed from its output. The fix is a signal, never a
+collapse of the two dials: collapsing them breaks the case the split exists for.
+It is said in three places, and the redundancy is deliberate because the third
+is model-mediated:
+
+- `/perfil`, at the top of the Language card, above the control that fixes it
+  (`LanguageDriftNote`) — not inside the "advanced" disclosure, because a
+  manager who does not know the split exists will never open a disclosure
+  about it.
+- `/tarefas`, above the board (`LanguageDriftStrip`) — the board is where a
+  title is READ, so it is where a title in the wrong language is noticed.
+  Styled quieter than the amber materials banner next to it: this is a
+  standing fact about a setting, not something to act on today.
+- In chat, by Capo itself: a bullet inside `buildLanguageDirective`'s
+  `user !== company` branch tells it to say once, on its first write of the
+  conversation, what it stored and in which language. It sits BEFORE the
+  `translate_company_data` line and therefore far above the
+  `manager_instruction` carve-out, which stays last and unreworded.
+
+Both components render **nothing** when the dials agree, which is every tenant
+that never split them, and neither ever moves a dial — they only point at the
+one control that moves both together. The copy must not read as an error: it
+names the case in which the split is correct.
+
 Translation invariants (`packages/core/src/translation`, migration `0015`):
 
 - **Collect from base tables, never `task_board`.** The view filters by

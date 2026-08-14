@@ -475,6 +475,24 @@ export interface Catalog {
     translateNothing: string;
     translateWarning: string;
 
+    /**
+     * The drift notice (issue #55). Shown ONLY when the two dials disagree —
+     * profiles.language (what Capo speaks to this manager) is not
+     * companies.language (what Capo writes into task titles and job names).
+     *
+     * That state is legal and sometimes correct (a foreman who does not share
+     * his crew's language), so the copy must NOT read as an error. It names
+     * what is happening, says when it is deliberate, and points at the one
+     * control that moves both dials together and offers to translate the rows
+     * that already exist. The two language names are passed in already
+     * rendered, in their own language ("Português", "English"), the same way
+     * the picker on /perfil labels them.
+     */
+    driftBanner(p: { you: string; board: string }): string;
+    driftHint: string;
+    /** Link label on surfaces that are not /perfil, pointing at the fix. */
+    driftAction: string;
+
     /** The two-dial split, demoted into a disclosure. Still needed when a
      *  Spanish-speaking foreman joins a Portuguese company. */
     advanced: string;
