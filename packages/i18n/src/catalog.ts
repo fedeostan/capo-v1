@@ -812,8 +812,55 @@ export interface Catalog {
     managerSummary(counts: { today: number; unassigned: number; overdue: number }): string;
     /** The manager's line when the company has nothing on today. */
     managerNothing: string;
-    /** The fuller version written into the chat thread, where newlines are fine. */
-    managerEvent(counts: { today: number; unassigned: number; overdue: number; notified: number }): string;
+
+    // ── the CHAT-THREAD notes (issue #47) ────────────────────────────────────
+    // Everything above goes out over WhatsApp. These three go into the
+    // company's perpetual chat thread as `role='event'` rows, which is what
+    // Capo itself reads on every later turn — so they are the difference
+    // between "the manager saw a message Capo has never heard of" and the two
+    // of them looking at the same day.
+    //
+    // They are permanent and model-visible, which fixes what may be in them:
+    // OUR copy, wrapped around company-owned data (crew names, counts) and
+    // around structured facts (which button was tapped). Never a word a crew
+    // member wrote — see apps/web/app/notifications/thread.ts for why that is a
+    // safety boundary and not a style rule.
+    //
+    // Newlines are fine here, unlike in a template parameter.
+
+    /**
+     * The morning note: what today holds, and WHO was sent their briefing.
+     * `names` is already joined and capped by the renderer, and is the empty
+     * string when nobody was messaged.
+     */
+    managerEvent(counts: {
+      today: number;
+      unassigned: number;
+      overdue: number;
+      notified: number;
+      names: string;
+    }): string;
+    /**
+     * The late-afternoon note: who was asked whether they had finished. Same
+     * `names` contract as managerEvent.
+     */
+    checkinEvent(args: { asked: number; names: string }): string;
+    /**
+     * One crew member's ANSWER to that check-in, recorded as it arrives.
+     *
+     * `answer` is the button they tapped — a two-valued enum minted by our own
+     * cron, never anything they typed. `tasks` is how many tasks were in the
+     * snapshot they were asked about, and may be 0 if that snapshot was
+     * unreadable, so the copy must not depend on it.
+     *
+     * A "done" tap is a CLAIM, never a completion: the task lands in
+     * `pending_review` and waits for the manager. This sentence must therefore
+     * never say the work is finished — the same rule the worker's own
+     * acknowledgement follows (checkinDoneAwaiting).
+     */
+    checkinAnswer(args: { name: string; answer: 'done' | 'not_done'; tasks: number }): string;
+    /** Joins the crew names inside a thread note. */
+    nameSeparator: string;
 
     // ── the FREE-FORM briefing (issue #46) ───────────────────────────────────
     // Everything above this line is squeezed into a Meta TEMPLATE parameter:

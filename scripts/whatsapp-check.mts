@@ -37,6 +37,12 @@
 //      recipient gets NOTHING, which on the 07:00 send is a silent morning for
 //      the whole crew. Guessing "outside" only costs money. Every ambiguity —
 //      null, garbage, a future timestamp — must resolve to the template.
+//  11. The manager could be reading a WhatsApp conversation Capo had no record
+//      of (issue #47). The three chat-thread notes are what close that, and
+//      what may be IN them is a safety boundary rather than a style question:
+//      our own copy, counts, manager-authored crew names and a two-valued
+//      button — never a word a crew member typed. The other half of that
+//      boundary is asserted by `pnpm guard-check`.
 //
 // Run with `pnpm whatsapp-check`. Exit 0 = green, 1 = at least one failure.
 
@@ -74,6 +80,9 @@ import { allTemplates, MANAGED_TEMPLATE_NAMES, TEMPLATE_LANGUAGES } from './what
 // reaches apps/web/lib/cron — it is pure, so no credentials come with it.
 import {
   loadCompanyBriefing,
+  renderCheckinAnswerEvent,
+  renderCheckinEvent,
+  renderManagerEvent,
   renderWorkerFreeForm,
   type BriefingTask,
   type WorkerBriefing,
@@ -339,6 +348,82 @@ eq('a check-in payload is not a proposal id', parseProposalButtonId(doneP), null
     briefing.excludedInactive + briefing.excludedUnreachable + briefing.excludedNoConsent + briefing.workers.length,
     crew.length,
   );
+}
+
+// ── the chat-thread notes (issue #47) ───────────────────────────────────────
+// The three lines the SYSTEM writes into the manager's own conversation, so
+// that what the manager sees on WhatsApp and what Capo sees in the thread are
+// the same day. Before #47 the 07:00 route wrote one of them and the check-in
+// route wrote nothing, so the crew could be mid-conversation with Capo about a
+// question Capo had no record of asking.
+//
+// These are not WhatsApp messages, but they are checked here because they are
+// rendered from the SAME briefing module and describe the same two sends — and
+// because the only thing standing between them and a real privilege escalation
+// is what is allowed to be in them. See guard-check for the other half: an
+// event row must never become guard evidence.
+{
+  const counts = { today: 3, unassigned: 1, overdue: 2 };
+  const crew = ['Zé', 'Ana', 'Miguel'];
+
+  for (const locale of LOCALES) {
+    const morning = renderManagerEvent(counts, crew.length, crew, locale);
+    check(`${locale}: the morning note NAMES who was briefed`,
+      crew.every(name => morning.includes(name)), morning);
+    check(`${locale}: and still carries the day's counts`, morning.includes('3') && morning.includes('2'), morning);
+
+    const ask = renderCheckinEvent(crew.length, crew, locale);
+    check(`${locale}: the check-in note names who was asked`,
+      crew.every(name => ask.includes(name)), ask);
+
+    const done = renderCheckinAnswerEvent({ name: 'Zé', answer: 'done', tasks: 2 }, locale);
+    const notDone = renderCheckinAnswerEvent({ name: 'Zé', answer: 'not_done', tasks: 2 }, locale);
+    check(`${locale}: the two answers read differently`, done !== notDone, `${done} / ${notDone}`);
+    check(`${locale}: both name the crew member who answered`,
+      done.includes('Zé') && notDone.includes('Zé'));
+    // A tap is a CLAIM, never a completion — task_board.is_open is a denylist,
+    // so the task stays open. A note telling the manager the work is done would
+    // put the thread back in disagreement with the board, which is the exact
+    // shape of the bug #54 fixed on the worker's own acknowledgement. Checked
+    // by length because the sentence itself is per-language: the "done" note
+    // must carry a whole extra clause about waiting, not merely a different verb.
+    check(`${locale}: the "done" note carries an extra "waiting on you" clause`,
+      done.length > notDone.length + 25, `${done.length} vs ${notDone.length}`);
+  }
+
+  // Nobody messaged: the note must still be a sentence, not a dangling colon.
+  // Reachable in two different ways — a company whose whole crew lacks consent,
+  // and an evening where every send failed after the claims were won — so both
+  // renderers need the branch.
+  for (const locale of LOCALES) {
+    const silent = renderManagerEvent(counts, 0, [], locale);
+    check(`${locale}: a morning where nobody was messaged still reads as a sentence`,
+      silent.length > 0 && !silent.includes(': .') && !silent.trimEnd().endsWith(':'), silent);
+
+    const noAsk = renderCheckinEvent(0, [], locale);
+    check(`${locale}: an evening where nobody was asked still reads as a sentence`,
+      noAsk.length > 0 && !noAsk.trimEnd().endsWith(':') && !noAsk.includes(' 0 '), noAsk);
+  }
+
+  // A crew of thirty must not put thirty names in the manager's thread AND in
+  // the model's context every single morning, where the summarizer then merges
+  // it forward indefinitely.
+  const big = Array.from({ length: 30 }, (_, i) => `Trabalhador ${i + 1}`);
+  const capped = renderManagerEvent(counts, big.length, big, 'pt-PT');
+  check('a 30-person crew is capped, not listed in full',
+    !capped.includes('Trabalhador 30') && capped.includes('+22'), capped);
+  check('and the count still tells the truth about how many were messaged',
+    capped.includes('30'), capped);
+
+  // Names are manager-authored free text. A pasted newline would otherwise
+  // break the one-line shape these notes are read in.
+  const messy = renderManagerEvent(counts, 1, ['Zé\n  Silva'], 'pt-PT');
+  check('a name with a newline in it is flattened', !messy.includes('\n'), JSON.stringify(messy));
+
+  // An unreadable task_ids snapshot yields zero ids (readTaskIds above). The
+  // note must still be a sentence rather than "(0 tarefas)".
+  const zero = renderCheckinAnswerEvent({ name: 'Ana', answer: 'done', tasks: 0 }, 'pt-PT');
+  check('an empty task snapshot does not print a zero count', !zero.includes('0 '), zero);
 }
 
 // ── bsuid ───────────────────────────────────────────────────────────────────

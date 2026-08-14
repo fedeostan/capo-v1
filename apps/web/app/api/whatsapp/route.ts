@@ -37,6 +37,8 @@ import {
 } from '../../../lib/checkin-claim';
 import { logEvent } from '../../../lib/log';
 import { type WhatsAppEnv } from '../../../lib/whatsapp';
+import { renderCheckinAnswerEvent } from '../../notifications/briefing';
+import { readThreadLocale, recordThreadEvent } from '../../notifications/thread';
 
 // WhatsApp manager channel — Meta Cloud API webhook (see
 // docs/whatsapp-cloud-api-runbook.md for the one-time Meta setup).
@@ -459,12 +461,20 @@ async function stampLastInbound(db: Db, target: BsuidTarget): Promise<void> {
 // exists and coerceConfirmPosture reads that as the safe posture. The embed
 // still has to be spelled out; PostgREST does not follow relations under `*`.
 const MANAGER_COLUMNS = '*, company:companies(language)';
-const WORKER_COLUMNS = 'id, company_id, language, company:companies(language)';
+// `name` is here for the check-in thread note (issue #47) and is safe to name
+// in this list for a reason worth stating: unlike whatsapp_user_id, it is an
+// original column of `workers` and has existed in every deployed schema, so it
+// cannot couple sender resolution to a migration that has not landed yet. That
+// is the whole hazard this file's header warns about — a 42703 here turns every
+// crew member into an unknown sender — and an original column carries none of
+// it. Do not extend this list with a column a pending migration adds.
+const WORKER_COLUMNS = 'id, company_id, name, language, company:companies(language)';
 
 /** One resolved crew row, as both worker lookups return it. */
 interface WorkerMatch {
   id: string;
   company_id: string;
+  name: string;
   language: string | null;
   company: { language: string | null } | null;
 }
@@ -719,7 +729,7 @@ async function claimCheckinTasks(
 async function handleCheckinTap(
   db: Db,
   message: WhatsAppMessage,
-  worker: { id: string; company_id: string },
+  worker: WorkerMatch,
   locale: Locale,
   sendConfig: WhatsAppSendConfig,
 ): Promise<boolean> {
@@ -828,10 +838,9 @@ async function handleCheckinTap(
   // every per-task call is idempotent in effect — a task already in review comes
   // back 'already_pending' and changes nothing. Only the ACK stays suppressed,
   // so a retry never double-messages the worker.
+  const taskIds = readTaskIds(ask.task_ids);
   const outcomes =
-    parsed.answer === 'done'
-      ? await claimCheckinTasks(db, worker, message.id, readTaskIds(ask.task_ids))
-      : [];
+    parsed.answer === 'done' ? await claimCheckinTasks(db, worker, message.id, taskIds) : [];
 
   // Recorded either way; only the acknowledgement is suppressed, so Meta
   // retrying does not double-message the worker.
@@ -846,6 +855,37 @@ async function handleCheckinTap(
       workerId: worker.id,
       error: err instanceof Error ? err.message : String(err),
     });
+  });
+
+  // ── the manager's thread (issue #47) ───────────────────────────────────────
+  // The other half of the check-in. The cron writes "I asked these four people
+  // whether they had finished"; this writes what came back, as it comes back.
+  // Without it the manager gets an inbox row and a push for a claim Capo has
+  // never heard of, and "did anyone report in today?" is answered from a board
+  // read rather than from what actually happened.
+  //
+  // ── WHAT GOES IN, AND WHY IT IS NOT WORKER TEXT ──────────────────────────
+  // Three inputs, and there is deliberately no fourth: the crew member's NAME
+  // (typed by the manager on /perfil), which of two BUTTONS they tapped (an
+  // enum minted by our own cron a few hours earlier, parsed by
+  // parseCheckinPayload), and how many tasks were in the snapshot. A tap
+  // carries no text at all, so nothing a worker wrote can reach `messages` here
+  // — which matters because `messages` is the table thread.recentUserTexts
+  // reads, and that is the evidence pool runGuarded matches a model's quote
+  // against before executing a manager-level write directly (0027, AGENTS.md).
+  // If this ever grows a `note` parameter, that boundary is gone.
+  //
+  // Placed AFTER the ack so the worker never waits on it, and after the
+  // redelivery return above so Meta retrying a webhook cannot put two copies of
+  // the same answer in the manager's thread. recordThreadEvent never throws.
+  const eventLocale = await readThreadLocale(db, worker.company_id, coerceLocale(worker.company?.language));
+  await recordThreadEvent(db, {
+    companyId: worker.company_id,
+    source: 'checkin_answer',
+    text: renderCheckinAnswerEvent(
+      { name: worker.name, answer: parsed.answer, tasks: taskIds.length },
+      eventLocale,
+    ),
   });
   return true;
 }
