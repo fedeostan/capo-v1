@@ -28,6 +28,13 @@ import { resolveProposal } from '@capo/core/capabilities/propose';
 import { downloadMedia } from '@capo/core/channels/whatsapp-media';
 import { TASK_PHOTO_MAX_BYTES, isTaskPhotoMime } from '@capo/core/media/photos';
 import { getBillingState } from '../../../lib/billing';
+import {
+  checkinDoneAck,
+  classifyClaimError,
+  readTaskIds,
+  type CheckinAck,
+  type ClaimOutcome,
+} from '../../../lib/checkin-claim';
 import { logEvent } from '../../../lib/log';
 import { type WhatsAppEnv } from '../../../lib/whatsapp';
 
@@ -607,6 +614,87 @@ function handleSystemMessage(db: Db, message: WhatsAppMessage): void {
   after(() => applyBsuidRotation(db, { previous, current }));
 }
 
+/** The `whatsapp` slice of the copy catalog, in the recipient's own language. */
+type WhatsAppCopy = ReturnType<typeof getCatalog>['whatsapp'];
+
+/** Three outcomes, three sentences. None of them says the task is done. */
+function doneAckBody(t: WhatsAppCopy, ack: CheckinAck): string {
+  if (ack === 'awaiting') return t.checkinDoneAwaiting;
+  if (ack === 'nothing') return t.checkinDoneNothing;
+  return t.checkinDoneProblem;
+}
+
+/**
+ * File one completion claim per task the worker was asked about.
+ *
+ * ── WHY PER TASK, AND WHY THE ERRORS ARE CAUGHT PER TASK ─────────────────────
+ * open_task_review refuses a task that is already `done`/`cancelled` (0019) and
+ * `task_reviews_one_pending_idx` refuses a second pending review for one task
+ * (0018). Both are ORDINARY outcomes for one row in the snapshot, not errors in
+ * the tap. A worker with three tasks, one of which the manager closed at lunch,
+ * must still get the other two claimed — so one refusal may never abort the
+ * loop, and each is logged with the task it belongs to.
+ *
+ * ── THE TENANT BOUNDARY, AND WHERE IT IS NOT ─────────────────────────────────
+ * open_task_review is SECURITY DEFINER and its tenant guard is
+ * `if auth.uid() is not null and v_company is distinct from
+ * private.current_company_id()`. On this path there IS no auth.uid() — the
+ * webhook runs on the service-role client — so that guard is skipped by design
+ * and the function will happily open a review on ANY task uuid it is handed.
+ *
+ * The `notification_log` read in handleCheckinTap is therefore the ENTIRE
+ * tenant boundary for this write: it is what proves the task_ids came from an
+ * ask that belongs to this company, this worker and this kind. That is why the
+ * ids are passed in from the caller rather than re-read here, and why nothing
+ * in this function accepts a task id from anywhere else. Do not move that read,
+ * do not widen it, and do not add a caller that skips it.
+ *
+ * ── NO NOTE ──────────────────────────────────────────────────────────────────
+ * `p_note` is deliberately left off. A quick-reply tap carries no text at all,
+ * so there is nothing of the worker's to quote; inventing a sentence here would
+ * put app copy in a data column, in one language, for managers who may read
+ * another. `declared_by_worker_id` is what attributes the claim, and 0024's
+ * trigger fans it into every manager's inbox with an empty body, which
+ * /notificacoes already renders as "no quote" rather than an empty quote.
+ */
+async function claimCheckinTasks(
+  db: Db,
+  worker: { id: string; company_id: string },
+  messageId: string,
+  taskIds: readonly string[],
+): Promise<ClaimOutcome[]> {
+  const outcomes: ClaimOutcome[] = [];
+
+  for (const taskId of taskIds) {
+    let outcome: ClaimOutcome;
+    let detail: string | undefined;
+    try {
+      // p_worker is the phone-derived worker row, exactly as declare_task_done
+      // passes it. Nothing here comes from anything the worker typed.
+      const { error } = await db.rpc('open_task_review', { p_task: taskId, p_worker: worker.id });
+      outcome = classifyClaimError(error);
+      if (outcome !== 'claimed') detail = error?.message;
+    } catch (err) {
+      // A transport failure, not a refusal. Same treatment: this task did not
+      // get claimed, the others still get their turn.
+      outcome = 'failed';
+      detail = err instanceof Error ? err.message : String(err);
+    }
+
+    outcomes.push(outcome);
+    logEvent('whatsapp.checkin_claim', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      messageId,
+      taskId,
+      outcome,
+      error: detail,
+    });
+  }
+
+  return outcomes;
+}
+
 /**
  * A check-in button tap: the worker answering the late-afternoon check-in template.
  *
@@ -621,6 +709,12 @@ function handleSystemMessage(db: Db, message: WhatsAppMessage): void {
  * handleWorkerReply) and a button tap carries no text at all — the only things a
  * model could add here are cost, latency, and the ability to be wrong about a
  * two-valued answer.
+ *
+ * Since #54 a "done" tap also FILES A COMPLETION CLAIM per task — see
+ * claimCheckinTasks below. Before that it recorded the answer and nothing else,
+ * so the worker believed they had reported the job, the manager's board still
+ * said pending, and Capo (which reads the board) agreed with the board. The
+ * claim is `pending_review`, never `done`: a tap is not a verification.
  */
 async function handleCheckinTap(
   db: Db,
@@ -724,12 +818,27 @@ async function handleCheckinTap(
     redelivery,
   });
 
+  // ── the completion claim (issue #54) ───────────────────────────────────────
+  // "Ainda não" files NOTHING and must keep filing nothing: it is an answer to a
+  // question, not a request. Only the "done" branch claims.
+  //
+  // Run BEFORE the redelivery early-return on purpose. A redelivery means our
+  // previous attempt did not finish (Meta retries on a non-200 or a timeout), so
+  // it may have claimed some of the tasks and not others. Re-running heals that:
+  // every per-task call is idempotent in effect — a task already in review comes
+  // back 'already_pending' and changes nothing. Only the ACK stays suppressed,
+  // so a retry never double-messages the worker.
+  const outcomes =
+    parsed.answer === 'done'
+      ? await claimCheckinTasks(db, worker, message.id, readTaskIds(ask.task_ids))
+      : [];
+
   // Recorded either way; only the acknowledgement is suppressed, so Meta
   // retrying does not double-message the worker.
   if (redelivery) return true;
 
   await sendWhatsAppText(
-    parsed.answer === 'done' ? t.checkinDone : t.checkinNotDone,
+    parsed.answer === 'done' ? doneAckBody(t, checkinDoneAck(outcomes)) : t.checkinNotDone,
     sendConfig,
   ).catch(err => {
     logEvent('whatsapp.checkin_ack_failed', {

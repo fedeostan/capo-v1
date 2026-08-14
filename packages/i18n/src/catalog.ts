@@ -716,10 +716,44 @@ export interface Catalog {
     checkinDoneButton: string;
     /** See `checkinDoneButton`. Max 25 chars, must differ from it. */
     checkinNotDoneButton: string;
-    /** Sent after a worker taps "done". */
+    /**
+     * SUPERSEDED by the three `checkinDone*` strings below (issue #54) and kept
+     * only so nothing that still reads it breaks. Do not wire it back up: it
+     * says the answer was recorded and says nothing about the manager, which
+     * was true when a tap wrote only to `worker_checkins` and is misleading now
+     * that it files a completion claim.
+     */
     checkinDone: string;
+    /**
+     * Sent after a worker taps "done" and at least one of the day's tasks is
+     * now waiting for the manager (issue #54).
+     *
+     * ⚠ It must NEVER say the task is done. A tap is a claim, not a
+     * verification — the task sits in `pending_review`, stays on the manager's
+     * board and is still counted overdue if its dates say so. A worker told
+     * "feito" who sees the same task on tomorrow's 07:00 briefing concludes
+     * Capo is broken, which is the failure this whole feature exists to end.
+     */
+    checkinDoneAwaiting: string;
+    /**
+     * Sent after a worker taps "done" when there was nothing left to claim —
+     * every task in the afternoon's snapshot had already been closed by the
+     * manager. The answer is still recorded; there is simply no approval
+     * pending.
+     */
+    checkinDoneNothing: string;
+    /**
+     * Sent after a worker taps "done" when the answer was recorded but the
+     * claim could not be filed. Says both halves out loud rather than implying
+     * success: the one thing worse than a failure here is a worker who thinks
+     * their manager has been told.
+     */
+    checkinDoneProblem: string;
     /** Sent after a worker taps "not yet". Never scolding — the answer is
-     *  useful precisely because it is safe to give. */
+     *  useful precisely because it is safe to give.
+     *
+     *  This branch files NOTHING and must stay that way (issue #54). "Not yet"
+     *  is an answer to a question, not a request for anything. */
     checkinNotDone: string;
     /** The worker_checkins write failed. Silence after a tap reads as "Capo is
      *  broken", the same failure mode proposalError guards against. */

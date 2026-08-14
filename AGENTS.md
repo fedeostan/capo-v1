@@ -293,11 +293,48 @@ Structural invariants (do not regress):
   "did you finish today's tasks?" as a template with two quick-reply buttons and
   records the tap in `worker_checkins`. Three things about it are load-bearing:
   it is **deterministic in both directions** (no model is called on this path at
-  all); it **records an answer and never writes `tasks.status`**; and it claims
+  all); a tap is a **claim, never a completion** (see below); and it claims
   under `kind='task_checkin'` in `notification_log`, which is the only reason
   two sends can share a day under that table's unique constraint. Both routes
   share `apps/web/lib/cron.ts` for auth and the claim protocol — the parts where
   drift would be a correctness bug — and nothing else.
+
+  **A "Sim, terminei" tap files a completion claim, one per task** (issue #54).
+  This REPLACES the older promise that the check-in "records an answer and never
+  writes `tasks.status`". It used to be literally true and it was the bug: the
+  worker believed they had reported the job, the board still said pending, and
+  Capo — which reads the board — agreed with the board. Three parties, three
+  beliefs, nothing recording the disagreement.
+  What changed and what did not:
+  - `worker_checkins` still records the answer, unchanged, and is still the only
+    thing "Ainda não" writes. **That branch files nothing. Keep it that way.**
+  - The `done` branch calls `open_task_review` once **per task id in the ask's
+    `notification_log.task_ids`**, on the SERVICE ROLE. So the task lands in
+    `pending_review`, not `done` — a tap is not a verification, and
+    `task_board.is_open` is a denylist so the task stays on the board and still
+    goes overdue.
+  - **The `notification_log` read in `handleCheckinTap` is the ENTIRE tenant
+    boundary for that write.** `open_task_review` is SECURITY DEFINER and its
+    guard is `if auth.uid() is not null and …`; there is no `auth.uid()` here,
+    so the guard is skipped by design and the RPC will open a review on any uuid
+    it is handed. The ownership read (`company_id` + `worker_id` + `kind`) is
+    what proves the ids are this worker's. Do not move it, widen it, or add a
+    caller that skips it.
+  - **One task failing must never abort the others.** Already-`done` (0019) and
+    already-pending (`task_reviews_one_pending_idx`) are ordinary outcomes for
+    one row of a multi-task snapshot. The loop calls, catches and logs per task;
+    `apps/web/lib/checkin-claim.ts` holds the pure classification and the
+    acknowledgement choice, asserted by `pnpm whatsapp-check`.
+  - **`p_note` is deliberately null.** A tap carries no worker text, so there is
+    nothing to quote; a synthesised sentence would be app copy in a data column,
+    in one language. `declared_by_worker_id` is the attribution.
+  - `task_reviews_notify_pending` (0024) fires on this path with no edit — the
+    trigger is `after insert on task_reviews` and its `is distinct from
+    auth.uid()` means a service-role actor notifies every manager profile, which
+    is also what sends the push (0026).
+  - The acknowledgement **must never say "done"**. `checkinDoneAwaiting` /
+    `checkinDoneNothing` / `checkinDoneProblem` in `@capo/i18n`; the old
+    `checkinDone` is kept but unwired.
   The inbound tap is a **template quick reply** (`type: 'button'`, from a
   worker), a different shape from an approval card's **interactive reply
   button** (`type: 'interactive'`, from a manager). They are handled on

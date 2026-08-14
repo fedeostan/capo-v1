@@ -564,6 +564,11 @@ const dict: Catalog = {
     checkinDoneButton: 'Yes, all done',
     checkinNotDoneButton: 'Not yet',
     checkinDone: 'Nice one, thanks. Logged as finished for today.',
+    checkinDoneAwaiting:
+      "Nice one, thanks. I've told your foreman — he still has to confirm it, so the task stays open until then.",
+    checkinDoneNothing: 'Thanks, logged. There was nothing left waiting for approval.',
+    checkinDoneProblem:
+      "Your answer is logged, but I couldn't tell your foreman. Have a word with him.",
     checkinNotDone: 'Alright, thanks for letting me know. Logged.',
     checkinError: "I couldn't record your answer. Talk to your foreman.",
   },

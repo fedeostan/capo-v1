@@ -73,10 +73,19 @@ import { allTemplates, MANAGED_TEMPLATE_NAMES, TEMPLATE_LANGUAGES } from './what
 // must never enter the agent bundle. Reached the same way scheduler-check
 // reaches apps/web/lib/cron — it is pure, so no credentials come with it.
 import {
+  loadCompanyBriefing,
   renderWorkerFreeForm,
   type BriefingTask,
   type WorkerBriefing,
 } from '../apps/web/app/notifications/briefing.ts';
+// The pure half of "a worker tapped Sim, terminei" (issue #54). Same reasoning
+// as the briefing import above: no Db, no clock, no network.
+import {
+  checkinDoneAck,
+  classifyClaimError,
+  readTaskIds,
+} from '../apps/web/lib/checkin-claim.ts';
+import type { Db } from '@capo/db/client';
 
 let failures = 0;
 const lines: string[] = [];
@@ -88,6 +97,29 @@ function check(name: string, ok: boolean, detail = '') {
 
 function eq(name: string, actual: unknown, expected: unknown) {
   check(name, actual === expected, `got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`);
+}
+
+/**
+ * A `Db` that answers every `.from(table).select(…).eq(…)…` chain with a fixed
+ * array. Enough for loadCompanyBriefing, which reads exactly two relations and
+ * filters both entirely in SQL. Anything not seeded comes back empty, which is
+ * what makes `task_board` optional here — the exclusion counters do not depend
+ * on who has tasks.
+ *
+ * The chain object is its own thenable so `Promise.all([...])` can await the
+ * builders directly, which is how the real supabase-js client behaves.
+ */
+function fakeBriefingDb(rows: Record<string, unknown[]>): Db {
+  const from = (table: string) => {
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      eq: () => chain,
+      then: (resolve: (value: { data: unknown[]; error: null }) => unknown) =>
+        resolve({ data: rows[table] ?? [], error: null }),
+    };
+    return chain;
+  };
+  return { from } as unknown as Db;
 }
 
 // ── markdown conversion ─────────────────────────────────────────────────────
@@ -195,6 +227,119 @@ eq('done and not_done payloads differ', doneP === notDoneP, false);
 // approval could be recorded as a worker's check-in.
 eq('a proposal id is not a check-in payload', parseCheckinPayload(approveId), null);
 eq('a check-in payload is not a proposal id', parseProposalButtonId(doneP), null);
+
+// ── the completion claim behind a "done" tap (issue #54) ────────────────────
+// The tap now files open_task_review per task instead of recording an answer
+// and stopping. The RPC itself cannot be reached without a database, so these
+// pin the two pure decisions in front of it: which errors are ordinary and
+// which are real, and which sentence the worker gets back.
+{
+  // task_ids is typed `Json`, i.e. unknown, and every id goes straight into a
+  // uuid argument. A malformed snapshot must claim nothing, never throw.
+  eq('a null task_ids snapshot yields no ids', readTaskIds(null).length, 0);
+  eq('a non-array task_ids snapshot yields no ids', readTaskIds('nope').length, 0);
+  eq('non-string members are dropped', readTaskIds([uuid, 7, null, '']).length, 1);
+  eq('duplicate ids are collapsed', readTaskIds([uuid, uuid]).length, 1);
+
+  // The three SQLSTATEs 0018/0019 raise on purpose. Misreading any of them as a
+  // hard failure sends a worker to find their foreman for nothing; misreading a
+  // real failure as ordinary tells them the manager was notified when nobody was.
+  eq('no error means the claim was filed', classifyClaimError(null), 'claimed');
+  eq(
+    'the one-pending unique violation is ordinary',
+    classifyClaimError({ code: '23505', message: 'duplicate key value violates unique constraint "task_reviews_one_pending_idx"' }),
+    'already_pending',
+  );
+  eq(
+    'a lost SQLSTATE still reads as already pending',
+    classifyClaimError({ code: '', message: 'task_reviews_one_pending_idx' }),
+    'already_pending',
+  );
+  eq(
+    "0019's done/cancelled guard is ordinary",
+    classifyClaimError({ code: '23514', message: 'task abc is done, not open' }),
+    'closed',
+  );
+  eq(
+    'a vanished task is its own outcome',
+    classifyClaimError({ code: '02000', message: 'task abc not found' }),
+    'missing',
+  );
+  // Unreachable on this path — auth.uid() is null for the service role, so
+  // open_task_review's tenant guard never fires — which is exactly why it must
+  // NOT be swallowed as ordinary if it ever shows up.
+  eq(
+    'a tenant-guard refusal is a real failure',
+    classifyClaimError({ code: '42501', message: 'task abc is not yours' }),
+    'failed',
+  );
+  eq('an unknown error is a real failure', classifyClaimError({ code: '08006', message: 'connection lost' }), 'failed');
+
+  // The acknowledgement. NONE of the three says "done"; that is the whole bug.
+  eq('one claim means the manager has it', checkinDoneAck(['claimed']), 'awaiting');
+  eq('an already-pending claim is the same end state', checkinDoneAck(['already_pending']), 'awaiting');
+  // The case the per-task loop exists for: three tasks, one closed at lunch,
+  // one already claimed, one newly claimed. The worker hears the useful fact.
+  eq('a partial success still reports awaiting', checkinDoneAck(['closed', 'already_pending', 'claimed']), 'awaiting');
+  eq('a failure alongside a claim does not drown it', checkinDoneAck(['failed', 'claimed']), 'awaiting');
+  eq('every task already closed is not an error', checkinDoneAck(['closed', 'closed']), 'nothing');
+  eq('an empty snapshot is not an error', checkinDoneAck([]), 'nothing');
+  eq('a failure with nothing claimed is an error', checkinDoneAck(['failed']), 'error');
+  eq('a vanished task with nothing claimed is an error', checkinDoneAck(['missing', 'closed']), 'error');
+
+  // The copy itself. Every locale must have all three, and none of them may be
+  // the superseded checkinDone — a worker told "done" who sees the same task on
+  // tomorrow's 07:00 briefing concludes Capo is broken.
+  for (const locale of LOCALES) {
+    const t = getCatalog(locale).whatsapp;
+    check(`${locale}: all three done-acks are present and distinct`,
+      new Set([t.checkinDoneAwaiting, t.checkinDoneNothing, t.checkinDoneProblem]).size === 3);
+    check(`${locale}: the awaiting ack is not the superseded checkinDone`,
+      t.checkinDoneAwaiting !== t.checkinDone);
+    check(`${locale}: the awaiting ack fits one WhatsApp message`,
+      t.checkinDoneAwaiting.length > 0 && t.checkinDoneAwaiting.length <= 300,
+      `${t.checkinDoneAwaiting.length} chars`);
+  }
+}
+
+// ── who the daily sends skip, and whether it is countable (issue #54) ───────
+// An inactive crew row is skipped on purpose. Until #54 it was skipped BEFORE
+// either exclusion counter could see it, so a switched-off worker appeared in
+// no signal at all — which is how issue #51's "the manager got no check-in
+// card" cost a log dive and a database session. These pin that the three
+// reasons partition the crew rather than overlapping.
+// Runs the REAL loadCompanyBriefing against a fake Db, the same device
+// guard-check uses on runGuarded: a pure re-implementation of the arithmetic
+// here would keep passing if somebody put the `active` filter back in the SQL.
+{
+  const optedIn = '2026-08-01T10:00:00Z';
+  const crew = [
+    // messaged: active, has a phone, opted in
+    { id: 'w1', name: 'Zé', active: true, phone: '351911111111', whatsapp_opt_in_at: optedIn },
+    // active and reachable, but never ticked the box
+    { id: 'w2', name: 'Pepe', active: true, phone: '351922222222', whatsapp_opt_in_at: null },
+    // active and consenting, but no phone and no BSUID — nowhere to send
+    { id: 'w3', name: 'Ana', active: true, phone: null, whatsapp_opt_in_at: optedIn },
+    // switched off. Reachable and consenting, and still skipped — correctly.
+    // This is Federico's own crew row on Ostan construcciones (issue #51).
+    { id: 'w4', name: 'Federico', active: false, phone: '5491178876189', whatsapp_opt_in_at: optedIn },
+    // switched off AND unreachable: must be counted ONCE, as inactive.
+    { id: 'w5', name: 'Antigo', active: false, phone: null, whatsapp_opt_in_at: null },
+  ];
+
+  const briefing = await loadCompanyBriefing(fakeBriefingDb({ workers: crew }), 'co', 'pt-PT');
+
+  eq('only the messageable worker survives every gate', briefing.workers.length, 1);
+  eq('and it is the one with a phone and an opt-in', briefing.workers[0]?.workerId, 'w1');
+  eq('inactive crew rows are counted, not invisible', briefing.excludedInactive, 2);
+  eq('an inactive worker is not ALSO counted unreachable', briefing.excludedUnreachable, 1);
+  eq('the consent count is unchanged by the new one', briefing.excludedNoConsent, 1);
+  eq(
+    'the three exclusions plus the messaged crew account for everyone',
+    briefing.excludedInactive + briefing.excludedUnreachable + briefing.excludedNoConsent + briefing.workers.length,
+    crew.length,
+  );
+}
 
 // ── bsuid ───────────────────────────────────────────────────────────────────
 // isBsuid is the TS half of a rule enforced twice — the other half is the CHECK

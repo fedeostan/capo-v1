@@ -27,8 +27,17 @@ import { loadCompanyBriefing, renderWorkerBriefing } from '../../../notification
 // back as one of two payload strings this route minted itself. No model is
 // called on this path, which is what makes the "Ainda não" branch free.
 //
-// It records an ANSWER and nothing else. It does not flip tasks.status; see the
-// header of supabase/migrations/0017_worker_checkins.sql.
+// THIS ROUTE records an ANSWER and nothing else — it asks the question, and it
+// does not flip tasks.status; see the header of
+// supabase/migrations/0017_worker_checkins.sql.
+//
+// The ANSWER is no longer inert, though (issue #54). A "Sim, terminei" tap
+// arrives at /api/whatsapp, which files a completion claim per task in the
+// snapshot below — open_task_review, so `pending_review` and never `done`. Two
+// consequences for this file: `task_ids` on the claim it writes is the exact
+// set that will be claimed hours later, so anything that changes what goes in
+// there changes what a tap declares finished; and "Ainda não" still files
+// nothing, which is what keeps that branch free.
 //
 // Nothing here reads dispatch_tasks_today or writes dispatch_log — that
 // contract stays frozen so SMS can be switched back on (AGENTS.md).
@@ -148,6 +157,17 @@ export async function GET(request: NextRequest) {
         logEvent('checkin.workers_unreachable', {
           companyId: company.id,
           excluded: briefing.excludedUnreachable,
+        });
+      }
+      // The third way to be skipped, and the only one that used to leave no
+      // trace at all (#51, #54): a crew row switched off. Skipping it is
+      // correct; being unable to tell that from a broken cron was not. This is
+      // the counter that explains "the manager was assigned a task and got no
+      // check-in card" without a database session.
+      if (briefing.excludedInactive > 0) {
+        logEvent('checkin.workers_inactive', {
+          companyId: company.id,
+          excluded: briefing.excludedInactive,
         });
       }
 

@@ -237,6 +237,15 @@ export async function GET(request: NextRequest) {
           excluded: briefing.excludedUnreachable,
         });
       }
+      // The third way to be skipped, and the only one that used to leave no
+      // trace at all (#51, #54): a crew row switched off. Skipping it is
+      // correct; being unable to tell that from a broken cron was not.
+      if (briefing.excludedInactive > 0) {
+        logEvent('reminders.workers_inactive', {
+          companyId: company.id,
+          excluded: briefing.excludedInactive,
+        });
+      }
 
       // ── workers ──────────────────────────────────────────────────────────
       for (const worker of briefing.workers) {
