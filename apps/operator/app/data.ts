@@ -5,6 +5,13 @@
 // through each tenant's own chat.
 import { getDb } from '@capo/db/client';
 import type { Tables } from '@capo/db/types';
+import {
+  WHATSAPP_TEMPLATE_USD,
+  estimateCostUsd,
+  estimateUncachedCostUsd,
+  type PriceConfidence,
+  type TokenCounts,
+} from '@capo/core/agent/pricing';
 
 export type Company = Tables<'companies'>;
 export type Task = Tables<'tasks'>;
@@ -468,4 +475,352 @@ export async function loadDispatchLog(): Promise<{ rows: DispatchRow[]; companyN
     db.from('companies').select('id, name').then(r => r.data ?? []),
   ]);
   return { rows, companyNames: new Map(companies.map(c => [c.id, c.name])) };
+}
+
+// ── Cost (issue #53) ────────────────────────────────────────────────────────
+//
+// The one screen that answers "what is Capo costing me, and on whom". Two
+// separate ledgers feed it and they are NOT the same kind of fact:
+//
+//   ai_usage (0032)         — one row per language-model API request, token
+//                             counts only. Priced here, at read time.
+//   notification_log (0016) — one row per paid WhatsApp template send. Read on
+//                             the SERVICE ROLE, which bypasses RLS legitimately
+//                             and adds no policy. Issue #51B owns the question
+//                             of whether tenants ever get to read this table;
+//                             nothing here touches that.
+//
+// A third cost exists and is deliberately absent: Vercel hosting. It is a flat
+// platform bill for the whole product — one set of functions, one bandwidth
+// pool, one cron scheduler serving every tenant at once — and there is no
+// per-request meter that would let it be divided between companies honestly.
+// Inventing an attribution (per company, per message, per seat) would produce a
+// confident number with nothing behind it. The page says so in words instead.
+
+/** Read every page of a window rather than trusting PostgREST's 1000-row cap. */
+const COST_PAGE_SIZE = 1000;
+/** Hard ceiling on pages, so a runaway table cannot hang the operator app. */
+const COST_MAX_PAGES = 25;
+
+export interface PersonSpend {
+  /** profiles.id, workers.id, or the literal 'system'. */
+  key: string;
+  kind: 'manager' | 'worker' | 'system';
+  name: string;
+  requests: number;
+  tokens: TokenCounts;
+  aiUsd: number;
+  unpricedRequests: number;
+  /** Paid WhatsApp template sends addressed to this person. */
+  whatsappSends: number;
+  whatsappUsd: number;
+}
+
+export interface SurfaceSpend {
+  surface: string;
+  requests: number;
+  tokens: TokenCounts;
+  aiUsd: number;
+  unpricedRequests: number;
+}
+
+export interface CompanyCost {
+  companyId: string;
+  companyName: string;
+  requests: number;
+  tokens: TokenCounts;
+  aiUsd: number;
+  /** What the same tokens would have cost with prompt caching off (#58). */
+  aiUsdUncached: number;
+  unpricedRequests: number;
+  whatsappSends: number;
+  whatsappUsd: number;
+  people: PersonSpend[];
+  surfaces: SurfaceSpend[];
+}
+
+export interface CostReport {
+  windowDays: number;
+  fromDate: string;
+  toDate: string;
+  companies: CompanyCost[];
+  totalAiUsd: number;
+  totalAiUsdUncached: number;
+  totalWhatsappUsd: number;
+  totalRequests: number;
+  totalWhatsappSends: number;
+  totalUnpricedRequests: number;
+  /**
+   * True when `ai_usage` does not exist yet — i.e. 0032 has not been applied.
+   * Distinguished from "exists and is empty", because the two mean completely
+   * different things: a missing migration versus a product nobody used.
+   */
+  ledgerMissing: boolean;
+  /** A read that failed for a reason OTHER than the table not existing. */
+  ledgerError: string | null;
+  /** True when COST_MAX_PAGES was hit, so every figure below is a FLOOR. */
+  truncated: boolean;
+  /** Highest-confidence claim we can make about the prices used. */
+  whatsappConfidence: PriceConfidence;
+}
+
+const ZERO_TOKENS = (): TokenCounts => ({
+  input_tokens: 0,
+  output_tokens: 0,
+  cache_read_tokens: 0,
+  cache_write_tokens: 0,
+});
+
+function addTokens(into: TokenCounts, row: TokenCounts): void {
+  into.input_tokens += row.input_tokens;
+  into.output_tokens += row.output_tokens;
+  into.cache_read_tokens += row.cache_read_tokens;
+  into.cache_write_tokens += row.cache_write_tokens;
+}
+
+export function totalTokens(t: TokenCounts): number {
+  return t.input_tokens + t.output_tokens + t.cache_read_tokens + t.cache_write_tokens;
+}
+
+/** Lisbon date, N days back, in the ISO form both ledgers store dates as. */
+function lisbonDateNDaysAgo(days: number): string {
+  const d = new Date(Date.now() - days * DAY_MS);
+  return d.toLocaleDateString('en-CA', { timeZone: 'Europe/Lisbon' });
+}
+
+type UsageRow = Pick<
+  Tables<'ai_usage'>,
+  | 'company_id'
+  | 'actor'
+  | 'profile_id'
+  | 'worker_id'
+  | 'surface'
+  | 'model_id'
+  | 'input_tokens'
+  | 'output_tokens'
+  | 'cache_read_tokens'
+  | 'cache_write_tokens'
+>;
+
+export async function loadCostReport(windowDays = 30): Promise<CostReport> {
+  const db = getDb();
+  const toDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Lisbon' });
+  const fromDate = lisbonDateNDaysAgo(windowDays - 1);
+
+  // ── ai_usage, paged ──────────────────────────────────────────────────────
+  // One row per model REQUEST means this table grows far faster than anything
+  // else the operator reads, so the unbounded-select convention used elsewhere
+  // in this file would silently cap at 1000 rows and understate the bill. Page
+  // until exhausted, and say so when the ceiling is reached.
+  const usage: UsageRow[] = [];
+  let ledgerMissing = false;
+  let ledgerError: string | null = null;
+  let truncated = false;
+
+  for (let page = 0; page < COST_MAX_PAGES; page++) {
+    const { data, error } = await db
+      .from('ai_usage')
+      .select(
+        'company_id, actor, profile_id, worker_id, surface, model_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens',
+      )
+      .gte('usage_date', fromDate)
+      .order('id')
+      .range(page * COST_PAGE_SIZE, page * COST_PAGE_SIZE + COST_PAGE_SIZE - 1);
+
+    if (error) {
+      // Two different facts, kept apart on purpose. 42P01 ("relation does not
+      // exist") means 0032 has not been applied — a deployment state with a
+      // known fix. Anything else is a read that failed for some other reason,
+      // and telling Federico "the migration is missing" when it is not would
+      // send him looking in the wrong place. Neither throws: this is a
+      // read-only report, and a page that 500s says less than one that says
+      // why it is empty.
+      if (error.code === '42P01') ledgerMissing = true;
+      else ledgerError = error.message;
+      break;
+    }
+    const rows = (data ?? []) as UsageRow[];
+    usage.push(...rows);
+    if (rows.length < COST_PAGE_SIZE) break;
+    if (page === COST_MAX_PAGES - 1) truncated = true;
+  }
+
+  // ── notification_log: the paid WhatsApp sends in the same window ─────────
+  // status='sent' only. A 'failed' send is not billed, and 'pending'/'skipped'
+  // never reached Meta at all — counting them would inflate the one figure on
+  // this page that maps to a real invoice line.
+  //
+  // Paged for the same reason ai_usage is: two sends per worker per day means a
+  // 30-day window over a real crew passes 1000 rows quickly, and a capped read
+  // would understate the WhatsApp bill with nothing on screen to say so.
+  const sends: { company_id: string; worker_id: string | null; profile_id: string | null }[] = [];
+
+  for (let page = 0; page < COST_MAX_PAGES; page++) {
+    const { data, error } = await db
+      .from('notification_log')
+      .select('company_id, worker_id, profile_id')
+      .eq('status', 'sent')
+      .gte('notification_date', fromDate)
+      .order('id')
+      .range(page * COST_PAGE_SIZE, page * COST_PAGE_SIZE + COST_PAGE_SIZE - 1);
+
+    if (error) break;
+    const rows = data ?? [];
+    sends.push(...rows);
+    if (rows.length < COST_PAGE_SIZE) break;
+    if (page === COST_MAX_PAGES - 1) truncated = true;
+  }
+
+  const [companies, profiles, workers] = await Promise.all([
+    db.from('companies').select('id, name').order('created_at').then(r => r.data ?? []),
+    db.from('profiles').select('id, full_name, company_id').then(r => r.data ?? []),
+    db.from('workers').select('id, name, company_id').then(r => r.data ?? []),
+  ]);
+
+  const profileName = new Map(profiles.map(p => [p.id, p.full_name]));
+  const workerName = new Map(workers.map(w => [w.id, w.name]));
+
+  // A company appears if EITHER ledger has anything for it, so a tenant that
+  // only receives briefings (no chat at all) is still visible with its WhatsApp
+  // bill rather than vanishing.
+  const active = new Set<string>([
+    ...usage.map(u => u.company_id),
+    ...sends.map(s => s.company_id),
+  ]);
+
+  const report: CompanyCost[] = [];
+
+  for (const company of companies) {
+    if (!active.has(company.id)) continue;
+
+    const rows = usage.filter(u => u.company_id === company.id);
+    const companySends = sends.filter(s => s.company_id === company.id);
+
+    const people = new Map<string, PersonSpend>();
+    const surfaces = new Map<string, SurfaceSpend>();
+    const tokens = ZERO_TOKENS();
+    let aiUsd = 0;
+    let aiUsdUncached = 0;
+    let unpricedRequests = 0;
+
+    for (const row of rows) {
+      const t: TokenCounts = {
+        input_tokens: row.input_tokens,
+        output_tokens: row.output_tokens,
+        cache_read_tokens: row.cache_read_tokens,
+        cache_write_tokens: row.cache_write_tokens,
+      };
+      const cost = estimateCostUsd(row.model_id, t);
+      const uncached = estimateUncachedCostUsd(row.model_id, t);
+
+      addTokens(tokens, t);
+      aiUsd += cost.usd;
+      aiUsdUncached += uncached.usd;
+      if (!cost.priced) unpricedRequests++;
+
+      // Per person. `system` collapses into one synthetic row rather than being
+      // dropped: company-wide work (a bulk translation) is real money and has
+      // to appear somewhere, just not under anybody's name.
+      const kind = row.actor === 'manager' ? 'manager' : row.actor === 'worker' ? 'worker' : 'system';
+      const key =
+        kind === 'manager' ? (row.profile_id ?? 'system') : kind === 'worker' ? (row.worker_id ?? 'system') : 'system';
+      const name =
+        kind === 'manager'
+          ? (profileName.get(key) ?? 'Unknown manager')
+          : kind === 'worker'
+            ? (workerName.get(key) ?? 'Unknown worker')
+            : 'Company-wide';
+
+      const person =
+        people.get(key) ??
+        {
+          key,
+          kind: key === 'system' ? ('system' as const) : kind,
+          name: key === 'system' ? 'Company-wide' : name,
+          requests: 0,
+          tokens: ZERO_TOKENS(),
+          aiUsd: 0,
+          unpricedRequests: 0,
+          whatsappSends: 0,
+          whatsappUsd: 0,
+        };
+      person.requests++;
+      addTokens(person.tokens, t);
+      person.aiUsd += cost.usd;
+      if (!cost.priced) person.unpricedRequests++;
+      people.set(key, person);
+
+      const surface =
+        surfaces.get(row.surface) ??
+        { surface: row.surface, requests: 0, tokens: ZERO_TOKENS(), aiUsd: 0, unpricedRequests: 0 };
+      surface.requests++;
+      addTokens(surface.tokens, t);
+      surface.aiUsd += cost.usd;
+      if (!cost.priced) surface.unpricedRequests++;
+      surfaces.set(row.surface, surface);
+    }
+
+    // WhatsApp attaches to the RECIPIENT, and this is the one place per-worker
+    // cost is genuinely knowable: notification_log records exactly who each
+    // paid template went to. Token cost is not like this — a manager's chat
+    // turn is a manager cost even when it is entirely about one crew member.
+    for (const send of companySends) {
+      const key = send.worker_id ?? send.profile_id ?? 'system';
+      const isWorker = Boolean(send.worker_id);
+      const person =
+        people.get(key) ??
+        {
+          key,
+          kind: key === 'system' ? ('system' as const) : isWorker ? ('worker' as const) : ('manager' as const),
+          name:
+            key === 'system'
+              ? 'Company-wide'
+              : isWorker
+                ? (workerName.get(key) ?? 'Unknown worker')
+                : (profileName.get(key) ?? 'Unknown manager'),
+          requests: 0,
+          tokens: ZERO_TOKENS(),
+          aiUsd: 0,
+          unpricedRequests: 0,
+          whatsappSends: 0,
+          whatsappUsd: 0,
+        };
+      person.whatsappSends++;
+      person.whatsappUsd += WHATSAPP_TEMPLATE_USD;
+      people.set(key, person);
+    }
+
+    report.push({
+      companyId: company.id,
+      companyName: company.name,
+      requests: rows.length,
+      tokens,
+      aiUsd,
+      aiUsdUncached,
+      unpricedRequests,
+      whatsappSends: companySends.length,
+      whatsappUsd: companySends.length * WHATSAPP_TEMPLATE_USD,
+      people: [...people.values()].sort((a, b) => b.aiUsd + b.whatsappUsd - (a.aiUsd + a.whatsappUsd)),
+      surfaces: [...surfaces.values()].sort((a, b) => b.aiUsd - a.aiUsd),
+    });
+  }
+
+  report.sort((a, b) => b.aiUsd + b.whatsappUsd - (a.aiUsd + a.whatsappUsd));
+
+  return {
+    windowDays,
+    fromDate,
+    toDate,
+    companies: report,
+    totalAiUsd: report.reduce((s, c) => s + c.aiUsd, 0),
+    totalAiUsdUncached: report.reduce((s, c) => s + c.aiUsdUncached, 0),
+    totalWhatsappUsd: report.reduce((s, c) => s + c.whatsappUsd, 0),
+    totalRequests: report.reduce((s, c) => s + c.requests, 0),
+    totalWhatsappSends: report.reduce((s, c) => s + c.whatsappSends, 0),
+    totalUnpricedRequests: report.reduce((s, c) => s + c.unpricedRequests, 0),
+    ledgerMissing,
+    ledgerError,
+    truncated,
+    whatsappConfidence: 'estimated',
+  };
 }

@@ -143,6 +143,13 @@ and say what the alternative would be — he is the one who decides.
   provider through a stubbed global `fetch` — that `cache_control` lands on the
   wire where we think it does. Credential-free, so it runs in CI
   (`pnpm cache-check`).
+- `scripts/cost-check.mts` — the token ledger and the rate card (#53). Pins the
+  provider-payload → four-bucket mapping against hand-written
+  `LanguageModelV4Usage` shapes (the double-counting bug is silent and
+  plausible), asserts every model in `MODEL_IDS` has a price, checks the
+  cache multipliers against the 1.25×/0.1× `cache.ts` argues from, and reads
+  `0032_ai_usage.sql` to assert its `surface` CHECK matches the `UsageSurface`
+  union. Credential-free, so it runs in CI (`pnpm cost-check`).
 - `scripts/agent-smoke.mts` — drives `handleInbound()` against a throwaway
   seeded tenant. Needs real API keys, so it is a manual gate
   (`pnpm agent-smoke`).
@@ -792,6 +799,68 @@ Structural invariants (do not regress):
   message), which brings Anthropic's 20-block lookback window into play — a
   single turn can add more than 20 blocks and silently stop finding the previous
   entry. Worth doing, deliberately not done here.
+- **The cost ledger stores TOKENS, never money, and is written at ONE seam**
+  (`ai_usage`, migration `0032`, issue #53). Before it, nothing recorded what a
+  model call cost: every request to Anthropic and Google was made, billed and
+  forgotten. One row per API REQUEST — not per turn, because `stopWhen(12)`
+  means one manager message can be twelve requests and a per-turn aggregate
+  cannot tell one expensive answer from twelve cheap hops. Seven things are
+  load-bearing:
+  - **The write lives in `getModel()`, not at call sites.** `getModel(role,
+    attribution?)` wraps the provider model in usage-recording middleware
+    (`packages/core/src/agent/usage.ts`). A call site's only job is to say WHO
+    is spending; a `recordUsage(...)` line per call site would count turns
+    instead of requests and would silently undercount forever the first time
+    somebody added a model call and forgot the line. `attribution` is
+    deliberately OPTIONAL — unlike `ToolContext.confirmPosture`, where the
+    omission is a safety regression; here it is a metrics gap, and requiring it
+    would break the credential-free `pnpm cache-check`.
+  - **`usage.ts` may serve both agents ONLY because it is plumbing**, exactly
+    like `models.ts` and `cache.ts`: its whole vocabulary is `Db`, plain strings
+    and numbers. `UsageActor` is a discriminated union
+    (`{kind:'manager',profileId}` | `{kind:'worker',workerId}` | `{kind:'system'}`),
+    so "a worker turn billed to a profile" is not expressible, the same way
+    `WorkerContext` has no `userId`.
+  - **The four token columns are DISJOINT.** `input_tokens` is the FULL-PRICE
+    half only; `cache_read_tokens` and `cache_write_tokens` are their own
+    numbers and total prompt tokens = the three added. The AI SDK's
+    `inputTokens.total` INCLUDES the cached halves, so storing it would
+    double-bill every cached request — and since #58 that is most of the
+    conversation traffic. The resulting figure is plausible, too high, and
+    unfalsifiable by looking. `toTokenBuckets` uses `.noCache`; `pnpm
+    cost-check` pins it.
+  - **Prices live in `packages/core/src/agent/pricing.ts`, keyed on MODEL ID.**
+    Never on the role: a row written under an older model must stay priced at
+    that model's rate. An unknown id is reported UNPRICED, never as free.
+    Anthropic's rates are published; the Gemini and WhatsApp figures are marked
+    `estimated` and have NOT been checked against a bill.
+  - **The write must never break a turn.** `recordUsage` swallows every error
+    into one `ai_usage.write_failed` warning line — same posture as
+    `loadCompanySnapshot`. The cost of that: a wrong `surface`, an unapplied
+    migration or a revoked grant all present as a table that quietly stops
+    filling up. Grep that event before concluding a quiet dashboard means quiet
+    traffic.
+  - **RLS is INSERT-only for tenants, with no SELECT policy at all.** Not
+    `notification_log`'s zero-policy posture, and the difference is forced: this
+    write happens inside a tenant request on that tenant's own RLS-scoped client
+    (the system-vs-user split forbids `getDb()` there). `usage_date` is absent
+    from the column grant and comes from `lisbon_today()`, and there is no
+    UPDATE and no DELETE — so the only lie available to a tenant inflates their
+    own company's bill. If this ever becomes a BILLING input rather than an
+    operator instrument, move the write behind a SECURITY DEFINER function that
+    derives `company_id` from `private.current_company_id()`.
+  - **Attribution is by who SPOKE, never by who was discussed.** A manager's
+    chat turn is a manager cost even when the conversation is entirely about one
+    crew member. Per-worker WhatsApp cost is the different, genuinely knowable
+    question and comes from `notification_log`'s recipient. Adding a `surface`
+    is two edits (0032's CHECK and the `UsageSurface` union) and there is
+    deliberately no `briefing` value — both daily sends call no model at all.
+
+  The dashboard is `/cost` in **apps/operator**, reading both ledgers on the
+  service role. It is not in apps/web on purpose: cross-company cost is an
+  operator question and this needs no tenant read surface. **Vercel hosting is
+  absent and cannot be added** — it is one flat platform bill with no per-tenant
+  meter, so any per-company hosting figure would be invented.
 - Views may only be extended with `create or replace view` **appending**
   columns (Postgres forbids reorder/retype). Code reading a view that a
   pending migration extends should `select('*')` and treat the new fields as

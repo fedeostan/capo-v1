@@ -257,6 +257,12 @@ export async function runTranslationBatch(
         batch.from_locale as Locale,
         batch.to_locale as Locale,
         glossary,
+        // actor 'system' (issue #53): a bulk translation rewrites the whole
+        // tenant's stored data, and it can be resumed hours later by a cron-ish
+        // retry with no live person in the request at all. Billing it to
+        // whoever happened to tap "translate" would put one manager's name on a
+        // company-wide job.
+        { db, companyId: batch.company_id, surface: 'translation', actor: { kind: 'system' } },
       );
 
       for (const { item, start, length, old } of spans) {

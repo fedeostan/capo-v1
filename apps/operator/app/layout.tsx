@@ -13,6 +13,7 @@ const NAV = [
   { href: '/conversations', label: 'Conversations' },
   { href: '/tasks', label: 'Tasks' },
   { href: '/dispatch', label: 'Briefing log' },
+  { href: '/cost', label: 'Cost' },
   { href: '/signups', label: 'Signups' },
 ];
 

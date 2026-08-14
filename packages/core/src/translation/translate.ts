@@ -2,6 +2,7 @@ import { generateObject } from 'ai';
 import { z } from 'zod';
 import type { Locale } from '@capo/i18n/locale';
 import { getModel } from '../agent/models';
+import type { UsageAttribution } from '../agent/usage';
 import { buildTranslatorPrompt } from './prompt';
 
 // The model call, and the validation that makes its output safe to write.
@@ -47,9 +48,9 @@ function chunk(strings: string[]): number[][] {
  * just finds, weeks later, that a task is describing someone else's work.
  * NEVER relax this into a length check plus positional zip.
  */
-async function translateOnce(strings: string[], system: string): Promise<string[]> {
+async function translateOnce(strings: string[], system: string, usage: UsageAttribution): Promise<string[]> {
   const { object } = await generateObject({
-    model: getModel('translation'),
+    model: getModel('translation', usage),
     schema: chunkSchema,
     system,
     prompt: JSON.stringify({ items: strings.map((text, id) => ({ id, text })) }),
@@ -79,6 +80,12 @@ export async function translateStrings(
   from: Locale,
   to: Locale,
   glossary: string[],
+  // Token accounting (issue #53). A bulk translation fans one wave out into
+  // several concurrent model calls plus retries and per-string fallbacks, so
+  // this is the clearest case in the codebase for recording per REQUEST rather
+  // than per operation: a batch that fell back to one call per string costs an
+  // order of magnitude more than the happy path, and only the ledger shows it.
+  usage: UsageAttribution,
 ): Promise<(string | null)[]> {
   if (strings.length === 0) return [];
   const system = buildTranslatorPrompt(from, to, glossary);
@@ -90,11 +97,11 @@ export async function translateStrings(
     let results: (string | null)[];
 
     try {
-      results = await translateOnce(inputs, system);
+      results = await translateOnce(inputs, system, usage);
     } catch {
       // Retry the chunk once — a malformed object is usually transient.
       try {
-        results = await translateOnce(inputs, system);
+        results = await translateOnce(inputs, system, usage);
       } catch {
         // Fall back to one call per string. Slow, but a single string cannot be
         // mis-numbered against itself, so this always converges to either a
@@ -102,7 +109,7 @@ export async function translateStrings(
         results = await Promise.all(
           inputs.map(async s => {
             try {
-              return (await translateOnce([s], system))[0];
+              return (await translateOnce([s], system, usage))[0];
             } catch {
               return null;
             }

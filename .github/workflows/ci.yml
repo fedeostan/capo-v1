@@ -75,3 +75,13 @@ jobs:
       # stubbed fetch — that cache_control lands on the wire where we think.
       - name: Prompt caching check
         run: pnpm cache-check
+
+      # The token ledger and the rate card (issue #53). Its headline failure is
+      # the quietest in the repo: reading `inputTokens.total` instead of
+      # `.noCache` double-bills every cached prompt token, producing a cost
+      # report that is plausible, too high, and impossible to falsify by
+      # looking. It also pins the surface list against migration 0032's CHECK
+      # constraint, and refuses a model with no price (which would otherwise
+      # make the whole bill appear to fall).
+      - name: Cost ledger check
+        run: pnpm cost-check

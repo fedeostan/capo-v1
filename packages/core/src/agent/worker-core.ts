@@ -168,7 +168,18 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
   // ./models.ts is: it speaks only `string` and the AI SDK's `ToolSet`, so no
   // Capo tool type or context can travel through it.
   const agent = new ToolLoopAgent({
-    model: getModel('conversation'),
+    // Usage accounting (issue #53), attributed to THIS crew member. The
+    // attribution type is a union, so `{ kind: 'worker', workerId }` has no
+    // profileId field to fill in — the worker loop cannot file its spend
+    // against a manager even by mistake, the same way WorkerContext has no
+    // userId. ./usage.ts may serve both loops for the reason ./models.ts and
+    // ./cache.ts may: it is plumbing, and speaks only Db, strings and numbers.
+    model: getModel('conversation', {
+      db,
+      companyId,
+      surface: 'worker_chat',
+      actor: { kind: 'worker', workerId },
+    }),
     instructions: await buildWorkerSystemPrompt({ db, locale, today, tasks, pendingPhotos: photos }),
     tools: withToolCacheBreakpoint(toWorkerAiTools(ctx)),
     stopWhen: stepCountIs(WORKER_STEPS),

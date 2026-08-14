@@ -1,6 +1,7 @@
 import { anthropic } from '@ai-sdk/anthropic';
 import { google } from '@ai-sdk/google';
 import type { LanguageModel } from 'ai';
+import { withUsageRecording, type UsageAttribution } from './usage';
 
 // The model seam: every model call in the app goes through a named role.
 // Swapping or adding a model is an edit here, nowhere else. The transcription
@@ -16,7 +17,12 @@ export type ModelRole =
   | 'planner'
   | 'translation';
 
-const registry: Record<ModelRole, () => LanguageModel> = {
+// Typed as the concrete model objects the providers return, not as
+// `LanguageModel` — that union also admits a bare gateway model-ID string, and
+// a string cannot be wrapped with usage-recording middleware (see ./usage.ts).
+// Keeping the narrower type here means "somebody put a plain string in the
+// registry" is a tsc error rather than an unrecorded model call.
+const registry: Record<ModelRole, () => Exclude<LanguageModel, string>> = {
   conversation: () => anthropic('claude-sonnet-5'),
   summarizer: () => anthropic('claude-haiku-4-5-20251001'),
   transcription: () => google('gemini-3.5-flash'),
@@ -36,8 +42,48 @@ const registry: Record<ModelRole, () => LanguageModel> = {
   translation: () => anthropic('claude-haiku-4-5-20251001'),
 };
 
-export function getModel(role: ModelRole): LanguageModel {
-  return registry[role]();
+/**
+ * Which provider each role bills against. Needed by the usage ledger, which
+ * records it per row so a future provider swap does not make old rows
+ * ambiguous. Derived from the registry above and asserted by `pnpm cost-check`
+ * against `MODEL_IDS`, so a role added to one and not the other is caught.
+ */
+export const MODEL_PROVIDERS: Record<ModelRole, 'anthropic' | 'google'> = {
+  conversation: 'anthropic',
+  summarizer: 'anthropic',
+  transcription: 'google',
+  extraction: 'anthropic',
+  planner: 'anthropic',
+  translation: 'anthropic',
+};
+
+/**
+ * The model seam, and — since issue #53 — the usage seam too.
+ *
+ * `attribution` is the ONE thing a call site has to supply: whose spend this
+ * is, and which surface is spending it. Everything else about recording (that
+ * it happens at all, per API request rather than per turn, into which columns,
+ * and that a failure is swallowed) is decided in ./usage.ts, so no call site
+ * ever writes a ledger row itself.
+ *
+ * It is OPTIONAL rather than required, unlike `ToolContext.confirmPosture`, and
+ * the asymmetry is deliberate. A forgotten posture is a SAFETY regression — an
+ * unconfirmed write on a live job — so `tsc` must refuse it. A forgotten
+ * attribution costs an uncounted call, which is a metrics gap. Making it
+ * required would break `getModel()` for the credential-free checks
+ * (`pnpm cache-check` builds every model with no database in sight) and would
+ * push a fake `db` into scripts, which is worse than an undercount.
+ * `pnpm cost-check` asserts that every real call site passes one.
+ */
+export function getModel(role: ModelRole, attribution?: UsageAttribution): LanguageModel {
+  const model = registry[role]();
+  if (!attribution) return model;
+  return withUsageRecording(model, {
+    ...attribution,
+    modelRole: role,
+    modelId: MODEL_IDS[role],
+    provider: MODEL_PROVIDERS[role],
+  });
 }
 
 // ── Prompt caching, per role ────────────────────────────────────────────────

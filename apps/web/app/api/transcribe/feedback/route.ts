@@ -47,7 +47,14 @@ export async function POST(req: Request) {
   // 200 with learned: 0 — a lost learning event must never surface as an error.
   try {
     const { object: terms } = await generateObject({
-      model: getModel('extraction'),
+      // Token accounting (issue #53). Billed to the manager whose correction
+      // triggered the learning — they are the only person in this request.
+      model: getModel('extraction', {
+        db: auth.db,
+        companyId: auth.companyId,
+        surface: 'vocab_extraction',
+        actor: { kind: 'manager', profileId: auth.userId },
+      }),
       output: 'array',
       schema: z.string().min(2).max(40),
       prompt: buildExtractionPrompt(transcript, final),
