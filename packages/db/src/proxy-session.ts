@@ -14,11 +14,21 @@ import { NextResponse, type NextRequest } from 'next/server';
 // /auth/confirm and /auth/callback are the routes that ESTABLISH a session
 // (email confirmation, password recovery, Google OAuth exchange) — they must
 // be reachable before one exists.
+// /robots.txt and /sitemap.xml are the crawler contract for the public landing
+// page. A crawler never holds a session, so gating them redirects it to /login
+// and the landing page is never indexed. That failure is SILENT in the only
+// way anyone would check it — a logged-in browser gets a 200 from both — so it
+// is only visible to an unauthenticated request. They belong here rather than
+// in proxy.ts's matcher for the same reason /manifest.webmanifest does: they
+// are generated routes (app/robots.ts, app/sitemap.ts), not static files, and
+// the matcher's exemptions are for assets Next serves without running code.
 const PUBLIC_PATHS = [
   '/login',
   '/offline',
   '/manifest.webmanifest',
   '/sw.js',
+  '/robots.txt',
+  '/sitemap.xml',
   '/registar',
   '/recuperar',
   '/nova-password',
