@@ -144,6 +144,22 @@ and say what the alternative would be — he is the one who decides.
   Note what it does NOT prove: every check asserts a REFUSAL, so a policy that
   denied everyone would pass all of them. After adding a policy, verify the
   owner's own path still works too.
+  Two traps when WRITING a check here, both of which shipped red once and were
+  fixed in the same pass:
+  - **"The tenant sees nothing" has two legitimate shapes.** A table that keeps
+    its SELECT grant and has no policy answers `0 rows, no error`
+    (`dispatch_log`, `notification_log`); a table that also `revoke all`s
+    answers **42501** before RLS is consulted (`ai_usage`,
+    `checkin_photo_requests`) — strictly stronger. Assert through
+    `readIsDenied`, never on `!error && rows === 0`, or the safest tables in the
+    schema report as failures. It deliberately rejects **42P01**: a dropped
+    table must never read as secure.
+  - **A positive control on a WRITE-ONLY table must not chain `.select()`.**
+    supabase-js only asks for the inserted row back when you chain it, and that
+    RETURNING clause needs SELECT — so `.insert(...).select('id')` is refused
+    42501 on `ai_usage` while the write itself succeeds. Mirror the call site
+    exactly (`const { error } = await db.from(t).insert({...})`) and confirm the
+    row landed on the **service role**, which is the only actor that can read it.
 - `scripts/scheduler-check.mts` — deterministic checks over the plan
   scheduler and the Portuguese working-day calendar. Since #51 it also covers
   the *other* schedule in the product: the cron send window
