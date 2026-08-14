@@ -54,13 +54,27 @@ export type WhatsAppRecipient =
   | { kind: 'phone'; waId: string }
   | { kind: 'bsuid'; userId: string };
 
-export interface WhatsAppSendConfig {
+/**
+ * Everything needed to TALK to the Graph API, with no statement about who is
+ * being addressed.
+ *
+ * Split out of WhatsAppSendConfig for one structural reason: a read receipt and
+ * a typing indicator are addressed by the INBOUND MESSAGE ID, not by a
+ * recipient, and carry no `to`/`recipient` field at all. Taking the narrower
+ * type means those two calls have no access to a recipient they must not emit —
+ * the same "make the wrong envelope unrepresentable" reasoning as
+ * WhatsAppRecipient itself.
+ */
+export interface WhatsAppApiConfig {
   accessToken: string;
   phoneNumberId: string;
-  /** Who to send to, and which envelope field carries them. */
-  recipient: WhatsAppRecipient;
   /** Overridable for tests; defaults to the live Graph API. */
   graphApiBase?: string;
+}
+
+export interface WhatsAppSendConfig extends WhatsAppApiConfig {
+  /** Who to send to, and which envelope field carries them. */
+  recipient: WhatsAppRecipient;
 }
 
 // Localized approval copy. INJECTED rather than imported: @capo/core depends on
@@ -212,11 +226,137 @@ export function withinFreeFormWindow(
   if (!lastInboundAt) return false;
   const at = Date.parse(lastInboundAt);
   if (Number.isNaN(at)) return false;
+  return elapsedWithin(at, now, windowMs);
+}
+
+// The arithmetic half of the predicate above, shared with mayNarrateProgress so
+// the two cannot drift. `elapsed >= 0` refuses a future timestamp. NaN in `at`
+// or `now` (nothing should pass one, but the arithmetic would propagate it
+// silently) fails both comparisons, which is again the closed direction.
+function elapsedWithin(at: number, now: number, windowMs: number): boolean {
   const elapsed = now - at;
-  // `elapsed >= 0` refuses a future timestamp. NaN in `now` (nothing should
-  // pass one, but the arithmetic would propagate it silently) fails both
-  // comparisons, which is again the closed direction.
   return elapsed >= 0 && elapsed <= windowMs;
+}
+
+// ── working-on-it feedback ──────────────────────────────────────────────────
+//
+// Issue #50: a manager on WhatsApp sent a message and then watched nothing
+// happen for thirty seconds. The web chat has "Capo está a escrever…" and tool
+// chips; WhatsApp had a blank screen, which reads as "it broke" and provokes a
+// second message that costs another agent turn.
+//
+// Meta's answer to this is NOT message editing. Editing a sent message does not
+// exist in the Cloud API in any form — there is exactly one messages endpoint
+// and it is send-only (see the runbook). What does exist is two *status*
+// updates, and both are FREE by construction: Meta bills TEMPLATE messages
+// only, and neither of these is a message at all — no `type`, no `template`, no
+// recipient field, and no wamid in the response.
+
+/**
+ * How long Meta shows a typing indicator before dismissing it on its own.
+ *
+ * The indicator also disappears the moment we send the real reply, whichever
+ * comes first — so on a turn that finishes quickly it behaves exactly like the
+ * web chat's "Capo está a escrever…".
+ *
+ * DO NOT BUILD A KEEP-ALIVE AROUND THIS. A repeating timer on a serverless
+ * function is a bug generator: the instance can freeze the moment the response
+ * flushes, so the loop either dies mid-cycle or keeps a function billable for
+ * no reason. The answer to a turn outlasting 25 seconds is ONE progress note
+ * (below), not a heartbeat.
+ */
+export const TYPING_INDICATOR_MS = 25_000;
+
+/**
+ * When a turn that is still running earns one plain-text "still on it".
+ *
+ * Deliberately just under TYPING_INDICATOR_MS: the note exists to cover the
+ * moment the indicator expires, so anything longer would leave a visible gap
+ * and anything much shorter would talk over an indicator that is still showing.
+ */
+export const PROGRESS_NOTE_AFTER_MS = 20_000;
+
+/**
+ * May this turn spend a FREE-FORM message on a progress note?
+ *
+ * The answer is essentially always yes — a progress note is only ever sent
+ * while answering someone whose own message arrived seconds ago, and that
+ * message is what opened Meta's 24-hour window. So why ask at all?
+ *
+ * Because "it is obviously inside the window" is exactly the kind of reasoning
+ * that stops being true after a refactor nobody connects to this file, and the
+ * failure would be expensive in the one direction that matters: a free-form
+ * send outside the window is refused with 131047, and the recovery path for
+ * that (packages/core, isOutsideWindowError) is a PAID TEMPLATE. A status
+ * update that quietly turns into a billable send is strictly worse than no
+ * status update, so the window is asserted rather than assumed.
+ *
+ * `inboundAt` is when WE received the webhook, not a stored column — the proof
+ * is the message we are answering, so it needs no database read and cannot be
+ * stale. Fails closed for the same reasons withinFreeFormWindow does, and
+ * shares its arithmetic so the two can never disagree.
+ */
+export function mayNarrateProgress(
+  inboundAt: number,
+  now: number,
+  windowMs = FREE_FORM_WINDOW_MS,
+): boolean {
+  if (!Number.isFinite(inboundAt)) return false;
+  return elapsedWithin(inboundAt, now, windowMs);
+}
+
+/**
+ * Pure: an inbound message id in, the Graph body for "seen" (and optionally
+ * "…and typing") out.
+ *
+ * THE SHAPE IS THE COST GUARANTEE, which is why this is a separate builder that
+ * whatsapp-check pins rather than an inline object literal:
+ *
+ *   - No `type` and no `template`. Meta bills template messages; a body that
+ *     cannot name a template cannot be billed as one.
+ *   - No `to` and no `recipient`. This is addressed by `message_id`, so it
+ *     never goes through buildSendBody and the `to`-silently-wins hazard that
+ *     shape exists to prevent has no way to reach it.
+ *   - The typing indicator RIDES the read receipt; it is not a second call.
+ *     Meta's endpoint takes `status: 'read'` plus an optional
+ *     `typing_indicator`, so showing "typing" always also marks the message
+ *     read. There is no typing-without-read request to get wrong.
+ *
+ * `typing` is a required property rather than an optional one: every call site
+ * has to decide out loud whether an answer is actually coming, because Meta
+ * asks that an indicator only be shown when one is.
+ */
+export function buildReceiptBody(
+  messageId: string,
+  options: { typing: boolean },
+): Record<string, unknown> {
+  return {
+    messaging_product: 'whatsapp',
+    status: 'read',
+    message_id: messageId,
+    ...(options.typing ? { typing_indicator: { type: 'text' } } : {}),
+  };
+}
+
+/**
+ * Mark an inbound message read, and optionally show the typing indicator.
+ *
+ * Takes a WhatsAppApiConfig, not a WhatsAppSendConfig: there is no recipient in
+ * this request and the narrower type is what stops one being added by accident.
+ *
+ * THROWS on a Graph failure, exactly like every other call here. Swallowing
+ * belongs at the call site, which is where the log is — and swallowing it there
+ * is mandatory: feedback that breaks the answer is worse than no feedback.
+ */
+export async function sendReadReceipt(
+  messageId: string,
+  config: WhatsAppApiConfig,
+  options: { typing: boolean },
+): Promise<void> {
+  // Not post(): that one calls buildSendBody, which would add `to`. Meta's
+  // response here is `{ "success": true }` with no wamid — there is no message,
+  // so there is no id and nothing to record.
+  await postRaw(buildReceiptBody(messageId, options), config);
 }
 
 /**
@@ -761,11 +901,18 @@ export function buildSendBody(
   return { messaging_product: 'whatsapp', ...address, ...payload };
 }
 
+// The transport, and nothing else: an already-complete Graph body goes on the
+// wire. Split out of post() so a READ RECEIPT can reach the same endpoint
+// without passing through buildSendBody — a receipt is addressed by
+// `message_id` and must carry no `to`/`recipient` at all, so the addressing
+// step is not merely unnecessary there, it would be wrong.
+//
 // Returns the provider message id so the reminder cron can record it in
-// notification_log; the sink's own sends ignore it.
-async function post(
-  payload: Record<string, unknown>,
-  config: WhatsAppSendConfig,
+// notification_log; the sink's own sends ignore it, and a status update has
+// none (Meta answers `{ "success": true }`).
+async function postRaw(
+  body: Record<string, unknown>,
+  config: WhatsAppApiConfig,
 ): Promise<{ providerMessageId: string | null }> {
   const base = config.graphApiBase ?? 'https://graph.facebook.com/v23.0';
   const res = await fetch(`${base}/${config.phoneNumberId}/messages`, {
@@ -774,7 +921,7 @@ async function post(
       Authorization: `Bearer ${config.accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(buildSendBody(payload, config.recipient)),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     throw new WhatsAppSendError(res.status, await res.text());
@@ -787,6 +934,13 @@ async function post(
   } catch {
     return { providerMessageId: null };
   }
+}
+
+async function post(
+  payload: Record<string, unknown>,
+  config: WhatsAppSendConfig,
+): Promise<{ providerMessageId: string | null }> {
+  return await postRaw(buildSendBody(payload, config.recipient), config);
 }
 
 async function sendText(

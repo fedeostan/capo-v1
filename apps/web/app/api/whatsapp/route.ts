@@ -37,6 +37,7 @@ import {
 } from '../../../lib/checkin-claim';
 import { logEvent } from '../../../lib/log';
 import { type WhatsAppEnv } from '../../../lib/whatsapp';
+import { acknowledgeInbound, withProgressNote } from '../../../lib/whatsapp-feedback';
 import { renderCheckinAnswerEvent } from '../../notifications/briefing';
 import { readThreadLocale, recordThreadEvent } from '../../notifications/thread';
 
@@ -1099,6 +1100,8 @@ async function handleWorkerReply(
   // branch that can never run.
   sender: WhatsAppSender,
   env: WhatsAppEnv,
+  /** When the webhook arrived — the proof of the free-form window (issue #50). */
+  inboundAt: number,
 ): Promise<boolean> {
   // Phone first, then BSUID — the same order and the same reasoning as
   // resolveManager. `.limit(2)` on BOTH, which is the part that matters:
@@ -1196,6 +1199,36 @@ async function handleWorkerReply(
     recipient: sender.replyTo,
   };
 
+  // ── "seen", and "working on it" (issue #50) ────────────────────────────────
+  // Above every branch below, because all of them answer: a crew member always
+  // gets a reply of some kind, so the tick is always honest.
+  //
+  // The typing indicator is NOT always honest, which is why it is conditional.
+  // A tap, a STOP or a language keyword is answered from a lookup in
+  // milliseconds; only a text or a photo can start a model turn worth waiting
+  // for. It is a slightly wider net than the branch that actually runs the
+  // agent — STOP and the language keywords are text too — because an indicator
+  // that flickers before an instant answer is ordinary chat behaviour, while
+  // missing one on a slow turn is the bug being fixed.
+  //
+  // hasText/hasPhoto are computed HERE, once, and reused by that branch far
+  // below rather than recomputed beside it: two copies of the same expression
+  // would eventually disagree, and the symptom would be a turn that runs the
+  // agent with no indicator (or an indicator with no turn behind it).
+  //
+  // The emptiness checks mirror the manager triage further down: a `text`
+  // message with no body and an `image` with no media id are both things Meta
+  // can send, and neither is worth a model turn against a daily budget.
+  //
+  // This stays entirely on the WORKER path. It sends nothing to a manager and
+  // reads nothing a worker wrote; a read receipt carries only a message id.
+  const hasText = message.type === 'text' && !!message.text?.body?.trim();
+  const hasPhoto = message.type === 'image' && !!message.image?.id;
+  await acknowledgeInbound(message.id, sendConfig, {
+    typing: hasText || hasPhoto,
+    companyId: worker.company_id,
+  });
+
   // The check-in answer. Sits here — inside the WORKER path — and not
   // beside the manager's `interactive` branch below, because a check-in tap
   // comes from a workers.phone sender: sender resolution diverts it here and
@@ -1275,13 +1308,31 @@ async function handleWorkerReply(
   // double what the daily budget buys, for a path this PRD does not cover. It
   // falls to the ack below, as it always has.
   //
-  // The emptiness checks mirror the manager triage below: a `text` message with
-  // no body and an `image` with no media id are both things Meta can send and
-  // neither is worth a model turn against a daily budget.
-  const hasText = message.type === 'text' && !!message.text?.body?.trim();
-  const hasPhoto = message.type === 'image' && !!message.image?.id;
+  // hasText/hasPhoto are computed once, up beside the read receipt — see the
+  // note there for why they are not recomputed here.
   if (hasText || hasPhoto) {
-    await runWorkerTurn(db, message, worker, current, sendConfig, env.accessToken);
+    // Same single-shot progress note as the manager path, in the crew member's
+    // own language, and free for the same reason: their message opened the
+    // window seconds ago. A worker turn is usually quick, but a photo download
+    // plus a knowledge-base lookup can outlast the 25-second indicator.
+    await withProgressNote(
+      () => runWorkerTurn(db, message, worker, current, sendConfig, env.accessToken),
+      {
+        inboundAt,
+        send: async () => {
+          await sendWhatsAppText(getCatalog(current).whatsapp.workerStillWorking, sendConfig);
+        },
+        report: (outcome, error) =>
+          logEvent('whatsapp.progress_note', {
+            companyId: worker.company_id,
+            workerId: worker.id,
+            messageId: message.id,
+            audience: 'worker',
+            outcome,
+            error,
+          }),
+      },
+    );
     return true;
   }
 
@@ -1329,6 +1380,14 @@ export async function POST(request: NextRequest) {
   }
 
   const db = getDb();
+
+  // WHEN THIS WEBHOOK ARRIVED — and therefore the moment Meta's 24-hour
+  // free-form window opened for whoever sent it (issue #50). Read once, here,
+  // and passed down to every path that may spend a free-form message on a
+  // progress note. Taken from the runtime rather than the message's own
+  // `timestamp` field deliberately: the wire value is the SENDER's clock, and
+  // the thing being bounded is how long OUR turn has been running.
+  const inboundAt = Date.now();
 
   // Meta batches, and not everything in a batch is a message. This used to
   // flat-map straight to `change.value?.messages` and ignore `change.field`
@@ -1392,7 +1451,7 @@ export async function POST(request: NextRequest) {
       // briefing, which is the one other identity we know. Runs after the ack so
       // the lookup and the ack send add no latency to Meta's webhook call.
       after(async () => {
-        const handled = await handleWorkerReply(db, message, sender, { accessToken, phoneNumberId });
+        const handled = await handleWorkerReply(db, message, sender, { accessToken, phoneNumberId }, inboundAt);
         // Safe no-op: don't reveal whether a sender is known, don't reply.
         if (!handled) logUnknownSender(message);
       });
@@ -1496,6 +1555,12 @@ export async function POST(request: NextRequest) {
       });
 
       after(async () => {
+        // Blue ticks, and NO typing indicator (issue #50). The decision is
+        // resolved from a lookup and answered in well under a second, so an
+        // indicator would flash and vanish; the tick is the honest signal that
+        // the tap registered. Never throws — a failed receipt must not cost the
+        // manager their confirmation.
+        await acknowledgeInbound(message.id, sendConfig, { typing: false, companyId });
         try {
           const resolution = await resolveProposal(db, button.proposalId, button.decision, locales);
           const confirmation =
@@ -1565,79 +1630,122 @@ export async function POST(request: NextRequest) {
     // Ack Meta fast (retries + duplicate delivery kick in otherwise); the
     // transcription and agent loop run after the response, within maxDuration.
     after(async () => {
-      let text: string;
-      let transcribed = false;
+      // ── "Capo is working on it" (issue #50) ─────────────────────────────
+      // FIRST, above the transcription and above the agent loop, because this
+      // is the whole point: the manager has been staring at a blank screen
+      // since they hit send. Two blue ticks plus a typing indicator, in ONE
+      // Graph call, and it never throws — if it fails, the reply still goes.
+      //
+      // `typing: true` is honest here: an answer really is coming, and Meta
+      // asks that the indicator only be shown when one is. It lapses after 25
+      // seconds on its own; withProgressNote below covers what happens then.
+      //
+      // Free by construction — a status update is not a message, so there is
+      // no template and nothing to bill. See lib/whatsapp-feedback.
+      await acknowledgeInbound(message.id, sendConfig, { typing: true, companyId });
 
-      if (message.type === 'text') {
-        text = message.text!.body;
-      } else {
-        transcribed = true;
+      // The turn itself: media download, transcription, and the agent loop.
+      // Extracted so withProgressNote below can wrap ALL of it. Wrapping only
+      // the agent loop would start the clock after a voice note had already
+      // spent ten seconds being transcribed — precisely the turn that needs the
+      // reassurance most.
+      const runTurn = async (): Promise<void> => {
+        let text: string;
+        let transcribed = false;
+
+        if (message.type === 'text') {
+          text = message.text!.body;
+        } else {
+          transcribed = true;
+          try {
+            // The media URL from hop 1 is short-lived (~5 min) and single-use, so
+            // the download must happen here and now — never stored, never retried.
+            const media = await downloadMedia(message.audio!.id, {
+              accessToken,
+              maxBytes: MAX_AUDIO_BYTES,
+            });
+            text = await transcribeAudio({
+              db,
+              companyId,
+              // Whose token spend this is (issue #53). This branch is the
+              // MANAGER's voice note: the worker path never reaches here, because
+              // the restricted loop takes text and images only.
+              profileId: userId,
+              locale: locales.user,
+              audio: media.bytes,
+              mediaType: media.mediaType,
+            });
+          } catch (err) {
+            logEvent('whatsapp.voice_note_failed', {
+              companyId,
+              messageId: message.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            // Silence on a voice note reads as "Capo is broken". Send directly
+            // rather than through the sink: the sink's `delivery` promise only
+            // settles once mergeAssistantStream is called, and the agent never
+            // runs on this path.
+            await sendWhatsAppText(t.whatsapp.voiceNoteFailed, sendConfig).catch(() => {});
+            return;
+          }
+
+          if (!text) {
+            logEvent('whatsapp.voice_note_empty', { companyId, messageId: message.id });
+            await sendWhatsAppText(t.whatsapp.voiceNoteEmpty, sendConfig).catch(() => {});
+            return;
+          }
+        }
+
         try {
-          // The media URL from hop 1 is short-lived (~5 min) and single-use, so
-          // the download must happen here and now — never stored, never retried.
-          const media = await downloadMedia(message.audio!.id, {
-            accessToken,
-            maxBytes: MAX_AUDIO_BYTES,
+          // Approval copy is INJECTED, not imported by the core: @capo/core
+          // depends on @capo/i18n/locale only, never on the copy catalog, so UI
+          // strings stay out of the agent bundle (AGENTS.md).
+          const { sink, delivery } = whatsappSink({
+            ...sendConfig,
+            approval: {
+              approve: t.whatsapp.approveButton,
+              reject: t.whatsapp.rejectButton,
+              prompt: t.whatsapp.approvalPrompt,
+              fallback: t.whatsapp.approvalFallback,
+            },
           });
-          text = await transcribeAudio({
+          await handleInbound({
             db,
             companyId,
-            // Whose token spend this is (issue #53). This branch is the
-            // MANAGER's voice note: the worker path never reaches here, because
-            // the restricted loop takes text and images only.
-            profileId: userId,
-            locale: locales.user,
-            audio: media.bytes,
-            mediaType: media.mediaType,
+            userId,
+            locales,
+            confirmPosture,
+            inbound: { channel: 'whatsapp', text, transcribed },
+            sink,
           });
+          await delivery;
         } catch (err) {
-          logEvent('whatsapp.voice_note_failed', {
+          console.error(`whatsapp: failed handling message ${message.id}:`, err);
+          logEvent('whatsapp.send_failure', { companyId, messageId: message.id, error: err instanceof Error ? err.message : String(err) });
+        }
+      };
+
+      // ONE "still working on it" if the turn outlasts the typing indicator.
+      //
+      // Free-form text inside the window THIS webhook opened, so it costs
+      // nothing — and withProgressNote asserts that rather than assuming it,
+      // because the recovery path for a free-form send that lands outside the
+      // window is a PAID template. The timer is single-shot and always cleared;
+      // see lib/whatsapp-feedback for why there is deliberately no keep-alive.
+      await withProgressNote(runTurn, {
+        inboundAt,
+        send: async () => {
+          await sendWhatsAppText(t.whatsapp.stillWorking, sendConfig);
+        },
+        report: (outcome, error) =>
+          logEvent('whatsapp.progress_note', {
             companyId,
             messageId: message.id,
-            error: err instanceof Error ? err.message : String(err),
-          });
-          // Silence on a voice note reads as "Capo is broken". Send directly
-          // rather than through the sink: the sink's `delivery` promise only
-          // settles once mergeAssistantStream is called, and the agent never
-          // runs on this path.
-          await sendWhatsAppText(t.whatsapp.voiceNoteFailed, sendConfig).catch(() => {});
-          return;
-        }
-
-        if (!text) {
-          logEvent('whatsapp.voice_note_empty', { companyId, messageId: message.id });
-          await sendWhatsAppText(t.whatsapp.voiceNoteEmpty, sendConfig).catch(() => {});
-          return;
-        }
-      }
-
-      try {
-        // Approval copy is INJECTED, not imported by the core: @capo/core
-        // depends on @capo/i18n/locale only, never on the copy catalog, so UI
-        // strings stay out of the agent bundle (AGENTS.md).
-        const { sink, delivery } = whatsappSink({
-          ...sendConfig,
-          approval: {
-            approve: t.whatsapp.approveButton,
-            reject: t.whatsapp.rejectButton,
-            prompt: t.whatsapp.approvalPrompt,
-            fallback: t.whatsapp.approvalFallback,
-          },
-        });
-        await handleInbound({
-          db,
-          companyId,
-          userId,
-          locales,
-          confirmPosture,
-          inbound: { channel: 'whatsapp', text, transcribed },
-          sink,
-        });
-        await delivery;
-      } catch (err) {
-        console.error(`whatsapp: failed handling message ${message.id}:`, err);
-        logEvent('whatsapp.send_failure', { companyId, messageId: message.id, error: err instanceof Error ? err.message : String(err) });
-      }
+            audience: 'manager',
+            outcome,
+            error,
+          }),
+      });
     });
   }
 

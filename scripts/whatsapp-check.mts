@@ -43,14 +43,25 @@
 //      our own copy, counts, manager-authored crew names and a two-valued
 //      button — never a word a crew member typed. The other half of that
 //      boundary is asserted by `pnpm guard-check`.
+//  12. WhatsApp gave the manager NO sign anything was happening (issue #50) —
+//      no ticks, no "typing", nothing, for the ten to thirty seconds a turn
+//      takes. The fix adds outbound traffic to the one channel where extra
+//      traffic can cost real money, so what is pinned here is the SHAPE that
+//      keeps it free: a read receipt / typing indicator carries no `type` and
+//      no `template`, so it cannot be billed as one, and no `to`/`recipient`,
+//      so it cannot be addressed at a stale number either.
 //
 // Run with `pnpm whatsapp-check`. Exit 0 = green, 1 = at least one failure.
 
 import type { UIMessage } from 'ai';
 import {
+  buildReceiptBody,
   buildSendBody,
   buildTemplatePayload,
   checkinPayload,
+  mayNarrateProgress,
+  PROGRESS_NOTE_AFTER_MS,
+  TYPING_INDICATOR_MS,
   hasWhatsAppConsent,
   isBsuid,
   isOutsideWindowError,
@@ -94,6 +105,12 @@ import {
   classifyClaimError,
   readTaskIds,
 } from '../apps/web/lib/checkin-claim.ts';
+// The one-shot progress-note timer (issue #50). Not pure — it schedules — but
+// it needs no credentials, no network and no model, and it is the riskiest new
+// code in that change: a timer that leaked past its request, or a feedback
+// failure that took the real answer down with it, would both be invisible
+// everywhere else. Exercised below with millisecond delays.
+import { withProgressNote } from '../apps/web/lib/whatsapp-feedback.ts';
 import type { Db } from '@capo/db/client';
 
 let failures = 0;
@@ -751,6 +768,157 @@ check('an unparseable opt-in → no consent', !hasWhatsAppConsent({ whatsapp_opt
   check('a timestamp one hour in the FUTURE → template', !withinFreeFormWindow(at(-HOUR), NOW));
   check('a timestamp one second in the future → template', !withinFreeFormWindow(at(-1000), NOW));
   check('a wildly future timestamp → template', !withinFreeFormWindow('2099-01-01T00:00:00Z', NOW));
+}
+
+// ── working-on-it feedback (issue #50) ──────────────────────────────────────
+// A manager on WhatsApp sent a message and watched nothing happen. The web chat
+// has "Capo está a escrever…" and a chip per tool call; WhatsApp had silence,
+// which reads as "it broke".
+//
+// The fix is a read receipt plus a typing indicator, and — for a turn that
+// outlasts the indicator — one plain-text note. THE RISK IS NOT THAT IT LOOKS
+// WRONG, IT IS THAT IT COSTS MONEY: Meta bills template messages, and a status
+// update that acquired a `type` or a `template` would become one silently.
+// These checks pin the shape that makes that impossible.
+//
+// (Message EDITING, the obvious nicer design, does not exist in the Cloud API
+// at all — there is one messages endpoint and it is send-only. Nothing here
+// tries to edit anything, and nothing should be added that does.)
+{
+  const receipt = buildReceiptBody('wamid.HBgL', { typing: false });
+  const typing = buildReceiptBody('wamid.HBgL', { typing: true });
+
+  eq('a receipt is addressed by message_id', receipt.message_id, 'wamid.HBgL');
+  eq('and carries messaging_product', receipt.messaging_product, 'whatsapp');
+  eq('and is a status update, not a send', receipt.status, 'read');
+
+  // THE COST GUARANTEE. A body with no `type` and no `template` cannot be
+  // billed as a template message, which is the only thing Meta bills.
+  check('a receipt has NO `type` — it is not a message', !('type' in receipt));
+  check('a receipt has NO `template` — it can never be a paid send', !('template' in receipt));
+  check('a typing indicator has NO `type` either', !('type' in typing));
+  check('a typing indicator has NO `template` either', !('template' in typing));
+
+  // THE ADDRESSING GUARANTEE. A receipt names a MESSAGE, never a recipient, so
+  // it never passes through buildSendBody and the `to`-silently-wins hazard
+  // that shape exists to prevent cannot reach it. A stray `to` here would also
+  // be the one way a BSUID sender could be answered on a stale phone number.
+  check('a receipt has NO `to`', !('to' in receipt));
+  check('a receipt has NO `recipient`', !('recipient' in receipt));
+  check('a typing indicator has NO `to`', !('to' in typing));
+  check('a typing indicator has NO `recipient`', !('recipient' in typing));
+
+  // The indicator RIDES the read receipt — one request, not two. There is no
+  // typing-without-read shape to get wrong.
+  check('typing: false emits no typing_indicator', !('typing_indicator' in receipt));
+  eq('typing: true emits Meta\'s text indicator', JSON.stringify(typing.typing_indicator), '{"type":"text"}');
+  eq('and still marks the message read', typing.status, 'read');
+
+  // The note must arrive BEFORE the indicator lapses, or there is a visible
+  // gap where the manager is back to staring at nothing. Reversing these two
+  // constants would reintroduce exactly the silence this feature removes.
+  eq('Meta dismisses the typing indicator after 25s', TYPING_INDICATOR_MS, 25_000);
+  check(
+    'the progress note fires BEFORE the indicator lapses',
+    PROGRESS_NOTE_AFTER_MS < TYPING_INDICATOR_MS,
+  );
+
+  // The progress note is free-form text, so it is free ONLY inside the window.
+  // It is triggered by an inbound message and therefore always is — but the
+  // predicate is asserted rather than assumed, because the recovery path for a
+  // free-form send that lands outside the window is a PAID template. Same
+  // fail-closed discipline as withinFreeFormWindow above.
+  const NOW = Date.parse('2026-08-14T07:00:00.000Z');
+  check('a turn that started this instant may narrate', mayNarrateProgress(NOW, NOW));
+  check('a turn 30 seconds in may narrate', mayNarrateProgress(NOW - 30_000, NOW));
+  check('exactly at the margin may narrate', mayNarrateProgress(NOW - FREE_FORM_WINDOW_MS, NOW));
+  check(
+    'one millisecond past the margin may NOT',
+    !mayNarrateProgress(NOW - FREE_FORM_WINDOW_MS - 1, NOW),
+  );
+  check('a start time in the FUTURE may not', !mayNarrateProgress(NOW + 1000, NOW));
+  check('NaN may not', !mayNarrateProgress(Number.NaN, NOW));
+  check('Infinity may not', !mayNarrateProgress(Number.POSITIVE_INFINITY, NOW));
+}
+
+// ── the progress-note timer itself (issue #50) ──────────────────────────────
+// Real timers, millisecond delays. Four properties, each of which fails
+// silently in production if it regresses:
+//
+//   - a fast turn sends NOTHING (otherwise every one-line answer grows a
+//     pointless "still working on it" above it);
+//   - a slow turn sends EXACTLY ONE note, never a heartbeat;
+//   - the timer is always cleared, so nothing fires after the call returns —
+//     a stray send on a frozen serverless instance is the failure the
+//     no-keep-alive rule exists to prevent;
+//   - a FAILED note never takes the answer down with it. Feedback that breaks
+//     the reply is strictly worse than no feedback.
+{
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  const NOW = Date.now();
+
+  // A turn that finishes well inside the delay.
+  {
+    const sent: string[] = [];
+    const out = await withProgressNote(async () => { await sleep(5); return 'answer'; }, {
+      inboundAt: NOW,
+      send: async () => { sent.push('note'); },
+      report: outcome => sent.push(`report:${outcome}`),
+      delayMs: 60,
+    });
+    eq('a fast turn still returns its value', out, 'answer');
+    eq('and sends no progress note at all', sent.length, 0);
+    // If the timer had survived the call, it would fire during this wait.
+    await sleep(90);
+    eq('and nothing fires after it returns — the timer was cleared', sent.length, 0);
+  }
+
+  // A turn that outlasts the delay.
+  {
+    const sent: string[] = [];
+    const out = await withProgressNote(async () => { await sleep(70); return 'answer'; }, {
+      inboundAt: NOW,
+      send: async () => { sent.push('note'); },
+      report: outcome => sent.push(`report:${outcome}`),
+      delayMs: 15,
+    });
+    eq('a slow turn still returns its value', out, 'answer');
+    eq('and sends EXACTLY ONE note, never a heartbeat', sent.filter(s => s === 'note').length, 1);
+    check('and reports it as sent', sent.includes('report:sent'));
+    await sleep(60);
+    eq('and still exactly one after the call returns', sent.filter(s => s === 'note').length, 1);
+  }
+
+  // The note itself fails. The answer must survive it.
+  {
+    const reports: string[] = [];
+    const out = await withProgressNote(async () => { await sleep(60); return 'answer'; }, {
+      inboundAt: NOW,
+      send: async () => { throw new Error('graph 500'); },
+      report: (outcome, error) => reports.push(`${outcome}:${error ?? ''}`),
+      delayMs: 10,
+    });
+    eq('A FAILED NOTE NEVER BREAKS THE ANSWER', out, 'answer');
+    check('and the failure is reported, not swallowed silently', reports[0]?.startsWith('failed:'));
+  }
+
+  // The turn throws. The note must not mask it, and must not leak either.
+  {
+    const reports: string[] = [];
+    let threw = '';
+    try {
+      await withProgressNote(async () => { await sleep(40); throw new Error('turn blew up'); }, {
+        inboundAt: NOW,
+        send: async () => {},
+        report: outcome => reports.push(outcome),
+        delayMs: 10,
+      });
+    } catch (err) {
+      threw = err instanceof Error ? err.message : String(err);
+    }
+    eq('a throwing turn still propagates its error', threw, 'turn blew up');
+    eq('and the note it had already fired is still accounted for', reports.length, 1);
+  }
 }
 
 // ── the one recoverable send failure ────────────────────────────────────────

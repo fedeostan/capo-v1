@@ -289,6 +289,34 @@ Structural invariants (do not regress):
   reads `task_board` like everything else. Proactive sends need an approved Meta **template** — free-form text is
   only allowed inside the 24h window a recipient's own reply opens, which is
   why the webhook acknowledges worker replies.
+- **WhatsApp feedback while a turn runs is a READ RECEIPT plus a TYPING
+  INDICATOR, and both are free by SHAPE rather than by policy** (issue #50).
+  **Message editing does not exist in the Cloud API** — there is one messages
+  endpoint and it is send-only, so the "send a placeholder and edit it into the
+  answer" design is unavailable, not merely unbuilt. Four invariants:
+  - **A status update is not a message.** `buildReceiptBody` emits
+    `status: 'read'` (+ optional `typing_indicator`) and **no `type`, no
+    `template`, no `to`, no `recipient`** — addressed by the inbound
+    `message_id`. Meta bills templates only, so a body that cannot name one
+    cannot be billed; and with no recipient field it never touches
+    `buildSendBody`, so the `to`-silently-wins BSUID hazard cannot reach it.
+    `pnpm whatsapp-check` pins every one of those absences — that is the cost
+    guarantee, so do not "tidy" the builder into an inline literal.
+  - **The indicator lapses after 25s and there is NO keep-alive.** A repeating
+    timer on a serverless function dies the instant the response flushes. The
+    cover is ONE plain-text note at `PROGRESS_NOTE_AFTER_MS` (20s), from a
+    single `setTimeout` created and always cleared inside one awaited call
+    within `after()` (`withProgressNote`, `apps/web/lib/whatsapp-feedback.ts`).
+  - **The 24h window is asserted, never assumed.** `mayNarrateProgress` is
+    consulted before the note even though an inbound message opened the window
+    seconds earlier: free-form outside the window is refused (131047) and the
+    recovery path for that refusal is a PAID template.
+  - **Unknown and ambiguous senders get nothing.** Blue ticks are an answer —
+    they would confirm to a stranger that their message reached a live system,
+    which is what the silent no-op exists to refuse. Every feedback call is
+    below sender resolution and below the `.limit(2)` worker ambiguity guard,
+    and every one of them swallows its own failure: feedback must never cost
+    somebody their reply.
 - **No proactive send goes out without a recorded opt-in** (migration `0025`).
   `whatsapp_opt_in_at` / `whatsapp_opt_out_at` on `workers` and `profiles`,
   latest-wins, evaluated by `hasWhatsAppConsent()` in

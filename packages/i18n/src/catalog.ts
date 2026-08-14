@@ -776,6 +776,25 @@ export interface Catalog {
     /** The worker_checkins write failed. Silence after a tap reads as "Capo is
      *  broken", the same failure mode proposalError guards against. */
     checkinError: string;
+    /**
+     * "Still working on it" — sent to a MANAGER when a turn is still running
+     * after PROGRESS_NOTE_AFTER_MS (issue #50).
+     *
+     * WhatsApp's typing indicator expires after 25 seconds and vanishes without
+     * a word, so a long turn (a plan, a translation) went back to looking
+     * broken exactly when it was working hardest. This is the one message that
+     * covers that gap. It is FREE-FORM text inside the 24-hour window the
+     * manager's own message opened a moment ago — never a template, and
+     * therefore never billable.
+     *
+     * ⚠ It must promise nothing about the OUTCOME. It is sent before the turn
+     * has finished, so it cannot know whether the answer will be a result, a
+     * card, or a failure. "Still on it" is the whole content.
+     */
+    stillWorking: string;
+    /** See `stillWorking`. The crew's copy of it — same job, plainer register,
+     *  and read in `workers.language`. */
+    workerStillWorking: string;
   };
 
   /**

@@ -576,6 +576,8 @@ const dict: Catalog = {
       "Your answer is logged, but I couldn't tell your foreman. Have a word with him.",
     checkinNotDone: 'Alright, thanks for letting me know. Logged.',
     checkinError: "I couldn't record your answer. Talk to your foreman.",
+    stillWorking: "Still working on this, boss — one more moment.",
+    workerStillWorking: "Still looking into this — one more moment.",
   },
 
   reminders: {
