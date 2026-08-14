@@ -8,13 +8,17 @@
 
 ## 1. The problem, stated exactly
 
-Production (`https://capo-v1.vercel.app`) is running against a Stripe **sandbox**,
-not against the live account. This was confirmed from Stripe's own side rather
-than inferred from the app: the sandbox account `acct_1TtrEZLaGmAMnE9x`
-("Moussemango sandbox") holds a webhook endpoint
-(`we_1TuAmhLaGmAMnE9xaKoeAC2P`) whose URL is the **production**
+Production is running against a Stripe **sandbox**, not against the live account.
+This was confirmed from Stripe's own side rather than inferred from the app: the
+sandbox account `acct_1TtrEZLaGmAMnE9x` ("Moussemango sandbox") holds a webhook
+endpoint (`we_1TuAmhLaGmAMnE9xaKoeAC2P`) whose URL is the **production**
 `https://capo-v1.vercel.app/api/stripe/webhook`. A sandbox webhook can only be
 reached by sandbox keys, so production is holding `sk_test_…`.
+
+Production is now served at **`https://www.construcapo.com`** (custom domain
+added 2026-08-14; the apex `construcapo.com` `308`-redirects to it, and
+`capo-v1.vercel.app` still answers). See §3.1 — the choice of host is a
+correctness matter for the webhook, not cosmetics.
 
 State of the live account `acct_1TtrERLIxn6Jugmn` ("Moussemango"):
 
@@ -52,7 +56,17 @@ stranded by moving worlds. The two real companies are `active` (force-set by
 
 ### 3.1 Webhook endpoint
 
-- **URL:** `https://capo-v1.vercel.app/api/stripe/webhook`
+- **URL:** `https://www.construcapo.com/api/stripe/webhook` — the **`www` host, not
+  the apex.** `construcapo.com` answers `308` and redirects to `www`, on `POST`
+  as well as `GET` (probed 2026-08-14). Stripe's delivery docs are explicit:
+  *"We consider redirect responses to webhook requests as failures"*, with the
+  prescribed fix being *"set the webhook endpoint destination to the URL resolved
+  by the redirect."* An apex endpoint would fail 100% of deliveries, retry for
+  three days, and produce precisely the paying-customer lockout described in §1.
+  `https://www.construcapo.com/api/stripe/webhook` was probed and answers
+  `400 missing signature` — the route runs, is publicly reachable, and rejects
+  unsigned bodies. Vercel Deployment Protection does not block it; `proxy.ts`
+  allowlists this path.
 - **Events, exactly three** — matching the `switch` in
   `apps/web/app/api/stripe/webhook/route.ts` and nothing else:
   - `checkout.session.completed`
@@ -63,8 +77,9 @@ stranded by moving worlds. The two real companies are `active` (force-set by
   `stripe@18.5.0`; pinning an endpoint to a version the SDK does not expect is a
   silent payload-shape mismatch.
 
-Vercel Deployment Protection does **not** block this: it is browser-session
-based, and Stripe→server delivery is server-to-server.
+Deliberately **not** `capo-v1.vercel.app`, which still serves and would also
+work. The custom domain is the product's identity; the `vercel.app` host is an
+artefact of the project name and moves if the project is ever renamed.
 
 ### 3.2 Billing portal configuration
 
@@ -182,10 +197,20 @@ Project `capo-v1`, **Production** scope:
 | `STRIPE_SECRET_KEY` | the live `sk_live_…` secret key |
 | `STRIPE_PRICE_ID` | `price_1U4J91LIxn6JugmnvZc5XN12` |
 | `STRIPE_WEBHOOK_SECRET` | the `whsec_…` of the endpoint created in §3.1, copied from the Stripe Dashboard |
+| `NEXT_PUBLIC_SITE_URL` | `https://www.construcapo.com` — **new, added because of the custom domain** |
 
-Then redeploy. All three are read lazily inside functions
+Then redeploy. The three Stripe values are read lazily inside functions
 (`getStripe()`, `startCheckout`, the webhook route), never at module scope, so a
 missing value degrades rather than breaking `next build`.
+
+`NEXT_PUBLIC_SITE_URL` is not optional now that a custom domain exists.
+`siteUrl()` builds Checkout's `success_url` and `cancel_url` and the portal's
+`return_url`, and its fallback is `VERCEL_PROJECT_PRODUCTION_URL` — which Vercel
+resolves to the *shortest* production custom domain, i.e. the apex
+`construcapo.com`, the host that 308-redirects. Browsers follow that redirect so
+it would not visibly break, but it means every post-payment return trip takes an
+extra hop through a host we do not otherwise serve. Setting it explicitly makes
+the app's idea of its own address match the webhook's.
 
 **Precondition Federico must confirm:** the live Stripe account is *activated* —
 business details submitted, bank account attached, no "complete your account"
@@ -229,7 +254,10 @@ Ordered, and every step is falsifiable:
    sandbox (`Moussemango sandbox`) — confirm with `stripe config --list` before
    running anything, so no `trigger` ever aims at live.
 3. **Live, one real transaction:** after §5, one €45 checkout on a real card
-   through `/subscricao`. Assert in Supabase that `subscription_status='active'`
+   through `https://www.construcapo.com/subscricao`. Check Stripe's **Event
+   deliveries** tab for the new endpoint first — a `200` there is the direct
+   proof the doorbell is wired to the right host, and a `3xx` is the apex
+   mistake from §3.1. Assert in Supabase that `subscription_status='active'`
    and `stripe_customer_id` is a `cus_…` from the **live** account, then cancel
    through the portal and assert the subscription shows `cancel_at_period_end`
    and Capo is still usable. Refund the €45 from the Dashboard afterwards.
@@ -257,10 +285,18 @@ CI. `resolveTrialEnd` is pure specifically so it *could* gain a check under
   urgency: an early subscriber is never blocked while the webhook catches up. The
   page's existing pull-to-refresh remains the answer.
 - **Expiring stale `proposals`.** Unrelated known issue, recorded in `AGENTS.md`.
-- **Custom production domain.** None is configured; `capo-v1.vercel.app` is the
-  production domain. If one is added later, the webhook URL in §3.1 and
-  `NEXT_PUBLIC_SITE_URL` both have to move, and the webhook must be updated
-  *before* the domain cuts over or a payment window goes unrecorded.
+- **Everything else the new domain touches.** `construcapo.com` /
+  `www.construcapo.com` were added on 2026-08-14, mid-design. This spec absorbs
+  the billing consequences (§3.1, §5) and nothing else. Two known consequences
+  live outside it and are **not** fixed here:
+  - **Supabase auth URL configuration.** Site URL and Additional Redirect URLs
+    still name the old host, so confirmation and password-reset emails send
+    people to `capo-v1.vercel.app`. Not a billing path; needs its own change.
+  - **`/robots.txt` and `/sitemap.xml` are unreachable.** Probed 2026-08-14:
+    both answer `307 → /login`, because `proxy.ts` allowlists only
+    `/api/whatsapp`, `/api/stripe/webhook` and `/api/cron/*`, and everything
+    else falls through to the auth redirect. A public domain that search
+    engines cannot crawl is worth its own issue.
 
 ---
 
@@ -273,3 +309,5 @@ CI. `resolveTrialEnd` is pure specifically so it *could* gain a check under
 | A manager subscribes between the env swap and the webhook creation | Strict cutover order, §5.1 step 2 before step 4 — the live endpoint is inert until live keys are in place, so creating it early costs nothing |
 | `trial_end` inside the 48-hour floor → checkout errors | `resolveTrialEnd` (§4.1), which is the whole reason that helper exists |
 | Webhook secret mismatch → every delivery 400s | Step 3 of §6 is a real transaction; a mismatch shows immediately as `subscription_status` not flipping |
+| Webhook pointed at the apex `construcapo.com` → **every** delivery fails as a `308`, silently, for three days of retries | §3.1 pins the `www` host and records the probe that established it. Re-probe with `curl -X POST` before creating the endpoint if the domain setup changes again |
+| A future domain change repeats this | The webhook URL, `NEXT_PUBLIC_SITE_URL` and Supabase's auth URLs all have to move together, and the webhook must move *before* the old host stops answering |
