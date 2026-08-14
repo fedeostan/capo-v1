@@ -20,6 +20,7 @@ import {
   setWhatsAppConsent,
 } from './actions';
 import PullToRefresh from '@/app/pull-to-refresh';
+import { LanguageDriftNote } from '@/app/(app)/language-drift';
 import { AccountForm, CompanyForm } from './profile-forms';
 import PushCard from './push-card';
 import SignOutButton from './sign-out-button';
@@ -280,6 +281,13 @@ export default async function PerfilPage({
             lives in the disclosure rather than on the surface. */}
         <Card title={t.settings.language}>
           <p className="text-xs text-zinc-500">{t.settings.languageHint}</p>
+
+          {/* Above the control, not inside the "advanced" disclosure: the whole
+              failure this notice exists for is a manager who does not know the
+              two dials are two settings, and he will never open a disclosure
+              about a split he has not heard of. Saving through the form below
+              with both dials moving together is what makes it disappear. */}
+          <LanguageDriftNote locale={ctx.locale} companyLocale={ctx.companyLocale} />
 
           <form action={saveLanguage} className="space-y-3">
             {/* Both dials move together here, so the pills show the one the

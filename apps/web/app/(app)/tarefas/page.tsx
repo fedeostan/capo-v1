@@ -7,6 +7,7 @@ import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import TaskActions from '@/app/(app)/_tasks/task-actions';
 import ReviewActions from '@/app/(app)/_tasks/review-actions';
 import PullToRefresh from '@/app/pull-to-refresh';
+import { LanguageDriftStrip } from '@/app/(app)/language-drift';
 import FilterChips from './filter-chips';
 import FilterControls from './filter-controls';
 import { parseFilters, type RawSearchParams, type TarefasFilters } from './filters';
@@ -74,6 +75,11 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
           <FilterChips filters={filters} locale={locale} />
           <FilterControls filters={filters} obras={obras} locale={locale} />
         </div>
+        {/* The board is where a task title is READ, so it is where a title in
+            a language the manager does not read is noticed — and, before this,
+            where he had no way to find out why. Renders nothing when the two
+            dials agree, which is every tenant that never split them. */}
+        <LanguageDriftStrip locale={ctx.locale} companyLocale={ctx.companyLocale} />
         {materialCount > 0 && (
           <Link
             href="/materiais"

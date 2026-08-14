@@ -416,6 +416,11 @@ const dict: Catalog = {
     translateWarning:
       'Los mensajes del equipo en WhatsApp pasarán a enviarse en el nuevo idioma, y los materiales se agruparán por los nombres traducidos. Puedes revertirlo durante 30 días.',
 
+    driftBanner: p => `El Capo habla contigo en ${p.you}, pero escribe las tareas y las obras en ${p.board}.`,
+    driftHint:
+      'Tiene sentido cuando tu equipo lee en un idioma distinto al tuyo. Si no es tu caso, pon los dos en el mismo idioma — el Capo traduce lo que ya existe.',
+    driftAction: 'Poner los dos en el mismo idioma',
+
     advanced: 'Ajustes avanzados',
     advancedHint:
       'Usa idiomas distintos para ti y para los datos de la empresa — útil si hablas un idioma diferente al del resto del equipo.',

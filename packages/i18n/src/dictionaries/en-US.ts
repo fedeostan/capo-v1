@@ -416,6 +416,11 @@ const dict: Catalog = {
     translateWarning:
       "The crew's morning WhatsApp briefing will switch to the new language too, and materials will be grouped by their translated names. You can undo this for 30 days.",
 
+    driftBanner: p => `Capo talks to you in ${p.you}, but writes tasks and jobs in ${p.board}.`,
+    driftHint:
+      "That makes sense when your crew reads a different language from you. If that's not your case, put both on the same language — Capo can translate what already exists.",
+    driftAction: 'Put both on the same language',
+
     advanced: 'Advanced settings',
     advancedHint:
       "Use different languages for yourself and for the company's data — useful if you speak a different language from the rest of the crew.",
