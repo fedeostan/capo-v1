@@ -521,6 +521,22 @@ const dict: Catalog = {
     genericStep2After: '(or “Add to Home screen”).',
   },
 
+  whatsappHandshake: {
+    title: 'Talk to Capo on WhatsApp',
+    subtitle: 'Capo works on WhatsApp, same as you and your crew. Send it the first message and it starts setting up your job.',
+    prefill: 'Hi Capo! I just signed up. Can you help me get started?',
+    openButton: 'Open WhatsApp',
+    qrHint: 'Point your phone camera at the code.',
+    webLink: 'Open in WhatsApp Web',
+    consentLabel: 'Send me the day summary at 07:00 on WhatsApp',
+    consentHint: 'You can turn this off any time, in your profile.',
+    waiting: 'Waiting for your message…',
+    arrived: 'Capo got your message. Check WhatsApp. ✅',
+    stalled: phone => `Still nothing. Is ${phone} the number your WhatsApp runs on?`,
+    fixNumber: 'Fix the number',
+    skip: 'Do this later',
+  },
+
   landing: {
     metaTitle: 'Capo — The assistant that runs your WhatsApp',
     metaDescription:

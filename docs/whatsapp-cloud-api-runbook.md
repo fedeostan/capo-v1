@@ -182,7 +182,13 @@ WHATSAPP_VERIFY_TOKEN=<long random string you invented>
 WHATSAPP_APP_SECRET=<app secret>
 WHATSAPP_ACCESS_TOKEN=<never-expiring system user token>
 WHATSAPP_PHONE_NUMBER_ID=<phone number id>
+WHATSAPP_BUSINESS_NUMBER=<Capo's own number in E.164, e.g. +351911097383>
 ```
+
+`WHATSAPP_BUSINESS_NUMBER` is Capo's own dialable number, used to build the
+`wa.me` click-to-chat link on the signup handshake screen (`/whatsapp`); if
+it's absent, that screen is skipped and `handshake.no_business_number` is
+logged.
 
 ## 5. Verify end-to-end
 

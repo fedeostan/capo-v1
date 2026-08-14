@@ -153,6 +153,8 @@ import {
 // failure that took the real answer down with it, would both be invisible
 // everywhere else. Exercised below with millisecond delays.
 import { withProgressNote } from '../apps/web/lib/whatsapp-feedback.ts';
+import { buildWhatsAppLink } from '../apps/web/lib/whatsapp-handshake.ts';
+import { qrGeometry } from '../apps/web/lib/qr.ts';
 import type { Db } from '@capo/db/client';
 
 let failures = 0;
@@ -2047,6 +2049,85 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     const m = buildWorkerMenu({ tasks: [task()], body: 'x', locale });
     check(`${locale} — the menu labels leak no undefined`, !JSON.stringify(m).includes('undefined'), JSON.stringify(m));
   }
+}
+
+// ── the onboarding handshake link (issue #84) ───────────────────────────────
+// The wa.me URL a freshly signed-up manager taps or scans. Pure, so it is
+// checkable here — and it needs checking, because every way it can be wrong is
+// silent: a link with no digits opens WhatsApp with no recipient, and a link
+// whose text was not encoded loses everything after the first '&'.
+{
+  const NUMBER = '+351911097383';
+  const link = buildWhatsAppLink(NUMBER, 'Olá Capo!');
+  eq('handshake — the link strips the + and keeps every digit', link?.split('?')[0], 'https://wa.me/351911097383');
+  check('handshake — the link is https', link!.startsWith('https://'), link!);
+  check('handshake — exactly one query separator', (link!.match(/\?/g) ?? []).length === 1, link!);
+  check('handshake — no raw spaces survive encoding', !buildWhatsAppLink(NUMBER, 'a b c')!.includes(' '));
+
+  // Formatting a human might paste in is tolerated; anything that is not E.164
+  // is refused outright rather than guessed at.
+  eq('handshake — spaces and dashes in the number are tolerated', buildWhatsAppLink('+351 911-097 383', 'x'), link!.replace(/\?.*$/, '?text=x'));
+  eq('handshake — a number without a + is refused', buildWhatsAppLink('351911097383', 'x'), null);
+  eq('handshake — an empty number is refused', buildWhatsAppLink('', 'x'), null);
+  eq('handshake — a too-short number is refused', buildWhatsAppLink('+351', 'x'), null);
+
+  // THE ONE THAT MATTERS. toSendTarget in apps/web/lib/whatsapp.ts is
+  // deliberately unexported so no BSUID can reach phone-digit surgery; this
+  // builder is a second front door onto the same hazard and must refuse the
+  // same shape. A BSUID in a wa.me link would silently address nobody.
+  eq('handshake — a BSUID is refused, never digit-stripped', buildWhatsAppLink('PT.13491208655302741918', 'x'), null);
+
+  // Accents and punctuation must survive the round trip. Uses a literal rather
+  // than the catalog: the copy arrives in Task 2, and this task must end green.
+  {
+    const accented = 'Olá! Acabei de me registar. Ajudas-me a começar?';
+    const url = new URL(buildWhatsAppLink(NUMBER, accented)!);
+    eq('handshake — accented text round-trips through the link', url.searchParams.get('text'), accented);
+  }
+
+  // The prefilled text must survive the round trip intact in EVERY locale —
+  // accents, punctuation, and the '?' that ends all three greetings.
+  for (const locale of LOCALES) {
+    const prefill = getCatalog(locale).whatsappHandshake.prefill;
+    const url = new URL(buildWhatsAppLink(NUMBER, prefill)!);
+    eq(`${locale} — the prefilled text round-trips through the link`, url.searchParams.get('text'), prefill);
+    check(`${locale} — the prefill is not empty`, prefill.trim().length > 0, prefill);
+  }
+
+  // Three languages, three different messages. A copy-paste that left two
+  // locales identical would be invisible in review and wrong in production.
+  const prefills = LOCALES.map(l => getCatalog(l).whatsappHandshake.prefill);
+  check('handshake — all three prefills differ', new Set(prefills).size === LOCALES.length, prefills.join(' | '));
+}
+
+// ── the desktop QR code (issue #84) ─────────────────────────────────────────
+// A QR that encodes the wrong thing, or nothing, looks exactly like a QR that
+// works. Nobody reviewing a screenshot can tell. These assertions are the only
+// thing standing between a broken code and a manager pointing a camera at it.
+{
+  const link = buildWhatsAppLink('+351911097383', getCatalog('pt-PT').whatsappHandshake.prefill)!;
+  const qr = qrGeometry(link);
+
+  // Every QR version is 4n+17 modules square (21, 25, … 177). A count outside
+  // that family means the encoder was misused, not that the link is long.
+  check('qr — the module count is a real QR version', (qr.count - 17) % 4 === 0 && qr.count >= 21 && qr.count <= 177, String(qr.count));
+  check('qr — the path is not empty', qr.path.length > 0);
+  check('qr — the path is only SVG path commands', /^[Mmhvz0-9 .-]+$/.test(qr.path), qr.path.slice(0, 40));
+
+  // The 4-module quiet zone is required by the QR spec, not decoration: many
+  // scanners will not lock on without it. Baking it into viewBox is what stops
+  // a caller from forgetting it.
+  check('qr — the viewBox carries the 4-module quiet zone', qr.viewBox === `-4 -4 ${qr.count + 8} ${qr.count + 8}`, qr.viewBox);
+
+  // Deterministic: the page is force-dynamic and re-renders per request, so a
+  // non-deterministic encoder would hand two managers different codes for the
+  // same link and make any bug here unreproducible.
+  // check(), not eq(): eq()'s detail string JSON.stringifies both sides and
+  // prints it on PASS as well as FAIL, and a QR path is ~50KB of SVG
+  // coordinates. Printed twice per run, it drowned out every other line in
+  // this file's output — this repo's only correctness signal.
+  check('qr — the same text yields the same path', qrGeometry(link).path === qr.path);
+  check('qr — different text yields a different path', qrGeometry(`${link}x`).path !== qr.path);
 }
 
 // ── the welcome (issue #45) ─────────────────────────────────────────────────

@@ -40,7 +40,7 @@ export async function completeOnboarding(formData: FormData): Promise<void> {
 
   if (error) {
     // double-submit / already onboarded: just proceed into the app
-    if (error.message.includes('profile already exists')) redirect('/instalar');
+    if (error.message.includes('profile already exists')) redirect('/whatsapp');
     if (error.message.includes('profiles_phone_key')) redirect('/onboarding?erro=telemovel-usado');
     console.error('complete_onboarding failed:', error.message);
     redirect('/onboarding?erro=guardar');
@@ -50,5 +50,10 @@ export async function completeOnboarding(formData: FormData): Promise<void> {
   // signed-out surface and <html lang> agree from here on.
   (await cookies()).set(LOCALE_COOKIE, language, localeCookieOptions);
 
-  redirect('/instalar');
+  // On to the WhatsApp handshake (issue #84), which then hands over to
+  // /instalar. This step sits AFTER the profile row exists and not before, and
+  // that ordering is load-bearing: Capo recognises an inbound WhatsApp message
+  // by matching the sender against profiles.phone, which complete_onboarding
+  // has only just written.
+  redirect('/whatsapp');
 }
