@@ -601,6 +601,45 @@ export interface Catalog {
     genericStep2After: string;
   };
 
+  /**
+   * The WhatsApp handshake screen (issue #84) — the step between the details
+   * form and the install guide, where a new manager sends Capo its first
+   * message.
+   */
+  whatsappHandshake: {
+    title: string;
+    subtitle: string;
+    /**
+     * What WhatsApp pre-fills into the composer. Sent BY the manager TO Capo,
+     * so it is written in the first person and in the manager's own language.
+     * It greets AND states an intent: Capo's `firstUse` prompt block already
+     * knows how to run initial setup, and this hands it the cue directly
+     * instead of opening with small talk it has to answer first.
+     */
+    prefill: string;
+    /** Primary button, mobile. */
+    openButton: string;
+    /** Caption under the QR code, desktop. */
+    qrHint: string;
+    /** Secondary link under the QR code, desktop. */
+    webLink: string;
+    consentLabel: string;
+    consentHint: string;
+    /** Status line while nothing has arrived yet. */
+    waiting: string;
+    /** Status line the moment the message lands. */
+    arrived: string;
+    /**
+     * Status line after 90 seconds of silence. A QUESTION, never an error —
+     * the threshold can be wrong, and the most likely cause is a phone number
+     * that does not match the manager's actual WhatsApp.
+     */
+    stalled(phone: string): string;
+    /** Link to /perfil, shown only alongside `stalled`. */
+    fixNumber: string;
+    skip: string;
+  };
+
   landing: {
     metaTitle: string;
     metaDescription: string;

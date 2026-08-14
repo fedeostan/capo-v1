@@ -508,6 +508,22 @@ const dict: Catalog = {
     genericStep2After: '(o «Añadir a pantalla de inicio»).',
   },
 
+  whatsappHandshake: {
+    title: 'Habla con Capo en WhatsApp',
+    subtitle: 'Capo trabaja en WhatsApp, igual que tú y tu equipo. Envíale el primer mensaje y empezará a preparar tu obra.',
+    prefill: '¡Hola Capo! Acabo de registrarme. ¿Me ayudas a empezar?',
+    openButton: 'Abrir WhatsApp',
+    qrHint: 'Apunta la cámara del móvil al código.',
+    webLink: 'Abrir en WhatsApp Web',
+    consentLabel: 'Envíame el resumen del día a las 07:00 por WhatsApp',
+    consentHint: 'Puedes desactivarlo cuando quieras, en tu perfil.',
+    waiting: 'Esperando tu mensaje…',
+    arrived: 'Capo ha recibido tu mensaje. Mira WhatsApp. ✅',
+    stalled: phone => `Todavía no ha llegado nada. ¿El ${phone} es el número de tu WhatsApp?`,
+    fixNumber: 'Corregir el número',
+    skip: 'Hacerlo más tarde',
+  },
+
   landing: {
     metaTitle: 'Capo — El asistente que gestiona tu WhatsApp',
     metaDescription:

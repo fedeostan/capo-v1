@@ -1720,6 +1720,20 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     const url = new URL(buildWhatsAppLink(NUMBER, accented)!);
     eq('handshake — accented text round-trips through the link', url.searchParams.get('text'), accented);
   }
+
+  // The prefilled text must survive the round trip intact in EVERY locale —
+  // accents, punctuation, and the '?' that ends all three greetings.
+  for (const locale of LOCALES) {
+    const prefill = getCatalog(locale).whatsappHandshake.prefill;
+    const url = new URL(buildWhatsAppLink(NUMBER, prefill)!);
+    eq(`${locale} — the prefilled text round-trips through the link`, url.searchParams.get('text'), prefill);
+    check(`${locale} — the prefill is not empty`, prefill.trim().length > 0, prefill);
+  }
+
+  // Three languages, three different messages. A copy-paste that left two
+  // locales identical would be invisible in review and wrong in production.
+  const prefills = LOCALES.map(l => getCatalog(l).whatsappHandshake.prefill);
+  check('handshake — all three prefills differ', new Set(prefills).size === LOCALES.length, prefills.join(' | '));
 }
 
 // ── report ──────────────────────────────────────────────────────────────────
