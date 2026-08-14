@@ -379,6 +379,8 @@ const dict: Catalog = {
     noWhatsAppWarning: 'Sin móvil — no recibe el WhatsApp de las 07:00.',
     noConsentWarning: 'Falta permiso — pregúntale si acepta recibir mensajes y díselo a Capo.',
     receivesWhatsApp: 'recibe el WhatsApp de las 07:00',
+    welcomeCostHint:
+      'Cuando le dices a Capo que alguien acepta recibir mensajes, Capo se presenta a esa persona una vez por WhatsApp. Es un mensaje de pago por persona — un equipo de 20 son 20 mensajes.',
     teamHint: 'Para añadir o cambiar a alguien,',
     teamHintLink: 'habla con el Capo',
     subscription: 'Suscripción',
@@ -449,6 +451,8 @@ const dict: Catalog = {
     whatsappConsentOption: { yes: 'Sí, quiero recibirlos', no: 'No, gracias' },
     whatsappConsentOn: 'Estás recibiendo los mensajes del día.',
     whatsappConsentOff: 'No estás recibiendo nada — actívalo aquí para empezar.',
+    whatsappConsentCost:
+      'Al activarlo, Capo se presenta una vez en tu WhatsApp. Ese mensaje de bienvenida es de pago; los del día a día ya estaban contados.',
 
     translationRunning: p => `Traduciendo… ${p.done} de ${p.total}`,
     translationDone: n => `${n} campo${n === 1 ? '' : 's'} traducido${n === 1 ? '' : 's'}.`,
@@ -645,6 +649,16 @@ const dict: Catalog = {
     detailNothingMore: 'No tengo más detalles de esta tarea. Si te hace falta, habla con tu encargado.',
     detailOverdue: title => `${title} — retrasada`,
     languageHint: 'Responde PT, ES o EN para cambiar de idioma',
+    welcomeWorker: company =>
+      `${company} ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.`,
+    welcomeManager: company =>
+      `Tu cuenta de ${company} ya está lista: recibes aquí el resumen de cada mañana y puedes hablar conmigo por WhatsApp igual que en la aplicación.`,
+    welcomeGreeting: name => `Hola ${name}, soy Capo, el asistente de obra.`,
+    welcomeStop: 'Responde STOP para dejar de recibir.',
+    welcomeEvent: ({ notified, names }) => {
+      const who = names ? `: ${names}` : '';
+      return `Me he presentado por WhatsApp a ${notified} ${notified === 1 ? 'persona nueva' : 'personas nuevas'} del equipo${who}.`;
+    },
   },
 };
 

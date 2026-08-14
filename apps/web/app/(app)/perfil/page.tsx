@@ -245,6 +245,13 @@ export default async function PerfilPage({
             hasWhatsAppConsent and 0025_whatsapp_optin.sql. */}
         <Card title={t.settings.whatsappConsent}>
           <p className="text-xs text-zinc-500">{t.settings.whatsappConsentHint}</p>
+          {/* Said on the control that causes it (issue #45): turning consent on
+              is what lets Capo introduce itself, and that introduction is a paid
+              WhatsApp template. Shown only while consent is OFF — once it is on,
+              the welcome has been sent and the sentence is history. */}
+          {!whatsappConsenting && (
+            <p className="text-xs text-zinc-500">{t.settings.whatsappConsentCost}</p>
+          )}
           <p className={`text-xs ${whatsappConsenting ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
             {whatsappConsenting ? t.settings.whatsappConsentOn : t.settings.whatsappConsentOff}
           </p>
@@ -439,6 +446,12 @@ export default async function PerfilPage({
                 </Link>
                 .
               </p>
+              {/* The cost of recording consent, said where the whole crew is
+                  visible at once (issue #45). Each person Capo is newly allowed
+                  to message gets one welcome, and each welcome is a paid
+                  template — so this multiplies by the size of the crew, which
+                  is a fact only this screen can show. */}
+              <p className="text-xs text-zinc-500">{t.profile.welcomeCostHint}</p>
             </>
           )}
         </Card>

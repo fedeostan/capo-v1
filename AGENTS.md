@@ -137,7 +137,9 @@ and say what the alternative would be — he is the one who decides.
   scheduler and the Portuguese working-day calendar. Since #51 it also covers
   the *other* schedule in the product: the cron send window
   (`withinSendWindow`) and the UTC entries in `apps/web/vercel.json` that feed
-  it, which it reads and asserts season by season. Needs **no credentials
+  it, which it reads and asserts season by season. Since #45 it also asserts the
+  welcome sweep's much wider window (Lisbon 09–19) and that it opens only after
+  the 07:00 briefing's window has closed. Needs **no credentials
   and no network**, so it runs in CI on every PR (`pnpm scheduler-check`).
 - `scripts/cache-check.mts` — provider prompt caching (#58). Asserts the
   system-prompt split is byte-identical to the single string it replaced, that
@@ -323,8 +325,16 @@ Structural invariants (do not regress):
 - **No proactive send goes out without a recorded opt-in** (migration `0025`).
   `whatsapp_opt_in_at` / `whatsapp_opt_out_at` on `workers` and `profiles`,
   latest-wins, evaluated by `hasWhatsAppConsent()` in
-  `packages/core/src/channels/whatsapp.ts` and applied in exactly one place —
-  `loadCompanyBriefing()`, which both sends read. It **fails closed** on a
+  `packages/core/src/channels/whatsapp.ts` and applied to the crew in exactly
+  one place — `partitionCrew()` in `apps/web/app/notifications/briefing.ts`,
+  which all THREE proactive sends read (the 07:00 briefing, the late-afternoon
+  check-in, and #45's welcome). It was inline in `loadCompanyBriefing()` until
+  the welcome needed the same three questions asked at a different time of day;
+  copying the filter would have put a second copy of a consent rule in the
+  codebase, and the symptom of two copies disagreeing is a person one send
+  reaches and another silently skips. Managers are the documented exception —
+  they have no `workers` row, so each route calls the same predicate directly on
+  the profile, as `/api/cron/reminders` always has. It **fails closed** on a
   missing opt-in, an unparseable timestamp or a tie; do not add a branch that
   defaults either side. Meta's free test tier used to enforce this by accident
   through its five-number allow-list, and the production number has no
@@ -420,9 +430,11 @@ Structural invariants (do not regress):
   check-in route wrote nothing — a habit rather than a rule, so the crew could
   be mid-conversation with Capo about a question Capo had no record of asking,
   and the manager had no way to tell which of the two was right. Five things:
-  - **Three notes exist and that list is exhaustive**: the morning briefing
+  - **Four notes exist and that list is exhaustive**: the morning briefing
     (what today holds + who was actually messaged, by name), the check-in ask
-    (who was asked), and one note per crew member ANSWERING that check-in.
+    (who was asked), one note per crew member ANSWERING that check-in, and
+    since #45 the welcome (who Capo has just introduced itself to, crew only —
+    a manager reads their own welcome on their own phone).
     Renderers live beside the briefing renderers in `notifications/briefing.ts`
     because they need the user copy catalog, which must never enter the agent
     bundle.
@@ -460,6 +472,61 @@ Structural invariants (do not regress):
   turn is persisted, and `finalize_proposal` writes the resolution event in the
   same transaction as the status flip), and a push is a delivery of a
   `notifications` row rather than a separate message.
+- **There is a THIRD proactive send: the welcome, and it is a SWEEP, not a
+  hook** (`apps/web/app/api/cron/welcome`, migration `0033`, issue #45). Capo
+  introduces itself to a person the first time it is legally allowed to message
+  them, once, ever. Seven things are load-bearing:
+  - **CONSENT COMES FIRST, AND THAT ORDER IS FORCED RATHER THAN CHOSEN.** The
+    obvious design — make the welcome the message that ASKS to be allowed to
+    write — is not available: a proactive template to somebody with no recorded
+    opt-in is the exact violation `0025` exists to prevent, and Meta's policy
+    says the opt-in is gathered through the business's own channels. So consent
+    is collected off WhatsApp (manager asks on site → `update_worker`, or
+    `/perfil` for their own number) and the welcome CONFIRMS it and states the
+    opt-out. **No copy in `welcome.ts` or in the template may ask a yes/no
+    question.** A worker with no consent is not "waiting for a welcome" — they
+    are waiting for their manager, for as long as that takes.
+  - **A sweep asks a question; a hook has to remember an event.** A number can
+    enter the system through onboarding, `/perfil`, `add_worker`, `update_worker`
+    or a `START` reply, and consent can be recorded weeks after the number. A
+    hook on each door is a door somebody forgets, silently. The sweep asks "who
+    may be messaged and has never been introduced?" every fifteen minutes, so
+    every door leads to it and none has to know it exists. Same reasoning as
+    `/api/cron/push`.
+  - **Idempotency is `notification_log`, with the DATE removed.** `0033` adds a
+    partial unique index `(worker_id, profile_id) nulls not distinct where kind
+    = 'welcome'` — the daily lock's shape minus `notification_date`. The
+    already-welcomed read in `loadPendingWelcomes` is an OPTIMISATION so the
+    sweep does not attempt a doomed INSERT per person per run; the INDEX is the
+    lock, through `claimNotification`'s 23505 → null. Do not trust the read and
+    do not add app-level state beside it.
+  - **The `0033` backfill was mandatory**, exactly as `0026`'s `pushed_at` one
+    was: it marks every worker and profile that existed when it was applied as
+    `skipped`, or the first deploy introduces Capo by paid template to everybody
+    already using it. Any future feature that adds a "have we done this yet?"
+    marker to a populated table needs the same.
+  - **`welcome_ledger_ready()` is a DEPLOY GATE, and it fails closed.** A marker
+    function `0033` creates and the route asks for before it sends anything —
+    because on this project a migration has been skipped in production while a
+    later one was applied, and the code shipping without its migration is
+    precisely the mass-mailing failure. Missing function → 503, no sends.
+  - **The hour gate is WIDE (Lisbon 09:00–19:59) and starts after the briefing
+    window closes.** It exists for quiet hours, not for punctuality: a first-ever
+    message from an unknown business number at 03:00 is how that number earns a
+    block report. Eleven hours wide with a `*/15` schedule means cron drift costs
+    lateness, never silence, which is also why the `:00`-not-`:30` rule does not
+    bind here — it exists for one-hour windows. `pnpm scheduler-check` asserts
+    the window, the schedule and the fact that 09 > the briefing's window end.
+  - **ONE template, `capo_welcome`, two audiences, and the difference lives in
+    `{{2}}`.** A template body is frozen at approval; `{{2}}` is ours. That is
+    #49's lesson applied in advance. Its fixed halves are BUILT from
+    `reminders.welcomeGreeting`/`welcomeStop`, because the same welcome goes out
+    as free text to anybody already inside their 24h window, and two copies of
+    an introduction would drift; `pnpm whatsapp-check` asserts the rejoin.
+  Known and NOT fixed: a crew member added and consented between midnight and
+  07:00 gets their first briefing BEFORE their welcome. Fixing it means the
+  morning send reading the welcome ledger, which couples it to a feature it has
+  nothing to do with.
 - **Sender identity is the PHONE, with the BSUID as a fallback — in that order,
   and the order is the safety property.** WhatsApp usernames mean Meta omits
   `from` entirely for anyone who has adopted one and sends only `from_user_id`,

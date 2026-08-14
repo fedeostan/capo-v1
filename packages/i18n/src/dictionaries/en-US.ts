@@ -379,6 +379,8 @@ const dict: Catalog = {
     noWhatsAppWarning: 'No phone number — gets nothing from the 07:00 WhatsApp.',
     noConsentWarning: "No consent on record — ask if they're happy to receive messages, then tell Capo.",
     receivesWhatsApp: 'gets the 07:00 WhatsApp',
+    welcomeCostHint:
+      'When you tell Capo that someone agrees to receive messages, Capo introduces itself to them once on WhatsApp. That is one paid message per person — a crew of 20 is 20 messages.',
     teamHint: 'To add or change someone,',
     teamHintLink: 'talk to Capo',
     subscription: 'Subscription',
@@ -449,6 +451,8 @@ const dict: Catalog = {
     whatsappConsentOption: { yes: 'Yes, send them', no: 'No thanks' },
     whatsappConsentOn: "You're receiving the daily messages.",
     whatsappConsentOff: "You're not receiving anything — turn it on here to start.",
+    whatsappConsentCost:
+      'When you turn this on, Capo introduces itself once on your WhatsApp. That welcome is a paid message; the daily ones were already accounted for.',
 
     translationRunning: p => `Translating… ${p.done} of ${p.total}`,
     translationDone: n => `${n} field${n === 1 ? '' : 's'} translated.`,
@@ -644,6 +648,16 @@ const dict: Catalog = {
     detailNothingMore: "I don't have any more detail on this one. Ask your foreman if you need it.",
     detailOverdue: title => `${title} — overdue`,
     languageHint: 'Reply PT, ES or EN to change language',
+    welcomeWorker: company =>
+      `${company} added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.`,
+    welcomeManager: company =>
+      `Your ${company} account is ready: you get each morning's summary here, and you can talk to me on WhatsApp just as you do in the app.`,
+    welcomeGreeting: name => `Hi ${name}, I am Capo, your site assistant.`,
+    welcomeStop: 'Reply STOP to unsubscribe.',
+    welcomeEvent: ({ notified, names }) => {
+      const who = names ? `: ${names}` : '';
+      return `I introduced myself on WhatsApp to ${notified} new ${notified === 1 ? 'person' : 'people'} on the team${who}.`;
+    },
   },
 };
 
