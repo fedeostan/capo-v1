@@ -35,6 +35,7 @@ export const cards: CardStrings = {
     const bits = [`Crear tarea: «${p.title}»`];
     if (p.jobName) bits.push(`en la obra ${p.jobName}`);
     if (p.workerName) bits.push(`para ${p.workerName}`);
+    if (p.collaboratorNames?.length) bits.push(`con ${p.collaboratorNames.join(', ')} ayudando`);
     if (p.startDate) bits.push(`inicio ${p.startDate}`);
     if (p.dueDate) bits.push(`hasta ${p.dueDate}`);
     return `${bits.join(', ')}.`;
@@ -44,6 +45,8 @@ export const cards: CardStrings = {
     title: v => `título → «${v}»`,
     status: v => `estado → ${v}`,
     assignee: v => `asignar a ${v}`,
+    collaborators: names =>
+      names.length === 0 ? 'dejar solo al responsable' : `ayudan: ${names.join(', ')}`,
     startDate: v => `inicio → ${v}`,
     dueDate: v => `plazo → ${v}`,
     job: v => `obra → ${v}`,

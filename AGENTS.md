@@ -918,6 +918,69 @@ Structural invariants (do not regress):
   `task_reviews.note` is the one place worker-authored text reaches the
   manager. Render it as an attributed quote, never as UI copy — in the
   inbox (`notifications.body`) as well as on the board.
+- **A task has ONE lead and any number of collaborators, and
+  `tasks.assignee_worker_id` is still the lead** (migration `0035`, issue #44).
+  Before it, the only shape for "o Miguel e o João fazem a pintura" was two
+  tasks — and `materials` lives on the task, so a duplicate doubled what
+  /materiais and `materials_outlook` said to buy. That is the whole bug.
+  `task_assignees` is additive: `(company_id, task_id, worker_id, role)` with
+  `unique (task_id, worker_id)` and `role in ('lead','collaborator')`.
+  - **The mirror flows ONE WAY, `tasks` → `task_assignees`, and no reader ever
+    takes the lead from the join table.** `tasks_sync_lead_assignee_{ins,upd}`
+    writes the `lead` row; `task_assignees_lead_matches_task` refuses any lead
+    row — from any actor, service role included — that disagrees with
+    `tasks.assignee_worker_id`. So "what if they disagree?" has no answer for
+    anything a reader consults. A MISSING lead row is likewise harmless: it
+    costs only the `unique` constraint's protection against the lead also being
+    listed as their own helper, whose worst symptom is one name printed twice.
+    The lead row exists for exactly that constraint — that is its job, not
+    "being the lead".
+  - **SELECT is the only tenant grant**, `task_reviews`' posture (0018) rather
+    than the uniform three-policy one. Every write goes through
+    `set_task_collaborators(p_task, p_workers[])`, SECURITY DEFINER, which
+    REPLACES the whole set in one transaction — a crew is a set, and a
+    half-applied one is a wrong WhatsApp message to a real person at 07:00. It
+    silently drops the lead if named, caps at 20, and takes `[]` as "remove
+    everybody". Its `auth.uid()` guard is the entire tenant boundary (the fourth
+    function of that shape; see 0019/0021 on the `<>` trap), and
+    `scripts/rls-isolation-matrix.mjs` attacks it directly. **There is still no
+    DELETE policy on this table** — `push_subscriptions` remains the only one in
+    the schema.
+  - **`task_board` gained TWO APPENDED columns**, `collaborator_worker_ids` and
+    `collaborator_names`, index-aligned by construction (same `order by` in both
+    aggregates). Read them ONLY through `readCollaborators` /
+    `everyoneOnTask` in `packages/core/src/capabilities/collaborators.ts`, which
+    is the one place this codebase zips two arrays by position and says why.
+    Every reader that needed them switched to `select('*')` — do not put either
+    name in an explicit column list.
+  - **The 07:00 briefing goes to EVERYONE on a task; the 16:00 check-in goes
+    only to the LEAD.** That asymmetry is deliberate and load-bearing. Since #54
+    a "Sim, terminei" tap FILES A COMPLETION CLAIM per task in the snapshot, so
+    briefing a helper is information while asking a helper is authority — and
+    `task_reviews_one_pending_idx` means a helper's premature claim would BLOCK
+    the lead from filing their own. The filter lives in the check-in route, not
+    in `loadCompanyBriefing`, so it cannot take the morning message with it.
+  - **The wording is a requirement, not a nicety.** A collaborator's line reads
+    `Pintar tecto (Casa de Paco) — a ajudar Miguel`; the lead's carries
+    `Contigo: Zé, João`. Both come from `taskHeadline` in
+    `apps/web/app/notifications/briefing.ts`, which every headline surface calls
+    — a surface that built one inline would tell a helper the job is theirs.
+    Lateness is applied AFTER the role clause, so it stays last on the line.
+  - **The 07:00 guided menu lists only tasks this person LEADS.** `findWorkerTask`
+    (and `loadWorkerTasks` behind it) still filters `assignee_worker_id`, so a
+    collaborator's row would answer "that task is not yours". Fixed in the cron
+    route rather than by widening that read, because the same read computes the
+    worker agent's `scope.taskIds`, which is `declare_task_done`'s boundary.
+  - **Deliberately NOT widened, and this is scope, not oversight**: the worker
+    agent (`my_tasks`, `declare_task_done`) and the guided-menu task sheet all
+    still see lead tasks only, so a collaborator cannot declare somebody else's
+    task finished by any route. `WorkerContext` gains nothing.
+    `dispatch_tasks_today` / `dispatch_log` are untouched — the frozen SMS path
+    knows nothing about collaborators, by design.
+  - Counters that answer "quem está livre?" — `loadTeamLoad`,
+    `loadAssignableWorkers`, `list_workers` — count helpers too, via
+    `everyoneOnTask`. A picker that called a helper "free" is the wrong-direction
+    label that whole control exists to refuse.
 - **Task photos are the project's only Storage use, and the object path IS
   the tenant boundary.** Migration `0023_task_photos.sql` adds a private
   bucket `task-photos`, the `task_photos` table, and one column,

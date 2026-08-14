@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { CapoTool } from './types';
+import type { CapoTool, ToolContext } from './types';
 
 const isoDate = z
   .string()
@@ -22,6 +22,53 @@ const startDate = isoDate
     "When work begins. A task is active — and appears in the assigned worker's daily WhatsApp briefing — from start_date (or its creation date if unset) through due_date.",
   );
 
+// ── TWO PEOPLE ON ONE TASK (issue #44) ──────────────────────────────────────
+// The bug this closes: with only `assignee_worker_id`, the sole shape the model
+// had for "o Miguel e o João fazem a pintura" was TWO tasks. Two board rows,
+// two `materials` arrays, and therefore twice the material on /materiais and in
+// materials_outlook — which is the complaint in Federico's own words.
+//
+// The description below is the fix, and it is aimed squarely at that instinct:
+// the model must reach for this field instead of a second create_task. It says
+// so in the imperative, because a rule the model has to infer is a rule it
+// infers wrong under pressure.
+const collaboratorIds = z
+  .array(z.string().uuid())
+  .max(20)
+  .optional()
+  .describe(
+    'Other workers helping on this SAME task, besides the assignee. Use list_workers for ids. When several people work on one job, ALWAYS use one task with collaborators — NEVER create a second copy of the task, because the materials belong to the task and duplicating it duplicates the order. The assignee stays the person in charge; collaborators are told in their morning message that they are helping. Sending this REPLACES the whole list, so include everyone who should be on it; send an empty array to remove them all.',
+  );
+
+/**
+ * Apply a collaborator list to a task that already exists.
+ *
+ * One RPC, never client-side inserts and deletes: "who is on this task" is a
+ * SET, and a half-applied set — the new helper added, the old one not removed —
+ * is a wrong WhatsApp message to a real person at 07:00 the next morning.
+ * set_task_collaborators (0035) replaces the whole set in one transaction, drops
+ * the lead if they were named, and is the only writer the table has.
+ *
+ * `undefined` means "not mentioned" and does nothing at all. That distinction is
+ * load-bearing on update_task: an edit to a due date must not silently clear the
+ * crew off a task. An empty ARRAY is the explicit "remove everybody".
+ */
+async function applyCollaborators(
+  ctx: ToolContext,
+  taskId: string,
+  workerIds: string[] | undefined,
+): Promise<void> {
+  if (!workerIds) return;
+  const { error } = await ctx.db.rpc('set_task_collaborators', {
+    p_task: taskId,
+    p_workers: workerIds,
+  });
+  // Thrown, never swallowed. The manager was told who would be on the job; if
+  // only half of that landed they have to hear so, because the other half is a
+  // person who will not get a briefing tomorrow.
+  if (error) throw new Error(`set_task_collaborators failed: ${error.message}`);
+}
+
 export const createTaskInput = z.object({
   // Tool schemas are built once per process, not per request, so they cannot
   // name a concrete language — the Language policy block in the system prompt
@@ -42,6 +89,7 @@ export const createTaskInput = z.object({
     .uuid()
     .optional()
     .describe('Assigned worker — use list_workers to find ids.'),
+  collaborator_worker_ids: collaboratorIds,
   start_date: startDate,
   due_date: isoDate.optional(),
   duration_days: z.number().int().positive().optional().describe('Estimated work duration in days.'),
@@ -51,7 +99,7 @@ export const createTaskInput = z.object({
 export const createTask: CapoTool<z.infer<typeof createTaskInput>> = {
   name: 'create_task',
   description:
-    'Create a construction task (real site work, tied to a job when possible). This is a write: only call it directly for an explicit manager command; otherwise use propose.',
+    'Create a construction task (real site work, tied to a job when possible). Several people on the same job means ONE task with collaborator_worker_ids — never two tasks. This is a write: only call it directly for an explicit manager command; otherwise use propose.',
   inputSchema: createTaskInput,
   guarded: true,
   async execute(input, ctx) {
@@ -72,6 +120,12 @@ export const createTask: CapoTool<z.infer<typeof createTaskInput>> = {
       .select()
       .single();
     if (error) throw new Error(`create_task failed: ${error.message}`);
+    // After the insert, because the RPC needs a task id — and it is the row
+    // that exists that matters. A failure here throws with the task already
+    // created, which is the recoverable direction: a task with the wrong crew
+    // is visible on the board and fixable in one sentence, whereas the reverse
+    // ordering is not expressible at all.
+    await applyCollaborators(ctx, data.id, input.collaborator_worker_ids);
     return { task: data };
   },
 };
@@ -85,6 +139,7 @@ export const updateTaskInput = z.object({
     .describe("Cannot be set to 'pending_review' — that status only comes from a worker or manager filing a review claim, not a direct write."),
   job_id: z.string().uuid().optional(),
   assignee_worker_id: z.string().uuid().optional(),
+  collaborator_worker_ids: collaboratorIds,
   start_date: startDate,
   due_date: isoDate.optional(),
   duration_days: z.number().int().positive().optional().describe('Estimated work duration in days.'),
@@ -94,11 +149,18 @@ export const updateTaskInput = z.object({
 export const updateTask: CapoTool<z.infer<typeof updateTaskInput>> = {
   name: 'update_task',
   description:
-    'Update an existing task (status, assignee, due date, title…). This is a write: only call it directly for an explicit manager command; otherwise use propose.',
+    'Update an existing task (status, assignee, due date, title, who else is helping…). To put a second person on a job, add them to collaborator_worker_ids here — never create a copy of the task. This is a write: only call it directly for an explicit manager command; otherwise use propose.',
   inputSchema: updateTaskInput,
   guarded: true,
   async execute(input, ctx) {
-    const { task_id, ...fields } = input;
+    // collaborator_worker_ids is pulled OUT before the update: it is not a
+    // column on `tasks` and would 42703 the whole write. It travels to the
+    // join table through its own RPC (0035) instead.
+    const { task_id, collaborator_worker_ids, ...fields } = input;
+
+    // An update naming ONLY collaborators leaves `fields` empty, which is a
+    // legitimate call ("põe o Zé também na pintura") and still worth writing —
+    // the timestamp is what makes the board and every cached page refresh.
     const { data, error } = await ctx.db
       .from('tasks')
       .update({ ...fields, updated_at: new Date().toISOString() })
@@ -107,6 +169,11 @@ export const updateTask: CapoTool<z.infer<typeof updateTaskInput>> = {
       .select()
       .single();
     if (error) throw new Error(`update_task failed: ${error.message}`);
+    // AFTER the task update, so a reassignment in the same call has already
+    // landed by the time the RPC reads `assignee_worker_id` to decide who the
+    // lead is. Reversing these two would let "o João passa a responsável e o
+    // Miguel ajuda" leave the old lead listed as their own helper.
+    await applyCollaborators(ctx, task_id, collaborator_worker_ids);
     return { task: data };
   },
 };

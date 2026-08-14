@@ -1,5 +1,6 @@
 import type { Db } from '@capo/db/client';
 import type { CheckinAnswer, WhatsAppRecipient } from '@capo/core/channels/whatsapp';
+import { readCollaborators } from '@capo/core/capabilities/collaborators';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
 import { hasWhatsAppConsent, recipientFor } from '../../lib/whatsapp';
@@ -74,6 +75,40 @@ export interface BriefingTask {
    * never at 07:00.
    */
   due_date: string | null;
+  /**
+   * WHICH OF THE TWO PEOPLE READING THIS TASK THIS PERSON IS (issue #44).
+   *
+   * The same task now appears in more than one worker's briefing: once for the
+   * LEAD (`tasks.assignee_worker_id`, still the only authoritative answer to
+   * "whose job is this") and once for each COLLABORATOR. Both read the same
+   * row, the same address and the same materials — one task, one materials
+   * list, which is the entire point of the issue.
+   *
+   * What must differ is the sentence. A collaborator who reads a briefing that
+   * sounds like the job is theirs is the failure this field exists to prevent;
+   * see `taskAsCollaborator` in @capo/i18n.
+   */
+  role: 'lead' | 'collaborator';
+  /**
+   * The LEAD's name, for a `role: 'collaborator'` row. `task_board.worker_name`,
+   * already on the wire.
+   *
+   * Optional and nullable, and both cases mean the same thing: no lead to name,
+   * so the copy falls to `taskAsTeam`, which claims nothing about anybody.
+   * Reachable because `tasks.assignee_worker_id` is nullable and clearing it
+   * does not delete anyone's collaborator row.
+   */
+  lead_name?: string | null;
+  /**
+   * The COLLABORATORS' names, for a `role: 'lead'` row — so the person
+   * accountable for the job knows who else is turning up.
+   *
+   * Optional because 0035 APPENDS the column to `task_board`: a deploy landing
+   * before its migration reads `undefined`, which is treated as "nobody", and
+   * the line is simply omitted. Never trusted straight off the row — see
+   * `readCollaborators`.
+   */
+  collaborator_names?: string[];
 }
 
 export interface WorkerBriefing {
@@ -205,9 +240,27 @@ export async function loadCompanyBriefing(
 
   const byWorker = new Map<string, BriefingTask[]>();
   for (const row of todayRows) {
-    if (!row.assignee_worker_id || !row.id || !row.title) continue;
-    const list = byWorker.get(row.assignee_worker_id) ?? [];
-    list.push({
+    if (!row.id || !row.title) continue;
+
+    // ── the fan-out (issue #44) ───────────────────────────────────────────
+    // ONE row, read once, rendered for everybody on it. `collaborator_*` come
+    // from task_board's 0035 columns, index-aligned by construction — the view
+    // aggregates both with the same ORDER BY. Reading them here rather than in
+    // a second query is what keeps "who is on this task" a single definition in
+    // SQL, exactly like "what is on today".
+    const collaborators = readCollaborators(row);
+    const leadId = row.assignee_worker_id;
+    // A row with neither a lead nor a collaborator reaches nobody. Skipped
+    // BEFORE the shared object is built, so an unassigned task costs nothing.
+    if (!leadId && collaborators.length === 0) continue;
+
+    // Built once and shared by reference across every reader of this task. That
+    // is not a micro-optimisation, it is the proof the issue asks for: there is
+    // exactly one `materials` array per task in this whole function, so two
+    // people on one task cannot possibly produce two van-loads. `role` and the
+    // two name fields are the ONLY things that differ per reader, and they are
+    // spread on below.
+    const shared = {
       id: row.id,
       title: row.title,
       job_name: row.job_name,
@@ -225,8 +278,21 @@ export async function loadCompanyBriefing(
       waiting_on: Array.isArray(row.depends_on_titles) ? row.depends_on_titles.filter(Boolean) : [],
       awaiting_review: row.status === 'pending_review',
       due_date: row.due_date ?? null,
-    });
-    byWorker.set(row.assignee_worker_id, list);
+    };
+
+    const push = (workerId: string, task: BriefingTask) => {
+      byWorker.set(workerId, [...(byWorker.get(workerId) ?? []), task]);
+    };
+
+    if (leadId) {
+      push(leadId, { ...shared, role: 'lead', collaborator_names: collaborators.map(c => c.name) });
+    }
+    for (const collaborator of collaborators) {
+      // `worker_name` is the LEAD's name on this row — task_board joins workers
+      // on assignee_worker_id (0013:38). Null when the task has no lead, which
+      // the copy handles by naming nobody.
+      push(collaborator.id, { ...shared, role: 'collaborator', lead_name: row.worker_name });
+    }
   }
 
   const { messageable: consenting, excludedNoConsent, excludedUnreachable, excludedInactive } =
@@ -443,7 +509,7 @@ export function renderWorkerBriefing(
   const shown = ordered.slice(0, MAX_LISTED);
 
   const parts = shown.map(task => {
-    const labelled = task.job_name ? t.taskWithJob(task.title, task.job_name) : task.title;
+    const labelled = taskHeadline(task, t);
     return task.overdue && task.days_overdue > 0 ? t.taskOverdue(labelled, task.days_overdue) : labelled;
   });
   if (ordered.length > shown.length) parts.push(t.andMore(ordered.length - shown.length));
@@ -478,8 +544,45 @@ const MAX_MATERIALS = 6;
 /** Predecessors named before the rest becomes "+N". Beyond this it is a plan, not a warning. */
 const MAX_WAITING_ON = 3;
 
+/** Fellow crew named on the LEAD's line before the rest becomes "+N" (issue #44).
+ *  The database caps a task at 20 collaborators; this caps what is worth reading
+ *  on a phone. Past a handful the useful fact is the number. */
+const MAX_HELPERS = 4;
+
 /** The `reminders` slice, in the reader's own language. */
 export type RemindersCopy = ReturnType<typeof getCatalog>['reminders'];
+
+/**
+ * ONE task's headline, WITHOUT its lateness — the obra, and whose job it is.
+ *
+ * ── FEDERICO: this is the sentence that answers issue #44. ──────────────────
+ * Three surfaces render a task headline — the 07:00 template, the 07:00
+ * free-form briefing, and the guided menu's task sheet — and before #44 each
+ * built it inline. That was survivable while a task had exactly one reader.
+ * With collaborators it is not: a surface that forgot the role clause would
+ * tell a helper the job is theirs, which is precisely the confusion this
+ * feature exists to remove. So it is one function, called by all of them.
+ *
+ * ORDER MATTERS AND IS DELIBERATE. The role clause is applied here, and
+ * lateness by the caller AFTERWARDS, so a late task reads
+ *
+ *     Pintar tecto (Casa de Paco) — a ajudar Miguel — atrasada 3d
+ *
+ * with the thing that changes what you do first sitting last, where the eye
+ * lands. Swapping them buries the deadline mid-sentence.
+ *
+ * A LEAD's headline is byte-identical to what it was before this feature —
+ * that is asserted implicitly by every existing morning message and is the
+ * reason nothing about today's crew changes on the day this ships.
+ */
+export function taskHeadline(task: BriefingTask, t: RemindersCopy): string {
+  const named = task.job_name ? t.taskWithJob(task.title, task.job_name) : task.title;
+  if (task.role !== 'collaborator') return named;
+  // The lead's name, when there is one. `taskAsTeam` covers the task whose
+  // assignee was cleared while helpers stayed on it — it names nobody, because
+  // there is nobody to name, and claiming otherwise would be worse than vague.
+  return task.lead_name ? t.taskAsCollaborator(named, task.lead_name) : t.taskAsTeam(named);
+}
 
 /**
  * Everything worth saying about ONE task, one fact per line, in the order
@@ -516,6 +619,21 @@ export function taskDetailLines(task: BriefingTask, t: RemindersCopy): string[] 
     const names = listed.map(w => clamp(w, 60));
     if (task.waiting_on.length > listed.length) names.push(t.andMore(task.waiting_on.length - listed.length));
     lines.push(t.freeFormWaitingOn(names.join(t.freeFormMaterialSeparator)));
+  }
+
+  // ── who else is coming (issue #44) ────────────────────────────────────────
+  // The LEAD's line only. A collaborator has already been told whose job it is,
+  // on the headline; listing their fellow helpers back at them would push the
+  // one fact that matters — the address — further down a phone screen at 07:00.
+  //
+  // Capped the same way materials and dependencies are, and for the same
+  // reason: a crew of twelve on one task is a message nobody finishes reading.
+  const helpers = (task.role === 'lead' ? (task.collaborator_names ?? []) : []).filter(Boolean);
+  if (helpers.length > 0) {
+    const listed = helpers.slice(0, MAX_HELPERS);
+    const names = listed.map(w => clamp(w, 40));
+    if (helpers.length > listed.length) names.push(t.andMore(helpers.length - listed.length));
+    lines.push(t.freeFormWith(names.join(t.freeFormMaterialSeparator)));
   }
 
   // Last, and never in the 07:00 briefing (BRIEFABLE excludes pending_review).
@@ -559,8 +677,14 @@ export function clamp(value: string, max: number): string {
  *      Substituir os tubos da cozinha e ligar a máquina.
  *      Material: tubo PVC 50mm, cola, fita
  *      Depende de: Demolir parede
+ *      Contigo: Zé
  *
- *   2. Pintar tecto (Casa de Paco) — atrasada 3d
+ *   2. Pintar tecto (Casa de Paco) — a ajudar Miguel — atrasada 3d
+ *
+ * The second line is issue #44 in one sentence. That task appears in Miguel's
+ * briefing too — same obra, same address, same materials, ONE task — and his
+ * copy of it says "Contigo: João" instead. Neither of them reads a message
+ * implying the other is not there, and neither of them loads the van twice.
  *
  * A task with no description, address, materials or dependencies is just its
  * numbered line, which is exactly what the template used to send — so this is
@@ -583,7 +707,7 @@ export function renderWorkerFreeForm(briefing: WorkerBriefing): string {
   const shown = ordered.slice(0, MAX_LISTED);
 
   const blocks = shown.map((task, index) => {
-    const labelled = task.job_name ? t.taskWithJob(task.title, task.job_name) : task.title;
+    const labelled = taskHeadline(task, t);
     const headline =
       task.overdue && task.days_overdue > 0 ? t.taskOverdue(labelled, task.days_overdue) : labelled;
     return [`${index + 1}. ${headline}`, ...taskDetailLines(task, t).map(line => `   ${line}`)].join('\n');

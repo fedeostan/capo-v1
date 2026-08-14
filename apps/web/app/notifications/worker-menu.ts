@@ -8,7 +8,7 @@ import {
 import { loadWorkerTasks, type WorkerTaskRow } from '@capo/core/capabilities/worker';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
-import { clamp, taskDetailLines, type BriefingTask } from './briefing';
+import { clamp, taskDetailLines, taskHeadline, type BriefingTask } from './briefing';
 
 // The GUIDED MENU — issue #49's third complaint, in Federico's own words:
 // "not a free-flowing conversation, but just these pre-made boxes".
@@ -85,6 +85,14 @@ export function toBriefingTask(row: WorkerTaskRow): BriefingTask {
     waiting_on: row.depends_on_titles ?? [],
     awaiting_review: row.status === 'pending_review',
     due_date: row.due_date,
+    // Always 'lead' (issue #44), and that is a statement about the READ, not a
+    // default. loadWorkerTasks filters `.eq('assignee_worker_id', workerId)`,
+    // so every row it can return is one this person leads. #44 deliberately did
+    // NOT widen that filter: it is the same read that computes the worker
+    // agent's `scope.taskIds`, which is the boundary `declare_task_done`
+    // checks, and widening a write boundary is not something to do as a side
+    // effect of a briefing change. See AGENTS.md.
+    role: 'lead',
   };
 }
 
@@ -120,7 +128,12 @@ function shortDate(iso: string, locale: Locale): string {
  */
 export function renderTaskDetail(task: BriefingTask, locale: Locale): string {
   const t = getCatalog(locale).reminders;
-  const named = task.job_name ? t.taskWithJob(task.title, task.job_name) : task.title;
+  // Through taskHeadline since #44, so this sheet and the two briefing
+  // renderers cannot disagree about whose job a task is. Today every task
+  // reaching here is one this person leads, so the output is byte-identical to
+  // what it was — the shared function is what keeps it that way if the read
+  // ever widens.
+  const named = taskHeadline(task, t);
   // Lateness is on the HEADLINE, exactly as it is in the briefing, because it
   // changes what somebody does first. It is added here rather than inside
   // taskDetailLines so the briefing does not say it twice — there it is already

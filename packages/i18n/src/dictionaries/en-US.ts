@@ -209,6 +209,14 @@ const dict: Catalog = {
       assignRemove: 'Leave unassigned',
       assignCancel: 'Cancel',
       assignFailed: 'Could not change the assignee.',
+      collaborators: 'Helping',
+      collaboratorsNone: 'Only the assignee on this task.',
+      collaboratorsTitle: 'Who else helps on this task?',
+      collaboratorsHint:
+        'The assignee does not change — these people work on the same task and get the morning message saying they are helping. The materials stay this task’s, they are not duplicated.',
+      collaboratorsLead: 'assignee',
+      collaboratorsSave: 'Save',
+      collaboratorsFailed: 'Could not save who helps on this task.',
       dates: 'Dates',
       startDate: 'Start',
       dueDate: 'Due',
@@ -610,6 +618,11 @@ const dict: Catalog = {
     taskWithJob: (title, job) => `${title} (${job})`,
     taskOverdue: (title, days) => `${title} — ${days}d overdue`,
     andMore: n => `+${n}`,
+    // issue #44. The clause that stops a helper reading their briefing as if
+    // the job were theirs. Applied before taskOverdue, so lateness stays last.
+    taskAsCollaborator: (title, lead) => `${title} — helping ${lead}`,
+    taskAsTeam: title => `${title} — as a team`,
+    freeFormWith: names => `With you: ${names}`,
     workerNothing: 'Nothing scheduled for today.',
     managerSummary: ({ today, unassigned, overdue }) => {
       const parts = [`${today} ${today === 1 ? 'task' : 'tasks'} for today`];
