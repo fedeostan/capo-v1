@@ -53,6 +53,10 @@ import { readThreadLocale, recordThreadEvent } from '../../../notifications/thre
 // there changes what a tap declares finished; and "Ainda não" still files
 // nothing, which is what keeps that branch free.
 //
+// That is also why this route diverges from the 07:00 briefing about who is
+// asked (issue #44): the morning message goes to everyone on a task, this one
+// only to the person who LEADS it. See the filter in the worker loop.
+//
 // Nothing here reads dispatch_tasks_today or writes dispatch_log — that
 // contract stays frozen so SMS can be switched back on (AGENTS.md).
 //
@@ -207,8 +211,48 @@ export async function GET(request: NextRequest) {
         // 'skipped' row — there was nothing to skip.
         if (worker.tasks.length === 0) continue;
 
-        const [name, taskList] = renderWorkerBriefing(worker);
-        const taskIds = worker.tasks.map(t => t.id);
+        // ── THE COLLABORATOR DECISION (issue #44) ────────────────────────────
+        // The 07:00 briefing goes to everybody on a task, lead and helpers
+        // alike. This one does NOT. The check-in asks a person only about the
+        // tasks they LEAD, and a crew member whose whole day was helping is not
+        // asked at all.
+        //
+        // WHY, and it is not caution for its own sake. A "Sim, terminei" tap is
+        // not an answer any more — since #54 it files a completion claim, one
+        // per id in this snapshot, through open_task_review. Widening the
+        // snapshot to helper tasks would mean a helper can declare somebody
+        // else's job finished by tapping one button, with the lead's name
+        // nowhere near the claim. The manager would then read "the Pintura is
+        // finished" attributed to a person who was carrying buckets on it.
+        //
+        // That is worse than it sounds, because a claim is not reversible from
+        // the crew's side: `task_reviews_one_pending_idx` allows exactly one
+        // live review per task, so the helper's premature claim BLOCKS the lead
+        // from filing their own until the manager resolves it.
+        //
+        // The lead is asked about the same task on the same afternoon, so
+        // nothing goes unasked — the question simply goes to the person
+        // accountable for the answer.
+        //
+        // KNOWN LIMIT, stated rather than hidden: a helper has NO way to report
+        // a task finished at all. `declare_task_done` checks
+        // `assignee_worker_id` too, so asking the worker agent in words gets
+        // "that task is not one of yours". Today they tell the lead or the
+        // manager. Giving a helper their own reportable claim is a real feature
+        // and a bigger one — it needs a shape for two claims on one task, which
+        // task_reviews_one_pending_idx currently forbids.
+        //
+        // Filtered HERE rather than in loadCompanyBriefing on purpose: the
+        // briefing route needs the full list, and one shared loader that
+        // silently dropped helper tasks would take the 07:00 message with it.
+        const leadTasks = worker.tasks.filter(t => t.role === 'lead');
+        if (leadTasks.length === 0) continue;
+
+        // The rendered list and the claimed ids come from the SAME array, which
+        // is what keeps "what the worker was asked about" and "what their tap
+        // declares finished" the same set. Do not let these two diverge.
+        const [name, taskList] = renderWorkerBriefing({ ...worker, tasks: leadTasks });
+        const taskIds = leadTasks.map(t => t.id);
 
         if (dryRun) {
           sends.push({

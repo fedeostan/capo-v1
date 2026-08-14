@@ -1131,6 +1131,10 @@ check('an unparseable opt-in → no consent', !hasWhatsAppConsent({ whatsapp_opt
       waiting_on: ['Demolir parede'],
       awaiting_review: false,
       due_date: '2026-08-20',
+      // The default is the pre-#44 world: one person, in charge. Every
+      // assertion around it therefore still describes exactly the message that
+      // went out before collaborators existed.
+      role: 'lead',
       ...over,
     };
   }
@@ -1231,6 +1235,218 @@ check('an unparseable opt-in → no consent', !hasWhatsAppConsent({ whatsapp_opt
     check(`${locale} — renders a body`, body.length > 0);
     check(`${locale} — leaks no undefined`, !body.includes('undefined'), body);
     check(`${locale} — still carries the materials`, body.includes('tubo PVC 50mm'), body);
+  }
+}
+
+// ── TWO PEOPLE ON ONE TASK (issue #44) ──────────────────────────────────────
+//
+// Federico's complaint, verbatim: "there is no way for Capo to assign 2 people
+// to the same task. What it does instead it duplicates the task, duplicating
+// the amount of material needed."
+//
+// So there are two things to prove here and they are of different kinds.
+//
+//   1. THE MATERIALS ARE NOT MULTIPLIED. Structural, and asserted against the
+//      REAL loadCompanyBriefing over a fake Db — the same device the crew
+//      partition checks use — because a re-implementation of the fan-out here
+//      would keep passing after somebody rewrote the real one.
+//   2. A COLLABORATOR IS NEVER TOLD THE JOB IS THEIRS. Copy, and the reason
+//      this feature can be actively harmful if it ships half-done: two people
+//      each believing they are in charge is worse than the duplicate task it
+//      replaces.
+{
+  const LEAD = '11111111-1111-4111-8111-111111111111';
+  const HELPER = '22222222-2222-4222-8222-222222222222';
+
+  // ONE task_board row, exactly as the view returns it after 0035: one
+  // `materials` array, one address, one set of collaborator columns.
+  const boardRow = {
+    id: uuid,
+    company_id: 'co',
+    title: 'Pintar tecto',
+    job_name: 'Casa de Paco',
+    job_address: 'Rua das Flores 12',
+    status: 'pending',
+    is_open: true,
+    active_today: true,
+    overdue: false,
+    days_overdue: 0,
+    description: 'Duas demãos.',
+    materials: ['tinta 10L', 'rolo', 'fita'],
+    depends_on_titles: [],
+    due_date: '2026-08-20',
+    assignee_worker_id: LEAD,
+    worker_name: 'Miguel',
+    collaborator_worker_ids: [HELPER],
+    collaborator_names: ['João'],
+  };
+  const optedIn = '2026-08-01T10:00:00Z';
+  const crew = [
+    { id: LEAD, name: 'Miguel', active: true, phone: '351911111111', whatsapp_opt_in_at: optedIn },
+    { id: HELPER, name: 'João', active: true, phone: '351922222222', whatsapp_opt_in_at: optedIn },
+  ];
+
+  const fanned = await loadCompanyBriefing(
+    fakeBriefingDb({ task_board: [boardRow], workers: crew }),
+    'co',
+    'pt-PT',
+  );
+
+  const lead = fanned.workers.find(w => w.workerId === LEAD);
+  const helper = fanned.workers.find(w => w.workerId === HELPER);
+  check('both people on the task get a briefing', !!lead && !!helper);
+  eq('the lead is briefed about it', lead?.tasks.length, 1);
+  eq('and so is the collaborator', helper?.tasks.length, 1);
+  eq('the lead is told they lead it', lead?.tasks[0]?.role, 'lead');
+  eq('the collaborator is told they are helping', helper?.tasks[0]?.role, 'collaborator');
+  eq('and who they are helping', helper?.tasks[0]?.lead_name, 'Miguel');
+  eq('the lead is told who is with them', lead?.tasks[0]?.collaborator_names?.join(','), 'João');
+
+  // ── THE PROOF THE ISSUE ASKS FOR ──────────────────────────────────────────
+  // It is ONE task. Two people read it; there is one id, and one materials
+  // list, whose contents are identical on both sides. The old workaround —
+  // two tasks — would show two ids here and two `materials` arrays, and
+  // /materiais would add them together.
+  const allTaskIds = new Set(fanned.workers.flatMap(w => w.tasks.map(t => t.id)));
+  eq('two people, ONE task id between them', allTaskIds.size, 1);
+  eq(
+    'and the collaborator sees the SAME material list, not a second one',
+    helper?.tasks[0]?.materials.join('|'),
+    lead?.tasks[0]?.materials.join('|'),
+  );
+  eq('which is exactly what is on the task', lead?.tasks[0]?.materials.join('|'), 'tinta 10L|rolo|fita');
+  // The manager's own count is a ROW count and must not move either — it is
+  // what the 07:00 thread note and the manager's template both quote.
+  eq("the manager's 'today' count still says one task", fanned.counts.today, 1);
+
+  // ── the wording, in every language ────────────────────────────────────────
+  for (const locale of LOCALES) {
+    const t = getCatalog(locale).reminders;
+    const helperBody = renderWorkerFreeForm({ ...helper!, locale });
+    const leadBody = renderWorkerFreeForm({ ...lead!, locale });
+
+    check(`${locale} — the helper is told whose job it is`, helperBody.includes('Miguel'), helperBody);
+    check(
+      `${locale} — using the collaborator wording, not the plain title`,
+      helperBody.includes(t.taskAsCollaborator('Pintar tecto (Casa de Paco)', 'Miguel')),
+      helperBody,
+    );
+    check(`${locale} — and leaks no undefined`, !helperBody.includes('undefined'), helperBody);
+    // Same address, same materials. A helper who is told less than the lead has
+    // to phone somebody, which is the failure #49 already fixed once.
+    check(`${locale} — the helper still gets the address`, helperBody.includes('Rua das Flores 12'), helperBody);
+    check(`${locale} — and the same materials`, helperBody.includes('tinta 10L'), helperBody);
+
+    check(`${locale} — the lead is told who is with them`, leadBody.includes(t.freeFormWith('João')), leadBody);
+    // ⚠ The asymmetry that keeps the message readable: only the LEAD gets the
+    // "with you" line. Telling a helper who their fellow helpers are pushes the
+    // address further down a phone screen at 07:00.
+    check(
+      `${locale} — the helper is NOT given a "with you" list`,
+      !helperBody.includes(t.freeFormWith('')),
+      helperBody,
+    );
+    // And the lead's own line is unchanged from before this feature: no role
+    // clause, because they are the assignee and always were.
+    check(
+      `${locale} — the lead's headline gains no role clause`,
+      leadBody.includes(t.taskWithJob('Pintar tecto', 'Casa de Paco')),
+      leadBody,
+    );
+  }
+
+  // Lateness stays LAST on the line, after the role clause: it is the thing
+  // that changes what somebody does first, and burying it mid-sentence is the
+  // one ordering mistake that costs a day.
+  {
+    const t = getCatalog('pt-PT').reminders;
+    const late = renderWorkerFreeForm({
+      ...helper!,
+      tasks: [{ ...helper!.tasks[0]!, overdue: true, days_overdue: 3 }],
+    });
+    check('an overdue helper task names the lead', late.includes('a ajudar Miguel'), late);
+    check('and still marks the delay', late.includes('3'), late);
+    check(
+      'with the delay after the role, not before it',
+      late.indexOf('a ajudar Miguel') < late.indexOf(t.taskOverdue('', 3).trim().slice(0, 4)),
+      late,
+    );
+  }
+
+  // A task whose assignee was cleared while helpers stayed on it. Reachable —
+  // clearing the assignee deliberately does not delete anybody's row — and the
+  // copy must claim nothing about anybody rather than printing "a ajudar null".
+  {
+    const orphaned = renderWorkerFreeForm({
+      ...helper!,
+      tasks: [{ ...helper!.tasks[0]!, lead_name: null }],
+    });
+    check(
+      'a helper on a lead-less task is told it is a team job',
+      orphaned.includes(getCatalog('pt-PT').reminders.taskAsTeam('Pintar tecto (Casa de Paco)')),
+      orphaned,
+    );
+    check('and never reads "null" or "undefined"', !/null|undefined/.test(orphaned), orphaned);
+  }
+
+  // The one-line TEMPLATE parameter carries the role clause too. It is the
+  // envelope a crew member OUTSIDE the free 24h window gets, i.e. the one that
+  // reaches somebody who has never written to Capo — the person most likely to
+  // misread whose job it is.
+  {
+    const [, list] = renderWorkerBriefing(helper!);
+    check('the paid template also names the lead', list.includes('a ajudar Miguel'), list);
+    check('and stays one line', !list.includes('\n'), JSON.stringify(list));
+  }
+
+  // A task with NO collaborators is byte-identical to what it rendered before
+  // this feature. That is what makes shipping it a no-op for every existing
+  // crew on the morning it lands.
+  {
+    const solo = await loadCompanyBriefing(
+      fakeBriefingDb({
+        task_board: [{ ...boardRow, collaborator_worker_ids: [], collaborator_names: [] }],
+        workers: crew,
+      }),
+      'co',
+      'pt-PT',
+    );
+    eq('a task with no helpers reaches only its assignee', solo.workers.filter(w => w.tasks.length > 0).length, 1);
+    const body = renderWorkerFreeForm(solo.workers.find(w => w.workerId === LEAD)!);
+    check('and its message carries no "with you" line', !body.includes('Contigo'), body);
+  }
+
+  // THE DEPLOY-ORDERING CASE. 0035 APPENDS the two columns to task_board, so a
+  // deploy that lands before its migration reads `undefined` for both. That
+  // must brief exactly the people it briefs today rather than throwing — every
+  // task_board reader uses select('*') for this reason (AGENTS.md).
+  {
+    const { collaborator_worker_ids: _a, collaborator_names: _b, ...preMigration } = boardRow;
+    const degraded = await loadCompanyBriefing(
+      fakeBriefingDb({ task_board: [preMigration], workers: crew }),
+      'co',
+      'pt-PT',
+    );
+    eq('a pre-migration row still briefs the assignee', degraded.workers.find(w => w.workerId === LEAD)?.tasks.length, 1);
+    eq('and briefs nobody else', degraded.workers.find(w => w.workerId === HELPER)?.tasks.length, 0);
+  }
+
+  // And the guard against a view whose two aggregates stopped agreeing: naming
+  // the wrong person to their own crew is worse than naming nobody.
+  {
+    const misaligned = await loadCompanyBriefing(
+      fakeBriefingDb({
+        task_board: [{ ...boardRow, collaborator_names: [] }],
+        workers: crew,
+      }),
+      'co',
+      'pt-PT',
+    );
+    eq(
+      'mismatched collaborator arrays name nobody rather than guessing',
+      misaligned.workers.find(w => w.workerId === HELPER)?.tasks.length,
+      0,
+    );
   }
 }
 
@@ -1637,6 +1853,10 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
       waiting_on: ['Demolir parede'],
       awaiting_review: false,
       due_date: '2026-08-20',
+      // The default is the pre-#44 world: one person, in charge. Every
+      // assertion around it therefore still describes exactly the message that
+      // went out before collaborators existed.
+      role: 'lead',
       ...over,
     };
   }

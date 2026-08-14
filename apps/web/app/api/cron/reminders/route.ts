@@ -351,9 +351,28 @@ export async function GET(request: NextRequest) {
         // to fit Meta's interactive-body cap — in which case the plain text
         // holds MORE than the list could have, which is the right trade at
         // 07:00. The AJUDA keyword still summons the menu afterwards.
-        const list = idle
-          ? null
-          : buildWorkerMenu({ tasks: worker.tasks, body: freeFormBody, locale: worker.locale });
+        //
+        // ── ONLY THE TASKS THIS PERSON LEADS (issue #44) ─────────────────────
+        // The BODY names every task they are on, helper roles included — that
+        // is the whole feature. The tappable ROWS are narrower on purpose.
+        //
+        // A tap is answered by findWorkerTask, which looks the id up among this
+        // worker's own `assignee_worker_id` rows and, finding nothing, replies
+        // "that task is not yours". Offering a collaborator's task as a row
+        // would therefore hand somebody a button that calls them a liar about a
+        // task Capo named two lines earlier. The fix is here, not in
+        // findWorkerTask: that read also computes the worker agent's write
+        // scope, and #44 does not widen a write boundary.
+        //
+        // Consequence, stated rather than hidden: a crew member whose whole day
+        // is collaboration gets the plain free-form briefing with no list. It
+        // carries every fact the list would have — address, description,
+        // materials, dependencies — so nothing is lost but the tap.
+        const menuTasks = worker.tasks.filter(t => t.role === 'lead');
+        const list =
+          menuTasks.length === 0
+            ? null
+            : buildWorkerMenu({ tasks: menuTasks, body: freeFormBody, locale: worker.locale });
 
         if (dryRun) {
           // `to` keeps its old meaning — the address as sent — and `address`

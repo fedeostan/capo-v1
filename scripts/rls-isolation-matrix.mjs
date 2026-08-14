@@ -240,6 +240,17 @@ async function seedTenant(label) {
     }).select().single(),
     `worker(${label})`,
   );
+  // A SECOND crew member, seeded for issue #44: somebody to be a COLLABORATOR
+  // on task1 while `worker` above leads it. Without two workers a lead/helper
+  // pair cannot exist at all, and every task_assignees check below would pass
+  // against an empty table — the trap this file's header warns about.
+  const helper = await must(
+    admin.from('workers').insert({
+      company_id: companyId,
+      name: `Helper ${label}`,
+    }).select().single(),
+    `helper(${label})`,
+  );
   const job = await must(
     admin.from('jobs').insert({ company_id: companyId, name: `Obra ${label}` }).select().single(),
     `job(${label})`,
@@ -258,6 +269,21 @@ async function seedTenant(label) {
   await must(
     admin.from('task_dependencies').insert({ task_id: task2.id, depends_on_task_id: task1.id }).select(),
     `task_dependency(${label})`,
+  );
+
+  // The collaborator (0035, issue #44). Written through the RPC rather than a
+  // raw insert, exactly as the seeded review goes through open_task_review —
+  // so the seed exercises the only writer the table has, and so the LEAD row
+  // the mirror trigger produced on task1's insert is proved to coexist with a
+  // collaborator row under `unique (task_id, worker_id)`.
+  //
+  // task1, not task2: task1 has an assignee, so this is a real lead + helper
+  // pair rather than a lead-less one. auth.uid() is null on the service role,
+  // so the RPC's tenant guard is skipped by design here — it is the adversarial
+  // pass below that exercises it.
+  await must(
+    admin.rpc('set_task_collaborators', { p_task: task1.id, p_workers: [helper.id] }),
+    `task_collaborator(${label})`,
   );
   const conversation = await must(
     admin.from('conversations').insert({ company_id: companyId }).select().single(),
@@ -457,7 +483,8 @@ async function seedTenant(label) {
 
   return {
     label, userId, companyId, client,
-    workerId: worker.id, workerBsuid: worker.whatsapp_user_id, jobId: job.id, taskIds: [task1.id, task2.id],
+    workerId: worker.id, helperWorkerId: helper.id,
+    workerBsuid: worker.whatsapp_user_id, jobId: job.id, taskIds: [task1.id, task2.id],
     conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
     photoPath, checkinAskId: checkinAsk.id, photoRequestId: photoRequest.id,
     colleagueId, ownNotificationId, colleagueNotificationId,
@@ -545,6 +572,10 @@ async function cleanupTenant(t) {
   await companyEq(admin.from('worker_messages').delete());
   await companyEq(admin.from('worker_conversations').delete());
   await companyEq(admin.from('task_reviews').delete());
+  // Before tasks AND before workers (0035). task_assignees.task_id cascades on
+  // a task delete, but worker_id deliberately does not — so leaving these until
+  // the workers sweep would fail the FK and strand a company.
+  await companyEq(admin.from('task_assignees').delete());
   await admin.from('task_dependencies').delete().in('task_id', t.taskIds);
   await companyEq(admin.from('tasks').delete());
   await companyEq(admin.from('memories').delete());
@@ -584,7 +615,7 @@ async function runMatrix(self, other) {
   // own, so this check would report green on that exact regression. Both
   // tables get their own dedicated block below instead, asserting on
   // profile_id too. Read those before adding another per-profile table here.
-  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'worker_checkins', 'task_photos', 'worker_conversations', 'worker_messages']) {
+  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'task_assignees', 'worker_checkins', 'task_photos', 'worker_conversations', 'worker_messages']) {
     const { data, error } = await db.from(table).select('*');
     const rows = data ?? [];
     const ownKey = table === 'companies' ? 'id' : 'company_id';
@@ -1576,6 +1607,147 @@ async function runAdversarial(attacker, victim) {
     );
     if (data?.id) await admin.from('ai_usage').delete().eq('id', data.id);
   }
+
+  // ── 0035: collaborators (issue #44) ───────────────────────────────────────
+  // task_assignees answers "who else is on this task", which decides who gets a
+  // 07:00 WhatsApp message naming another company's obra, address and
+  // materials. A leak here is not an abstract row read — it is a crew member of
+  // company A being told, in writing, where company B is working tomorrow.
+  //
+  // The table is SELECT-only for tenants (0018's posture, not the uniform
+  // three-policy one), and the single writer is set_task_collaborators, which
+  // is SECURITY DEFINER — so RLS does NOT cover the write path and its internal
+  // auth.uid() check is the entire tenant boundary. Same class as
+  // resolve_task_review and revert_translation_batch, and attacked the same way:
+  // never on the error alone, always on the victim's rows too.
+
+  // Attack 32 (RPC, cross-tenant): put my own worker on THEIR task.
+  {
+    const { error } = await db.rpc('set_task_collaborators', {
+      p_task: victim.taskIds[0],
+      p_workers: [attacker.workerId],
+    });
+    const { data: after } = await admin
+      .from('task_assignees')
+      .select('worker_id, role')
+      .eq('task_id', victim.taskIds[0]);
+    const rows = after ?? [];
+    // The victim's task must still carry exactly its seeded pair: the mirrored
+    // lead and the one helper. Asserting the COUNT and the attacker's absence,
+    // because a call that wiped the victim's helpers and wrote nothing would
+    // otherwise pass "the attacker is not there".
+    const intact = rows.length === 2 && !rows.some(r => r.worker_id === attacker.workerId);
+    check(
+      'adversarial: set_task_collaborators on a foreign task blocked',
+      error != null && intact,
+      error == null
+        ? 'RPC SUCCEEDED (cross-tenant crew write!)'
+        : !intact
+          ? `victim task now has ${rows.length} assignee row(s) — mutated`
+          : `rejected (${error.code ?? 'err'})`,
+    );
+  }
+
+  // Attack 33 (FK guard trigger): my OWN task, THEIR worker. RLS has nothing to
+  // say — the row's company_id is the attacker's own — and the RPC's tenant
+  // check passes for the same reason. Only
+  // private.assert_task_assignee_fks_same_company refuses it, which is the
+  // exact hole 0009 exists to close and the reason 0035 carries its own copy.
+  //
+  // What it would buy if it landed: the victim's crew member starts receiving
+  // the attacker's 07:00 briefings, addresses included.
+  {
+    const { error } = await db.rpc('set_task_collaborators', {
+      p_task: attacker.taskIds[1],
+      p_workers: [victim.workerId],
+    });
+    const { data: after } = await admin
+      .from('task_assignees')
+      .select('worker_id')
+      .eq('task_id', attacker.taskIds[1]);
+    const leaked = (after ?? []).some(r => r.worker_id === victim.workerId);
+    check(
+      "adversarial: collaborator → another company's worker blocked by the 0035 FK trigger",
+      error != null && !leaked,
+      error == null
+        ? 'RPC SUCCEEDED (foreign worker on my task!)'
+        : leaked
+          ? "ACCEPTED — victim's worker is on the attacker's task"
+          : `rejected (${error.code ?? 'err'})`,
+    );
+  }
+
+  // Attack 34 (grant layer): bypass the RPC entirely. task_assignees has NO
+  // insert grant for `authenticated` and no insert policy, so a direct write is
+  // refused before any trigger runs. Aimed at the attacker's OWN task on
+  // purpose — this is a grant check, not a boundary check, and the thing it
+  // protects is the LEAD MIRROR: a tenant able to insert here could write a
+  // `role = 'lead'` row naming somebody who is not the assignee, which is the
+  // one disagreement 0035's whole design is built to make impossible.
+  {
+    const { error } = await db.from('task_assignees').insert({
+      company_id: attacker.companyId,
+      task_id: attacker.taskIds[1],
+      worker_id: attacker.helperWorkerId,
+      role: 'lead',
+    });
+    const { data: after } = await admin
+      .from('task_assignees')
+      .select('id')
+      .eq('task_id', attacker.taskIds[1]);
+    check(
+      'adversarial: direct INSERT into task_assignees blocked (the lead mirror is unforgeable)',
+      error != null && (after ?? []).length === 0,
+      error
+        ? `rejected (${error.code ?? 'err'})`
+        : `INSERT SUCCEEDED — ${(after ?? []).length} row(s) written by hand`,
+    );
+    if (!error) await admin.from('task_assignees').delete().eq('task_id', attacker.taskIds[1]);
+  }
+
+  // Attack 35 (grant layer): and no DELETE either — on the victim's rows, so
+  // this is a boundary check as well as a grant one. There is no DELETE policy
+  // on this table (push_subscriptions remains the schema's only one), so a
+  // tenant cannot quietly erase the record of who was on a job.
+  {
+    const { error } = await db.from('task_assignees').delete().eq('task_id', victim.taskIds[0]);
+    const { data: after } = await admin
+      .from('task_assignees')
+      .select('id')
+      .eq('task_id', victim.taskIds[0]);
+    check(
+      "adversarial: tenant DELETE of another company's task_assignees blocked",
+      (after ?? []).length === 2,
+      error
+        ? `rejected (${error.code ?? 'err'})`
+        : `${(after ?? []).length} rows remain (expected 2)`,
+    );
+  }
+
+  // POSITIVE CONTROL. Every check above asserts a REFUSAL, so a migration that
+  // revoked EXECUTE from `authenticated` — or a trigger that rejected every
+  // row — would pass all four while making the feature completely unusable
+  // from the app. The owner must still be able to set their own crew.
+  //
+  // Runs last in this section and cleans up after itself, so the visibility
+  // sweep's expected row counts are unaffected.
+  {
+    const { error } = await db.rpc('set_task_collaborators', {
+      p_task: attacker.taskIds[1],
+      p_workers: [attacker.helperWorkerId],
+    });
+    const { data: after } = await admin
+      .from('task_assignees')
+      .select('worker_id, role')
+      .eq('task_id', attacker.taskIds[1]);
+    const rows = after ?? [];
+    check(
+      'adversarial: owner can still set collaborators on their OWN task (positive control)',
+      !error && rows.length === 1 && rows[0].role === 'collaborator',
+      error ? `REFUSED (${error.code ?? 'err'}) — the feature is unusable` : `${rows.length} row(s)`,
+    );
+    await admin.from('task_assignees').delete().eq('task_id', attacker.taskIds[1]);
+  }
 }
 
 /**
@@ -1907,6 +2079,46 @@ async function runOrphanAttack(orphan, victim) {
       'adversarial: orphan (no profiles row) download of a task photo blocked',
       downloadError != null && bytes == null,
       downloadError ? `rejected (${downloadError.message})` : 'DOWNLOADED — boundary broken',
+    );
+  }
+
+  // Attack 36 (0035): set_task_collaborators, seen by the actor its guard is
+  // most likely to fail open for. It is the FOURTH SECURITY DEFINER function in
+  // this schema whose whole tenant boundary is
+  //
+  //     if auth.uid() is not null and v_company is distinct from
+  //        private.current_company_id() then raise
+  //
+  // and private.current_company_id() returns NULL for this user. Two of the
+  // three that came before it shipped with `<>` instead of `IS DISTINCT FROM`
+  // and fell open for exactly this caller — 0019 and 0021 are the fixes, and
+  // 0021 was confirmed exploitable against production. No ordinary two-tenant
+  // attacker can reach the path at all, which is why both bugs survived a green
+  // matrix, and why this check exists rather than a comment saying it is fine.
+  //
+  // Asserted on the victim's ROWS, not the error: the failure mode of that bug
+  // class is a call that returns a success value and looks healthy.
+  {
+    const { error } = await db.rpc('set_task_collaborators', {
+      p_task: victim.taskIds[0],
+      p_workers: [],
+    });
+    const { data: after } = await admin
+      .from('task_assignees')
+      .select('id')
+      .eq('task_id', victim.taskIds[0]);
+    // The empty array is the payload that MATTERS here: it is "take everybody
+    // off", so a fall-open would silently strip the victim's crew from their
+    // own task and nobody would receive a briefing for it tomorrow.
+    const intact = (after ?? []).length === 2;
+    check(
+      'adversarial: orphan (no profiles row) set_task_collaborators on a foreign task blocked',
+      error != null && intact,
+      error == null
+        ? 'RPC SUCCEEDED (cross-tenant crew wipe!)'
+        : !intact
+          ? `victim task now has ${(after ?? []).length} assignee row(s) — crew stripped`
+          : `rejected (${error.code ?? 'err'})`,
     );
   }
 }

@@ -270,6 +270,27 @@ export interface Catalog {
       assignRemove: string;
       assignCancel: string;
       assignFailed: string;
+
+      // ── collaborators (issue #44) ──────────────────────────────────────────
+      // The assignee above is the LEAD and stays the accountable person. These
+      // name the OTHER people on the same single task — the whole point being
+      // that "Miguel e o João fazem a pintura" is one task with one materials
+      // list, not two tasks with two.
+      /** Section heading for the helpers on this task. */
+      collaborators: string;
+      /** Shown in the section when nobody is helping — an invitation, not a hole. */
+      collaboratorsNone: string;
+      /** Heading of the multi-select sheet. */
+      collaboratorsTitle: string;
+      /** Sub-line of that sheet. Must make clear this never changes the lead. */
+      collaboratorsHint: string;
+      /** Marks the LEAD inside the picker list — they are shown, never tappable:
+       *  hiding them would read as a bug, and letting them be picked would mean
+       *  somebody helping themselves. */
+      collaboratorsLead: string;
+      /** Confirm button on the sheet. Named for what it does to the set. */
+      collaboratorsSave: string;
+      collaboratorsFailed: string;
       dates: string;
       startDate: string;
       dueDate: string;
@@ -953,6 +974,34 @@ export interface Catalog {
     taskOverdue(title: string, days: number): string;
     /** Tail when the list had to be truncated. */
     andMore(n: number): string;
+
+    // ── who else is on this task (issue #44) ─────────────────────────────────
+    // ⚠ THE CONTENT REQUIREMENT OF THE WHOLE FEATURE. A crew member who is
+    // HELPING must never read a briefing that sounds like the job is theirs.
+    // They get the same task, the same address and the same materials — and one
+    // extra clause on the headline saying whose job it is. Get this wrong and
+    // two people turn up each believing they are in charge, which is worse than
+    // the duplicated-task bug this replaces.
+    //
+    // Applied to the headline BEFORE `taskOverdue`, so lateness stays the last
+    // and most visible thing on the line.
+
+    /** "Pintar tecto (Casa de Paco) — a ajudar Miguel". `title` already carries
+     *  the obra. `lead` is the assignee's name, straight from the row. */
+    taskAsCollaborator(title: string, lead: string): string;
+    /**
+     * The same, for a task that has collaborators and NO lead at all.
+     *
+     * Reachable: `tasks.assignee_worker_id` is nullable, and clearing it does
+     * not remove anybody's collaborator row (deleting people's rows on an
+     * unrelated edit would be worse). The wording must therefore not name
+     * anyone and must not imply ownership either way.
+     */
+    taskAsTeam(title: string): string;
+    /** The LEAD's line naming who is helping them. `names` is already joined
+     *  and capped by the caller. Detail-sheet only — there is no room for it in
+     *  the one-line template parameter. */
+    freeFormWith(names: string): string;
     /** A worker with nothing scheduled today. */
     workerNothing: string;
     /** The manager's one-line WhatsApp summary. */

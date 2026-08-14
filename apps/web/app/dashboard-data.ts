@@ -9,6 +9,7 @@
 import type { AuthContext } from '@capo/db/session';
 import type { Tables } from '@capo/db/types';
 import { TASK_PHOTO_BUCKET } from '@capo/core/media/photos';
+import { everyoneOnTask, readCollaborators, type Collaborator } from '@capo/core/capabilities/collaborators';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { BoardTask, DashboardObra, MaterialsGroup, MaterialsTask } from '@capo/ui/dashboard-ui';
 // Type-only: keeps the 'use client' markdown renderer inside task-detail.tsx
@@ -115,6 +116,15 @@ export interface TaskDetailData {
   task: BoardTask;
   job: TaskDetailJob | null;
   worker: TaskDetailWorker | null;
+  /**
+   * Everyone else on this task (issue #44) — the helpers, never the assignee.
+   *
+   * Read off the same `task_board` row as everything else on this screen, so
+   * the detail page and the 07:00 briefing cannot disagree about who is on a
+   * job. Empty on a deploy landing before 0035, which renders as "only the
+   * assignee" — the truth at that moment.
+   */
+  collaborators: Collaborator[];
 }
 
 // One task, read from task_board like every other screen — the detail must
@@ -160,7 +170,14 @@ export async function loadTaskDetail(
       : null,
   ]);
 
-  return { task, job: jobRes?.data ?? null, worker: workerRes?.data ?? null };
+  return {
+    task,
+    job: jobRes?.data ?? null,
+    worker: workerRes?.data ?? null,
+    // No third query: the view already carries the ids and names, aggregated in
+    // the same statement that produced this row.
+    collaborators: readCollaborators(row),
+  };
 }
 
 /** One active crew member as an assignment candidate, with how busy they are
@@ -243,9 +260,16 @@ export async function loadAssignableWorkers(
 
   // Same shape as loadBoardTasks' specific-date branch, minus the obra filter
   // and minus this task itself — a task does not make its own assignee busy.
+  //
+  // `select('*')` since #44, not the one column it used to name. The count now
+  // includes COLLABORATORS, whose two columns 0035 appends to the view — and an
+  // explicit list naming them would 42703 on a deploy that lands before the
+  // migration, which for this screen means the picker cannot open at all.
+  // With select('*') the pre-migration read simply counts leads, exactly as it
+  // does today.
   const { data: sameDay, error: boardError } = await db
     .from('task_board')
-    .select('assignee_worker_id')
+    .select('*')
     .eq('company_id', companyId)
     .eq('is_open', true)
     .eq('job_active', true)
@@ -254,10 +278,14 @@ export async function loadAssignableWorkers(
     .neq('id', task.id);
   if (boardError) throw new Error(`task_board read failed: ${boardError.message}`);
 
+  // Everyone on the task, not just its lead. Somebody spending the day helping
+  // on a wall is on that wall, and this picker's whole promise is that it never
+  // labels such a person "free" — see AssignableWorker.busyOn.
   const busy = new Map<string, number>();
   for (const row of sameDay ?? []) {
-    if (!row.assignee_worker_id) continue;
-    busy.set(row.assignee_worker_id, (busy.get(row.assignee_worker_id) ?? 0) + 1);
+    for (const workerId of everyoneOnTask(row)) {
+      busy.set(workerId, (busy.get(workerId) ?? 0) + 1);
+    }
   }
 
   const workers = roster
@@ -299,19 +327,25 @@ export type TeamLoad = Record<string, { today: number; tomorrow: number; open: n
 // `recebeSms` on the card, exposes the silent failure where an active worker
 // has no number and therefore receives nothing from the 07:00 dispatch.
 export async function loadTeamLoad({ db, companyId }: AuthContext): Promise<TeamLoad> {
+  // select('*') since #44, for the reason loadAssignableWorkers gives: the
+  // tallies now count collaborators, whose columns 0035 appends to the view.
   const { data } = await db
     .from('task_board')
-    .select('assignee_worker_id, active_today, active_tomorrow, overdue, is_open')
+    .select('*')
     .eq('company_id', companyId)
     .eq('is_open', true);
   const load: TeamLoad = {};
   for (const row of data ?? []) {
-    if (!row.assignee_worker_id) continue;
-    const entry = (load[row.assignee_worker_id] ??= { today: 0, tomorrow: 0, open: 0, overdue: 0 });
-    entry.open += 1;
-    if (row.active_today) entry.today += 1;
-    if (row.active_tomorrow) entry.tomorrow += 1;
-    if (row.overdue) entry.overdue += 1;
+    // Lead AND helpers. A crew card that showed "0 tarefas hoje" next to
+    // somebody who is spending the day on the Casa de Paco would be answering
+    // "quem está livre?" with the wrong name.
+    for (const workerId of everyoneOnTask(row)) {
+      const entry = (load[workerId] ??= { today: 0, tomorrow: 0, open: 0, overdue: 0 });
+      entry.open += 1;
+      if (row.active_today) entry.today += 1;
+      if (row.active_tomorrow) entry.tomorrow += 1;
+      if (row.overdue) entry.overdue += 1;
+    }
   }
   return load;
 }

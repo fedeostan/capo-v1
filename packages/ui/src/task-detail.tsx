@@ -70,15 +70,25 @@ export function TaskDetail({
   task,
   job,
   worker,
+  collaborators,
   photos,
   locale,
   renderAssignee,
+  renderCollaborators,
   renderMaterials,
   renderActions,
 }: {
   task: BoardTask;
   job: TaskDetailJob | null;
   worker: TaskDetailWorker | null;
+  /**
+   * Everyone else on this task (issue #44) — helpers, never the assignee.
+   *
+   * Names only. This package is presentation and owns no mutation, so the
+   * editing control arrives through `renderCollaborators` exactly as the
+   * assignee picker arrives through `renderAssignee`.
+   */
+  collaborators?: { id: string; name: string }[];
   /** Proof of the work, newest first. Empty is the normal case and renders
    *  nothing at all — an "no photos yet" placeholder on every task would turn
    *  an optional feature into a standing reproach. */
@@ -89,6 +99,16 @@ export function TaskDetail({
    *  presentation-only and owns no mutation. When absent the line renders as
    *  plain text, which is what any caller without a picker still gets. */
   renderAssignee?: () => React.ReactNode;
+  /**
+   * The "who else is helping" control (issue #44). Same slot contract as
+   * renderAssignee.
+   *
+   * Its presence also makes the section render when NOBODY is helping —
+   * otherwise the one screen that can add a collaborator would be the one
+   * screen that hides the section until there already is one. Same judgement
+   * renderMaterials makes below.
+   */
+  renderCollaborators?: () => React.ReactNode;
   /** The "edit materials" control (issue #60). Same slot contract as
    *  renderAssignee: this package owns no mutation, so apps/web injects it.
    *  Its presence also makes the Materials section render on a task with an
@@ -116,6 +136,11 @@ export function TaskDetail({
         Boolean,
       )
     : [];
+
+  // Defaulted here rather than in the signature so a caller that has not been
+  // updated for #44 renders the section as "only the assignee" instead of
+  // crashing on an undefined array.
+  const helpers = collaborators ?? [];
 
   const dates = [
     task.start_date ? `${t.startDate}: ${formatShortDate(task.start_date, locale)}` : null,
@@ -148,6 +173,21 @@ export function TaskDetail({
         {renderAssignee ? renderAssignee() : <p className="text-sm">{worker ? worker.name : dash.noAssignee}</p>}
         {workerNotes.length > 0 && <p className="text-xs text-zinc-500">{workerNotes.join(' · ')}</p>}
       </Section>
+
+      {/* Its own section rather than a second line under the assignee: the two
+          are different facts — one person is accountable, the others are on the
+          job — and collapsing them is what makes a manager think of the helper
+          as a co-owner. Chips because a crew is a set, not a sentence. */}
+      {(renderCollaborators || helpers.length > 0) && (
+        <Section title={t.collaborators}>
+          {helpers.length > 0 ? (
+            <Chips items={helpers.map(c => c.name).filter(Boolean)} />
+          ) : (
+            <p className="text-sm text-zinc-500">{t.collaboratorsNone}</p>
+          )}
+          {renderCollaborators && <div className="pt-1">{renderCollaborators()}</div>}
+        </Section>
+      )}
 
       {dates.length > 0 && (
         <Section title={t.dates}>
