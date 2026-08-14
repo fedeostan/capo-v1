@@ -1,5 +1,5 @@
 import type { Db } from '@capo/db/client';
-import type { WhatsAppRecipient } from '@capo/core/channels/whatsapp';
+import type { CheckinAnswer, WhatsAppRecipient } from '@capo/core/channels/whatsapp';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
 import { hasWhatsAppConsent, recipientFor } from '../../lib/whatsapp';
@@ -404,12 +404,83 @@ export function renderManagerBriefing(
   return [name, counts.today === 0 ? t.managerNothing : t.managerSummary(counts)];
 }
 
+// ── the chat-thread notes (issue #47) ───────────────────────────────────────
+//
+// Not template parameters, so these may be longer and may contain newlines —
+// and unlike a WhatsApp push they are PERMANENT and MODEL-VISIBLE, which is the
+// whole point: the thread is where the manager can later ask "what did you send
+// the crew on Tuesday, and who got it?" and where Capo reads the answer.
+//
+// Everything these renderers put in a note is either our own copy, a count, a
+// two-valued enum, or a name the MANAGER wrote on /perfil. Never a word a crew
+// member typed. See apps/web/app/notifications/thread.ts for why that is a
+// structural boundary rather than a matter of taste.
+
 /**
- * The line written into the company's chat thread. Not a template parameter,
- * so it may be longer and may contain newlines — and unlike the WhatsApp push
- * it is permanent, which is the point: the thread is where the manager can
- * later ask "what did you send the crew on Tuesday?".
+ * How many people a thread note names before the rest becomes "+N".
+ *
+ * A crew of thirty would otherwise put thirty names in the manager's thread
+ * every morning AND in the model's context on every later turn, where the
+ * summarizer then merges it forward indefinitely. Eight is enough to answer
+ * "did Zé get it?" for a real crew; past that the count is the useful part.
  */
-export function renderManagerEvent(counts: ManagerCounts, notified: number, locale: Locale): string {
-  return getCatalog(locale).reminders.managerEvent({ ...counts, notified });
+const MAX_NAMED = 8;
+
+/** A capped, locale-joined list of crew names. Empty string for nobody. */
+function nameList(names: readonly string[], locale: Locale): string {
+  const t = getCatalog(locale).reminders;
+  if (names.length === 0) return '';
+  const shown = names.slice(0, MAX_NAMED);
+  // clamp() flattens whitespace as well as trimming: a name is manager-authored
+  // free text, so a pasted newline would otherwise break the one-line shape.
+  const parts = shown.map(name => clamp(name, 40));
+  if (names.length > shown.length) parts.push(t.andMore(names.length - shown.length));
+  return parts.join(t.nameSeparator);
+}
+
+/**
+ * The MORNING note: what today holds, and who was actually sent their briefing.
+ *
+ * `notified` and `names` describe the same people — the crew members a send
+ * genuinely went out to, not everyone who was considered. A worker skipped for
+ * want of consent, an address or an active crew row appears in neither, which
+ * is correct and is why the three exclusion counters are logged separately.
+ */
+export function renderManagerEvent(
+  counts: ManagerCounts,
+  notified: number,
+  names: readonly string[],
+  locale: Locale,
+): string {
+  return getCatalog(locale).reminders.managerEvent({ ...counts, notified, names: nameList(names, locale) });
+}
+
+/**
+ * The LATE-AFTERNOON note: who was asked whether they had finished.
+ *
+ * Written by the check-in cron, which before issue #47 wrote nothing at all —
+ * so the manager's phone showed a conversation Capo had never been told about.
+ */
+export function renderCheckinEvent(asked: number, names: readonly string[], locale: Locale): string {
+  return getCatalog(locale).reminders.checkinEvent({ asked, names: nameList(names, locale) });
+}
+
+/**
+ * ONE crew member's answer to that check-in.
+ *
+ * `answer` is the quick-reply button they tapped — one of exactly two payload
+ * strings our own cron minted hours earlier — and `tasks` is the size of the
+ * snapshot they were asked about. There is no third input, and deliberately so:
+ * a tap carries no text, and the moment this function grew a `note` parameter
+ * it would be writing crew prose into the manager's thread.
+ */
+export function renderCheckinAnswerEvent(
+  args: { name: string; answer: CheckinAnswer; tasks: number },
+  locale: Locale,
+): string {
+  return getCatalog(locale).reminders.checkinAnswer({
+    name: clamp(args.name, 40),
+    answer: args.answer,
+    tasks: args.tasks,
+  });
 }

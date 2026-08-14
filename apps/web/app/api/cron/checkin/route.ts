@@ -14,7 +14,12 @@ import {
   sendWindowEnd,
   withinSendWindow,
 } from '../../../../lib/cron';
-import { loadCompanyBriefing, renderWorkerBriefing } from '../../../notifications/briefing';
+import {
+  loadCompanyBriefing,
+  renderCheckinEvent,
+  renderWorkerBriefing,
+} from '../../../notifications/briefing';
+import { readThreadLocale, recordThreadEvent } from '../../../notifications/thread';
 
 // The late-afternoon Europe/Lisbon check-in: "did you finish today's tasks?",
 // asked as a template with two quick-reply buttons and answered by tapping one.
@@ -30,6 +35,15 @@ import { loadCompanyBriefing, renderWorkerBriefing } from '../../../notification
 // THIS ROUTE records an ANSWER and nothing else — it asks the question, and it
 // does not flip tasks.status; see the header of
 // supabase/migrations/0017_worker_checkins.sql.
+//
+// It also writes ONE line into the company's chat thread saying who it asked
+// (issue #47). Until then it wrote nothing there at all, so the crew's phones
+// held a question Capo had no record of ever asking — and a manager asking
+// "did you check on the crew today?" got an answer assembled from a board read
+// instead of from what had actually happened. That note goes through the shared
+// seam in apps/web/app/notifications/thread.ts, not through an inline
+// ensureConversation call: the 07:00 route having solved this privately is
+// precisely why this one shipped silent.
 //
 // The ANSWER is no longer inert, though (issue #54). A "Sim, terminei" tap
 // arrives at /api/whatsapp, which files a completion claim per task in the
@@ -143,6 +157,20 @@ export async function GET(request: NextRequest) {
       const briefing = await loadCompanyBriefing(db, company.id, company.language);
       const sends: unknown[] = [];
       let asked = 0;
+      // WHO was asked, and how many claims THIS invocation won (issue #47).
+      //
+      // `askedNames` is crew names — text the MANAGER typed on /perfil — for
+      // the thread note below. Nothing a worker wrote ever enters it.
+      //
+      // `claims` is the idempotency counter. Since the send window widened to
+      // two Lisbon hours (#51) two invocations pass the hour gate every day;
+      // notification_log's unique constraint makes the SENDS safe (the second
+      // run claims nothing and messages nobody), but a thread note is a message
+      // and no unique constraint protects it. Counting claims is what makes the
+      // note ride the same lock: the run that won the claims is the run that
+      // asked the question, and later runs stay quiet.
+      const askedNames: string[] = [];
+      let claims = 0;
 
       // The consent gate lives inside loadCompanyBriefing, so it applies to this
       // send without this route implementing anything. All that is left to do is
@@ -204,6 +232,7 @@ export async function GET(request: NextRequest) {
           task_ids: taskIds,
         });
         if (!claimed) continue;
+        claims += 1;
 
         try {
           const { providerMessageId } = await sendWhatsAppTemplate(
@@ -224,6 +253,7 @@ export async function GET(request: NextRequest) {
           );
           await resolveNotification(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
           asked += 1;
+          askedNames.push(worker.name);
         } catch (err) {
           // One unreachable worker must never abort the run. A 132001 is the
           // expected case until the template is approved; a 131026 means the
@@ -239,9 +269,47 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // No manager audience and no chat-thread note, both deliberately. The
-      // manager's surface for this is worker_checkins; a per-company thread
-      // message at that hour, before anyone has answered, would say nothing.
+      // ── the chat thread (issue #47) ──────────────────────────────────────
+      //
+      // This route used to write nothing here, and the comment that used to sit
+      // in this spot argued the case: the manager's surface for a check-in is
+      // worker_checkins, and a note before anyone has answered says nothing.
+      //
+      // That was wrong in one specific way, and it is the whole of issue #47.
+      // The crew's phones held a question Capo had never been told about, so a
+      // manager asking "did you check on the crew today?" got an answer built
+      // from a board read while the real conversation was elsewhere. What the
+      // manager sees and what Capo sees must not diverge — and the 07:00 route
+      // had already accepted that argument for itself, months earlier, inline.
+      //
+      // No manager AUDIENCE, though: nothing here is sent to a manager over
+      // WhatsApp. That part of the old comment stands.
+      //
+      // ── written once a day, by the run that did the asking ───────────────
+      // `claims > 0` and nothing else. It means this invocation won at least
+      // one notification_log claim, i.e. it is the invocation that actually
+      // sent the question; every later in-window run claims nothing (23505) and
+      // stays quiet.
+      //
+      // Deliberately NO `targets === 0` branch, unlike the 07:00 route. There,
+      // claiming nobody means a whole company is unreachable and the note is
+      // the only in-product trace of it. Here it means the crew had nothing
+      // scheduled — a weekend, a quiet Tuesday — which is the ordinary case,
+      // and "I asked nobody anything" written into the thread every evening
+      // would be noise in front of the manager AND in front of the model.
+      //
+      // A dry run renders it unconditionally and sends nothing, so an operator
+      // can read the note at any hour without waiting for a real claim.
+      if (dryRun || claims > 0) {
+        const eventLocale = await readThreadLocale(db, company.id, briefing.companyLocale);
+        const eventText = renderCheckinEvent(asked, askedNames, eventLocale);
+        if (dryRun) {
+          sends.push({ audience: 'thread', locale: eventLocale, text: eventText });
+        } else {
+          await recordThreadEvent(db, { companyId: company.id, source: 'checkin_ask', text: eventText });
+        }
+      }
+
       report.push({ company: company.name, asked, sends });
     } catch (err) {
       // One broken company must not cost every other company its check-in.

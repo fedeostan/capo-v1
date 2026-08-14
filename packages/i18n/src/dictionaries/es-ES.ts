@@ -593,17 +593,30 @@ const dict: Catalog = {
       return parts.join(' · ');
     },
     managerNothing: 'Nada previsto para hoy.',
-    managerEvent: ({ today, unassigned, overdue, notified }) => {
+    managerEvent: ({ today, unassigned, overdue, notified, names }) => {
       const parts = [`Buenos días. Hoy hay ${today} ${today === 1 ? 'tarea' : 'tareas'} en curso`];
       if (overdue > 0) parts.push(`${overdue} ${overdue === 1 ? 'retrasada' : 'retrasadas'}`);
       if (unassigned > 0) parts.push(`${unassigned} sin responsable`);
       const head = parts.join(' · ');
+      const who = names ? `: ${names}` : '';
       const tail =
         notified === 0
           ? 'No he enviado nada al equipo.'
-          : `He enviado el resumen a ${notified} ${notified === 1 ? 'persona' : 'personas'}.`;
+          : `He enviado el resumen del día a ${notified} ${notified === 1 ? 'persona' : 'personas'}${who}.`;
       return `${head}. ${tail}`;
     },
+    checkinEvent: ({ asked, names }) => {
+      if (asked === 0) return 'Al final de la tarde no he podido preguntarle a nadie si ha acabado el trabajo de hoy.';
+      const who = names ? `: ${names}` : '';
+      return `Al final de la tarde le he preguntado a ${asked} ${asked === 1 ? 'persona' : 'personas'} si han acabado el trabajo de hoy${who}. Las respuestas van apareciendo aquí.`;
+    },
+    checkinAnswer: ({ name, answer, tasks }) => {
+      const count = tasks > 0 ? ` (${tasks} ${tasks === 1 ? 'tarea' : 'tareas'})` : '';
+      return answer === 'done'
+        ? `${name} ha respondido al check-in: dice que ha acabado el trabajo de hoy${count}. Queda a la espera de que lo confirmes — hasta entonces sigue abierto.`
+        : `${name} ha respondido al check-in: todavía no ha acabado el trabajo de hoy${count}.`;
+    },
+    nameSeparator: ', ',
     freeFormGreeting: name => `Buenos días, ${name}.`,
     freeFormHeader: count => `Hoy tienes ${count} ${count === 1 ? 'tarea' : 'tareas'}:`,
     freeFormDescription: text => text,

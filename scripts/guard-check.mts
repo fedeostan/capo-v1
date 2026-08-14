@@ -24,6 +24,15 @@
 //   4. That the decision is genuinely a function of the posture ALONE under
 //      always_ask. Nothing the model emits — a real quote, a fabricated one, no
 //      quote at all — may reach the direct-write branch.
+//   5. WHAT MAY BECOME EVIDENCE IN THE FIRST PLACE (issue #47). The guard
+//      matches quotes against `thread.recentUserTexts`, which toThread() builds
+//      from `messages` rows whose role is 'user'. Since #47 the system writes
+//      `role='event'` rows into that same table several times a day — the
+//      morning briefing note, the check-in note, one note per crew member who
+//      answers it. If any of them ever counted as evidence, a line Capo wrote
+//      itself would authorize a direct write the moment the model quoted it
+//      back, with no error and no card. That filter is one clause in one
+//      function, so it is asserted here.
 //
 // The last block runs the REAL runGuarded end to end against a fake `Db`, so
 // this file also pins the wiring: that runGuarded consults ctx.confirmPosture at
@@ -37,6 +46,10 @@ import { CONFIRM_POSTURES, coerceConfirmPosture, DEFAULT_CONFIRM_POSTURE } from 
 import { decideGuard, matchesManagerInstruction, runGuarded } from '@capo/core/capabilities/guard';
 import { getProposableTool } from '@capo/core/capabilities/propose';
 import type { CapoTool, ToolContext } from '@capo/core/capabilities/types';
+// The evidence pool is BUILT here, not in the guard. Since #47 the system
+// writes into `messages` several times a day, so what toThread lets into
+// recentUserTexts is now as load-bearing as what the guard does with it.
+import { toThread, type ThreadWindow } from '@capo/core/conversation';
 
 let failures = 0;
 const lines: string[] = [];
@@ -91,6 +104,74 @@ check(
   'the newest message is searched too, not only the first',
   matchesManagerInstruction('cancela a obra', ['bom dia', 'cancela a obra Teste QA']),
 );
+
+// ── WHAT MAY BECOME EVIDENCE AT ALL (issue #47) ─────────────────────────────
+//
+// Everything above asks whether a quote MATCHES the evidence pool. This asks
+// what is allowed INTO that pool, which is the half a prompt cannot protect.
+//
+// The pool is `thread.recentUserTexts`, built by toThread() from the last three
+// `messages` rows whose role is 'user'. Since #47 the system itself writes into
+// `messages` far more often than it used to — the 07:00 briefing note, the
+// late-afternoon check-in note, and one note per crew member answering that
+// check-in. All of them are `role='event'`.
+//
+// If an event row ever counted as evidence, a system-authored line — or worse,
+// anything a crew member could influence the wording of — would authorize a
+// DIRECT manager-level write the moment the model quoted it back. Nothing would
+// error; the card would simply stop appearing. The filter is one clause in
+// toThread and it is the entire structural protection, so it is pinned here
+// rather than left to review.
+{
+  const row = (id: string, role: string, text: string) =>
+    ({
+      id,
+      role,
+      channel: 'system',
+      content: { parts: [{ type: 'text', text }] },
+      content_format: 'ui-message@7',
+      conversation_id: 'c',
+      created_at: '2026-08-14T06:00:00Z',
+    }) as unknown as ThreadWindow['rows'][number];
+
+  const EVENT = 'Bom dia. Hoje há 3 tarefas em curso. Enviei o resumo do dia a 2 pessoas: Zé, Ana.';
+  const ANSWER = 'Zé respondeu ao check-in: diz que acabou o trabalho de hoje (2 tarefas).';
+
+  const thread = toThread({
+    summary: null,
+    rows: [
+      row('1', 'event', EVENT),
+      row('2', 'user', 'bom dia'),
+      row('3', 'assistant', 'bom dia, chefe'),
+      row('4', 'event', ANSWER),
+    ],
+  });
+
+  eq('only the real manager row is evidence', thread.recentUserTexts.length, 1);
+  eq('and it is the one the manager actually typed', thread.recentUserTexts[0], 'bom dia');
+  check(
+    "the morning briefing note is NOT evidence, though the model does see it",
+    !thread.recentUserTexts.includes(EVENT),
+  );
+  check(
+    "a crew member's check-in answer is NOT evidence either",
+    !thread.recentUserTexts.includes(ANSWER),
+  );
+  check(
+    'neither of them could authorize a direct write by being quoted back',
+    !matchesManagerInstruction('Enviei o resumo do dia', thread.recentUserTexts) &&
+      !matchesManagerInstruction('acabou o trabalho de hoje', thread.recentUserTexts),
+  );
+
+  // The other half: an event row is still shown to the model, tagged, so this
+  // check cannot be "fixed" by dropping events from the thread entirely — that
+  // would put issue #47 straight back.
+  eq('all four rows still reach the model', thread.uiMessages.length, 4);
+  check(
+    'and an event reaches it tagged as a system event, not as the manager',
+    JSON.stringify(thread.uiMessages[0]?.parts ?? []).includes('<system-event>'),
+  );
+}
 
 // ── decideGuard: the posture branch (issue #57) ─────────────────────────────
 // The whole matrix. `posture × (matching quote | wrong quote | too short | none)`.

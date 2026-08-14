@@ -592,17 +592,30 @@ const dict: Catalog = {
       return parts.join(' · ');
     },
     managerNothing: 'Nothing scheduled for today.',
-    managerEvent: ({ today, unassigned, overdue, notified }) => {
+    managerEvent: ({ today, unassigned, overdue, notified, names }) => {
       const parts = [`Morning. ${today} ${today === 1 ? 'task' : 'tasks'} in progress today`];
       if (overdue > 0) parts.push(`${overdue} overdue`);
       if (unassigned > 0) parts.push(`${unassigned} unassigned`);
       const head = parts.join(' · ');
+      const who = names ? `: ${names}` : '';
       const tail =
         notified === 0
           ? "I didn't message the crew."
-          : `I sent the rundown to ${notified} ${notified === 1 ? 'person' : 'people'}.`;
+          : `I sent today's rundown to ${notified} ${notified === 1 ? 'person' : 'people'}${who}.`;
       return `${head}. ${tail}`;
     },
+    checkinEvent: ({ asked, names }) => {
+      if (asked === 0) return "Late this afternoon I couldn't ask anybody whether they had finished today's work.";
+      const who = names ? `: ${names}` : '';
+      return `Late this afternoon I asked ${asked} ${asked === 1 ? 'person' : 'people'} whether they had finished today's work${who}. Their answers show up here as they come in.`;
+    },
+    checkinAnswer: ({ name, answer, tasks }) => {
+      const count = tasks > 0 ? ` (${tasks} ${tasks === 1 ? 'task' : 'tasks'})` : '';
+      return answer === 'done'
+        ? `${name} answered the check-in: says today's work is finished${count}. Waiting on you to confirm — it stays open on the board until you do.`
+        : `${name} answered the check-in: not finished yet${count}.`;
+    },
+    nameSeparator: ', ',
     freeFormGreeting: name => `Morning, ${name}.`,
     freeFormHeader: count => `You have ${count} ${count === 1 ? 'task' : 'tasks'} today:`,
     freeFormDescription: text => text,

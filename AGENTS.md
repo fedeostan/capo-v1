@@ -382,6 +382,53 @@ Structural invariants (do not regress):
   button** (`type: 'interactive'`, from a manager). They are handled on
   different paths and their payload codecs are deliberately non-overlapping;
   conflating them is the mistake to watch for.
+- **Anything the manager or their crew is sent by the SYSTEM is written into the
+  manager's chat thread, through ONE seam** (`recordThreadEvent` in
+  `apps/web/app/notifications/thread.ts`, issue #47). Before it, the 07:00
+  briefing route wrote a `role='event'` note inline and the late-afternoon
+  check-in route wrote nothing — a habit rather than a rule, so the crew could
+  be mid-conversation with Capo about a question Capo had no record of asking,
+  and the manager had no way to tell which of the two was right. Five things:
+  - **Three notes exist and that list is exhaustive**: the morning briefing
+    (what today holds + who was actually messaged, by name), the check-in ask
+    (who was asked), and one note per crew member ANSWERING that check-in.
+    Renderers live beside the briefing renderers in `notifications/briefing.ts`
+    because they need the user copy catalog, which must never enter the agent
+    bundle.
+  - **What may be in a note is a SAFETY boundary, not a style question.** Our
+    own copy, counts, crew names (typed by the MANAGER on `/perfil`) and which
+    of two quick-reply buttons was tapped — an enum our own cron minted. Never
+    worker-authored prose: not quoted, not summarised. `messages` is the table
+    `loadWindow` → `toThread` → `thread.recentUserTexts` reads, and that is the
+    evidence pool `runGuarded` matches a model quote against before executing a
+    manager-level write directly. The `checkinAnswer` renderer takes exactly
+    three inputs and the moment it grows a `note` parameter that boundary is
+    gone. `scripts/rls-isolation-matrix.mjs` now seeds its worker tracer in
+    `task_reviews.note` as well as in `worker_messages`, precisely because that
+    column is where such a change would draw the text from.
+  - **An event row is shown to the model but is NOT evidence.**
+    `recentUserTexts` filters on `role === 'user'`; an event row is
+    `role === 'event'` and reaches the model tagged `<system-event>`. That one
+    clause is the whole protection and `pnpm guard-check` now asserts it in both
+    directions — events excluded from evidence, and still present for the model.
+  - **Idempotency is the CALLER's job, because `messages` has no lock.** Two
+    invocations pass the send window every day (#51); `notification_log`'s
+    unique constraint makes the sends safe but a thread note is a message. Both
+    crons therefore gate the write on having WON at least one claim in that run.
+    The check-in route gates on `claims > 0` **only** — deliberately no
+    `targets === 0` branch, unlike the briefing: there it means a whole company
+    is unreachable and is worth saying, here it means the crew had nothing on,
+    which is most evenings. The webhook's answer note rides the existing
+    `redelivery` gate, so a Meta retry cannot double-write it.
+  - **Recording must never break a send.** `recordThreadEvent` swallows into one
+    `thread.event_failed` line — same posture as `loadCompanySnapshot`. The cost
+    is that a revoked grant presents as a thread that quietly stops filling up;
+    grep that event before concluding a quiet thread means a quiet day.
+  Known and NOT done: approval-card renderings and Web Push deliveries still
+  have no note of their own. Cards are partly covered already (the assistant
+  turn is persisted, and `finalize_proposal` writes the resolution event in the
+  same transaction as the status flip), and a push is a delivery of a
+  `notifications` row rather than a separate message.
 - **Sender identity is the PHONE, with the BSUID as a fallback — in that order,
   and the order is the safety property.** WhatsApp usernames mean Meta omits
   `from` entirely for anyone who has adopted one and sends only `from_user_id`,

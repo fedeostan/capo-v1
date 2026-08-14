@@ -43,6 +43,16 @@
 // tracer string, with a positive control so an empty sweep cannot pass for the
 // wrong reason.
 //
+// That sweep got MORE load-bearing with #47, which gave the system three new
+// reasons to write into `messages` — a note when the 07:00 briefing goes out, a
+// note when the late-afternoon check-in goes out, and one note per crew member
+// who taps an answer to it. Those notes may carry counts, crew NAMES (typed by
+// the manager) and which of two buttons was tapped; they may never carry
+// worker-authored prose. So the tracer is now seeded in TWO places: the worker
+// agent's own thread, and `task_reviews.note` — the one column where a crew
+// member's words legitimately reach the manager, and therefore the one a
+// well-meaning "let's also quote what they said" change would draw from.
+//
 // 0023 is the first surface here that is not only Postgres. task_photos is an
 // ordinary RLS table and rides in the visibility matrix like any other, but
 // the PHOTOS THEMSELVES live in Storage, behind policies on storage.objects
@@ -325,7 +335,15 @@ async function seedTenant(label) {
     admin.rpc('open_task_review', {
       p_task: task1.id,
       p_worker: worker.id,
-      p_note: `seed note ${label} ${run}`,
+      // The tracer rides in the NOTE on purpose (issue #47). task_reviews.note
+      // is the ONE place worker-authored prose legitimately reaches the
+      // manager, and since #47 the system writes several `role='event'` rows
+      // into `messages` a day describing exactly the events that produce these
+      // reviews — the check-in ask, and each crew member's answer to it. The
+      // day one of those notes starts quoting what the worker wrote, this
+      // tracer appears in `messages` and checkWorkerTextIsolation fails.
+      // Without it that sweep would only cover the worker AGENT's thread.
+      p_note: `seed note ${label} ${run} ${workerSecret}`,
     }),
     `task_review(${label})`,
   );
@@ -1478,6 +1496,16 @@ async function checkWorkerTextIsolation(tenant) {
   const secret = tenant.workerSecret;
 
   // POSITIVE CONTROL FIRST: the tracer really is in worker_messages.
+  //
+  // Since #47 there is a SECOND source of worker-authored text carrying the
+  // same tracer — task_reviews.note, seeded above. That matters because #47
+  // gave the system three new reasons to write into `messages`: the 07:00
+  // briefing note, the late-afternoon check-in note, and one note per crew
+  // member who taps an answer to it. Those notes are allowed to carry counts,
+  // crew NAMES (which the manager typed) and which of two buttons was tapped.
+  // They are not allowed to carry a syllable the worker wrote — because
+  // `messages` is what thread.recentUserTexts reads, and that is the evidence
+  // pool the write guard authorizes a direct manager-level write against.
   {
     const { data } = await admin
       .from('worker_messages')
@@ -1492,6 +1520,23 @@ async function checkWorkerTextIsolation(tenant) {
       `${L}: worker text IS in worker_messages (positive control)`,
       (data ?? []).length === 1 && JSON.stringify(row?.content ?? {}).includes(secret),
       `${(data ?? []).length} rows`,
+    );
+  }
+
+  // Second positive control (issue #47): the tracer really is in the review
+  // note too. Without this, a change that stopped passing p_note through would
+  // make every "worker text never reaches X" check below pass for the wrong
+  // reason — there would simply be no worker text on that path to find.
+  {
+    const { data } = await admin
+      .from('task_reviews')
+      .select('note')
+      .eq('id', tenant.reviewId)
+      .maybeSingle();
+    check(
+      `${L}: the review note IS worker-authored text (positive control)`,
+      (data?.note ?? '').includes(secret),
+      JSON.stringify(data?.note ?? null),
     );
   }
 

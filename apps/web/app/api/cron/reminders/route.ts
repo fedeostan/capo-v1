@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getDb } from '@capo/db/client';
-import { appendEventMessage, ensureConversation } from '@capo/core/conversation';
 import {
   isOutsideWindowError,
   sendWhatsAppTemplate,
@@ -38,6 +37,7 @@ import {
   renderWorkerBriefing,
   renderWorkerFreeForm,
 } from '../../../notifications/briefing';
+import { recordThreadEvent, threadLocale } from '../../../notifications/thread';
 
 // The daily 07:00 Europe/Lisbon briefing.
 //
@@ -213,6 +213,14 @@ export async function GET(request: NextRequest) {
       const briefing = await loadCompanyBriefing(db, company.id, company.language);
       const sends: unknown[] = [];
       let notified = 0;
+      // WHO was messaged, not just how many (issue #47). The manager's question
+      // is "what did you send my crew this morning, and who got it" — a bare
+      // count cannot answer the second half, and the exclusion counters below
+      // explain absences only in the log drain, which the manager never reads.
+      //
+      // Crew names, i.e. text the MANAGER typed on /perfil. Nothing a worker
+      // wrote ever enters this list; see notifications/thread.ts.
+      const notifiedNames: string[] = [];
 
       // Two counters that exist only to keep the chat-thread note below written
       // exactly once a day now that more than one invocation can pass the gate.
@@ -324,6 +332,7 @@ export async function GET(request: NextRequest) {
             fellBack: delivery.fellBack,
           });
           notified += 1;
+          notifiedNames.push(worker.name);
         } catch (err) {
           // One unreachable worker must never abort the run. A 132001 means the
           // template is not approved for that locale; a 131026 means the number
@@ -346,10 +355,18 @@ export async function GET(request: NextRequest) {
       //
       // select('*') for the same deploy-ordering reason as the workers read in
       // loadCompanyBriefing: 0025 adds the two consent columns.
+      //
+      // Ordered by created_at (issue #47) so "the first manager" — whose
+      // language the thread note below is written in — is a stable person
+      // rather than whatever Postgres happened to return first. A thread whose
+      // notes changed language between two mornings reads as a bug in Capo.
+      // The send loop itself is order-independent: each manager is claimed on
+      // their own notification_log row.
       const { data: managers, error: managersError } = await db
         .from('profiles')
         .select('*')
-        .eq('company_id', company.id);
+        .eq('company_id', company.id)
+        .order('created_at');
       if (managersError) throw new Error(`profiles read failed: ${managersError.message}`);
 
       for (const manager of managers ?? []) {
@@ -449,8 +466,17 @@ export async function GET(request: NextRequest) {
       // Written regardless of whether WhatsApp delivered: the thread is the
       // permanent record, and a manager who later asks "what did you send the
       // crew?" should get an answer even on a day Meta rejected every send.
-      // appendEventMessage writes role='event', which the chat page renders as
+      // recordThreadEvent writes role='event', which the chat page renders as
       // a system note and toThread() presents to the model as <system-event>.
+      //
+      // Since #47 this goes through the shared seam in notifications/thread.ts
+      // rather than calling ensureConversation/appendEventMessage inline. Two
+      // things came with that: the rule now has ONE place to be stated (this
+      // route having solved it privately is exactly why the check-in route
+      // shipped writing nothing), and a failure to record can no longer fail
+      // the whole company — recordThreadEvent swallows into
+      // `thread.event_failed`, because a lost note is a visibility problem and
+      // an aborted run is a crew standing around.
       //
       // ⚠ This is the ONE side effect of this route that notification_log's
       // unique constraint does not protect — it is a message, not a send — and
@@ -474,13 +500,12 @@ export async function GET(request: NextRequest) {
       //                 a whole company is silently unreachable. Restricted to
       //                 the target hour so it is written once rather than once
       //                 per in-window invocation.
-      const eventLocale = firstManagerLocale(managers, briefing.companyLocale);
-      const eventText = renderManagerEvent(briefing.counts, notified, eventLocale);
+      const eventLocale = threadLocale(managers, briefing.companyLocale);
+      const eventText = renderManagerEvent(briefing.counts, notified, notifiedNames, eventLocale);
       const firstRunOfTheDay = claims > 0 || (targets === 0 && hour === SEND_HOUR);
       if (!dryRun) {
         if (firstRunOfTheDay) {
-          const conversationId = await ensureConversation(db, company.id);
-          await appendEventMessage(db, conversationId, eventText);
+          await recordThreadEvent(db, { companyId: company.id, source: 'briefing', text: eventText });
         }
       } else {
         sends.push({ audience: 'thread', locale: eventLocale, text: eventText });
@@ -496,15 +521,4 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.json({ dryRun, date: today, lisbonHour: hour, companies: report });
-}
-
-// The thread is shared, so its note can only be in one language. The first
-// manager's is a better guess than the company's stored-content language,
-// which is about task titles rather than about who is reading.
-function firstManagerLocale(
-  managers: { language: string | null }[] | null,
-  fallback: Locale,
-): Locale {
-  const first = managers?.[0]?.language;
-  return first ? coerceLocale(first) : fallback;
 }
