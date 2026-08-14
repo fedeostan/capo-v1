@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import { LOCALES, type Locale } from '@capo/i18n/locale';
+import { CONFIRM_POSTURES, type ConfirmPosture } from '@capo/db/posture';
 import { EmptyState, ScreenShell } from '@capo/ui/dashboard-ui';
 import { loadTeam, loadTeamLoad } from '@/app/dashboard-data';
 import { getBillingState } from '@/lib/billing';
@@ -14,6 +15,7 @@ import {
   revertTranslation,
   saveLanguage,
   setCompanyLanguage,
+  setConfirmPosture,
   setUserLanguage,
   setWhatsAppConsent,
 } from './actions';
@@ -109,6 +111,44 @@ function WhatsAppConsentPills({ consenting, t }: { consenting: boolean; t: Catal
             />
             <span className="block cursor-pointer rounded-lg border border-zinc-500/30 py-2 text-center text-sm peer-checked:border-orange-600 peer-checked:bg-orange-600/10 peer-checked:font-semibold">
               {option ? t.settings.whatsappConsentOption.yes : t.settings.whatsappConsentOption.no}
+            </span>
+          </label>
+        ))}
+      </div>
+      <SubmitButton label={t.common.save} />
+    </form>
+  );
+}
+
+// The confirmation posture (0031, issue #57): does an instruction to Capo that
+// CHANGES something act immediately, or show an approval card first?
+//
+// Two options with a line of explanation UNDER each, rather than the bare pills
+// used for language and theme. Those three are all reversible in one tap and
+// their names say what they do; this one is a genuine safety/speed trade-off,
+// and a manager cannot pick between "Always ask" and "Go ahead" from the labels
+// alone. The hint under each option is the control, not decoration.
+function ConfirmPosturePills({ current, t }: { current: ConfirmPosture; t: Catalog }) {
+  return (
+    <form action={setConfirmPosture} className="space-y-2">
+      <div className="space-y-2">
+        {/* Indexing the two catalog records with a ConfirmPosture is the same
+            tripwire themeOption uses: widen the union in @capo/db/posture
+            without widening the copy and tsc fails right here. */}
+        {CONFIRM_POSTURES.map(option => (
+          <label key={option} className="block">
+            <input
+              type="radio"
+              name="confirmacao"
+              value={option}
+              defaultChecked={option === current}
+              className="peer sr-only"
+            />
+            <span className="block cursor-pointer rounded-lg border border-zinc-500/30 p-3 peer-checked:border-orange-600 peer-checked:bg-orange-600/10">
+              <span className="block text-sm font-semibold">{t.settings.confirmPostureOption[option]}</span>
+              <span className="mt-0.5 block text-xs text-zinc-500">
+                {t.settings.confirmPostureOptionHint[option]}
+              </span>
             </span>
           </label>
         ))}
@@ -214,6 +254,18 @@ export default async function PerfilPage({
             can render nothing at all when push is unconfigured or unsupported,
             rather than leaving an empty bordered box on the screen. */}
         {pushKey && <PushCard locale={locale} vapidPublicKey={pushKey} />}
+
+        {/* Directly above appearance, and deliberately not buried in the
+            "advanced" disclosure the two language dials use: this is the one
+            setting on the page that changes what Capo is allowed to do to the
+            board without asking, so a manager has to be able to find it without
+            knowing it exists. It reads off ctx, which is the same value the
+            chat route and the WhatsApp webhook hand the guard — one source, so
+            the screen cannot promise a posture the agent is not using. */}
+        <Card title={t.settings.confirmPosture}>
+          <p className="text-xs text-zinc-500">{t.settings.confirmPostureHint}</p>
+          <ConfirmPosturePills current={ctx.confirmPosture} t={t} />
+        </Card>
 
         {/* Above the language dials on purpose: appearance is personal and
             reversible, while the company language card carries a warning. */}

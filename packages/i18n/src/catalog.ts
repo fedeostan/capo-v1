@@ -511,6 +511,25 @@ export interface Catalog {
     // an app. Same pattern as billing.statusLabel below.
     themeOption: Record<'light' | 'dark' | 'system', string>;
 
+    /**
+     * The confirmation posture card (profiles.confirm_posture, 0031, #57).
+     *
+     * The hint must state the TRADE-OFF, not just the setting: always-ask is
+     * safer and costs a tap on every change, the other acts immediately when
+     * Capo can quote the manager's own words back. A control whose two options
+     * both sound good is a control nobody can choose between.
+     *
+     * Keys must match ConfirmPosture in @capo/db/posture — duplicated as string
+     * literals rather than imported, because @capo/i18n is a zero-dependency
+     * leaf and must never reach up into another package. Same pattern (and same
+     * tripwire) as themeOption above: the call site indexes these with a
+     * ConfirmPosture, so widening one union without the other fails tsc.
+     */
+    confirmPosture: string;
+    confirmPostureHint: string;
+    confirmPostureOption: Record<'always_ask' | 'trust_quote', string>;
+    confirmPostureOptionHint: Record<'always_ask' | 'trust_quote', string>;
+
     translationRunning(p: { done: number; total: number }): string;
     translationDone(n: number): string;
     translationFailed: string;

@@ -8,6 +8,7 @@ import {
 } from 'ai';
 import { toAiTools } from '../capabilities';
 import type { Db } from '@capo/db/client';
+import type { ConfirmPosture } from '@capo/db/posture';
 import type { LocaleContext } from '@capo/i18n/locale';
 import type { ToolContext } from '../capabilities/types';
 import type { InboundMessage, OutboundSink } from '../channels/types';
@@ -43,12 +44,17 @@ export interface HandleInboundOptions {
   userId: string;
   // Both dials, resolved by the caller — core never guesses a language.
   locales: LocaleContext;
+  // profiles.confirm_posture for THAT person (0031, issue #57). Required for
+  // the same reason userId is: every caller has already read the profile row
+  // this comes from, and a defaulted optional would let a new channel ship with
+  // the riskier posture by omission. See ToolContext.confirmPosture.
+  confirmPosture: ConfirmPosture;
   inbound: InboundMessage;
   sink: OutboundSink;
 }
 
 export async function handleInbound(opts: HandleInboundOptions): Promise<void> {
-  const { db, companyId, userId, locales, inbound, sink } = opts;
+  const { db, companyId, userId, locales, confirmPosture, inbound, sink } = opts;
   const conversationId = await ensureConversation(db, companyId);
 
   await persistUserMessage(db, conversationId, inbound.text, inbound.channel);
@@ -61,6 +67,7 @@ export async function handleInbound(opts: HandleInboundOptions): Promise<void> {
     actor: 'manager',
     recentUserTexts: thread.recentUserTexts,
     userId,
+    confirmPosture,
     locales,
   };
 

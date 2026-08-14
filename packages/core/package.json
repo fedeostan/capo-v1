@@ -11,6 +11,8 @@
     "./embeddings": "./src/agent/embeddings.ts",
     "./knowledge": "./src/knowledge/search.ts",
     "./conversation": "./src/agent/memory/conversation.ts",
+    "./capabilities/guard": "./src/capabilities/guard.ts",
+    "./capabilities/types": "./src/capabilities/types.ts",
     "./capabilities/propose": "./src/capabilities/propose.ts",
     "./capabilities/plan": "./src/capabilities/plan.ts",
     "./capabilities/workdays": "./src/capabilities/workdays.ts",

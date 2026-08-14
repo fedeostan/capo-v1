@@ -5,6 +5,7 @@ import { handleInbound } from '@capo/core/agent';
 import { handleWorkerInbound } from '@capo/core/agent/worker';
 import type { PendingPhoto } from '@capo/core/capabilities/worker';
 import { MAX_AUDIO_BYTES, transcribeAudio } from '@capo/core/transcription';
+import { coerceConfirmPosture } from '@capo/db/posture';
 import { coerceLocale, type Locale, type LocaleContext } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
 import {
@@ -438,10 +439,19 @@ async function stampLastInbound(db: Db, target: BsuidTarget): Promise<void> {
 // risk logic in this change, and there it can be pinned by
 // scripts/whatsapp-check.mts with no credentials and no network.
 
-// The same list on both tables, and deliberately two constants rather than one:
-// they answer different questions (who is the manager / who is the crew member)
-// and are free to diverge without either lookup silently acquiring a column.
-const MANAGER_COLUMNS = 'id, company_id, language, company:companies(language)';
+// Deliberately two constants rather than one: they answer different questions
+// (who is the manager / who is the crew member) and are free to diverge without
+// either lookup silently acquiring a column.
+//
+// MANAGER_COLUMNS became a `*` in 0031, and the reason is the rule stated at
+// length in this file's header: a manager lookup must never name a column a
+// pending migration adds. `confirm_posture` written out here would 42703 for
+// the minutes between a deploy and its migration, and on THIS query a 42703
+// means every manager in the product becomes an unknown sender — silence, no
+// error to them, no reply. With `*` the field is simply absent until the column
+// exists and coerceConfirmPosture reads that as the safe posture. The embed
+// still has to be spelled out; PostgREST does not follow relations under `*`.
+const MANAGER_COLUMNS = '*, company:companies(language)';
 const WORKER_COLUMNS = 'id, company_id, language, company:companies(language)';
 
 /** One resolved crew row, as both worker lookups return it. */
@@ -1261,6 +1271,10 @@ export async function POST(request: NextRequest) {
       user: coerceLocale(profile.language),
       company: coerceLocale(profile.company?.language),
     };
+    // Same story as the two locales: no auth.uid() on this path, so the
+    // confirmation posture comes off the profile row matched by phone/BSUID —
+    // not from a session, and not from a second query.
+    const confirmPosture = coerceConfirmPosture(profile.confirm_posture);
 
     const t = getCatalog(locales.user);
     // Replies go back on whichever identifier the manager wrote with, in the
@@ -1462,6 +1476,7 @@ export async function POST(request: NextRequest) {
           companyId,
           userId,
           locales,
+          confirmPosture,
           inbound: { channel: 'whatsapp', text, transcribed },
           sink,
         });

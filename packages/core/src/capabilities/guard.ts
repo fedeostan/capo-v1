@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ConfirmPosture } from '@capo/db/posture';
 import { createProposal } from './propose';
 import type { CapoTool, ToolContext, GuardedResult } from './types';
 
@@ -36,6 +37,47 @@ export function matchesManagerInstruction(instruction: string, recentUserTexts: 
   return recentUserTexts.some(t => normalize(t).includes(needle));
 }
 
+/** Why a guarded call was downgraded. Machine-facing: fed back to the model so
+ *  it says the right thing about the card, never shown to a manager. */
+export type GuardDecision =
+  | { act: 'execute' }
+  | { act: 'propose'; reason: string };
+
+const NO_MATCH_REASON =
+  'No verbatim manager authorization matched their recent messages — downgraded to a proposal awaiting approval.';
+
+const ALWAYS_ASK_REASON =
+  'This manager has confirmation set to always-ask, so every change is shown as an approval card before it happens — even one they just asked for in so many words. An approval card is waiting for them. This is their own setting, not a problem with the request: point them at the card, do not apologise for it, and do not retry the write.';
+
+/**
+ * The whole decision, as a pure function of the posture, the model's quote and
+ * the evidence pool. No I/O, no clock, no database — deliberately, so it can be
+ * asserted exhaustively by `pnpm guard-check` and so a guarded write can never
+ * hang or fail on a lookup.
+ *
+ * ── the posture branch (issue #57) ──
+ * `always_ask` does NOT tighten `matchesManagerInstruction`; it makes the match
+ * irrelevant. The quote is not consulted at all, which is the point: under this
+ * posture there is nothing the model can emit, correct or fabricated, that
+ * produces a direct write. `trust_quote` is the behaviour that shipped before
+ * 0031 and is preserved byte-for-byte below.
+ *
+ * The two postures share the property that matters: NEITHER can reject. The
+ * worst outcome on either branch is one approval card the manager did not
+ * strictly need.
+ */
+export function decideGuard(
+  posture: ConfirmPosture,
+  managerInstruction: string | undefined,
+  recentUserTexts: string[],
+): GuardDecision {
+  if (posture === 'always_ask') return { act: 'propose', reason: ALWAYS_ASK_REASON };
+  if (managerInstruction && matchesManagerInstruction(managerInstruction, recentUserTexts)) {
+    return { act: 'execute' };
+  }
+  return { act: 'propose', reason: NO_MATCH_REASON };
+}
+
 export async function runGuarded(
   capoTool: CapoTool,
   rawInput: Record<string, unknown>,
@@ -43,17 +85,16 @@ export async function runGuarded(
 ): Promise<GuardedResult> {
   const { manager_instruction, ...args } = rawInput as { manager_instruction?: string } & Record<string, unknown>;
 
-  if (manager_instruction && matchesManagerInstruction(manager_instruction, ctx.recentUserTexts)) {
+  // ctx.confirmPosture, never a lookup: the posture was resolved on the request
+  // path from the profile that had already been read (getAuthState on the web,
+  // resolveManager on WhatsApp). See ToolContext.confirmPosture.
+  const decision = decideGuard(ctx.confirmPosture, manager_instruction, ctx.recentUserTexts);
+
+  if (decision.act === 'execute') {
     const result = await capoTool.execute(capoTool.inputSchema.parse(args), { ...ctx, actor: 'manager' });
     return { status: 'executed', result };
   }
 
   const { proposalId, renderedText } = await createProposal(ctx, capoTool.name, args);
-  return {
-    status: 'proposed',
-    proposalId,
-    renderedText,
-    reason:
-      'No verbatim manager authorization matched their recent messages — downgraded to a proposal awaiting approval.',
-  };
+  return { status: 'proposed', proposalId, renderedText, reason: decision.reason };
 }

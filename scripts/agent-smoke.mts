@@ -182,6 +182,13 @@ async function sendTurn(tenant: Tenant, text: string): Promise<string> {
     companyId: tenant.companyId,
     userId: tenant.userId,
     locales: { user: tenant.locale, company: tenant.locale },
+    // 'trust_quote' on purpose, and it is the opposite of the product default.
+    // This harness asserts that an explicit command with a matching verbatim
+    // quote EXECUTES rather than raising a card; under always_ask (what a real
+    // manager gets since 0031) every one of those assertions would flip to
+    // "proposed" and the smoke test would stop covering the direct-write path
+    // at all. The card path is covered by the proposal assertions below.
+    confirmPosture: 'trust_quote',
     inbound: { channel: 'web', text },
     sink,
   });

@@ -6,6 +6,7 @@
   "exports": {
     "./client": "./src/client.ts",
     "./user-client": "./src/user-client.ts",
+    "./posture": "./src/posture.ts",
     "./proxy-session": "./src/proxy-session.ts",
     "./session": "./src/session.ts",
     "./types": "./src/types.ts"
