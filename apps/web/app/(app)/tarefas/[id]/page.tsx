@@ -16,6 +16,7 @@ import TaskActions from '@/app/(app)/_tasks/task-actions';
 import PullToRefresh from '@/app/pull-to-refresh';
 import { isUuid } from '../filters';
 import AssigneePicker from './assignee-picker';
+import CollaboratorsPicker from './collaborators-picker';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,6 +76,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
           task={detail.task}
           job={detail.job}
           worker={detail.worker}
+          collaborators={detail.collaborators}
           photos={photos}
           locale={locale}
           renderAssignee={() => (
@@ -86,6 +88,20 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
               // Formatted here, on the server: formatShortDate lives in
               // @capo/ui/dashboard-ui and pulling that module into a client
               // component would drag the whole board with it.
+              dateLabel={assignable.date ? formatShortDate(assignable.date, locale) : null}
+              locale={locale}
+            />
+          )}
+          // Issue #44. Shares the assignee picker's roster and its availability
+          // labels — the same question ("who is free that day?") must not get
+          // two different answers on one screen — and takes the lead so it can
+          // show them, locked, rather than mysteriously omitting them.
+          renderCollaborators={() => (
+            <CollaboratorsPicker
+              taskId={detail.task.id}
+              leadWorkerId={detail.task.assignee_worker_id}
+              currentIds={detail.collaborators.map(c => c.id)}
+              workers={assignable.workers}
               dateLabel={assignable.date ? formatShortDate(assignable.date, locale) : null}
               locale={locale}
             />
@@ -114,6 +130,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
                   note={review.note}
                   declaredByWorker={review.declaredByWorker}
                   declaredByName={review.declaredByName}
+                  photoCount={review.photoCount}
                   locale={locale}
                 />
               )}

@@ -37,6 +37,29 @@ async function workerName(db: Db, companyId: string, id: string, t: CardStrings)
   return data.name;
 }
 
+/**
+ * Several worker ids to their names, in the order given (issue #44).
+ *
+ * `undefined` in, `undefined` out — "the payload did not mention collaborators"
+ * has to stay distinguishable from "the payload says: nobody". An empty array
+ * in gives an empty array out, which every locale renders as its own sentence.
+ *
+ * Sequential rather than Promise.all deliberately: each lookup is also a
+ * REFERENTIAL CHECK that throws RenderError on a dangling or foreign id, and
+ * the first bad id is the one worth reporting. A crew is a handful of rows.
+ */
+async function workerNames(
+  db: Db,
+  companyId: string,
+  ids: string[] | undefined | null,
+  t: CardStrings,
+): Promise<string[] | undefined> {
+  if (!ids) return undefined;
+  const names: string[] = [];
+  for (const id of ids) names.push(await workerName(db, companyId, id, t));
+  return names;
+}
+
 async function taskRow(
   db: Db,
   companyId: string,
@@ -71,6 +94,7 @@ export async function renderProposal(
         workerName: args.assignee_worker_id
           ? await workerName(db, companyId, args.assignee_worker_id, t)
           : undefined,
+        collaboratorNames: await workerNames(db, companyId, args.collaborator_worker_ids, t),
         startDate: args.start_date ? fmt(args.start_date) : undefined,
         dueDate: args.due_date ? fmt(args.due_date) : undefined,
       });
@@ -84,6 +108,16 @@ export async function renderProposal(
       if (args.status) changes.push(t.taskChange.status(t.taskStatus[args.status as TaskStatus] ?? args.status));
       if (args.assignee_worker_id) {
         changes.push(t.taskChange.assignee(await workerName(db, companyId, args.assignee_worker_id, t)));
+      }
+      // `!= null`, not truthiness: an EMPTY array is the explicit "take
+      // everybody off this task" and has to produce its own line. Treating it
+      // as absent would let a card silently omit the only change it makes.
+      if (args.collaborator_worker_ids != null) {
+        changes.push(
+          t.taskChange.collaborators(
+            (await workerNames(db, companyId, args.collaborator_worker_ids, t)) ?? [],
+          ),
+        );
       }
       if (args.start_date) changes.push(t.taskChange.startDate(fmt(args.start_date)));
       if (args.due_date) changes.push(t.taskChange.dueDate(fmt(args.due_date)));

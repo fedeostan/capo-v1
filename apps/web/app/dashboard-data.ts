@@ -9,6 +9,7 @@
 import type { AuthContext } from '@capo/db/session';
 import type { Tables } from '@capo/db/types';
 import { TASK_PHOTO_BUCKET } from '@capo/core/media/photos';
+import { everyoneOnTask, readCollaborators, type Collaborator } from '@capo/core/capabilities/collaborators';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { BoardTask, DashboardObra, MaterialsGroup, MaterialsTask } from '@capo/ui/dashboard-ui';
 // Type-only: keeps the 'use client' markdown renderer inside task-detail.tsx
@@ -115,6 +116,15 @@ export interface TaskDetailData {
   task: BoardTask;
   job: TaskDetailJob | null;
   worker: TaskDetailWorker | null;
+  /**
+   * Everyone else on this task (issue #44) — the helpers, never the assignee.
+   *
+   * Read off the same `task_board` row as everything else on this screen, so
+   * the detail page and the 07:00 briefing cannot disagree about who is on a
+   * job. Empty on a deploy landing before 0035, which renders as "only the
+   * assignee" — the truth at that moment.
+   */
+  collaborators: Collaborator[];
 }
 
 // One task, read from task_board like every other screen — the detail must
@@ -160,7 +170,14 @@ export async function loadTaskDetail(
       : null,
   ]);
 
-  return { task, job: jobRes?.data ?? null, worker: workerRes?.data ?? null };
+  return {
+    task,
+    job: jobRes?.data ?? null,
+    worker: workerRes?.data ?? null,
+    // No third query: the view already carries the ids and names, aggregated in
+    // the same statement that produced this row.
+    collaborators: readCollaborators(row),
+  };
 }
 
 /** One active crew member as an assignment candidate, with how busy they are
@@ -243,9 +260,16 @@ export async function loadAssignableWorkers(
 
   // Same shape as loadBoardTasks' specific-date branch, minus the obra filter
   // and minus this task itself — a task does not make its own assignee busy.
+  //
+  // `select('*')` since #44, not the one column it used to name. The count now
+  // includes COLLABORATORS, whose two columns 0035 appends to the view — and an
+  // explicit list naming them would 42703 on a deploy that lands before the
+  // migration, which for this screen means the picker cannot open at all.
+  // With select('*') the pre-migration read simply counts leads, exactly as it
+  // does today.
   const { data: sameDay, error: boardError } = await db
     .from('task_board')
-    .select('assignee_worker_id')
+    .select('*')
     .eq('company_id', companyId)
     .eq('is_open', true)
     .eq('job_active', true)
@@ -254,10 +278,14 @@ export async function loadAssignableWorkers(
     .neq('id', task.id);
   if (boardError) throw new Error(`task_board read failed: ${boardError.message}`);
 
+  // Everyone on the task, not just its lead. Somebody spending the day helping
+  // on a wall is on that wall, and this picker's whole promise is that it never
+  // labels such a person "free" — see AssignableWorker.busyOn.
   const busy = new Map<string, number>();
   for (const row of sameDay ?? []) {
-    if (!row.assignee_worker_id) continue;
-    busy.set(row.assignee_worker_id, (busy.get(row.assignee_worker_id) ?? 0) + 1);
+    for (const workerId of everyoneOnTask(row)) {
+      busy.set(workerId, (busy.get(workerId) ?? 0) + 1);
+    }
   }
 
   const workers = roster
@@ -299,19 +327,25 @@ export type TeamLoad = Record<string, { today: number; tomorrow: number; open: n
 // `recebeSms` on the card, exposes the silent failure where an active worker
 // has no number and therefore receives nothing from the 07:00 dispatch.
 export async function loadTeamLoad({ db, companyId }: AuthContext): Promise<TeamLoad> {
+  // select('*') since #44, for the reason loadAssignableWorkers gives: the
+  // tallies now count collaborators, whose columns 0035 appends to the view.
   const { data } = await db
     .from('task_board')
-    .select('assignee_worker_id, active_today, active_tomorrow, overdue, is_open')
+    .select('*')
     .eq('company_id', companyId)
     .eq('is_open', true);
   const load: TeamLoad = {};
   for (const row of data ?? []) {
-    if (!row.assignee_worker_id) continue;
-    const entry = (load[row.assignee_worker_id] ??= { today: 0, tomorrow: 0, open: 0, overdue: 0 });
-    entry.open += 1;
-    if (row.active_today) entry.today += 1;
-    if (row.active_tomorrow) entry.tomorrow += 1;
-    if (row.overdue) entry.overdue += 1;
+    // Lead AND helpers. A crew card that showed "0 tarefas hoje" next to
+    // somebody who is spending the day on the Casa de Paco would be answering
+    // "quem está livre?" with the wrong name.
+    for (const workerId of everyoneOnTask(row)) {
+      const entry = (load[workerId] ??= { today: 0, tomorrow: 0, open: 0, overdue: 0 });
+      entry.open += 1;
+      if (row.active_today) entry.today += 1;
+      if (row.active_tomorrow) entry.tomorrow += 1;
+      if (row.overdue) entry.overdue += 1;
+    }
   }
   return load;
 }
@@ -522,14 +556,36 @@ export interface PendingReview {
    *  did but their name did not resolve. Branch on `declaredByWorker`, not on
    *  this, to tell those two apart. */
   declaredByName: string | null;
+  /**
+   * How many photos are attached to the task this claim is about (issue #52).
+   *
+   * ── WHY IT IS COUNTED HERE AND NOT STORED ON THE REVIEW ──────────────────
+   * A photo can arrive MINUTES AFTER the claim: the check-in tap files the
+   * claim, Capo then asks for a photo, and the worker sends it whenever they
+   * get to it. Anything denormalised onto `task_reviews` at insert time would
+   * say "no photo" forever, be wrong three minutes later, and be wrong
+   * invisibly. Counted at read time it is true whenever the screen is looked
+   * at, which is the only moment it is read.
+   *
+   * EVERY photo on the task, with no time filter and no source filter, and
+   * both of those are deliberate. A time filter would break the agent path,
+   * where photos are written BEFORE the review by design (proof with no claim
+   * is untidy; a claim with no proof is the state the requirement exists to
+   * prevent) and therefore carry an earlier `created_at` than the review they
+   * belong to. A source filter would hide the manager's own photos, which are
+   * evidence about the same work. The copy is correspondingly literal — "3
+   * photos attached", a statement about the task — rather than a claim about
+   * who took them or when.
+   */
+  photoCount: number;
 }
 
 /**
  * Pending reviews for a set of board rows, keyed by task id.
  *
- * Two reads rather than one PostgREST embed: the worker name comes through a
+ * Three reads rather than one PostgREST embed: the worker name comes through a
  * nullable FK whose embed alias depends on the constraint's generated name,
- * and a rename would break it silently at runtime. Two explicit queries cannot
+ * and a rename would break it silently at runtime. Explicit queries cannot
  * drift that way, and the second is skipped entirely when no review names a
  * worker (the manager-initiated case).
  *
@@ -564,6 +620,11 @@ export async function loadPendingReviews(
     for (const w of crew ?? []) names.set(w.id, w.name);
   }
 
+  const photos = await countTaskPhotos(
+    { db, companyId },
+    rows.map(r => r.task_id),
+  );
+
   // task_reviews_one_pending_idx guarantees at most one pending row per task,
   // so a plain Map keyed by task id cannot lose anything.
   return new Map(
@@ -576,9 +637,48 @@ export async function loadPendingReviews(
         declaredAt: r.declared_at,
         declaredByWorker: Boolean(r.declared_by_worker_id),
         declaredByName: r.declared_by_worker_id ? (names.get(r.declared_by_worker_id) ?? null) : null,
+        photoCount: photos.get(r.task_id) ?? 0,
       },
     ]),
   );
+}
+
+/**
+ * How many photos each of these tasks has, keyed by task id. Tasks with none
+ * are simply absent from the map.
+ *
+ * Ids only — no urls, no bytes, no signed anything. This answers "is there
+ * proof", which is a count; showing the photos themselves is
+ * `loadTaskPhotos()`'s job and lives behind a dynamic segment because a signed
+ * URL is a bearer token (see the note there).
+ *
+ * Shared by the board (loadPendingReviews) and the in-app inbox, so the two
+ * cannot disagree about the same claim — the same reason push and inbox share
+ * one headline catalog entry.
+ */
+export async function countTaskPhotos(
+  { db, companyId }: Pick<AuthContext, 'db' | 'companyId'>,
+  taskIds: string[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  const ids = [...new Set(taskIds)];
+  if (ids.length === 0) return counts;
+
+  const { data, error } = await db
+    .from('task_photos')
+    .select('task_id')
+    .eq('company_id', companyId)
+    .in('task_id', ids);
+  // Soft failure, unlike the reads above: "how much proof is attached" is a
+  // detail ON a review, and losing it must never take down the board the review
+  // is rendered on. An empty map reads as "no photos", which under-reports
+  // rather than inventing evidence — the safe direction to be wrong in.
+  if (error) return counts;
+
+  for (const row of data ?? []) {
+    counts.set(row.task_id, (counts.get(row.task_id) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /** One photo attached to a task, with a URL that works for the next few minutes. */

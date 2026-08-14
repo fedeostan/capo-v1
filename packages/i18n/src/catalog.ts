@@ -210,6 +210,29 @@ export interface Catalog {
       /** Opens a review from the task detail screen. */
       request: string;
       failed: string;
+      /** ── WHETHER THE CLAIM CAME WITH PROOF (issue #52) ──────────────────
+       *  Two doors lead into `pending_review` and they used to disagree about
+       *  evidence: the worker agent requires at least one photo at the schema
+       *  level, a check-in button tap required nothing. Now that a tap can be
+       *  followed by a photo, the manager needs to see which they are looking
+       *  at BEFORE they approve.
+       *
+       *  ⚠ THIS IS A FACT, NEVER AN ACCUSATION. "No photos attached" is a
+       *  true statement about a record. It must not read as "this worker did
+       *  not bother" — most claims have no photo for perfectly ordinary
+       *  reasons (the manager filed the check themselves, the crew member was
+       *  already off site, the task is one nobody photographs). Do not add a
+       *  warning colour, an exclamation mark, or the word "missing".
+       *
+       *  Counted from `task_photos` at READ time, so it is true whenever the
+       *  screen is looked at rather than whenever the claim was filed.
+       *
+       *  ONE pair of keys for three surfaces — the board row, the task detail
+       *  screen and the in-app inbox all read exactly these, the same way push
+       *  and inbox share one headline entry so they cannot say different
+       *  things about the same row. */
+      proofNone: string;
+      proofPhotos(n: number): string;
     };
     taskDetail: {
       /** Page title when the task cannot be named (metadata runs before the row loads). */
@@ -247,6 +270,27 @@ export interface Catalog {
       assignRemove: string;
       assignCancel: string;
       assignFailed: string;
+
+      // ── collaborators (issue #44) ──────────────────────────────────────────
+      // The assignee above is the LEAD and stays the accountable person. These
+      // name the OTHER people on the same single task — the whole point being
+      // that "Miguel e o João fazem a pintura" is one task with one materials
+      // list, not two tasks with two.
+      /** Section heading for the helpers on this task. */
+      collaborators: string;
+      /** Shown in the section when nobody is helping — an invitation, not a hole. */
+      collaboratorsNone: string;
+      /** Heading of the multi-select sheet. */
+      collaboratorsTitle: string;
+      /** Sub-line of that sheet. Must make clear this never changes the lead. */
+      collaboratorsHint: string;
+      /** Marks the LEAD inside the picker list — they are shown, never tappable:
+       *  hiding them would read as a bug, and letting them be picked would mean
+       *  somebody helping themselves. */
+      collaboratorsLead: string;
+      /** Confirm button on the sheet. Named for what it does to the set. */
+      collaboratorsSave: string;
+      collaboratorsFailed: string;
       dates: string;
       startDate: string;
       dueDate: string;
@@ -390,6 +434,17 @@ export interface Catalog {
      */
     noConsentWarning: string;
     receivesWhatsApp: string;
+    /**
+     * The cost of recording consent for the CREW (issue #45). Each person Capo
+     * is newly allowed to message gets one welcome, and each welcome is a paid
+     * WhatsApp template — so consenting a twenty-person crew is twenty paid
+     * messages, not one.
+     *
+     * On the team card rather than in chat because this is where the manager
+     * sees the whole crew at once, which is the only place the multiplication
+     * is visible.
+     */
+    welcomeCostHint: string;
     teamHint: string;
     teamHintLink: string;
     subscription: string;
@@ -523,6 +578,16 @@ export interface Catalog {
     whatsappConsentOn: string;
     /** Shown when it is not — the reason the daily messages are not arriving. */
     whatsappConsentOff: string;
+    /**
+     * What turning consent ON actually causes (issue #45): Capo introduces
+     * itself on WhatsApp, once, and that introduction is a PAID template send.
+     *
+     * Said out loud on the control that triggers it, because the manager is
+     * spending money on their own account and cannot see the bill from here.
+     * One message for their own number; the crew equivalent is
+     * `profile.welcomeCostHint`, where it is one message per person.
+     */
+    whatsappConsentCost: string;
     // Keys must match Theme in apps/web/lib/theme.ts — tsc catches drift at
     // the call site, where the index is typed as Theme. Duplicated rather than
     // imported: @capo/i18n is a zero-dependency leaf and must never reach into
@@ -856,6 +921,40 @@ export interface Catalog {
      * their manager has been told.
      */
     checkinDoneProblem: string;
+    /**
+     * ── THE PHOTO FOLLOW-UP (issue #52) ─────────────────────────────────────
+     * Sent right after `checkinDoneAwaiting`, naming ONE claimed task and
+     * asking for a photo of it. FREE-FORM text inside the 24-hour window the
+     * worker's own tap opened a second earlier — never a template, so never
+     * billable, and it must stay that way: a paid template to chase a photo
+     * would make proof cost money per attempt.
+     *
+     * ⚠ IT MUST BE AN INVITATION, NOT A REQUIREMENT. The claim has ALREADY
+     * been filed and stands whether or not a photo ever arrives (that is the
+     * whole difference from `declare_task_done`, where `.min(1)` makes proof a
+     * precondition). A sentence that reads as "send a photo or this does not
+     * count" would be a lie about what just happened. Say so out loud in the
+     * copy: no photo is fine.
+     *
+     * `task` is the task's own title, stored in companies.language and never
+     * retranslated — so this must read acceptably wrapped around foreign text.
+     */
+    checkinPhotoAsk(task: string): string;
+    /**
+     * A photo landed and there is another claimed task to ask about. One task
+     * at a time, deliberately: an inbound image says nothing about which task
+     * it shows, and a photo filed as proof of the wrong job is worse than no
+     * photo at all.
+     */
+    checkinPhotoNext(task: string): string;
+    /**
+     * A photo landed and there is nothing left to ask about.
+     *
+     * ⚠ Like every other acknowledgement on this path it must NEVER say the
+     * task is done. The photo is proof attached to a claim that is still
+     * waiting for the manager.
+     */
+    checkinPhotoThanks: string;
     /** Sent after a worker taps "not yet". Never scolding — the answer is
      *  useful precisely because it is safe to give.
      *
@@ -914,6 +1013,34 @@ export interface Catalog {
     taskOverdue(title: string, days: number): string;
     /** Tail when the list had to be truncated. */
     andMore(n: number): string;
+
+    // ── who else is on this task (issue #44) ─────────────────────────────────
+    // ⚠ THE CONTENT REQUIREMENT OF THE WHOLE FEATURE. A crew member who is
+    // HELPING must never read a briefing that sounds like the job is theirs.
+    // They get the same task, the same address and the same materials — and one
+    // extra clause on the headline saying whose job it is. Get this wrong and
+    // two people turn up each believing they are in charge, which is worse than
+    // the duplicated-task bug this replaces.
+    //
+    // Applied to the headline BEFORE `taskOverdue`, so lateness stays the last
+    // and most visible thing on the line.
+
+    /** "Pintar tecto (Casa de Paco) — a ajudar Miguel". `title` already carries
+     *  the obra. `lead` is the assignee's name, straight from the row. */
+    taskAsCollaborator(title: string, lead: string): string;
+    /**
+     * The same, for a task that has collaborators and NO lead at all.
+     *
+     * Reachable: `tasks.assignee_worker_id` is nullable, and clearing it does
+     * not remove anybody's collaborator row (deleting people's rows on an
+     * unrelated edit would be worse). The wording must therefore not name
+     * anyone and must not imply ownership either way.
+     */
+    taskAsTeam(title: string): string;
+    /** The LEAD's line naming who is helping them. `names` is already joined
+     *  and capped by the caller. Detail-sheet only — there is no room for it in
+     *  the one-line template parameter. */
+    freeFormWith(names: string): string;
     /** A worker with nothing scheduled today. */
     workerNothing: string;
     /** The manager's one-line WhatsApp summary. */
@@ -1059,5 +1186,70 @@ export interface Catalog {
      * re-approved in WhatsApp Manager — see docs/whatsapp-cloud-api-runbook.md.
      */
     languageHint: string;
+
+    // ── the WELCOME message (issue #45) ──────────────────────────────────────
+    // The first thing Capo ever says to somebody, sent once and never again,
+    // and the only message in the product whose whole job is to explain what
+    // the sender is.
+    //
+    // ⚠ IT IS NOT A REQUEST FOR CONSENT, AND MUST NEVER READ AS ONE. A
+    // proactive WhatsApp message is legal only AFTER an opt-in is on record, so
+    // by the time any of these strings is rendered the person has already
+    // agreed (on site, to their manager, or by ticking the box on /perfil).
+    // The welcome CONFIRMS that agreement and states how to withdraw it. Copy
+    // that asked "do you want to receive messages?" would be asking a question
+    // the answer to which is the reason the message was allowed to be sent.
+    //
+    // ── the template split, and why the interesting half is a PARAMETER ──────
+    // The approved Meta template `capo_welcome` is
+    //     "<fixed opening> {{1}}<fixed>. {{2}} <fixed closing>"
+    // and the fixed parts cannot be changed from this repository — editing an
+    // approved template means re-submitting it by hand and waiting for review.
+    // That is exactly the trap the daily briefing fell into with its "reply PT,
+    // ES or EN" line (issue #49). So everything audience-specific lives in
+    // {{2}}: `welcomeWorker` and `welcomeManager` below. One approved template,
+    // two very different messages, and the difference is ours to change.
+    //
+    // ⚠ BOTH ARE TEMPLATE PARAMETERS. One line each — no newlines, no tabs, no
+    // runs of four spaces, or Meta rejects the whole send with a 132000.
+
+    /**
+     * {{2}} for a CREW MEMBER: their manager put their number in, this is what
+     * they will now get, and how to change the language it arrives in.
+     *
+     * The language sentence is unconditional here and conditional in the daily
+     * briefing, and that asymmetry is deliberate: a welcome is by definition
+     * first contact, so this is the one message where "reply PT, ES or EN" is
+     * certainly new information rather than daily noise.
+     */
+    welcomeWorker(company: string): string;
+    /**
+     * {{2}} for a MANAGER: their account is live, and this message is itself
+     * the proof that the number they typed on /perfil actually reaches them.
+     * No language sentence — a manager changes language on the profile screen.
+     */
+    welcomeManager(company: string): string;
+    /**
+     * The free-form opening, used ONLY when the recipient has written to us in
+     * the last 23 hours and ordinary text is therefore allowed (and free).
+     * Mirrors the approved template's fixed opening so the two envelopes say
+     * the same thing.
+     */
+    welcomeGreeting(name: string): string;
+    /**
+     * The free-form closing, mirroring the template's own opt-out sentence.
+     * Meta expects a utility message to state how to stop receiving them, and
+     * the free-form path has no approved wrapper to state it for us.
+     */
+    welcomeStop: string;
+    /**
+     * The manager's CHAT-THREAD note: who Capo just introduced itself to.
+     *
+     * Same contract as `managerEvent` and `checkinEvent` — our copy, a count,
+     * and crew names the MANAGER typed, joined and capped by the renderer.
+     * Never a word a crew member wrote. Crew only: a manager reads their own
+     * welcome on their own phone and does not need Capo telling them about it.
+     */
+    welcomeEvent(args: { notified: number; names: string }): string;
   };
 }

@@ -188,6 +188,8 @@ const dict: Catalog = {
       dismiss: 'Não precisa controlo',
       request: 'Pedir controlo',
       failed: 'Não foi possível resolver o controlo',
+      proofNone: 'Sem fotos anexadas.',
+      proofPhotos: n => (n === 1 ? '1 foto anexada.' : `${n} fotos anexadas.`),
     },
     taskDetail: {
       fallbackTitle: 'Tarefa',
@@ -208,6 +210,14 @@ const dict: Catalog = {
       assignRemove: 'Deixar sem responsável',
       assignCancel: 'Cancelar',
       assignFailed: 'Não foi possível mudar o responsável.',
+      collaborators: 'A ajudar',
+      collaboratorsNone: 'Só o responsável nesta tarefa.',
+      collaboratorsTitle: 'Quem mais ajuda nesta tarefa?',
+      collaboratorsHint:
+        'O responsável não muda — estas pessoas trabalham na mesma tarefa e recebem o aviso da manhã a dizer que estão a ajudar. O material continua a ser o desta tarefa, não se duplica.',
+      collaboratorsLead: 'responsável',
+      collaboratorsSave: 'Guardar',
+      collaboratorsFailed: 'Não foi possível guardar quem ajuda nesta tarefa.',
       dates: 'Datas',
       startDate: 'Início',
       dueDate: 'Prazo',
@@ -385,6 +395,8 @@ const dict: Catalog = {
     noWhatsAppWarning: 'Sem telemóvel — não recebe o WhatsApp das 07:00.',
     noConsentWarning: 'Falta autorização — pergunta-lhe se aceita receber mensagens e diz ao Capo.',
     receivesWhatsApp: 'recebe o WhatsApp das 07:00',
+    welcomeCostHint:
+      'Quando dizes ao Capo que alguém aceita receber mensagens, o Capo apresenta-se a essa pessoa uma vez no WhatsApp. É uma mensagem paga por pessoa — uma equipa de 20 são 20 mensagens.',
     teamHint: 'Para adicionar ou alterar alguém,',
     teamHintLink: 'fala com o Capo',
     subscription: 'Subscrição',
@@ -454,6 +466,8 @@ const dict: Catalog = {
     whatsappConsentOption: { yes: 'Sim, quero receber', no: 'Não, obrigado' },
     whatsappConsentOn: 'Estás a receber as mensagens do dia.',
     whatsappConsentOff: 'Não estás a receber nada — liga aqui para começares.',
+    whatsappConsentCost:
+      'Ao ligares, o Capo apresenta-se uma vez no teu WhatsApp. Essa mensagem de boas-vindas é paga; as do dia-a-dia já estavam contadas.',
 
     translationRunning: p => `A traduzir… ${p.done} de ${p.total}`,
     translationDone: n => `${n} campo${n === 1 ? '' : 's'} traduzido${n === 1 ? '' : 's'}.`,
@@ -610,6 +624,11 @@ const dict: Catalog = {
     checkinDoneProblem:
       'Fica registada a tua resposta, mas não consegui avisar o teu encarregado. Fala com ele.',
     checkinNotDone: 'Certo, obrigado por avisares. Fica registado.',
+    checkinPhotoAsk: task =>
+      `Se puderes, manda-me uma foto de “${task}” que eu junto ao pedido. Se não der, não faz mal — o pedido segue na mesma.`,
+    checkinPhotoNext: task => `Recebi a foto, obrigado. E de “${task}”, tens alguma?`,
+    checkinPhotoThanks:
+      'Recebi a foto, obrigado. Vai junto com o pedido — falta na mesma o teu encarregado confirmar.',
     checkinError: 'Não consegui registar a tua resposta. Fala com o teu encarregado.',
     stillWorking: 'Continuo a tratar disso, chefe — só mais um bocadinho.',
     workerStillWorking: 'Continuo a ver isso — só mais um bocadinho.',
@@ -621,6 +640,11 @@ const dict: Catalog = {
     taskWithJob: (title, job) => `${title} (${job})`,
     taskOverdue: (title, days) => `${title} — atrasada ${days}d`,
     andMore: n => `+${n}`,
+    // issue #44. The clause that stops a helper reading their briefing as if
+    // the job were theirs. Applied before taskOverdue, so lateness stays last.
+    taskAsCollaborator: (title, lead) => `${title} — a ajudar ${lead}`,
+    taskAsTeam: title => `${title} — em equipa`,
+    freeFormWith: names => `Contigo: ${names}`,
     workerNothing: 'Nada agendado para hoje.',
     managerSummary: ({ today, unassigned, overdue }) => {
       const parts = [`${today} ${today === 1 ? 'tarefa' : 'tarefas'} para hoje`];
@@ -666,6 +690,16 @@ const dict: Catalog = {
     detailNothingMore: 'Não tenho mais detalhes sobre esta tarefa. Se precisares, fala com o teu encarregado.',
     detailOverdue: title => `${title} — atrasada`,
     languageHint: 'Responde PT, ES ou EN para mudares de idioma',
+    welcomeWorker: company =>
+      `A ${company} pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.`,
+    welcomeManager: company =>
+      `A tua conta da ${company} está pronta: recebes aqui o resumo de cada manhã e podes falar comigo por WhatsApp tal como falas na aplicação.`,
+    welcomeGreeting: name => `Olá ${name}, sou o Capo, o assistente de obra.`,
+    welcomeStop: 'Responde STOP para deixar de receber.',
+    welcomeEvent: ({ notified, names }) => {
+      const who = names ? `: ${names}` : '';
+      return `Apresentei-me a ${notified} ${notified === 1 ? 'pessoa nova' : 'pessoas novas'} da equipa no WhatsApp${who}.`;
+    },
   },
 };
 

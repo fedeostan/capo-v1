@@ -113,7 +113,7 @@ on *"põe o Miguel a receber em espanhol"* — #12 adds `language` to the
 **guarded** `update_worker` tool, and that write must execute directly rather
 than degrade into an approval card.
 
-## 1. Stripe billing — ✅ DONE (2026-07-17)
+## 1. Stripe billing — ✅ LIVE (2026-08-14)
 
 1. ✅ Stripe account created, Product "Capo" with recurring Price €45/mo EUR.
    `STRIPE_PRICE_ID` and `STRIPE_SECRET_KEY` set in Vercel (production env,
@@ -128,6 +128,37 @@ than degrade into an approval card.
    `stripe_customer_id`/`stripe_subscription_id` were populated with real
    `cus_.../sub_...` ids — proof the webhook fired and the signature verified.
    Test account and its Stripe test-mode subscription were cleaned up afterward.
+4. ✅ Moved from the sandbox to the **live** account (issue #85, 2026-08-14).
+   Live account `acct_1TtrERLIxn6Jugmn`; price `price_1U4J91LIxn6JugmnvZc5XN12`
+   (€45/month EUR); webhook `we_1U4JwCLIxn6JugmnMEnNNhDA` at
+   `https://www.construcapo.com/api/stripe/webhook` — the **www** host, because
+   the apex `construcapo.com` 308-redirects and Stripe counts any 3xx as a
+   failed delivery; portal configuration `bpc_1U4K5ALIxn6JugmnJTbCA060` (cancel
+   at period end, no proration, no plan switching, no ToS/privacy links because
+   neither page exists yet). Vercel production gained `NEXT_PUBLIC_SITE_URL =
+   https://www.construcapo.com` alongside the three Stripe values. Decisions
+   recorded in `docs/superpowers/specs/2026-08-14-stripe-live-checkout-design.md`.
+
+⚠ **Still outstanding — disable (do not delete) the sandbox webhook**
+`we_1TuAmhLaGmAMnE9xaKoeAC2P`, which still points at `capo-v1.vercel.app`. It
+was deliberately left enabled through the cutover as the rollback path, and is
+the last step of the sequence, not the first. Disabling preserves its delivery
+history; deleting loses it.
+
+⚠ **Also outstanding — a real live transaction has not been run yet.** One €45
+checkout from `ostanfederico+1@gmail.com` (company *Test 1*, `trialing`),
+asserting a `200` in Stripe's Event deliveries tab and a live `cus_…` landing in
+`companies.stripe_customer_id`, then cancel through the portal and refund.
+
+⚠ **Known, NOT fixed:** a company force-set to `active` by migration `0011` with
+no `stripe_customer_id` — which is both of Federico's own companies — shows
+"Gerir subscrição" on `/subscricao`, and tapping it throws
+`billing.noSubscription`. This pre-dates #85. The fix is for the page to key
+that button on `stripe_customer_id` rather than on `subscription_status`.
+
+⚠ **Supabase auth still names the old host.** Site URL and Additional Redirect
+URLs point at `capo-v1.vercel.app`, so confirmation and password-reset emails
+send people to the old address. Dashboard change, not code. See §2.
 
 ## 2. Supabase auth (self-serve signup, password reset, Google OAuth)
 

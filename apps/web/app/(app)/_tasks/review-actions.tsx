@@ -20,6 +20,7 @@ export default function ReviewActions({
   note,
   declaredByWorker,
   declaredByName,
+  photoCount,
   locale,
 }: {
   reviewId: string;
@@ -32,6 +33,11 @@ export default function ReviewActions({
   /** null when either the manager opened this check, or a worker did but
    *  their name did not resolve — see declaredByWorker. */
   declaredByName: string | null;
+  /** How many photos are attached to the task (issue #52), counted at read
+   *  time. Rendered as a plain FACT, never as a warning: a claim with no
+   *  photo is ordinary, and the manager is about to decide whether to walk
+   *  over and look. */
+  photoCount: number;
   // A plain string, not a catalog: the catalog holds functions, which cannot
   // cross the server→client boundary.
   locale: Locale;
@@ -64,6 +70,14 @@ export default function ReviewActions({
           “{note}”
         </blockquote>
       )}
+      {/* Whether the claim came with proof (issue #52). Deliberately the same
+          muted zinc as the note beneath it and NOT a warning colour: "no
+          photos attached" is a true statement about a record, not a complaint
+          about a person. Most claims have no photo for perfectly ordinary
+          reasons. The photos themselves live on the task detail screen. */}
+      <p className="mt-1 text-[11px] text-zinc-500">
+        {photoCount > 0 ? t.proofPhotos(photoCount) : t.proofNone}
+      </p>
       <div className="mt-2 flex flex-wrap gap-2">
         <button
           type="button"

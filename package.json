@@ -15,6 +15,7 @@
     "push-check": "tsx scripts/push-check.mts",
     "cache-check": "tsx scripts/cache-check.mts",
     "cost-check": "tsx scripts/cost-check.mts",
+    "billing-check": "tsx scripts/billing-check.mts",
     "whatsapp-template": "tsx scripts/whatsapp-template.mts",
     "agent-smoke": "tsx scripts/agent-smoke.mts",
     "knowledge-ingest": "tsx scripts/knowledge-ingest.mts"

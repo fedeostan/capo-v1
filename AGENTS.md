@@ -137,7 +137,9 @@ and say what the alternative would be — he is the one who decides.
   scheduler and the Portuguese working-day calendar. Since #51 it also covers
   the *other* schedule in the product: the cron send window
   (`withinSendWindow`) and the UTC entries in `apps/web/vercel.json` that feed
-  it, which it reads and asserts season by season. Needs **no credentials
+  it, which it reads and asserts season by season. Since #45 it also asserts the
+  welcome sweep's much wider window (Lisbon 09–19) and that it opens only after
+  the 07:00 briefing's window has closed. Needs **no credentials
   and no network**, so it runs in CI on every PR (`pnpm scheduler-check`).
 - `scripts/cache-check.mts` — provider prompt caching (#58). Asserts the
   system-prompt split is byte-identical to the single string it replaced, that
@@ -273,6 +275,53 @@ Structural invariants (do not regress):
     existed since `0001` and is never written. With always-ask as the default,
     `status='pending'` accumulates much faster, and the chat page's unbounded
     `select` over `proposals` stacks every stale card above the conversation.
+- **Billing runs on the LIVE Stripe account, and the webhook URL is the `www`
+  host** (issue #85, cut over 2026-08-14). Live account `acct_1TtrERLIxn6Jugmn`,
+  price `price_1U4J91LIxn6JugmnvZc5XN12` (€45/month EUR), endpoint
+  `we_1U4JwCLIxn6JugmnMEnNNhDA` at
+  `https://www.construcapo.com/api/stripe/webhook`, three events, portal
+  configuration `bpc_1U4K5ALIxn6JugmnJTbCA060` (cancel at period end, no
+  proration, no plan switching).
+  **The apex `construcapo.com` answers `308`, and Stripe treats ANY 3xx reply to
+  a delivery as a failure** — an apex endpoint fails 100% of deliveries with no
+  error anywhere in this codebase. Since `0011` revoked the tenant's table-wide
+  UPDATE on `companies` and re-granted `(name)` only, that webhook is the sole
+  writer of `subscription_status`: no delivery means a paying customer keeps
+  `trialing` and is locked out the day their trial expires. Four things follow:
+  - **The 14-day trial lives in Capo's database and is handed to Stripe at
+    checkout**, as `subscription_data.trial_end`. `resolveTrialEnd`
+    (`apps/web/lib/billing-trial.ts`) is pure and lives OUTSIDE
+    `subscricao/actions.ts` because that file is `'use server'`, where every
+    export must be an async function compiled into a callable HTTP endpoint — a
+    sync helper there is a build error and an async one publishes the rule as an
+    endpoint. Stripe rejects an entire Checkout Session whose `trial_end` is
+    nearer than 48 hours, which is the whole reason the function exists; the
+    rule is *carry it across when comfortably clear of the floor, otherwise
+    charge today*, and `TRIAL_CARRY_MARGIN_SECONDS` exists because the floor is
+    evaluated when the request LANDS, so a trial ending at exactly 48:00:00
+    would be refused for arriving two seconds late. `pnpm billing-check`
+    (credential-free, in CI) asserts that no input can produce a value inside
+    the floor — an invariant that survives a change of product mind, unlike the
+    pinned cases beside it.
+  - **A zero-row update is not an error.** Postgres reports a filter that
+    matched nothing as a fully successful statement, so both webhook updates
+    carry `.select('id')` and log `billing.company_not_found` /
+    `billing.subscription_orphan` when nothing matched. Same posture as
+    `loadCompanySnapshot` and `recordUsage`: swallowed, but greppable. Grep
+    those events before concluding that a quiet billing table means quiet
+    traffic.
+  - **`subscription_data.metadata.company_id` is the SECOND identity, and the
+    reason the recovery path can exist.** `client_reference_id` rides the
+    Checkout Session only and is absent from every `customer.subscription.*`
+    event, so without the metadata an unmatched subscription event can only be
+    logged, never repaired. The recovery re-writes `stripe_customer_id`, and a
+    `23505` there means another company already claims that customer — a data
+    problem to look at, not a transient failure to retry.
+  - **The live price carries `tax_behavior: 'unspecified'` and that is now
+    frozen** — the field is immutable once a price has been used. Federico's
+    decision (2026-08-14) is that Stripe computes no IVA and collects no NIF;
+    invoicing happens outside Stripe. Adding IVA later means a NEW price object,
+    leaving existing subscribers alone. It is never an edit to this one.
 - **System-vs-user client split**: `getDb()` (service role) is system-only;
   `createUserClient()` (publishable key, RLS) is the client for everything on
   the tenant request path.
@@ -323,8 +372,16 @@ Structural invariants (do not regress):
 - **No proactive send goes out without a recorded opt-in** (migration `0025`).
   `whatsapp_opt_in_at` / `whatsapp_opt_out_at` on `workers` and `profiles`,
   latest-wins, evaluated by `hasWhatsAppConsent()` in
-  `packages/core/src/channels/whatsapp.ts` and applied in exactly one place —
-  `loadCompanyBriefing()`, which both sends read. It **fails closed** on a
+  `packages/core/src/channels/whatsapp.ts` and applied to the crew in exactly
+  one place — `partitionCrew()` in `apps/web/app/notifications/briefing.ts`,
+  which all THREE proactive sends read (the 07:00 briefing, the late-afternoon
+  check-in, and #45's welcome). It was inline in `loadCompanyBriefing()` until
+  the welcome needed the same three questions asked at a different time of day;
+  copying the filter would have put a second copy of a consent rule in the
+  codebase, and the symptom of two copies disagreeing is a person one send
+  reaches and another silently skips. Managers are the documented exception —
+  they have no `workers` row, so each route calls the same predicate directly on
+  the profile, as `/api/cron/reminders` always has. It **fails closed** on a
   missing opt-in, an unparseable timestamp or a tie; do not add a branch that
   defaults either side. Meta's free test tier used to enforce this by accident
   through its five-number allow-list, and the production number has no
@@ -413,6 +470,58 @@ Structural invariants (do not regress):
   button** (`type: 'interactive'`, from a manager). They are handled on
   different paths and their payload codecs are deliberately non-overlapping;
   conflating them is the mistake to watch for.
+
+  **A tap now also ASKS FOR A PHOTO, and asking is all it does** (issue #52,
+  migration `0034`). The button path filed claims with no proof while the worker
+  agent's `declare_task_done` had required one at the schema level since #22 —
+  two doors into `pending_review` disagreeing about evidence, with nothing
+  telling the manager which door a claim came through. Six things:
+  - **It is an INVITATION, never a requirement.** The claim is already filed and
+    stands whether or not a photo arrives. Refusing to file one without proof
+    would mean a worker who cannot photograph anything reports nothing at all,
+    which is the state #54 exists to end. The copy says so out loud.
+  - **`checkin_photo_requests` stages the EXPECTATION, never the BYTES.** There
+    is no blob column and there must never be one. A photo's object key contains
+    the task id, so bytes cannot be written until the task is known; the tap
+    path knows it *before* the photo arrives, which is exactly what the agent
+    path cannot do. The one-turn photo lifetime on the agent path is
+    **unchanged**.
+  - **ONE TASK AT A TIME.** An inbound image says nothing about which task it
+    shows, so a three-task claim is asked three times, `next_index` walking the
+    snapshot. A photo filed as proof of the wrong job is worse than no photo:
+    it is evidence, it is wrong, and `0023` has no DELETE policy anywhere.
+  - **A CAPTIONED photo is excluded and falls through to the agent.** A caption
+    is words, and words can say something the deterministic branch cannot read.
+    The bare-photo branch sits with the other taps, above the agent.
+  - **Deny-all, like `notification_log` and not like `worker_checkins`.** RLS on,
+    zero policies, every grant revoked. A tenant able to write one could redirect
+    another crew member's next photo onto a task of their choosing.
+    `scripts/rls-isolation-matrix.mjs` attacks insert, update and delete.
+  - **The TTL is enforced by the READER and nothing sweeps the table.**
+    `PHOTO_REQUEST_TTL_MS` is 3 hours: long enough for "I'll do it at the van",
+    short enough that a request cannot survive to the next 07:00 briefing and
+    file tomorrow's work as proof of yesterday's claim. It is deliberately
+    **shorter** than Meta's free-form window, because the follow-up must never
+    become a paid template. An unparseable `expires_at` reads as expired.
+
+  **"Claimed without proof" is shown to the manager as a FACT, counted at read
+  time.** `countTaskPhotos` (`apps/web/app/dashboard-data.ts`) feeds both the
+  board's review control and the in-app inbox, so the two cannot disagree —
+  the same reason push and inbox share one headline entry. Three things:
+  - **Nothing is denormalised onto `task_reviews`.** A photo can arrive minutes
+    after the claim, so anything stamped at insert time would say "no photo"
+    forever and be wrong invisibly.
+  - **The count is every photo on the task, no time filter and no source
+    filter.** A time filter breaks the agent path, which writes photos *before*
+    the review by design. The copy is correspondingly literal — "3 photos
+    attached", a statement about the task.
+  - **The PUSH deliberately carries none of it**, breaking the usual
+    push/inbox symmetry on purpose: a push fires seconds after the claim, the
+    one moment "no photo" is guaranteed true and guaranteed uninformative.
+  `tasks.completion_proof` is still written, now by both crew paths as well as
+  the sheet, and `0034` restates its comment: it answers "does this completion
+  have photographic proof". NULL still means UNKNOWN, and only the manager,
+  through the sheet, ever writes `'skipped'`.
 - **Anything the manager or their crew is sent by the SYSTEM is written into the
   manager's chat thread, through ONE seam** (`recordThreadEvent` in
   `apps/web/app/notifications/thread.ts`, issue #47). Before it, the 07:00
@@ -420,9 +529,11 @@ Structural invariants (do not regress):
   check-in route wrote nothing — a habit rather than a rule, so the crew could
   be mid-conversation with Capo about a question Capo had no record of asking,
   and the manager had no way to tell which of the two was right. Five things:
-  - **Three notes exist and that list is exhaustive**: the morning briefing
+  - **Four notes exist and that list is exhaustive**: the morning briefing
     (what today holds + who was actually messaged, by name), the check-in ask
-    (who was asked), and one note per crew member ANSWERING that check-in.
+    (who was asked), one note per crew member ANSWERING that check-in, and
+    since #45 the welcome (who Capo has just introduced itself to, crew only —
+    a manager reads their own welcome on their own phone).
     Renderers live beside the briefing renderers in `notifications/briefing.ts`
     because they need the user copy catalog, which must never enter the agent
     bundle.
@@ -460,6 +571,61 @@ Structural invariants (do not regress):
   turn is persisted, and `finalize_proposal` writes the resolution event in the
   same transaction as the status flip), and a push is a delivery of a
   `notifications` row rather than a separate message.
+- **There is a THIRD proactive send: the welcome, and it is a SWEEP, not a
+  hook** (`apps/web/app/api/cron/welcome`, migration `0033`, issue #45). Capo
+  introduces itself to a person the first time it is legally allowed to message
+  them, once, ever. Seven things are load-bearing:
+  - **CONSENT COMES FIRST, AND THAT ORDER IS FORCED RATHER THAN CHOSEN.** The
+    obvious design — make the welcome the message that ASKS to be allowed to
+    write — is not available: a proactive template to somebody with no recorded
+    opt-in is the exact violation `0025` exists to prevent, and Meta's policy
+    says the opt-in is gathered through the business's own channels. So consent
+    is collected off WhatsApp (manager asks on site → `update_worker`, or
+    `/perfil` for their own number) and the welcome CONFIRMS it and states the
+    opt-out. **No copy in `welcome.ts` or in the template may ask a yes/no
+    question.** A worker with no consent is not "waiting for a welcome" — they
+    are waiting for their manager, for as long as that takes.
+  - **A sweep asks a question; a hook has to remember an event.** A number can
+    enter the system through onboarding, `/perfil`, `add_worker`, `update_worker`
+    or a `START` reply, and consent can be recorded weeks after the number. A
+    hook on each door is a door somebody forgets, silently. The sweep asks "who
+    may be messaged and has never been introduced?" every fifteen minutes, so
+    every door leads to it and none has to know it exists. Same reasoning as
+    `/api/cron/push`.
+  - **Idempotency is `notification_log`, with the DATE removed.** `0033` adds a
+    partial unique index `(worker_id, profile_id) nulls not distinct where kind
+    = 'welcome'` — the daily lock's shape minus `notification_date`. The
+    already-welcomed read in `loadPendingWelcomes` is an OPTIMISATION so the
+    sweep does not attempt a doomed INSERT per person per run; the INDEX is the
+    lock, through `claimNotification`'s 23505 → null. Do not trust the read and
+    do not add app-level state beside it.
+  - **The `0033` backfill was mandatory**, exactly as `0026`'s `pushed_at` one
+    was: it marks every worker and profile that existed when it was applied as
+    `skipped`, or the first deploy introduces Capo by paid template to everybody
+    already using it. Any future feature that adds a "have we done this yet?"
+    marker to a populated table needs the same.
+  - **`welcome_ledger_ready()` is a DEPLOY GATE, and it fails closed.** A marker
+    function `0033` creates and the route asks for before it sends anything —
+    because on this project a migration has been skipped in production while a
+    later one was applied, and the code shipping without its migration is
+    precisely the mass-mailing failure. Missing function → 503, no sends.
+  - **The hour gate is WIDE (Lisbon 09:00–19:59) and starts after the briefing
+    window closes.** It exists for quiet hours, not for punctuality: a first-ever
+    message from an unknown business number at 03:00 is how that number earns a
+    block report. Eleven hours wide with a `*/15` schedule means cron drift costs
+    lateness, never silence, which is also why the `:00`-not-`:30` rule does not
+    bind here — it exists for one-hour windows. `pnpm scheduler-check` asserts
+    the window, the schedule and the fact that 09 > the briefing's window end.
+  - **ONE template, `capo_welcome`, two audiences, and the difference lives in
+    `{{2}}`.** A template body is frozen at approval; `{{2}}` is ours. That is
+    #49's lesson applied in advance. Its fixed halves are BUILT from
+    `reminders.welcomeGreeting`/`welcomeStop`, because the same welcome goes out
+    as free text to anybody already inside their 24h window, and two copies of
+    an introduction would drift; `pnpm whatsapp-check` asserts the rejoin.
+  Known and NOT fixed: a crew member added and consented between midnight and
+  07:00 gets their first briefing BEFORE their welcome. Fixing it means the
+  morning send reading the welcome ledger, which couples it to a feature it has
+  nothing to do with.
 - **Sender identity is the PHONE, with the BSUID as a fallback — in that order,
   and the order is the safety property.** WhatsApp usernames mean Meta omits
   `from` entirely for anyone who has adopted one and sends only `from_user_id`,
@@ -578,10 +744,18 @@ Structural invariants (do not regress):
   the requirement exists to prevent, while proof with no claim is merely untidy.
   Photos are **never shown to a model** — the agent learns only how many
   arrived.
-  Known limit, stated rather than hidden: photos live for ONE turn, because a
-  task photo's object key contains the task id and the task is not known until
-  the tool names it. "Photo, then a separate message saying which task" loses
-  the photo. A staging area keyed on the worker is the fix, and is out of scope.
+  Known limit, stated rather than hidden: photos live for ONE turn **on this
+  path**, because a task photo's object key contains the task id and the task is
+  not known until the tool names it. "Photo, then a separate message saying
+  which task" loses the photo. #52's `checkin_photo_requests` is a staging area
+  keyed on the worker, but it stages the EXPECTATION rather than the bytes and
+  only works because the check-in tap knows the task *before* the photo — so it
+  does not lift this limit, and it is not a design to copy here without solving
+  the byte problem too.
+  Both crew paths share ONE writer, `storeWorkerTaskPhoto` /
+  `markTaskProofPhotos` in `packages/core/src/media/task-photo-store.ts`: what a
+  `source: 'worker'` row asserts is an ATTRIBUTION the grant layer makes
+  unforgeable, and two copies of a claim like that would eventually disagree.
 - **The crew channel is GUIDED FIRST and conversational second** (issue #49).
   Federico's complaint was three complaints and the fixes are independent, so
   they are recorded separately — but they share one shape: the cheap
@@ -744,6 +918,69 @@ Structural invariants (do not regress):
   `task_reviews.note` is the one place worker-authored text reaches the
   manager. Render it as an attributed quote, never as UI copy — in the
   inbox (`notifications.body`) as well as on the board.
+- **A task has ONE lead and any number of collaborators, and
+  `tasks.assignee_worker_id` is still the lead** (migration `0035`, issue #44).
+  Before it, the only shape for "o Miguel e o João fazem a pintura" was two
+  tasks — and `materials` lives on the task, so a duplicate doubled what
+  /materiais and `materials_outlook` said to buy. That is the whole bug.
+  `task_assignees` is additive: `(company_id, task_id, worker_id, role)` with
+  `unique (task_id, worker_id)` and `role in ('lead','collaborator')`.
+  - **The mirror flows ONE WAY, `tasks` → `task_assignees`, and no reader ever
+    takes the lead from the join table.** `tasks_sync_lead_assignee_{ins,upd}`
+    writes the `lead` row; `task_assignees_lead_matches_task` refuses any lead
+    row — from any actor, service role included — that disagrees with
+    `tasks.assignee_worker_id`. So "what if they disagree?" has no answer for
+    anything a reader consults. A MISSING lead row is likewise harmless: it
+    costs only the `unique` constraint's protection against the lead also being
+    listed as their own helper, whose worst symptom is one name printed twice.
+    The lead row exists for exactly that constraint — that is its job, not
+    "being the lead".
+  - **SELECT is the only tenant grant**, `task_reviews`' posture (0018) rather
+    than the uniform three-policy one. Every write goes through
+    `set_task_collaborators(p_task, p_workers[])`, SECURITY DEFINER, which
+    REPLACES the whole set in one transaction — a crew is a set, and a
+    half-applied one is a wrong WhatsApp message to a real person at 07:00. It
+    silently drops the lead if named, caps at 20, and takes `[]` as "remove
+    everybody". Its `auth.uid()` guard is the entire tenant boundary (the fourth
+    function of that shape; see 0019/0021 on the `<>` trap), and
+    `scripts/rls-isolation-matrix.mjs` attacks it directly. **There is still no
+    DELETE policy on this table** — `push_subscriptions` remains the only one in
+    the schema.
+  - **`task_board` gained TWO APPENDED columns**, `collaborator_worker_ids` and
+    `collaborator_names`, index-aligned by construction (same `order by` in both
+    aggregates). Read them ONLY through `readCollaborators` /
+    `everyoneOnTask` in `packages/core/src/capabilities/collaborators.ts`, which
+    is the one place this codebase zips two arrays by position and says why.
+    Every reader that needed them switched to `select('*')` — do not put either
+    name in an explicit column list.
+  - **The 07:00 briefing goes to EVERYONE on a task; the 16:00 check-in goes
+    only to the LEAD.** That asymmetry is deliberate and load-bearing. Since #54
+    a "Sim, terminei" tap FILES A COMPLETION CLAIM per task in the snapshot, so
+    briefing a helper is information while asking a helper is authority — and
+    `task_reviews_one_pending_idx` means a helper's premature claim would BLOCK
+    the lead from filing their own. The filter lives in the check-in route, not
+    in `loadCompanyBriefing`, so it cannot take the morning message with it.
+  - **The wording is a requirement, not a nicety.** A collaborator's line reads
+    `Pintar tecto (Casa de Paco) — a ajudar Miguel`; the lead's carries
+    `Contigo: Zé, João`. Both come from `taskHeadline` in
+    `apps/web/app/notifications/briefing.ts`, which every headline surface calls
+    — a surface that built one inline would tell a helper the job is theirs.
+    Lateness is applied AFTER the role clause, so it stays last on the line.
+  - **The 07:00 guided menu lists only tasks this person LEADS.** `findWorkerTask`
+    (and `loadWorkerTasks` behind it) still filters `assignee_worker_id`, so a
+    collaborator's row would answer "that task is not yours". Fixed in the cron
+    route rather than by widening that read, because the same read computes the
+    worker agent's `scope.taskIds`, which is `declare_task_done`'s boundary.
+  - **Deliberately NOT widened, and this is scope, not oversight**: the worker
+    agent (`my_tasks`, `declare_task_done`) and the guided-menu task sheet all
+    still see lead tasks only, so a collaborator cannot declare somebody else's
+    task finished by any route. `WorkerContext` gains nothing.
+    `dispatch_tasks_today` / `dispatch_log` are untouched — the frozen SMS path
+    knows nothing about collaborators, by design.
+  - Counters that answer "quem está livre?" — `loadTeamLoad`,
+    `loadAssignableWorkers`, `list_workers` — count helpers too, via
+    `everyoneOnTask`. A picker that called a helper "free" is the wrong-direction
+    label that whole control exists to refuse.
 - **Task photos are the project's only Storage use, and the object path IS
   the tenant boundary.** Migration `0023_task_photos.sql` adds a private
   bucket `task-photos`, the `task_photos` table, and one column,
@@ -780,9 +1017,15 @@ Structural invariants (do not regress):
   - **Photos are never shown to a model.** Feeding an inbound image to a
     vision model is a text-in-image prompt-injection surface with no guard in
     front of it. The agent neither reads the bucket nor reads `task_photos`.
-  - `tasks.completion_proof` is `'photos' | 'skipped' | NULL`, written only by
-    the completion sheet. **NULL means "closed some other way" (chat, agent,
-    pre-0023) — unknown, never "skipped".** Do not conflate them when counting.
+  - `tasks.completion_proof` is `'photos' | 'skipped' | NULL`. Since #52 it is
+    written by **three** callers — the completion sheet, `declare_task_done`,
+    and the check-in photo follow-up — so it answers "does this completion have
+    photographic proof", not "how did the manager close it" (`0034` restates the
+    column comment). **NULL means "closed some other way" (chat, agent,
+    pre-0023) — unknown, never "skipped".** Do not conflate them when counting,
+    and note only the sheet ever writes `'skipped'`.
+    It is **not** what the board and inbox read: those count `task_photos` at
+    read time, because a photo can arrive after the claim.
 - **`notifications` (0024) is the in-app inbox, and is NOT
   `notification_log` (0016).** They share a stem and nothing else.
   `notification_log` is the OUTBOUND ledger — one row per paid WhatsApp

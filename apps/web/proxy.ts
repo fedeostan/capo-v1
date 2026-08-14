@@ -18,8 +18,9 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except Next internals and static assets. sw.js and the
-    // manifest DO match — proxy-session.ts allowlists them explicitly.
+    // Everything except Next internals and static assets. The generated public
+    // routes — sw.js, the manifest, robots.txt, sitemap.xml — DO match;
+    // proxy-session.ts allowlists them explicitly.
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
   ],
 };

@@ -417,6 +417,54 @@ Four things that fail silently or confusingly:
   `companies.language` and nothing retranslates existing rows, so a worker on
   `es-ES` gets a Spanish sentence around Portuguese titles. Deliberate.
 
+### 6c. `capo_welcome`
+
+The first message Capo ever sends somebody (issue #45), from
+`apps/web/app/api/cron/welcome`. Once per person, ever. Submit it with
+`pnpm whatsapp-template create`; the definition is `capoWelcome()` in
+`scripts/whatsapp-templates.ts`.
+
+> ⚠ **MANUAL GO-LIVE STEP.** Nothing is sent until this template is APPROVED in
+> all three languages. Until then every welcome fails with **132001**
+> (`template name (capo_welcome) does not exist in <locale>`), recorded as a
+> `failed` row in `notification_log` — and because a failed send keeps its
+> claim, **that person is never retried**. Delete their `welcome` rows after
+> approval if the sweep ran before it.
+
+- Name `capo_welcome`, category **Utility**, `parameter_format` **POSITIONAL**,
+  three languages.
+- Body: two parameters. `{{1}}` is the recipient's name; `{{2}}` is the whole
+  audience-specific sentence — one wording for a crew member, another for a
+  manager. **That is the entire reason there is one template and not two.** The
+  fixed halves around it are frozen at approval; `{{2}}` is ours and can be
+  reworded any day without Meta seeing it again. This is the lesson of the
+  briefing's "reply PT, ES or EN" line (§6a), applied in advance.
+- **No buttons.** A reply of any kind opens the free 24-hour window, and the
+  crew already have `STOP`, `PT`/`ES`/`EN` and `MENU` as whole-message keywords.
+  A quick-reply button would be a fourth tappable payload shape to keep disjoint
+  from the other three for no gain.
+- The body text is BUILT from `reminders.welcomeGreeting` and
+  `reminders.welcomeStop` in `@capo/i18n`, because the same welcome also goes
+  out as free text to anybody already inside their 24-hour window.
+  `pnpm whatsapp-check` asserts the two envelopes still say the same thing —
+  so **editing that copy changes what must be submitted here**, and
+  `pnpm whatsapp-template status` will WARN until the live template matches.
+
+**It is not a request for consent, and must never become one.** A proactive
+template may only be sent to somebody who has already opted in (see the next
+section), so a message asking "do you want to receive messages?" would itself be
+the violation. Consent is collected off WhatsApp — the manager asks on site and
+records it — and this message confirms it and states how to withdraw it.
+
+**Idempotency** is migration `0033`: a partial unique index on
+`notification_log (worker_id, profile_id) where kind = 'welcome'`, i.e. the
+daily lock with the DATE removed. `0033` also backfills a `skipped` welcome row
+for every worker and profile that existed when it was applied, so the first
+deploy does not introduce Capo to people who have been using it for a month, and
+creates `welcome_ledger_ready()` — a marker function the sweep asks for before
+it sends anything, so shipping the code without the migration produces silence
+rather than a mass mailing.
+
 ## Opt-in and opt-out (migration `0025`)
 
 **Nothing proactive is sent to anyone without a recorded opt-in.** Meta's

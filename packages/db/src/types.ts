@@ -132,6 +132,52 @@
 // into TypeScript. `usage_date` is typed as an ordinary optional Insert field
 // and tsc will happily let you set it, but it is absent from the tenant's
 // column-scoped INSERT grant and comes from lisbon_today(). Do not send one.
+//
+// ── checkin_photo_requests (0034), WRITTEN BY HAND, NOT YET APPLIED ────────
+// The check-in photo request from 0034_checkin_photo_requests.sql (issue #52),
+// added here in alphabetical position for the same reason as every block above
+// it: generating against a project that lacks the table would silently DELETE
+// it rather than add it.
+//
+// One consequence while the migration is unapplied, and the code is written to
+// survive it: every query answers 42P01 ("relation does not exist"). Both
+// callers — openPhotoRequest and readOpenPhotoRequest in
+// apps/web/app/api/whatsapp/route.ts — swallow that into a log line, so the tap
+// still files its claim and still acknowledges the worker, and the photo path
+// simply falls through to the restricted worker agent exactly as it did before
+// this feature existed. Nothing about the claim depends on this table.
+//
+// Invisible here as always: this table is deny-all under RLS with ZERO
+// policies (notification_log's posture), and every grant is revoked from
+// `authenticated`. tsc will let a tenant-scoped client select from it; the
+// database returns nothing.
+//
+// ── task_assignees (0035), WRITTEN BY HAND, NOT YET APPLIED ────────────────
+// The collaborator join table from 0035_task_collaborators.sql (issue #44),
+// plus `set_task_collaborators` under Functions and the TWO APPENDED
+// task_board columns `collaborator_worker_ids` / `collaborator_names`. Added
+// here by hand for the same reason as every block above it: generating against
+// a project that lacks the table would silently DELETE these rather than add
+// them.
+//
+// Three consequences while the migration is unapplied, and the code is written
+// to survive all three:
+//   - any query against task_assignees answers 42P01 ("relation does not
+//     exist"). Nothing reads it directly — the view carries the data — so the
+//     only caller is the RLS matrix.
+//   - `set_task_collaborators` answers 42883 ("function does not exist"). Both
+//     callers (the agent's create_task/update_task and the /tarefas/[id] server
+//     action) surface it as an ordinary write failure, so a manager is told the
+//     change did not land instead of being told it did.
+//   - the two view columns answer as `undefined`, because every task_board
+//     reader uses select('*') (AGENTS.md). `readCollaborators` in
+//     apps/web/app/notifications/briefing.ts validates rather than trusts, so a
+//     deploy landing first briefs exactly the people it briefs today. Do NOT
+//     switch a task_board read to an explicit column list naming either one.
+//
+// Invisible here as usual: the tenant grant on task_assignees is SELECT ONLY.
+// The Insert/Update shapes below are typed because the generator always emits
+// them, not because a tenant may use them — every write goes through the RPC.
 export type Json =
   | string
   | number
@@ -217,6 +263,80 @@ export type Database = {
           },
           {
             foreignKeyName: "ai_usage_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      checkin_photo_requests: {
+        Row: {
+          checkin_date: string
+          close_reason: string | null
+          closed_at: string | null
+          company_id: string
+          created_at: string
+          expires_at: string
+          id: string
+          next_index: number
+          notification_id: string
+          photos_received: number
+          task_ids: Json
+          worker_id: string
+        }
+        Insert: {
+          checkin_date: string
+          close_reason?: string | null
+          closed_at?: string | null
+          company_id: string
+          created_at?: string
+          expires_at: string
+          id?: string
+          next_index?: number
+          notification_id: string
+          photos_received?: number
+          task_ids?: Json
+          worker_id: string
+        }
+        Update: {
+          checkin_date?: string
+          close_reason?: string | null
+          closed_at?: string | null
+          company_id?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          next_index?: number
+          notification_id?: string
+          photos_received?: number
+          task_ids?: Json
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "checkin_photo_requests_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "checkin_photo_requests_notification_id_fkey"
+            columns: ["notification_id"]
+            isOneToOne: false
+            referencedRelation: "notification_log"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "checkin_photo_requests_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["worker_id"]
+          },
+          {
+            foreignKeyName: "checkin_photo_requests_worker_id_fkey"
             columns: ["worker_id"]
             isOneToOne: false
             referencedRelation: "workers"
@@ -923,6 +1043,83 @@ export type Database = {
             columns: ["task_id"]
             isOneToOne: false
             referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      task_assignees: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          role: string
+          task_id: string
+          worker_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          role?: string
+          task_id: string
+          worker_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          role?: string
+          task_id?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_assignees_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_assignees_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "dashboard_tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_assignees_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "task_assignees_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "task_board"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_assignees_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_assignees_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["worker_id"]
+          },
+          {
+            foreignKeyName: "task_assignees_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
             referencedColumns: ["id"]
           },
         ]
@@ -1687,6 +1884,8 @@ export type Database = {
           active_tomorrow: boolean | null
           assignee_worker_id: string | null
           at_risk: boolean | null
+          collaborator_names: string[] | null
+          collaborator_worker_ids: string[] | null
           company_id: string | null
           created_at: string | null
           days_overdue: number | null
@@ -1786,6 +1985,18 @@ export type Database = {
         }[]
       }
       revert_translation_batch: { Args: { p_batch: string }; Returns: Json }
+      // 0035 (issue #44). Replaces the WHOLE collaborator set for one task and
+      // returns how many rows the task ends up carrying. The lead is never in
+      // it — pass only the helpers; `tasks.assignee_worker_id` stays the lead
+      // and stays the only way to change one.
+      set_task_collaborators: {
+        Args: { p_task: string; p_workers: string[] }
+        Returns: number
+      }
+      // 0033. A marker, not a computation: the welcome sweep asks for it before
+      // it sends anything, and a missing function means the once-ever index and
+      // the backfill are not in place yet, so nothing goes out.
+      welcome_ledger_ready: { Args: never; Returns: boolean }
       search_knowledge: {
         Args: {
           filter_category?: string

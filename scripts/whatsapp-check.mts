@@ -109,6 +109,16 @@ import {
   buildWorkerMenu,
   renderTaskDetail,
 } from '../apps/web/app/notifications/worker-menu.ts';
+// The WELCOME (issue #45). Same reasoning again — pure renderers plus one
+// loader that reads three relations and filters them in TypeScript, so the fake
+// Db below drives the real function rather than a re-implementation of it.
+import {
+  loadPendingWelcomes,
+  renderWelcome,
+  renderWelcomeEvent,
+  renderWelcomeFreeForm,
+  WELCOME_KIND,
+} from '../apps/web/app/notifications/welcome.ts';
 // The three keyword tables that sit IN FRONT of the worker agent. They moved
 // out of the Next route precisely so this file could assert them: three sets
 // that must stay pairwise disjoint cannot be checked by reading.
@@ -128,6 +138,15 @@ import {
   classifyClaimError,
   readTaskIds,
 } from '../apps/web/lib/checkin-claim.ts';
+// The pure half of the photo follow-up to that tap (issue #52). Same reasoning
+// again — no Db, no clock beyond an argument, no network.
+import {
+  claimedTaskIds,
+  nextPhotoTaskId,
+  photoRequestExpiry,
+  photoRequestLive,
+  PHOTO_REQUEST_TTL_MS,
+} from '../apps/web/lib/checkin-photo.ts';
 // The one-shot progress-note timer (issue #50). Not pure — it schedules — but
 // it needs no credentials, no network and no model, and it is the riskiest new
 // code in that change: a timer that leaked past its request, or a feedback
@@ -165,6 +184,10 @@ function fakeBriefingDb(rows: Record<string, unknown[]>): Db {
     const chain: Record<string, unknown> = {
       select: () => chain,
       eq: () => chain,
+      // `order` is here for loadPendingWelcomes (#45), which reads `profiles`
+      // ordered by created_at. It is a no-op: nothing under test depends on the
+      // order, only on who is in the set.
+      order: () => chain,
       then: (resolve: (value: { data: unknown[]; error: null }) => unknown) =>
         resolve({ data: rows[table] ?? [], error: null }),
     };
@@ -350,6 +373,126 @@ eq('a check-in payload is not a proposal id', parseProposalButtonId(doneP), null
     check(`${locale}: the awaiting ack fits one WhatsApp message`,
       t.checkinDoneAwaiting.length > 0 && t.checkinDoneAwaiting.length <= 300,
       `${t.checkinDoneAwaiting.length} chars`);
+  }
+}
+
+// ── the photo follow-up to that tap (issue #52) ─────────────────────────────
+// The tap files a claim; the claim needs proof, and until #52 the button path
+// asked for none while the agent path required one at the schema level. The
+// database half cannot be exercised here, so these pin the pure decisions in
+// front of it: WHICH tasks are worth asking about, HOW LONG an unlabelled photo
+// may be believed to be about them, and the copy that must never overstate what
+// just happened.
+{
+  const t1 = '11111111-1111-4111-8111-111111111111';
+  const t2 = '22222222-2222-4222-8222-222222222222';
+  const t3 = '33333333-3333-4333-8333-333333333333';
+
+  // Only tasks now waiting for the manager are worth a photo. `already_pending`
+  // counts — same end state, reached earlier — and a worker who re-taps after
+  // remembering to photograph something must be able to send it.
+  eq(
+    'a newly filed claim is worth asking about',
+    claimedTaskIds([{ taskId: t1, outcome: 'claimed' }]).join(),
+    t1,
+  );
+  eq(
+    'so is one that was already pending',
+    claimedTaskIds([{ taskId: t1, outcome: 'already_pending' }]).join(),
+    t1,
+  );
+  // A task the manager closed at lunch, one that vanished, one that errored:
+  // there is nothing for a photo to be proof OF.
+  eq(
+    'a closed, missing or failed task is not',
+    claimedTaskIds([
+      { taskId: t1, outcome: 'closed' },
+      { taskId: t2, outcome: 'missing' },
+      { taskId: t3, outcome: 'failed' },
+    ]).length,
+    0,
+  );
+  // Order is the snapshot's own, because it is the order they will be asked
+  // about — and the ONLY reason that is safe is that the outcomes are paired
+  // with their task id at the source rather than zipped by position afterwards.
+  eq(
+    'the ask order is the snapshot order',
+    claimedTaskIds([
+      { taskId: t3, outcome: 'claimed' },
+      { taskId: t2, outcome: 'closed' },
+      { taskId: t1, outcome: 'already_pending' },
+    ]).join(','),
+    `${t3},${t1}`,
+  );
+
+  // The cursor. A stale or malformed index must read as "finished" rather than
+  // hand `undefined` to a uuid argument.
+  eq('the cursor names the task at its index', nextPhotoTaskId([t1, t2], 1), t2);
+  eq('past the end there is nothing left to ask', nextPhotoTaskId([t1, t2], 2), null);
+  eq('a negative index is not a task', nextPhotoTaskId([t1, t2], -1), null);
+  eq('a fractional index is not a task', nextPhotoTaskId([t1, t2], 1.5), null);
+  eq('an empty snapshot asks about nothing', nextPhotoTaskId([], 0), null);
+
+  // THE TTL. Nothing sweeps checkin_photo_requests, so the READER is what makes
+  // a request die — and it must fail CLOSED. Believing an unlabelled photo for
+  // too long files tomorrow's work as proof of yesterday's claim, silently and
+  // with a plausible timestamp.
+  const now = Date.UTC(2026, 7, 14, 16, 30);
+  eq('an unexpired request is live', photoRequestLive(new Date(now + 60_000).toISOString(), now), true);
+  eq('an expired request is not', photoRequestLive(new Date(now - 1).toISOString(), now), false);
+  eq('a missing expiry is not', photoRequestLive(null, now), false);
+  eq('an unparseable expiry is not', photoRequestLive('not a date', now), false);
+  eq(
+    'the expiry is exactly the TTL past now',
+    Date.parse(photoRequestExpiry(now)) - now,
+    PHOTO_REQUEST_TTL_MS,
+  );
+  // Shorter than Meta's free-form window, and that direction is load-bearing:
+  // the follow-up "and the next one?" is free-form text, so a request outliving
+  // the window could only be answered by a PAID template, which this path must
+  // never send.
+  check(
+    'the photo window closes before the free-form window does',
+    PHOTO_REQUEST_TTL_MS < FREE_FORM_WINDOW_MS,
+    `${PHOTO_REQUEST_TTL_MS} vs ${FREE_FORM_WINDOW_MS}`,
+  );
+  // And short enough that a request opened in the 16:00–17:59 send window is
+  // dead long before the next morning's 07:00 briefing.
+  check(
+    'a request cannot survive until the next briefing',
+    PHOTO_REQUEST_TTL_MS < 13 * 60 * 60 * 1000,
+    `${PHOTO_REQUEST_TTL_MS}ms`,
+  );
+
+  for (const locale of LOCALES) {
+    const t = getCatalog(locale).whatsapp;
+    const title = 'Pintura do 2.º andar';
+    const ask = t.checkinPhotoAsk(title);
+    const next = t.checkinPhotoNext(title);
+    check(`${locale}: the photo ask names the task`, ask.includes(title), ask);
+    check(`${locale}: the follow-up names the next task`, next.includes(title), next);
+    check(`${locale}: neither leaks undefined`, !`${ask}${next}`.includes('undefined'));
+    check(
+      `${locale}: all three photo strings are distinct`,
+      new Set([ask, next, t.checkinPhotoThanks]).size === 3,
+    );
+    // Each is one free-form WhatsApp message following an acknowledgement that
+    // has already been sent.
+    for (const [name, body] of [['ask', ask], ['next', next], ['thanks', t.checkinPhotoThanks]] as const) {
+      check(
+        `${locale}: the photo ${name} fits one WhatsApp message`,
+        body.length > 0 && body.length <= 300,
+        `${body.length} chars`,
+      );
+    }
+    // ⚠ THE ONE RULE EVERY ACKNOWLEDGEMENT ON THIS PATH SHARES. The claim is
+    // waiting for the manager; a worker told the task is finished who then sees
+    // it on tomorrow's 07:00 message concludes Capo is broken.
+    check(
+      `${locale}: the photo thanks does not claim the task is done`,
+      t.checkinPhotoThanks !== t.checkinDone,
+      t.checkinPhotoThanks,
+    );
   }
 }
 
@@ -990,6 +1133,10 @@ check('an unparseable opt-in → no consent', !hasWhatsAppConsent({ whatsapp_opt
       waiting_on: ['Demolir parede'],
       awaiting_review: false,
       due_date: '2026-08-20',
+      // The default is the pre-#44 world: one person, in charge. Every
+      // assertion around it therefore still describes exactly the message that
+      // went out before collaborators existed.
+      role: 'lead',
       ...over,
     };
   }
@@ -1090,6 +1237,218 @@ check('an unparseable opt-in → no consent', !hasWhatsAppConsent({ whatsapp_opt
     check(`${locale} — renders a body`, body.length > 0);
     check(`${locale} — leaks no undefined`, !body.includes('undefined'), body);
     check(`${locale} — still carries the materials`, body.includes('tubo PVC 50mm'), body);
+  }
+}
+
+// ── TWO PEOPLE ON ONE TASK (issue #44) ──────────────────────────────────────
+//
+// Federico's complaint, verbatim: "there is no way for Capo to assign 2 people
+// to the same task. What it does instead it duplicates the task, duplicating
+// the amount of material needed."
+//
+// So there are two things to prove here and they are of different kinds.
+//
+//   1. THE MATERIALS ARE NOT MULTIPLIED. Structural, and asserted against the
+//      REAL loadCompanyBriefing over a fake Db — the same device the crew
+//      partition checks use — because a re-implementation of the fan-out here
+//      would keep passing after somebody rewrote the real one.
+//   2. A COLLABORATOR IS NEVER TOLD THE JOB IS THEIRS. Copy, and the reason
+//      this feature can be actively harmful if it ships half-done: two people
+//      each believing they are in charge is worse than the duplicate task it
+//      replaces.
+{
+  const LEAD = '11111111-1111-4111-8111-111111111111';
+  const HELPER = '22222222-2222-4222-8222-222222222222';
+
+  // ONE task_board row, exactly as the view returns it after 0035: one
+  // `materials` array, one address, one set of collaborator columns.
+  const boardRow = {
+    id: uuid,
+    company_id: 'co',
+    title: 'Pintar tecto',
+    job_name: 'Casa de Paco',
+    job_address: 'Rua das Flores 12',
+    status: 'pending',
+    is_open: true,
+    active_today: true,
+    overdue: false,
+    days_overdue: 0,
+    description: 'Duas demãos.',
+    materials: ['tinta 10L', 'rolo', 'fita'],
+    depends_on_titles: [],
+    due_date: '2026-08-20',
+    assignee_worker_id: LEAD,
+    worker_name: 'Miguel',
+    collaborator_worker_ids: [HELPER],
+    collaborator_names: ['João'],
+  };
+  const optedIn = '2026-08-01T10:00:00Z';
+  const crew = [
+    { id: LEAD, name: 'Miguel', active: true, phone: '351911111111', whatsapp_opt_in_at: optedIn },
+    { id: HELPER, name: 'João', active: true, phone: '351922222222', whatsapp_opt_in_at: optedIn },
+  ];
+
+  const fanned = await loadCompanyBriefing(
+    fakeBriefingDb({ task_board: [boardRow], workers: crew }),
+    'co',
+    'pt-PT',
+  );
+
+  const lead = fanned.workers.find(w => w.workerId === LEAD);
+  const helper = fanned.workers.find(w => w.workerId === HELPER);
+  check('both people on the task get a briefing', !!lead && !!helper);
+  eq('the lead is briefed about it', lead?.tasks.length, 1);
+  eq('and so is the collaborator', helper?.tasks.length, 1);
+  eq('the lead is told they lead it', lead?.tasks[0]?.role, 'lead');
+  eq('the collaborator is told they are helping', helper?.tasks[0]?.role, 'collaborator');
+  eq('and who they are helping', helper?.tasks[0]?.lead_name, 'Miguel');
+  eq('the lead is told who is with them', lead?.tasks[0]?.collaborator_names?.join(','), 'João');
+
+  // ── THE PROOF THE ISSUE ASKS FOR ──────────────────────────────────────────
+  // It is ONE task. Two people read it; there is one id, and one materials
+  // list, whose contents are identical on both sides. The old workaround —
+  // two tasks — would show two ids here and two `materials` arrays, and
+  // /materiais would add them together.
+  const allTaskIds = new Set(fanned.workers.flatMap(w => w.tasks.map(t => t.id)));
+  eq('two people, ONE task id between them', allTaskIds.size, 1);
+  eq(
+    'and the collaborator sees the SAME material list, not a second one',
+    helper?.tasks[0]?.materials.join('|'),
+    lead?.tasks[0]?.materials.join('|'),
+  );
+  eq('which is exactly what is on the task', lead?.tasks[0]?.materials.join('|'), 'tinta 10L|rolo|fita');
+  // The manager's own count is a ROW count and must not move either — it is
+  // what the 07:00 thread note and the manager's template both quote.
+  eq("the manager's 'today' count still says one task", fanned.counts.today, 1);
+
+  // ── the wording, in every language ────────────────────────────────────────
+  for (const locale of LOCALES) {
+    const t = getCatalog(locale).reminders;
+    const helperBody = renderWorkerFreeForm({ ...helper!, locale });
+    const leadBody = renderWorkerFreeForm({ ...lead!, locale });
+
+    check(`${locale} — the helper is told whose job it is`, helperBody.includes('Miguel'), helperBody);
+    check(
+      `${locale} — using the collaborator wording, not the plain title`,
+      helperBody.includes(t.taskAsCollaborator('Pintar tecto (Casa de Paco)', 'Miguel')),
+      helperBody,
+    );
+    check(`${locale} — and leaks no undefined`, !helperBody.includes('undefined'), helperBody);
+    // Same address, same materials. A helper who is told less than the lead has
+    // to phone somebody, which is the failure #49 already fixed once.
+    check(`${locale} — the helper still gets the address`, helperBody.includes('Rua das Flores 12'), helperBody);
+    check(`${locale} — and the same materials`, helperBody.includes('tinta 10L'), helperBody);
+
+    check(`${locale} — the lead is told who is with them`, leadBody.includes(t.freeFormWith('João')), leadBody);
+    // ⚠ The asymmetry that keeps the message readable: only the LEAD gets the
+    // "with you" line. Telling a helper who their fellow helpers are pushes the
+    // address further down a phone screen at 07:00.
+    check(
+      `${locale} — the helper is NOT given a "with you" list`,
+      !helperBody.includes(t.freeFormWith('')),
+      helperBody,
+    );
+    // And the lead's own line is unchanged from before this feature: no role
+    // clause, because they are the assignee and always were.
+    check(
+      `${locale} — the lead's headline gains no role clause`,
+      leadBody.includes(t.taskWithJob('Pintar tecto', 'Casa de Paco')),
+      leadBody,
+    );
+  }
+
+  // Lateness stays LAST on the line, after the role clause: it is the thing
+  // that changes what somebody does first, and burying it mid-sentence is the
+  // one ordering mistake that costs a day.
+  {
+    const t = getCatalog('pt-PT').reminders;
+    const late = renderWorkerFreeForm({
+      ...helper!,
+      tasks: [{ ...helper!.tasks[0]!, overdue: true, days_overdue: 3 }],
+    });
+    check('an overdue helper task names the lead', late.includes('a ajudar Miguel'), late);
+    check('and still marks the delay', late.includes('3'), late);
+    check(
+      'with the delay after the role, not before it',
+      late.indexOf('a ajudar Miguel') < late.indexOf(t.taskOverdue('', 3).trim().slice(0, 4)),
+      late,
+    );
+  }
+
+  // A task whose assignee was cleared while helpers stayed on it. Reachable —
+  // clearing the assignee deliberately does not delete anybody's row — and the
+  // copy must claim nothing about anybody rather than printing "a ajudar null".
+  {
+    const orphaned = renderWorkerFreeForm({
+      ...helper!,
+      tasks: [{ ...helper!.tasks[0]!, lead_name: null }],
+    });
+    check(
+      'a helper on a lead-less task is told it is a team job',
+      orphaned.includes(getCatalog('pt-PT').reminders.taskAsTeam('Pintar tecto (Casa de Paco)')),
+      orphaned,
+    );
+    check('and never reads "null" or "undefined"', !/null|undefined/.test(orphaned), orphaned);
+  }
+
+  // The one-line TEMPLATE parameter carries the role clause too. It is the
+  // envelope a crew member OUTSIDE the free 24h window gets, i.e. the one that
+  // reaches somebody who has never written to Capo — the person most likely to
+  // misread whose job it is.
+  {
+    const [, list] = renderWorkerBriefing(helper!);
+    check('the paid template also names the lead', list.includes('a ajudar Miguel'), list);
+    check('and stays one line', !list.includes('\n'), JSON.stringify(list));
+  }
+
+  // A task with NO collaborators is byte-identical to what it rendered before
+  // this feature. That is what makes shipping it a no-op for every existing
+  // crew on the morning it lands.
+  {
+    const solo = await loadCompanyBriefing(
+      fakeBriefingDb({
+        task_board: [{ ...boardRow, collaborator_worker_ids: [], collaborator_names: [] }],
+        workers: crew,
+      }),
+      'co',
+      'pt-PT',
+    );
+    eq('a task with no helpers reaches only its assignee', solo.workers.filter(w => w.tasks.length > 0).length, 1);
+    const body = renderWorkerFreeForm(solo.workers.find(w => w.workerId === LEAD)!);
+    check('and its message carries no "with you" line', !body.includes('Contigo'), body);
+  }
+
+  // THE DEPLOY-ORDERING CASE. 0035 APPENDS the two columns to task_board, so a
+  // deploy that lands before its migration reads `undefined` for both. That
+  // must brief exactly the people it briefs today rather than throwing — every
+  // task_board reader uses select('*') for this reason (AGENTS.md).
+  {
+    const { collaborator_worker_ids: _a, collaborator_names: _b, ...preMigration } = boardRow;
+    const degraded = await loadCompanyBriefing(
+      fakeBriefingDb({ task_board: [preMigration], workers: crew }),
+      'co',
+      'pt-PT',
+    );
+    eq('a pre-migration row still briefs the assignee', degraded.workers.find(w => w.workerId === LEAD)?.tasks.length, 1);
+    eq('and briefs nobody else', degraded.workers.find(w => w.workerId === HELPER)?.tasks.length, 0);
+  }
+
+  // And the guard against a view whose two aggregates stopped agreeing: naming
+  // the wrong person to their own crew is worse than naming nobody.
+  {
+    const misaligned = await loadCompanyBriefing(
+      fakeBriefingDb({
+        task_board: [{ ...boardRow, collaborator_names: [] }],
+        workers: crew,
+      }),
+      'co',
+      'pt-PT',
+    );
+    eq(
+      'mismatched collaborator arrays name nobody rather than guessing',
+      misaligned.workers.find(w => w.workerId === HELPER)?.tasks.length,
+      0,
+    );
   }
 }
 
@@ -1496,6 +1855,10 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
       waiting_on: ['Demolir parede'],
       awaiting_review: false,
       due_date: '2026-08-20',
+      // The default is the pre-#44 world: one person, in charge. Every
+      // assertion around it therefore still describes exactly the message that
+      // went out before collaborators existed.
+      role: 'lead',
       ...over,
     };
   }
@@ -1765,6 +2128,133 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
   // this file's output — this repo's only correctness signal.
   check('qr — the same text yields the same path', qrGeometry(link).path === qr.path);
   check('qr — different text yields a different path', qrGeometry(`${link}x`).path !== qr.path);
+}
+
+// ── the welcome (issue #45) ─────────────────────────────────────────────────
+//
+// The first message Capo ever sends somebody, once per person, ever. Three
+// things here are load-bearing and none of them fails loudly in production:
+//
+//   a. It is a PROACTIVE send, so it may only ever reach somebody with a
+//      recorded opt-in. The audience loader must therefore drop exactly the
+//      people the two daily sends drop, and for exactly the same reasons —
+//      which is why it goes through partitionCrew rather than a filter of its
+//      own.
+//   b. It has TWO envelopes — the paid template and, for anybody inside their
+//      24-hour window, free text. The approved template body is BUILT from the
+//      same two catalog strings the free-form renderer uses, so the two cannot
+//      drift into introducing Capo differently depending on an invisible
+//      property of the recipient. Assert the rejoin, the way cache-check
+//      asserts the system-prompt split.
+//   c. Both parameters go into a Meta template, where a newline is a 132000
+//      that fails the whole send. A company name and a person's name are both
+//      manager-authored free text.
+{
+  const optedIn = '2026-08-01T10:00:00Z';
+
+  // The kinds must stay distinct. 'welcome' is the only one locked once-EVER
+  // (0033's partial unique index); collapsing it into either daily kind would
+  // either welcome people daily or stop a daily send after its first day.
+  check('the welcome kind is its own', WELCOME_KIND === 'welcome');
+  check('and is neither daily kind', WELCOME_KIND !== 'daily_briefing' && WELCOME_KIND !== 'task_checkin');
+
+  const crew = [
+    // welcomable: active, reachable, consenting, never welcomed
+    { id: 'w1', name: 'Zé', active: true, phone: '351911111111', whatsapp_opt_in_at: optedIn },
+    // consented, but ALREADY welcomed — the steady state, and the one the
+    // ledger read exists to keep cheap
+    { id: 'w2', name: 'Pepe', active: true, phone: '351922222222', whatsapp_opt_in_at: optedIn },
+    // ⚠ THE ONE THAT MATTERS. Reachable, active, and nobody has agreed on their
+    // behalf. A welcome to this person is the message that gets a business
+    // number banned.
+    { id: 'w3', name: 'Ana', active: true, phone: '351933333333', whatsapp_opt_in_at: null },
+    // consenting but with nowhere to send
+    { id: 'w4', name: 'Rui', active: true, phone: null, whatsapp_opt_in_at: optedIn },
+    // switched off
+    { id: 'w5', name: 'Antigo', active: false, phone: '351955555555', whatsapp_opt_in_at: optedIn },
+  ];
+  const managers = [
+    { id: 'p1', full_name: 'Federico', language: 'pt-PT', phone: '+5491178876189', whatsapp_opt_in_at: optedIn },
+    // the account holder who never ticked the box on /perfil. Being the owner
+    // is not consent to be messaged on WhatsApp.
+    { id: 'p2', full_name: 'Sócio', language: 'pt-PT', phone: '+351966666666', whatsapp_opt_in_at: null },
+  ];
+  const done = [{ worker_id: 'w2', profile_id: null }];
+
+  const audience = await loadPendingWelcomes(
+    fakeBriefingDb({ workers: crew, profiles: managers, notification_log: done }),
+    { id: 'co', name: 'Construções Silva', language: 'pt-PT' },
+  );
+
+  const ids = audience.pending.map(p => p.id).sort();
+  eq('only the never-welcomed, consenting, reachable people are pending', ids.join(','), 'p1,w1');
+  check('a worker with no recorded opt-in is NEVER pending', !ids.includes('w3'));
+  check('a manager with no recorded opt-in is NEVER pending either', !ids.includes('p2'));
+  check('an already-welcomed worker is not welcomed twice', !ids.includes('w2'));
+  eq('the consent exclusion is counted, not silent', audience.excludedNoConsent, 1);
+  eq('and so is the unreachable one', audience.excludedUnreachable, 1);
+  eq('and the inactive one', audience.excludedInactive, 1);
+  eq('and the manager one', audience.excludedManagers, 1);
+
+  const worker = audience.pending.find(p => p.id === 'w1')!;
+  const manager = audience.pending.find(p => p.id === 'p1')!;
+  eq('a crew member is addressed as a worker', worker.audience, 'worker');
+  eq('a profile is addressed as a manager', manager.audience, 'manager');
+
+  for (const locale of LOCALES) {
+    const t2 = getCatalog(locale).reminders;
+    const target = { ...worker, locale };
+    const [name, middle] = renderWelcome(target, 'Construções Silva');
+    const [, managerMiddle] = renderWelcome({ ...manager, locale }, 'Construções Silva');
+
+    // (c) Template parameters survive Meta's rules untouched. If toTemplateParam
+    // has to CHANGE either of them, the copy contains something Meta would have
+    // rejected outright.
+    eq(`${locale} — the name parameter needs no flattening`, toTemplateParam(name), name);
+    eq(`${locale} — the worker sentence needs no flattening`, toTemplateParam(middle), middle);
+    eq(`${locale} — the manager sentence needs no flattening`, toTemplateParam(managerMiddle), managerMiddle);
+
+    // The two audiences must actually differ. One approved template serving
+    // both is only defensible because {{2}} carries the difference.
+    check(`${locale} — worker and manager are told different things`, middle !== managerMiddle, middle);
+    check(`${locale} — the welcome names the company`, middle.includes('Construções Silva'), middle);
+
+    // A welcome is by definition first contact, so this is the one message
+    // where the language options are certainly new information (#49 made them
+    // conditional everywhere else).
+    check(`${locale} — the crew welcome offers PT/ES/EN`, /\bPT\b/.test(middle), middle);
+    check(`${locale} — the manager welcome does not`, !/\bPT,/.test(managerMiddle), managerMiddle);
+
+    // (b) THE REJOIN. The approved template body is greeting ⊕ {{2}} ⊕ opt-out,
+    // and the free-form twin is the same three strings with newlines between
+    // them. Assert against the REAL template definition rather than a
+    // re-derivation, so a change to either side fails here.
+    const def = allTemplates().find(d => d.name === 'capo_welcome' && d.language === t2.templateLanguage)!;
+    const body = (def.components.find(c => c.type === 'BODY') as { text: string }).text;
+    const freeForm = renderWelcomeFreeForm(target, 'Construções Silva');
+    eq(
+      `${locale} — the free-form welcome is the template body, rejoined`,
+      freeForm.replace(/\n+/g, ' '),
+      body.replace('{{1}}', name).replace('{{2}}', middle),
+    );
+    // Meta expects a utility message to say how to stop receiving them, and the
+    // free-form path has no approved wrapper to say it on our behalf.
+    check(`${locale} — the free-form welcome still states the opt-out`, freeForm.includes(t2.welcomeStop), freeForm);
+    check(`${locale} — and leaks no undefined`, !freeForm.includes('undefined'), freeForm);
+  }
+
+  // A pasted paragraph in the company name must not blow the parameter apart.
+  const [, messy] = renderWelcome({ ...worker, locale: 'pt-PT' }, 'Obras\nSilva\t& Filhos, Lda, a maior empresa de construção civil de toda a região norte de Portugal');
+  eq('a multi-line company name is flattened before it reaches Meta', toTemplateParam(messy), messy);
+  check('and clamped rather than allowed to run on', messy.includes('…'), messy);
+
+  // The thread note (issue #47's boundary, one more source). Crew names only,
+  // and they are text the MANAGER typed.
+  for (const locale of LOCALES) {
+    const note = renderWelcomeEvent(2, ['Zé', 'Pepe'], locale);
+    check(`${locale} — the welcome thread note names who was introduced`, note.includes('Zé') && note.includes('Pepe'), note);
+    check(`${locale} — and leaks no undefined`, !note.includes('undefined'), note);
+  }
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

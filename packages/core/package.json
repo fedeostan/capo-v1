@@ -22,6 +22,7 @@
     "./capabilities/propose": "./src/capabilities/propose.ts",
     "./capabilities/plan": "./src/capabilities/plan.ts",
     "./capabilities/workdays": "./src/capabilities/workdays.ts",
+    "./capabilities/collaborators": "./src/capabilities/collaborators.ts",
     "./capabilities/reschedule": "./src/capabilities/reschedule.ts",
     "./capabilities/reschedule-propose": "./src/capabilities/reschedule-propose.ts",
     "./translation": "./src/translation/index.ts",
@@ -31,7 +32,8 @@
     "./transcription": "./src/agent/transcription.ts",
     "./channels/whatsapp-media": "./src/channels/whatsapp-media.ts",
     "./channels/push-rules": "./src/channels/push-rules.ts",
-    "./media/photos": "./src/media/photos.ts"
+    "./media/photos": "./src/media/photos.ts",
+    "./media/task-photo-store": "./src/media/task-photo-store.ts"
   },
   "scripts": {
     "lint": "eslint .",

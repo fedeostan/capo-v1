@@ -47,6 +47,11 @@ export interface CardStrings {
     title: string;
     jobName?: string;
     workerName?: string;
+    /** Everyone else on the SAME task (issue #44). Resolved to names by
+     *  render.ts, so a dangling worker id fails before the manager sees the
+     *  card — the same referential check `workerName` gets. Omitted entirely
+     *  when empty; a card must never say "with nobody helping". */
+    collaboratorNames?: string[];
     startDate?: string;
     dueDate?: string;
   }): string;
@@ -55,6 +60,18 @@ export interface CardStrings {
     title(v: string): string;
     status(v: string): string;
     assignee(v: string): string;
+    /**
+     * Who is helping, after this change (issue #44).
+     *
+     * Takes the WHOLE list rather than a diff, because the payload is a whole
+     * list — set_task_collaborators replaces the set — and a card that said
+     * "add João" while the payload also removed Zé would be describing one
+     * thing and doing another, which is the one thing a card may never do.
+     *
+     * The empty array is therefore a real and different sentence, not an
+     * omission: it means "take everybody off". Each locale writes its own.
+     */
+    collaborators(names: string[]): string;
     startDate(v: string): string;
     dueDate(v: string): string;
     job(v: string): string;

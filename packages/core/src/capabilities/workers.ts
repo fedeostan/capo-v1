@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { LOCALES } from '@capo/i18n/locale';
 import { hasWhatsAppConsent } from '../channels/whatsapp';
+import { everyoneOnTask } from './collaborators';
 import type { CapoTool } from './types';
 
 // E.164 — this is the number the daily WhatsApp briefing is sent to, and the
@@ -27,7 +28,7 @@ const whatsappOptIn = z
   .boolean()
   .optional()
   .describe(
-    'Set true ONLY when the manager states that this worker has agreed to receive WhatsApp messages from Capo. Required before Capo sends them anything — without it they get no briefing and no check-in. Never infer it: if the manager has not said so, ask. Set false to record that they no longer want them.',
+    'Set true ONLY when the manager states that this worker has agreed to receive WhatsApp messages from Capo. Required before Capo sends them anything — without it they get no briefing and no check-in. Never infer it: if the manager has not said so, ask. Set false to record that they no longer want them. Recording consent also makes Capo introduce itself to that person on WhatsApp, once — one paid message per person, so say so when the manager is consenting several people at a time.',
   );
 
 export const addWorkerInput = z.object({
@@ -140,19 +141,28 @@ export const listWorkers: CapoTool<Record<string, never>> = {
     // that view for removal in a follow-up migration.)
     // Best-effort: a worker roster is still useful without the tallies.
     const load = new Map<string, { hoje: number; amanha: number; atrasadas: number; abertas: number }>();
+    // select('*') since #44, not the four columns it used to name: the tallies
+    // now count COLLABORATORS as well as leads, and their two columns are
+    // APPENDED to the view by 0035 — an explicit list naming them would 42703
+    // on a deploy landing before the migration and cost the manager the whole
+    // roster. With select('*') a pre-migration read counts leads only, which is
+    // exactly today's behaviour.
     const { data: rows } = await ctx.db
       .from('task_board')
-      .select('assignee_worker_id, active_today, active_tomorrow, overdue')
+      .select('*')
       .eq('company_id', ctx.companyId)
       .eq('is_open', true);
     for (const row of rows ?? []) {
-      if (!row.assignee_worker_id) continue;
-      const entry = load.get(row.assignee_worker_id) ?? { hoje: 0, amanha: 0, atrasadas: 0, abertas: 0 };
-      entry.abertas += 1;
-      if (row.active_today) entry.hoje += 1;
-      if (row.active_tomorrow) entry.amanha += 1;
-      if (row.overdue) entry.atrasadas += 1;
-      load.set(row.assignee_worker_id, entry);
+      // Everyone on the task. "Quem está livre?" must give the same answer here
+      // and on the crew card in the app, and a helper on a wall is not free.
+      for (const workerId of everyoneOnTask(row)) {
+        const entry = load.get(workerId) ?? { hoje: 0, amanha: 0, atrasadas: 0, abertas: 0 };
+        entry.abertas += 1;
+        if (row.active_today) entry.hoje += 1;
+        if (row.active_tomorrow) entry.amanha += 1;
+        if (row.overdue) entry.atrasadas += 1;
+        load.set(workerId, entry);
+      }
     }
 
     return {

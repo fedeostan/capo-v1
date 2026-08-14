@@ -55,7 +55,11 @@ export async function POST(request: NextRequest) {
       const session = event.data.object as Stripe.Checkout.Session;
       const companyId = session.client_reference_id;
       if (companyId) {
-        const { error } = await db
+        // .select('id') so an update that matched NOTHING is visible. Without
+        // it a zero-row update is indistinguishable from a successful one:
+        // Postgres reports a filter that matched no rows as a fully successful
+        // statement, not an error.
+        const { data: updated, error } = await db
           .from('companies')
           .update({
             stripe_customer_id: typeof session.customer === 'string' ? session.customer : (session.customer?.id ?? null),
@@ -63,9 +67,16 @@ export async function POST(request: NextRequest) {
               typeof session.subscription === 'string' ? session.subscription : (session.subscription?.id ?? null),
             subscription_status: 'active',
           })
-          .eq('id', companyId);
-        if (error) console.error('billing: failed to apply checkout.session.completed:', error.message);
-        logEvent('billing.checkout_completed', { companyId });
+          .eq('id', companyId)
+          .select('id');
+        if (error) {
+          console.error('billing: failed to apply checkout.session.completed:', error.message);
+        } else if (!updated?.length) {
+          // Somebody paid and we cannot say who. Never silent.
+          logEvent('billing.company_not_found', { companyId });
+        } else {
+          logEvent('billing.checkout_completed', { companyId });
+        }
       }
       break;
     }
@@ -74,12 +85,69 @@ export async function POST(request: NextRequest) {
       const subscription = event.data.object as Stripe.Subscription;
       const customerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id;
       const status = mapStripeStatus(subscription.status);
-      const { error } = await db
+      const patch = { subscription_status: status, stripe_subscription_id: subscription.id };
+
+      const { data: matched, error } = await db
         .from('companies')
-        .update({ subscription_status: status, stripe_subscription_id: subscription.id })
-        .eq('stripe_customer_id', customerId);
-      if (error) console.error(`billing: failed to apply ${event.type}:`, error.message);
-      logEvent('billing.subscription_updated', { customerId, stripeStatus: subscription.status, mappedStatus: status });
+        .update(patch)
+        .eq('stripe_customer_id', customerId)
+        .select('id');
+      if (error) {
+        console.error(`billing: failed to apply ${event.type}:`, error.message);
+        break;
+      }
+      if (matched?.length) {
+        logEvent('billing.subscription_updated', { customerId, stripeStatus: subscription.status, mappedStatus: status });
+        break;
+      }
+
+      // No company carries this customer id. That is exactly the state a fresh
+      // webhook is most likely to be in — checkout.session.completed missed,
+      // failed, or delivered out of order — so recover through the company id
+      // stamped on the subscription at checkout rather than dropping the event.
+      const companyId = subscription.metadata?.company_id;
+      if (!companyId) {
+        logEvent('billing.subscription_orphan', {
+          customerId,
+          subscriptionId: subscription.id,
+          reason: 'no_company_metadata',
+        });
+        break;
+      }
+
+      const { data: recovered, error: recoveryError } = await db
+        .from('companies')
+        .update({ ...patch, stripe_customer_id: customerId })
+        .eq('id', companyId)
+        .select('id');
+      if (recoveryError) {
+        // stripe_customer_id is unique (0011), so 23505 here means another
+        // company row already claims this customer — a real data problem worth
+        // seeing, not a transient failure to retry.
+        logEvent('billing.subscription_orphan', {
+          customerId,
+          subscriptionId: subscription.id,
+          companyId,
+          reason: recoveryError.code ?? 'recovery_failed',
+        });
+        break;
+      }
+      if (!recovered?.length) {
+        logEvent('billing.subscription_orphan', {
+          customerId,
+          subscriptionId: subscription.id,
+          companyId,
+          reason: 'company_missing',
+        });
+        break;
+      }
+      logEvent('billing.subscription_recovered', {
+        customerId,
+        subscriptionId: subscription.id,
+        companyId,
+        stripeStatus: subscription.status,
+        mappedStatus: status,
+      });
       break;
     }
     default:

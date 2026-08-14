@@ -515,6 +515,51 @@ const pushEntries = crons.filter(c => c.path === '/api/cron/push');
 eq('/api/cron/push is scheduled exactly once', pushEntries.length, 1);
 eq('/api/cron/push still runs all day, ungated', pushEntries[0]?.schedule, '*/10 * * * *');
 
+// ── the welcome sweep (issue #45) ───────────────────────────────────────────
+// The THIRD shape in the product, and it is neither of the other two. Unlike
+// the daily sends it has no correct time — it fires whenever somebody was
+// added — but unlike the push sweep it must not run all night: a first-ever
+// message from an unknown business number at 03:00 is how that number earns a
+// block report.
+//
+// So it carries a WIDE gate (Lisbon 09:00–19:59) fed by a minute-based
+// schedule, which is why the "one UTC entry per window hour under both DST
+// offsets" sweep above does not apply to it: every quarter of an hour covers
+// every hour in every season by construction. These numbers are duplicated from
+// the route for the same reason BRIEFING_HOUR and CHECKIN_HOUR are — a route
+// that moved alone would fail here on the next pull request.
+const WELCOME_HOUR = 9;
+const WELCOME_WINDOW_HOURS = 11;
+
+eq('the welcome window ends at Lisbon 19', sendWindowEnd(WELCOME_HOUR, WELCOME_WINDOW_HOURS), 19);
+check('a welcome may go out at 09', withinSendWindow(WELCOME_HOUR, WELCOME_HOUR, WELCOME_WINDOW_HOURS));
+check('a welcome may still go out at 19', withinSendWindow(19, WELCOME_HOUR, WELCOME_WINDOW_HOURS));
+// The two directions quiet hours exist for. Nobody's first ever contact from
+// Capo arrives while they are asleep.
+check('no welcome at 20:00', !withinSendWindow(20, WELCOME_HOUR, WELCOME_WINDOW_HOURS));
+check('no welcome at 03:00', !withinSendWindow(3, WELCOME_HOUR, WELCOME_WINDOW_HOURS));
+// Starts AFTER the 07:00 briefing's own window (07–08) closes, so a crew member
+// added overnight cannot be welcomed and briefed inside the same hour in an
+// order nobody chose.
+check(
+  'the welcome window opens only after the briefing window has closed',
+  WELCOME_HOUR > sendWindowEnd(BRIEFING_HOUR),
+  `welcome starts at ${WELCOME_HOUR}, briefing window ends at ${sendWindowEnd(BRIEFING_HOUR)}`,
+);
+
+const welcomeEntries = crons.filter(c => c.path === '/api/cron/welcome');
+eq('/api/cron/welcome is scheduled exactly once', welcomeEntries.length, 1);
+eq('/api/cron/welcome sweeps every 15 minutes', welcomeEntries[0]?.schedule, '*/15 * * * *');
+// The eleven-hour window is what makes a minute-based schedule safe here. If
+// somebody narrows the window toward the one-hour shape of the daily sends, the
+// ":00, never :30" rule starts applying again and this entry becomes the
+// check-in bug — so the two facts are asserted together.
+check(
+  'the welcome window is wide enough that cron drift cannot close it',
+  WELCOME_WINDOW_HOURS >= 4,
+  `${WELCOME_WINDOW_HOURS} hours`,
+);
+
 // ── report ──────────────────────────────────────────────────────────────────
 console.log(lines.join('\n'));
 console.log(`\nScheduler check: ${lines.length - failures}/${lines.length} passed; failures: ${failures}`);
