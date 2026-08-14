@@ -582,6 +582,8 @@ const dict: Catalog = {
       'Fica registada a tua resposta, mas não consegui avisar o teu encarregado. Fala com ele.',
     checkinNotDone: 'Certo, obrigado por avisares. Fica registado.',
     checkinError: 'Não consegui registar a tua resposta. Fala com o teu encarregado.',
+    stillWorking: 'Continuo a tratar disso, chefe — só mais um bocadinho.',
+    workerStillWorking: 'Continuo a ver isso — só mais um bocadinho.',
   },
 
   reminders: {

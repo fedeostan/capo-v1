@@ -538,6 +538,98 @@ same locale the card itself was sent in.
   proposal; other interactive subtypes (`list_reply`, `nfm_reply`) are acked
   and logged as `whatsapp.unsupported_interactive`.
 
+## "Capo is working on it" — read receipts and the typing indicator
+
+Issue #50. The web chat shows a "Capo está a escrever…" line and a chip per
+tool call; WhatsApp showed nothing at all, so a manager sent a message and
+watched a blank screen for ten to thirty seconds. That reads as "it broke", and
+the natural response — send it again — costs another whole agent turn and can
+produce a second approval card for the same intent.
+
+**No Meta dashboard change is required.** Both calls below go to the same
+`POST /{phone-number-id}/messages` endpoint the sends already use.
+
+### ⚠ Message editing does not exist. Not for us, not for anyone.
+
+The obvious design is "send *a thinking…* immediately, then edit that same
+message into the real answer when it is ready". **The WhatsApp Cloud API cannot
+edit a sent message.** There is exactly one messages endpoint and it is
+send-only: no edit, no update, no delete, for any message a business sends, in
+any conversation category. (Consumers can edit their own messages in the app;
+that is a client feature and is not exposed to businesses through the API.)
+
+Verified against Meta's own
+[Cloud API message reference](https://developers.facebook.com/documentation/business-messaging/whatsapp/reference/whatsapp-business-phone-number/message-api),
+which lists one operation and no mutation of a sent message.
+
+Do not build on the assumption that it will appear. If it ever does, the place
+to change is `planAssistantMessages` and the sink, not the feedback code.
+
+### What does exist
+
+| | request | lasts | billable |
+|---|---|---|---|
+| Read receipt | `status: 'read'` + `message_id` | permanent (two blue ticks) | **no** |
+| Typing indicator | the same body plus `typing_indicator: { type: 'text' }` | **25 s**, or until the real reply is sent | **no** |
+
+```json
+{ "messaging_product": "whatsapp", "status": "read",
+  "message_id": "<inbound wamid>", "typing_indicator": { "type": "text" } }
+```
+
+Four things about this shape are load-bearing:
+
+- **The typing indicator RIDES the read receipt.** It is one request, not two —
+  showing "typing" always also marks the message read, and there is no
+  typing-without-read shape to get wrong.
+- **It is addressed by `message_id`, never by a recipient.** There is no `to`
+  and no `recipient` field, so this request cannot pass through `buildSendBody`
+  and the `to`-silently-wins BSUID hazard cannot reach it. `buildReceiptBody` in
+  `packages/core/src/channels/whatsapp.ts` is the only constructor, and
+  `pnpm whatsapp-check` asserts every one of these absences.
+- **Neither is a message, so neither can be billed.** Meta bills *template*
+  messages ([pricing](https://developers.facebook.com/docs/whatsapp/pricing/):
+  "all non-template messages are free"). A status update has no `type` and no
+  `template`, and Meta answers `{"success": true}` with no wamid — there is no
+  message, so there is nothing to price. The check script pins the absence of
+  both keys, because that absence is the cost guarantee.
+- **Meta asks that the indicator only be shown when a reply is actually
+  coming.** `sendReadReceipt`'s `typing` option is therefore required rather
+  than defaulted, so each call site decides out loud. Paths answered from a
+  lookup in milliseconds (an approval tap, STOP/START, a `PT`/`ES`/`EN`
+  keyword) get the tick and no indicator.
+
+### The 25-second cliff, and the one message that covers it
+
+The indicator expires silently. A plan or a translation routinely runs longer,
+so exactly the turns that most need reassurance went quiet again halfway
+through. The answer is **one** plain-text note at 20 seconds
+(`PROGRESS_NOTE_AFTER_MS`, deliberately just under `TYPING_INDICATOR_MS`) — free
+because it is free-form text inside the window the inbound message opened a
+moment earlier.
+
+> ⚠ **Do not turn this into a keep-alive.** Re-arming the indicator every 20
+> seconds is the obvious next idea and it is a bug generator: a serverless
+> instance can freeze the moment the response flushes, so a repeating timer
+> either dies mid-cycle or holds the function open for nothing.
+> `withProgressNote` (`apps/web/lib/whatsapp-feedback.ts`) uses a **single**
+> `setTimeout`, created and cleared inside one awaited call, inside `after()` —
+> which keeps the invocation alive until it settles. One note per turn, ever.
+
+The window is **asserted, not assumed** (`mayNarrateProgress`). It is always
+true today — the note only ever goes out while answering a message that arrived
+seconds ago — but the failure direction is expensive: free-form text outside the
+window is refused with 131047, and the recovery path for that refusal is a paid
+template. Assumed-safe is how a status update turns into a bill.
+
+### Unknown senders get nothing, deliberately
+
+`acknowledgeInbound` is called only after a sender has resolved to a `profiles`
+or `workers` row, and never for an ambiguous `workers.phone` match. Two blue
+ticks are an answer: they would confirm to a stranger that their message reached
+a live system, which is precisely what the webhook's silent no-op exists to
+refuse.
+
 ## Approval cards (interactive reply buttons)
 
 An approval card is a **tool output part**, not text. The sink used to flatten
