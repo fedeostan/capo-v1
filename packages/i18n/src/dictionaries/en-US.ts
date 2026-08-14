@@ -187,6 +187,8 @@ const dict: Catalog = {
       dismiss: 'No check needed',
       request: 'Request review',
       failed: 'Could not resolve the review',
+      proofNone: 'No photos attached.',
+      proofPhotos: n => (n === 1 ? '1 photo attached.' : `${n} photos attached.`),
     },
     taskDetail: {
       fallbackTitle: 'Task',
@@ -592,6 +594,11 @@ const dict: Catalog = {
     checkinDoneProblem:
       "Your answer is logged, but I couldn't tell your foreman. Have a word with him.",
     checkinNotDone: 'Alright, thanks for letting me know. Logged.',
+    checkinPhotoAsk: task =>
+      `If you can, send me a photo of “${task}” and I'll attach it. If you can't, no problem — it's logged either way.`,
+    checkinPhotoNext: task => `Got it, thanks. Any photo of “${task}”?`,
+    checkinPhotoThanks:
+      'Got it, thanks. It goes with the claim — your foreman still has to confirm it.',
     checkinError: "I couldn't record your answer. Talk to your foreman.",
     stillWorking: "Still working on this, boss — one more moment.",
     workerStillWorking: "Still looking into this — one more moment.",

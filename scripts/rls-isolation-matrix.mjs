@@ -65,6 +65,18 @@
 // worker attribution past the column-scoped INSERT grant, and rewriting or
 // deleting evidence the tenant owns.
 //
+// 0034 (issue #52) adds the row that decides WHERE the next photo goes:
+// checkin_photo_requests, which records "the next unlabelled photo from this
+// crew member is proof of THIS task" for a few hours after they tap "Sim,
+// terminei". It is deny-all with every grant revoked — notification_log's
+// posture — so it appears twice here: as a deny-all READ in the visibility
+// sweep (seeded, so an exposing policy cannot pass for want of rows), and as
+// three grant-layer attacks. Insert would let a tenant manufacture a request
+// naming a task of their choosing; update would repoint an existing one with no
+// worker cooperation at all; delete would erase the trail. All three end in a
+// task_photos row that can never be removed, because 0023 has no DELETE policy
+// anywhere.
+//
 // notifications (0024) is the first relation in this repo scoped per PROFILE
 // and not only per company, which is why seedTenant now creates a COLLEAGUE — a
 // second profile in the same company. Without one, a policy that dropped
@@ -406,6 +418,37 @@ async function seedTenant(label) {
     `task_photo(${label})`,
   );
 
+  // The check-in ask, and the photo request that descends from it (0034,
+  // issue #52). Both are written by the WhatsApp webhook on the SERVICE ROLE in
+  // production too, and both are deny-all for tenants — notification_log's
+  // posture, not worker_checkins'.
+  //
+  // Seeded rather than left empty because a deny-all check against an empty
+  // table passes for the wrong reason: it would report green on a policy that
+  // exposed every company's rows, simply because there were none to expose.
+  //
+  // The request row is the interesting one. It says "the next bare photo from
+  // this crew member is proof of THIS task", so a tenant able to insert or
+  // update one could redirect another company's worker's next photo onto a task
+  // of their choosing — and a task photo cannot be deleted (0023 has no DELETE
+  // policy anywhere). The adversarial pass attacks both writes.
+  const checkinAsk = await must(
+    admin.from('notification_log').insert({
+      company_id: companyId, kind: 'task_checkin', audience: 'worker',
+      worker_id: worker.id, notification_date: '2026-01-05', status: 'sent',
+      task_ids: [task1.id],
+    }).select().single(),
+    `notification_log(${label})`,
+  );
+  const photoRequest = await must(
+    admin.from('checkin_photo_requests').insert({
+      company_id: companyId, worker_id: worker.id, notification_id: checkinAsk.id,
+      checkin_date: '2026-01-05', task_ids: [task1.id],
+      expires_at: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+    }).select().single(),
+    `checkin_photo_request(${label})`,
+  );
+
   const client = createClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: false },
   });
@@ -416,7 +459,7 @@ async function seedTenant(label) {
     label, userId, companyId, client,
     workerId: worker.id, workerBsuid: worker.whatsapp_user_id, jobId: job.id, taskIds: [task1.id, task2.id],
     conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
-    photoPath,
+    photoPath, checkinAskId: checkinAsk.id, photoRequestId: photoRequest.id,
     colleagueId, ownNotificationId, colleagueNotificationId,
     pushEndpoint, colleaguePushEndpoint,
     workerConversationId: workerConversation.id, workerMessageId: workerMessage.id, workerSecret,
@@ -509,6 +552,10 @@ async function cleanupTenant(t) {
   await companyEq(admin.from('conversations').delete());
   // Before workers: worker_checkins.worker_id is a FK.
   await companyEq(admin.from('worker_checkins').delete());
+  // Before workers and before notification_log: checkin_photo_requests holds a
+  // FK to each (0034).
+  await companyEq(admin.from('checkin_photo_requests').delete());
+  await companyEq(admin.from('notification_log').delete());
   await companyEq(admin.from('workers').delete());
   await companyEq(admin.from('jobs').delete());
   await companyEq(admin.from('profiles').delete());
@@ -629,6 +676,18 @@ async function runMatrix(self, other) {
   {
     const { data, error } = await db.from('notification_log').select('id');
     check(`${L}: notification_log deny-all (bonus)`, !error && (data ?? []).length === 0,
+      error ? error.message : `${(data ?? []).length} rows`);
+  }
+
+  // checkin_photo_requests (0034) — the fourth deny-all relation, and the one
+  // whose rows are the most directly weaponisable. Each says "the next
+  // unlabelled photo from this crew member is proof of THIS task". Reading one
+  // tells an attacker who is mid-conversation with Capo and about which job;
+  // writing one redirects a photo. Both seeded rows exist by the time this
+  // runs, so a policy that exposed every company's rows would show TWO here.
+  {
+    const { data, error } = await db.from('checkin_photo_requests').select('id');
+    check(`${L}: checkin_photo_requests deny-all (bonus)`, !error && (data ?? []).length === 0,
       error ? error.message : `${(data ?? []).length} rows`);
   }
 
@@ -951,6 +1010,60 @@ async function runAdversarial(attacker, victim) {
       'adversarial: tenant DELETE of its own task photo blocked',
       deleteError != null,
       deleteError ? `rejected (${deleteError.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
+
+  // ── 0034 checkin_photo_requests (issue #52) ──────────────────────────────
+  // The row that decides where a crew member's NEXT unlabelled photo is filed.
+  // Deny-all under RLS with every grant revoked, so these are grant-layer
+  // checks and both are aimed at the ATTACKER'S OWN company on purpose: a
+  // cross-tenant variant would be refused for the wrong reason.
+  //
+  // What a write here would buy, and why it is worth three checks rather than
+  // one. INSERT: manufacture a request naming a task the attacker chooses, so
+  // the next photo that crew member sends becomes proof of it — permanently,
+  // since 0023 has no DELETE policy on task_photos or on storage.objects.
+  // UPDATE: repoint an EXISTING request, which needs no worker cooperation at
+  // all. DELETE: erase the trail afterwards.
+  {
+    const { error } = await db.from('checkin_photo_requests').insert({
+      company_id: attacker.companyId,
+      worker_id: attacker.workerId,
+      notification_id: attacker.checkinAskId,
+      checkin_date: '2026-01-06',
+      task_ids: [attacker.taskIds[1]],
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    check(
+      'adversarial: tenant forging a check-in photo request blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a tenant can redirect a photo!',
+    );
+    if (!error) {
+      await admin.from('checkin_photo_requests').delete()
+        .eq('company_id', attacker.companyId).eq('checkin_date', '2026-01-06');
+    }
+  }
+  {
+    const { error } = await db
+      .from('checkin_photo_requests')
+      .update({ task_ids: [attacker.taskIds[1]] })
+      .eq('id', attacker.photoRequestId);
+    check(
+      'adversarial: tenant repointing its own check-in photo request blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — update grant leaked',
+    );
+  }
+  {
+    const { error } = await db
+      .from('checkin_photo_requests')
+      .delete()
+      .eq('id', attacker.photoRequestId);
+    check(
+      'adversarial: tenant DELETE of its own check-in photo request blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
     );
   }
 

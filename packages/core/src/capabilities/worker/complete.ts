@@ -1,10 +1,6 @@
 import { z } from 'zod';
-import {
-  TASK_PHOTO_BUCKET,
-  checkTaskPhoto,
-  taskPhotoPath,
-} from '../../media/photos';
-import type { PendingPhoto, WorkerContext, WorkerTool } from './types';
+import { markTaskProofPhotos, storeWorkerTaskPhoto } from '../../media/task-photo-store';
+import type { PendingPhoto, WorkerTool } from './types';
 import { workerToolError } from './types';
 
 // "Acabei" — a worker declaring a task finished, with proof.
@@ -48,61 +44,13 @@ export const declareTaskDoneInput = z.object({
 
 type DeclareTaskDoneInput = z.infer<typeof declareTaskDoneInput>;
 
-interface StoredPhoto {
-  photo: PendingPhoto;
-  path: string;
-}
-
-/**
- * Write one photo's bytes into the bucket and record the row that points at it.
- *
- * Object first, row second, and the order is forced: `task_photos.storage_path`
- * is `unique` and its `task_photos_path_scoped` CHECK re-derives the key, so a
- * row written first would name bytes that may never arrive. A dead object with
- * no row is invisible and harmless; a row with no object renders a broken frame
- * on the manager's screen forever.
- *
- * `source: 'worker'` and `worker_id` are written HERE, on the service role,
- * which bypasses the column-scoped INSERT grant that stops a manager writing
- * them (0023). That grant is what makes "the crew sent proof" unforgeable by a
- * tenant; this is the one caller entitled to say it, and it says it because it
- * resolved the worker from their phone number, not from anything in the model's
- * arguments.
- *
- * `uploaded_by` is deliberately left to its `auth.uid()` default, which is NULL
- * for the service role — exactly what a worker-sourced row should carry. Do not
- * fill it with anything; there is no profile behind this write.
- */
-async function storePhoto(
-  ctx: WorkerContext,
-  taskId: string,
-  photo: PendingPhoto,
-): Promise<StoredPhoto | null> {
-  // Re-checked here even though the route checks on download. The route's check
-  // protects the download; this one protects the write, and the two are far
-  // enough apart in the call graph that sharing one check would be sharing an
-  // assumption.
-  if (checkTaskPhoto(photo.mime, photo.byteSize) !== null) return null;
-
-  const path = taskPhotoPath(ctx.companyId, taskId, photo.id, photo.mime);
-  const { error: uploadError } = await ctx.db.storage
-    .from(TASK_PHOTO_BUCKET)
-    .upload(path, photo.bytes, { contentType: photo.mime, upsert: false });
-  if (uploadError) return null;
-
-  const { error: rowError } = await ctx.db.from('task_photos').insert({
-    company_id: ctx.companyId,
-    task_id: taskId,
-    storage_path: path,
-    source: 'worker',
-    worker_id: ctx.workerId,
-    mime: photo.mime,
-    byte_size: photo.byteSize,
-  });
-  if (rowError) return null;
-
-  return { photo, path };
-}
+// The bytes are written by storeWorkerTaskPhoto (../../media/task-photo-store),
+// which since issue #52 is the ONE writer of a crew-sourced `task_photos` row.
+// The check-in photo follow-up writes exactly the same shape from the WhatsApp
+// route, and what that row carries is an ATTRIBUTION — `source: 'worker'` is
+// the claim "the crew sent this", unforgeable by a tenant because 0023 leaves
+// `source`/`worker_id`/`uploaded_by` out of their column-scoped INSERT grant.
+// Two copies of a claim like that would eventually disagree.
 
 export const declareTaskDone: WorkerTool<DeclareTaskDoneInput> = {
   audience: 'worker',
@@ -164,14 +112,26 @@ export const declareTaskDone: WorkerTool<DeclareTaskDoneInput> = {
     // recoverable by the worker saying so again. The reverse order would leave
     // a claim with no proof — precisely the state `.min(1)` exists to make
     // impossible, reached by a crash instead of by an argument.
-    const stored: StoredPhoto[] = [];
+    const stored: string[] = [];
     for (const photo of requested) {
-      const result = await storePhoto(ctx, input.task_id, photo);
-      if (result) stored.push(result);
+      const path = await storeWorkerTaskPhoto(ctx.db, {
+        companyId: ctx.companyId,
+        taskId: input.task_id,
+        workerId: ctx.workerId,
+        photo,
+      });
+      if (path) stored.push(path);
     }
     if (stored.length === 0) {
       return workerToolError('The photos could not be saved. Ask the worker to send them again.');
     }
+
+    // The denormalised "this completion has proof" bit, written the moment
+    // proof lands and BEFORE the claim below — same ordering and the same
+    // reasoning as the photos themselves. The board and the inbox count
+    // `task_photos` rather than reading this column, so losing it costs a
+    // convenience and never the evidence.
+    await markTaskProofPhotos(ctx.db, ctx.companyId, input.task_id);
 
     // open_task_review moves the task to pending_review and files the claim in
     // ONE transaction (0018). Never two client-side updates: a half-applied

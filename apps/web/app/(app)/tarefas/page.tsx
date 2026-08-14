@@ -108,6 +108,7 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
                 note={review.note}
                 declaredByWorker={review.declaredByWorker}
                 declaredByName={review.declaredByName}
+                photoCount={review.photoCount}
                 locale={locale}
               />
             ) : null;

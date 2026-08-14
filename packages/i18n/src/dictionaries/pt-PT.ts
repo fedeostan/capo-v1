@@ -188,6 +188,8 @@ const dict: Catalog = {
       dismiss: 'Não precisa controlo',
       request: 'Pedir controlo',
       failed: 'Não foi possível resolver o controlo',
+      proofNone: 'Sem fotos anexadas.',
+      proofPhotos: n => (n === 1 ? '1 foto anexada.' : `${n} fotos anexadas.`),
     },
     taskDetail: {
       fallbackTitle: 'Tarefa',
@@ -598,6 +600,11 @@ const dict: Catalog = {
     checkinDoneProblem:
       'Fica registada a tua resposta, mas não consegui avisar o teu encarregado. Fala com ele.',
     checkinNotDone: 'Certo, obrigado por avisares. Fica registado.',
+    checkinPhotoAsk: task =>
+      `Se puderes, manda-me uma foto de “${task}” que eu junto ao pedido. Se não der, não faz mal — o pedido segue na mesma.`,
+    checkinPhotoNext: task => `Recebi a foto, obrigado. E de “${task}”, tens alguma?`,
+    checkinPhotoThanks:
+      'Recebi a foto, obrigado. Vai junto com o pedido — falta na mesma o teu encarregado confirmar.',
     checkinError: 'Não consegui registar a tua resposta. Fala com o teu encarregado.',
     stillWorking: 'Continuo a tratar disso, chefe — só mais um bocadinho.',
     workerStillWorking: 'Continuo a ver isso — só mais um bocadinho.',

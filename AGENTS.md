@@ -423,6 +423,58 @@ Structural invariants (do not regress):
   button** (`type: 'interactive'`, from a manager). They are handled on
   different paths and their payload codecs are deliberately non-overlapping;
   conflating them is the mistake to watch for.
+
+  **A tap now also ASKS FOR A PHOTO, and asking is all it does** (issue #52,
+  migration `0034`). The button path filed claims with no proof while the worker
+  agent's `declare_task_done` had required one at the schema level since #22 —
+  two doors into `pending_review` disagreeing about evidence, with nothing
+  telling the manager which door a claim came through. Six things:
+  - **It is an INVITATION, never a requirement.** The claim is already filed and
+    stands whether or not a photo arrives. Refusing to file one without proof
+    would mean a worker who cannot photograph anything reports nothing at all,
+    which is the state #54 exists to end. The copy says so out loud.
+  - **`checkin_photo_requests` stages the EXPECTATION, never the BYTES.** There
+    is no blob column and there must never be one. A photo's object key contains
+    the task id, so bytes cannot be written until the task is known; the tap
+    path knows it *before* the photo arrives, which is exactly what the agent
+    path cannot do. The one-turn photo lifetime on the agent path is
+    **unchanged**.
+  - **ONE TASK AT A TIME.** An inbound image says nothing about which task it
+    shows, so a three-task claim is asked three times, `next_index` walking the
+    snapshot. A photo filed as proof of the wrong job is worse than no photo:
+    it is evidence, it is wrong, and `0023` has no DELETE policy anywhere.
+  - **A CAPTIONED photo is excluded and falls through to the agent.** A caption
+    is words, and words can say something the deterministic branch cannot read.
+    The bare-photo branch sits with the other taps, above the agent.
+  - **Deny-all, like `notification_log` and not like `worker_checkins`.** RLS on,
+    zero policies, every grant revoked. A tenant able to write one could redirect
+    another crew member's next photo onto a task of their choosing.
+    `scripts/rls-isolation-matrix.mjs` attacks insert, update and delete.
+  - **The TTL is enforced by the READER and nothing sweeps the table.**
+    `PHOTO_REQUEST_TTL_MS` is 3 hours: long enough for "I'll do it at the van",
+    short enough that a request cannot survive to the next 07:00 briefing and
+    file tomorrow's work as proof of yesterday's claim. It is deliberately
+    **shorter** than Meta's free-form window, because the follow-up must never
+    become a paid template. An unparseable `expires_at` reads as expired.
+
+  **"Claimed without proof" is shown to the manager as a FACT, counted at read
+  time.** `countTaskPhotos` (`apps/web/app/dashboard-data.ts`) feeds both the
+  board's review control and the in-app inbox, so the two cannot disagree —
+  the same reason push and inbox share one headline entry. Three things:
+  - **Nothing is denormalised onto `task_reviews`.** A photo can arrive minutes
+    after the claim, so anything stamped at insert time would say "no photo"
+    forever and be wrong invisibly.
+  - **The count is every photo on the task, no time filter and no source
+    filter.** A time filter breaks the agent path, which writes photos *before*
+    the review by design. The copy is correspondingly literal — "3 photos
+    attached", a statement about the task.
+  - **The PUSH deliberately carries none of it**, breaking the usual
+    push/inbox symmetry on purpose: a push fires seconds after the claim, the
+    one moment "no photo" is guaranteed true and guaranteed uninformative.
+  `tasks.completion_proof` is still written, now by both crew paths as well as
+  the sheet, and `0034` restates its comment: it answers "does this completion
+  have photographic proof". NULL still means UNKNOWN, and only the manager,
+  through the sheet, ever writes `'skipped'`.
 - **Anything the manager or their crew is sent by the SYSTEM is written into the
   manager's chat thread, through ONE seam** (`recordThreadEvent` in
   `apps/web/app/notifications/thread.ts`, issue #47). Before it, the 07:00
@@ -645,10 +697,18 @@ Structural invariants (do not regress):
   the requirement exists to prevent, while proof with no claim is merely untidy.
   Photos are **never shown to a model** — the agent learns only how many
   arrived.
-  Known limit, stated rather than hidden: photos live for ONE turn, because a
-  task photo's object key contains the task id and the task is not known until
-  the tool names it. "Photo, then a separate message saying which task" loses
-  the photo. A staging area keyed on the worker is the fix, and is out of scope.
+  Known limit, stated rather than hidden: photos live for ONE turn **on this
+  path**, because a task photo's object key contains the task id and the task is
+  not known until the tool names it. "Photo, then a separate message saying
+  which task" loses the photo. #52's `checkin_photo_requests` is a staging area
+  keyed on the worker, but it stages the EXPECTATION rather than the bytes and
+  only works because the check-in tap knows the task *before* the photo — so it
+  does not lift this limit, and it is not a design to copy here without solving
+  the byte problem too.
+  Both crew paths share ONE writer, `storeWorkerTaskPhoto` /
+  `markTaskProofPhotos` in `packages/core/src/media/task-photo-store.ts`: what a
+  `source: 'worker'` row asserts is an ATTRIBUTION the grant layer makes
+  unforgeable, and two copies of a claim like that would eventually disagree.
 - **The crew channel is GUIDED FIRST and conversational second** (issue #49).
   Federico's complaint was three complaints and the fixes are independent, so
   they are recorded separately — but they share one shape: the cheap
@@ -847,9 +907,15 @@ Structural invariants (do not regress):
   - **Photos are never shown to a model.** Feeding an inbound image to a
     vision model is a text-in-image prompt-injection surface with no guard in
     front of it. The agent neither reads the bucket nor reads `task_photos`.
-  - `tasks.completion_proof` is `'photos' | 'skipped' | NULL`, written only by
-    the completion sheet. **NULL means "closed some other way" (chat, agent,
-    pre-0023) — unknown, never "skipped".** Do not conflate them when counting.
+  - `tasks.completion_proof` is `'photos' | 'skipped' | NULL`. Since #52 it is
+    written by **three** callers — the completion sheet, `declare_task_done`,
+    and the check-in photo follow-up — so it answers "does this completion have
+    photographic proof", not "how did the manager close it" (`0034` restates the
+    column comment). **NULL means "closed some other way" (chat, agent,
+    pre-0023) — unknown, never "skipped".** Do not conflate them when counting,
+    and note only the sheet ever writes `'skipped'`.
+    It is **not** what the board and inbox read: those count `task_photos` at
+    read time, because a photo can arrive after the claim.
 - **`notifications` (0024) is the in-app inbox, and is NOT
   `notification_log` (0016).** They share a stem and nothing else.
   `notification_log` is the OUTBOUND ledger — one row per paid WhatsApp

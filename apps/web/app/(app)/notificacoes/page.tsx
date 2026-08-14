@@ -53,6 +53,19 @@ function Item({ item, t }: { item: InboxItem; t: Catalog }) {
           <p className="mt-0.5 text-[11px] text-zinc-500">
             {unread && <span className="sr-only">{t.notifications.unread} · </span>}
             {stamp(item.createdAt, t)}
+            {/* Whether the claim came with proof (issue #52). The SAME two
+                catalog keys the board's review control renders, so the two
+                surfaces cannot say different things about one claim — and in
+                the same muted tone, because "no photos attached" is a fact
+                about a record and not a complaint about a person. */}
+            {item.photoCount !== null && (
+              <>
+                {' · '}
+                {item.photoCount > 0
+                  ? t.screens.taskReview.proofPhotos(item.photoCount)
+                  : t.screens.taskReview.proofNone}
+              </>
+            )}
           </p>
         </div>
       </div>

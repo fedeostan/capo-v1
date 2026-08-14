@@ -114,6 +114,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
                   note={review.note}
                   declaredByWorker={review.declaredByWorker}
                   declaredByName={review.declaredByName}
+                  photoCount={review.photoCount}
                   locale={locale}
                 />
               )}
