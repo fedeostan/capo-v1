@@ -11,15 +11,17 @@ import type { Tables } from '@capo/db/types';
 import { TASK_PHOTO_BUCKET } from '@capo/core/media/photos';
 import { everyoneOnTask, readCollaborators, type Collaborator } from '@capo/core/capabilities/collaborators';
 import { getCatalog } from '@capo/i18n/catalog';
-import type { BoardTask, DashboardObra, MaterialsGroup, MaterialsTask } from '@capo/ui/dashboard-ui';
+import type { BoardGrouping, BoardTask, DashboardObra, MaterialsGroup, MaterialsTask } from '@capo/ui/dashboard-ui';
 // Type-only: keeps the 'use client' markdown renderer inside task-detail.tsx
 // out of this module's graph.
 import type { TaskDetailJob, TaskDetailWorker } from '@capo/ui/task-detail';
 import type { TarefasFilters } from '@/app/(app)/tarefas/filters';
 
-export type { BoardTask, DashboardObra, MaterialsGroup, MaterialsTask, TaskDetailJob, TaskDetailWorker };
+export type { BoardGrouping, BoardTask, DashboardObra, MaterialsGroup, MaterialsTask, TaskDetailJob, TaskDetailWorker };
 
-export type GroupBy = 'date' | 'obra';
+// Re-exported rather than redefined so the loader and the component can never
+// drift apart on what groupings exist.
+export type GroupBy = BoardGrouping;
 
 export interface ObraOption {
   id: string;
@@ -67,13 +69,16 @@ export async function loadBoardTasks(
 
   if (filters.obraId) query = query.eq('job_id', filters.obraId);
 
-  // Ordering is query-owned; TaskBoardList only groups, never re-sorts.
+  // Ordering of the ROWS is query-owned, and that is what decides the order
+  // inside each section. (The agenda grouping additionally sorts its SECTIONS
+  // in the component, because their keys are computed from a clock the query
+  // does not have — see TaskBoardList.)
   const ordered =
     filters.quando.kind === 'keyword' && filters.quando.value === 'atrasadas'
       ? query.order('days_overdue', { ascending: false })
-      : groupBy === 'date'
-        ? query.order('due_date', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true })
-        : query.order('job_name', { ascending: true }).order('due_date', { ascending: true, nullsFirst: false });
+      : groupBy === 'obra'
+        ? query.order('job_name', { ascending: true }).order('due_date', { ascending: true, nullsFirst: false })
+        : query.order('due_date', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true });
 
   const { data } = await ordered;
   return (data ?? []).map(toBoardTask);
@@ -99,6 +104,8 @@ function toBoardTask(row: Tables<'task_board'>): BoardTask {
     assignee_worker_id: row.assignee_worker_id,
     start_date: row.start_date,
     due_date: row.due_date,
+    active_today: row.active_today ?? false,
+    active_tomorrow: row.active_tomorrow ?? false,
     overdue: row.overdue ?? false,
     days_overdue: row.days_overdue ?? 0,
     at_risk: row.at_risk ?? false,

@@ -263,6 +263,13 @@ export interface BoardTask {
   assignee_worker_id: string | null;
   start_date: string | null;
   due_date: string | null;
+  // The board's OWN answer to "is this on today / tomorrow", straight off
+  // task_board. Re-deriving it here from start_date/due_date would put a
+  // second definition of "today" in TypeScript, which is the one thing
+  // AGENTS.md forbids: the list and the Hoje chip would eventually disagree
+  // and the manager would have no way to tell which was right.
+  active_today: boolean;
+  active_tomorrow: boolean;
   overdue: boolean;
   days_overdue: number;
   at_risk: boolean;
@@ -312,18 +319,66 @@ export function formatShortDate(iso: string, locale: Locale): string {
 // than a separate component because the only difference between "todas as
 // obras, por obra" and "uma obra, por data" is the heading key. Ordering is
 // owned by the query, never re-sorted here.
+/**
+ * How the board splits itself into headed sections.
+ *
+ * - `obra`   — one section per job site.
+ * - `date`   — one section per calendar day, taken off the task's own dates.
+ * - `agenda` — one section per *when it lands on the manager*: Atrasadas
+ *              first, then Hoje, Amanhã, each later day, and finally the
+ *              tasks that carry no date at all. This is the grouping the wide
+ *              "Todas" view uses (issue #96), and unlike `date` it needs to
+ *              know what day it is — hence the `today` prop below.
+ */
+export type BoardGrouping = 'date' | 'obra' | 'agenda';
+
+// Sentinel section keys for the agenda grouping. They are chosen so that a
+// plain string sort puts the sections in reading order without a second
+// ranking table to keep in step: U+0000 sorts before every digit an ISO date
+// can start with, U+FFFF after every one of them. Neither can ever collide
+// with a real YYYY-MM-DD.
+const AGENDA_OVERDUE = '\u0000overdue';
+const AGENDA_NO_DATE = '\uffffno-date';
+
+/**
+ * The section a task belongs to in the agenda grouping.
+ *
+ * Overdue wins over everything: a task whose deadline has passed is the
+ * manager's problem now, whatever day it was booked for. After that the
+ * board's OWN active_today / active_tomorrow flags decide, so the Hoje
+ * section holds exactly the tasks the Hoje chip would show — two things
+ * called "Hoje" showing different lists is the confusion this whole change
+ * exists to end. Everything left over falls to the day it is meant to start,
+ * then to its deadline, then to "no date".
+ */
+function agendaSection(task: BoardTask, today: string, tomorrow: string): string {
+  if (task.overdue) return AGENDA_OVERDUE;
+  if (task.active_today) return today;
+  if (task.active_tomorrow) return tomorrow;
+  return task.start_date ?? task.due_date ?? AGENDA_NO_DATE;
+}
+
 export function TaskBoardList({
   tasks,
   empty,
   groupBy,
   locale,
+  today,
   renderExtra,
   renderBelow,
 }: {
   tasks: BoardTask[];
   empty: string;
-  groupBy: 'date' | 'obra';
+  groupBy: BoardGrouping;
   locale: Locale;
+  /**
+   * Today in Europe/Lisbon, from the SAME lisbon_today() clock the board's
+   * buckets come from — never from the browser. Required in practice by the
+   * `agenda` grouping and ignored by the other two; when it is missing the
+   * agenda grouping degrades to plain per-day sections, which is wrong-looking
+   * but never wrong.
+   */
+  today?: string | null;
   // Optional per-row slot (the Concluir/Reabrir buttons), kept as a plain
   // render prop so this package never has to import a mutation.
   renderExtra?: (task: BoardTask) => React.ReactNode;
@@ -335,27 +390,64 @@ export function TaskBoardList({
 }) {
   if (tasks.length === 0) return <EmptyState text={empty} cta={talkToCapo(locale)} />;
   const t = getCatalog(locale).dashboard;
+  // The agenda grouping cannot name a section "Hoje" without knowing what day
+  // it is, and the only honest source for that is lisbon_today() upstream. If
+  // the caller could not read it, fall back to plain per-day sections rather
+  // than render a heading computed from nothing.
+  const grouping: BoardGrouping = groupBy === 'agenda' && !today ? 'date' : groupBy;
+  // Agenda sections are keyed on a day, so the component needs tomorrow too.
+  // Adding one to an ISO calendar date is not a timezone question — the SQL
+  // view does exactly the same thing with `d.today + 1`.
+  const tomorrow = grouping === 'agenda' && today ? addOneDay(today) : '';
   const groups = new Map<string, BoardTask[]>();
   for (const task of tasks) {
     const key =
-      groupBy === 'obra' ? (task.job_name ?? t.noJob) : (task.due_date ?? task.start_date ?? 'sem-data');
+      grouping === 'obra'
+        ? (task.job_name ?? t.noJob)
+        : grouping === 'agenda'
+          ? agendaSection(task, today ?? '', tomorrow)
+          : (task.due_date ?? task.start_date ?? 'sem-data');
     groups.set(key, [...(groups.get(key) ?? []), task]);
   }
+
+  // Order WITHIN a section stays query-owned, as it always has. Only the
+  // ORDER OF THE SECTIONS is decided here, and only for the agenda grouping,
+  // because its keys are computed from a clock the query does not have. The
+  // sentinels above make that a plain string sort.
+  const sections = [...groups.entries()];
+  if (grouping === 'agenda') sections.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+
+  // An empty section is never built, so "no tasks tomorrow" is simply no
+  // Amanhã heading — there is nothing to suppress.
+  const heading = (key: string): string => {
+    if (grouping === 'obra') return key;
+    if (key === AGENDA_OVERDUE) return t.agendaOverdue;
+    if (key === AGENDA_NO_DATE || key === 'sem-data') return t.noDate;
+    if (grouping === 'agenda' && key === today) return t.agendaToday;
+    if (grouping === 'agenda' && key === tomorrow) return t.agendaTomorrow;
+    return formatDayHeading(key, locale);
+  };
+
   return (
     <>
-      {[...groups.entries()].map(([key, groupTasks]) => (
+      {sections.map(([key, groupTasks]) => (
         <section key={key} className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            {groupBy === 'obra' ? key : key === 'sem-data' ? t.noDate : formatDayHeading(key, locale)}
-          </h2>
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{heading(key)}</h2>
           {groupTasks.map(task => {
             const reasons = riskReasons(task, locale);
             // The secondary line carries whatever the heading is NOT already
             // saying: the obra when grouped by date, the deadline otherwise.
             const context =
-              groupBy === 'obra'
+              grouping === 'obra'
                 ? task.due_date && t.dueBy(formatShortDate(task.due_date, locale))
                 : (task.job_name ?? t.noJob);
+            // Under Atrasadas and Sem data the heading says nothing about
+            // WHEN, so the deadline joins the obra on the secondary line
+            // rather than being readable only by opening the task.
+            const extraContext =
+              grouping === 'agenda' && (key === AGENDA_OVERDUE || key === AGENDA_NO_DATE) && task.due_date
+                ? t.dueBy(formatShortDate(task.due_date, locale))
+                : null;
             return (
               <div
                 key={task.id}
@@ -378,6 +470,7 @@ export function TaskBoardList({
                     <p className="text-xs text-zinc-500">
                       {task.worker_name ? t.assignedTo(task.worker_name) : t.noAssignee}
                       {context ? ` · ${context}` : ''}
+                      {extraContext ? ` · ${extraContext}` : ''}
                     </p>
                   </div>
                   <div className="relative z-10 flex shrink-0 items-center gap-2">
@@ -469,6 +562,17 @@ export interface TimelineTask {
   materials: string[] | null;
   assignee_name: string | null;
   depends_on_titles: string[];
+}
+
+/**
+ * The calendar day after an ISO date. Pure string→string date arithmetic done
+ * in UTC, so it never consults the browser's clock or zone: the input already
+ * came from lisbon_today(), and "the day after 2026-08-19" has one answer.
+ */
+function addOneDay(iso: string): string {
+  const day = new Date(`${iso}T00:00:00Z`);
+  day.setUTCDate(day.getUTCDate() + 1);
+  return day.toISOString().slice(0, 10);
 }
 
 function formatDayHeading(iso: string, locale: Locale): string {

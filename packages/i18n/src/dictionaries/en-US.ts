@@ -95,6 +95,9 @@ const dict: Catalog = {
     assignedTo: name => `Assigned to ${name}`,
     noJob: 'No job',
     noDate: 'No date',
+    agendaToday: 'Today',
+    agendaTomorrow: 'Tomorrow',
+    agendaOverdue: 'Overdue',
     talkToCapo: 'Talk to Capo',
     dueBy: shortDate => `due ${shortDate}`,
     risk: {

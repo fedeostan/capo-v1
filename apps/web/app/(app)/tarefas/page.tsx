@@ -2,7 +2,15 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { Catalog } from '@capo/i18n/catalog';
 import { ScreenShell, TaskBoardList } from '@capo/ui/dashboard-ui';
-import { loadBoardTasks, loadDayLabel, loadMaterials, loadObraOptions, loadPendingReviews, type GroupBy } from '@/app/dashboard-data';
+import {
+  loadBoardTasks,
+  loadDayLabel,
+  loadMaterials,
+  loadObraOptions,
+  loadPendingReviews,
+  loadToday,
+  type GroupBy,
+} from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import TaskActions from '@/app/(app)/_tasks/task-actions';
 import ReviewActions from '@/app/(app)/_tasks/review-actions';
@@ -31,16 +39,26 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
   const filters = parseFilters(await searchParams);
   const { ctx, locale, t } = await requireAuthT();
 
-  // Grouping by obra inside a single obra would be one meaningless heading,
-  // so a selected obra switches the list to day headings instead.
-  const groupBy: GroupBy = filters.obraId ? 'date' : 'obra';
+  // Three groupings, and which one applies is decided here rather than in the
+  // component so the page can load exactly what that grouping needs.
+  //
+  // - Todas is the whole open board and the default view (issue #96), so it
+  //   groups as an AGENDA: Atrasadas, Hoje, Amanhã, each later day, no date.
+  //   A flat list of everything grouped by obra was the "confusing" part —
+  //   the manager could not see what was actually on today.
+  // - Grouping by obra inside a single obra would be one meaningless heading,
+  //   so a selected obra switches the list to day headings instead.
+  // - Every other chip is already narrowed to a moment, so obra headings are
+  //   the useful split there.
+  const isTodas = filters.quando.kind === 'keyword' && filters.quando.value === 'todas';
+  const groupBy: GroupBy = isTodas && !filters.obraId ? 'agenda' : filters.obraId ? 'date' : 'obra';
 
   // Hoje/Amanhã take their header date from the same lisbon_today() RPC that
   // drives the buckets, so the header can never contradict the list under it.
   const dayOffset: 0 | 1 | null =
     filters.quando.kind !== 'keyword' ? null : filters.quando.value === 'hoje' ? 0 : filters.quando.value === 'amanha' ? 1 : null;
 
-  const [tasks, obras, dayLabel, tomorrowMaterials] = await Promise.all([
+  const [tasks, obras, dayLabel, tomorrowMaterials, today] = await Promise.all([
     loadBoardTasks(ctx, filters, groupBy),
     loadObraOptions(ctx),
     dayOffset === null ? Promise.resolve(null) : loadDayLabel(ctx, dayOffset),
@@ -48,6 +66,10 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
     // manager can still act on what has to be bought tonight. Anywhere else it
     // would be a nag.
     dayOffset === 1 ? loadMaterials(ctx, 'amanha', null) : Promise.resolve([]),
+    // The agenda headings say "Hoje" and "Amanhã", so they need the same
+    // Europe/Lisbon date the board's own buckets are computed from. Only the
+    // agenda grouping asks for it; every other view skips the round trip.
+    groupBy === 'agenda' ? loadToday(ctx) : Promise.resolve(null),
   ]);
   const materialCount = tomorrowMaterials.reduce((n, group) => n + group.items.length, 0);
 
@@ -98,6 +120,7 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
           tasks={tasks}
           groupBy={groupBy}
           locale={locale}
+          today={today}
           empty={emptyText(filters, t)}
           renderExtra={task => <TaskActions taskId={task.id} status={task.status} locale={locale} />}
           renderBelow={task => {
