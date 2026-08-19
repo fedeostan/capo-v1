@@ -457,13 +457,25 @@ export async function loadDayLabel(ctx: AuthContext, offsetDays: 0 | 1): Promise
   }).format(day);
 }
 
+/**
+ * The Obras screen. Since 0038 this view carries PAUSED sites as well as
+ * active ones (issue #95) — a paused obra is a site where no work should be
+ * booked right now, not a site that has gone away.
+ *
+ * The paused rows are sorted to the BOTTOM here rather than in SQL. The two
+ * status values happen to sort the right way alphabetically ('active' before
+ * 'paused'), and leaning on that would be an invariant nobody could see: it
+ * breaks silently the day a fourth status is added. A named comparator says
+ * what is meant. Name order inside each block still comes from the query.
+ */
 export async function loadObras({ db, companyId }: AuthContext): Promise<DashboardObra[]> {
   const { data } = await db
     .from('dashboard_obras')
     .select('*')
     .eq('company_id', companyId)
     .order('name', { ascending: true });
-  return data ?? [];
+  const rank = (obra: DashboardObra): number => (obra.status === 'paused' ? 1 : 0);
+  return [...(data ?? [])].sort((a, b) => rank(a) - rank(b));
 }
 
 // Overdue tallies per obra for the progress view. Reuses the task_board

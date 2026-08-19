@@ -112,6 +112,8 @@ const dict: Catalog = {
     noTasksRegistered: 'no tasks yet',
     overdueCount: n => `${n} overdue`,
     pendingCount: n => `${n} pending`,
+    jobPaused: 'Paused',
+    jobPausedHint: 'No work booked for now. The tasks are still here.',
     dependsOn: titles => `⤷ after: ${titles.join(', ')}`,
   },
 
@@ -308,10 +310,11 @@ const dict: Catalog = {
       allJobs: 'All jobs',
       jobStatusSuffix: { paused: ' (paused)', done: ' (done)' },
     },
-    jobs: { title: 'Jobs', subtitle: 'Active jobs — progress and delays', empty: 'No active jobs.' },
+    jobs: { title: 'Jobs', subtitle: 'Progress, delays and paused jobs', empty: 'No jobs yet.' },
     jobDetail: {
       fallbackTitle: 'Job',
       empty: 'No tasks on this job yet — ask Capo to build the plan.',
+      paused: 'This job is paused: no work is booked and nobody on the crew is asked about it. The tasks stay here until you restart it.',
     },
     taskActions: { complete: 'Complete', reopen: 'Reopen', failed: "That didn't work, try again." },
     taskReview: {

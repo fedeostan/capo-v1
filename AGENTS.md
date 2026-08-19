@@ -1399,6 +1399,50 @@ Structural invariants (do not regress):
   and `scheduler-check` asserts that, because a task with no `duration_days`
   (nullable since `0010` — every pre-planner task) has its length read back off
   its dates.
+- **Pausing an obra is a BOOKING decision, never a deletion** (migration
+  `0038`, issue #95). `dashboard_obras` had carried `where j.status = 'active'`
+  since `0005` and is the only reader behind the Obras screen, so pausing a site
+  removed it from the app entirely — no row, no badge, no explanation, and no
+  route back except knowing the `/obras/<uuid>` URL. Every other surface already
+  read `paused` correctly: `task_board.overdue` deliberately ignores
+  `job_active`, `risk_paused_job` exists to badge those tasks, and
+  `loadObraOptions` reads `jobs` rather than the view with a comment saying why.
+  Four things:
+  - **The view now carries `active` AND `paused`, and `done` stays out.** A
+    finished obra has no work left to book and belongs on a history screen that
+    does not exist; adding it here would silently change what `pendentes` means
+    on the screen that does. `0038` is a `create or replace view` with an
+    IDENTICAL column list — only the WHERE clause moves, `status` was already
+    selected, and grants and `security_invoker` survive untouched. The Obras
+    list is therefore **no longer "active obras"**: any new reader that assumes
+    every row is active must filter on `status` itself.
+  - **Two pauses exist and they are different products.** A DEFINITE pause
+    ("parada até dia 3") is `update_job(status: 'paused')` and keeps every date
+    where it is, because the plan is still the plan. An INDEFINITE pause is
+    `pause_job`, which proposes pausing AND clearing the dates of the job's
+    unfinished tasks — Federico's own words: "if the person says I don't know
+    when I'm starting it again, then all tasks are without dates". The
+    distinction lives in the two tool descriptions and nowhere else.
+  - **`apply_job_pause` is the FOURTH absent-from-roster applier**, alongside
+    `apply_plan`, `apply_company_translation` and `apply_reschedule`, and the
+    reason is sharper here than for any of them: erasing a date is not
+    recoverable from anything the payload stores, and for "vou de férias, pausa
+    a obra" the model can always quote the manager. `pause_job` is unguarded
+    because it only ever proposes. The `from_start_date`/`from_due_date` pair is
+    the compare-and-set predicate, checked for EVERY row before the first write,
+    and a task that reached `done`/`cancelled` since the card was written fails
+    it too — those dates are the record of when work happened, not a booking to
+    release.
+  - **The job is paused BEFORE the dates are cleared, and that order is
+    load-bearing.** Dying in between leaves a paused obra with some dates still
+    on it: visible, badged, off the crew's morning message, and fixed by
+    approving again. The reverse order strips dates while the obra still looks
+    active — work that has silently vanished from every day view with nothing
+    saying why.
+  Known and NOT changed: `risk_paused_job` still puts every open task on a
+  paused obra under **Em risco**. For a deliberate holiday pause that is amber
+  noise rather than information, but narrowing it is a product decision about
+  what "at risk" means, not part of making a paused site visible again.
 - **`apply_reschedule` is the third absent-from-roster applier**, alongside
   `apply_plan` and `apply_company_translation`, and for the identical reason: a
   *guarded* tool in the roster executes directly whenever the model can quote

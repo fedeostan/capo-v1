@@ -111,6 +111,12 @@ export interface Catalog {
     noTasksRegistered: string;
     overdueCount(n: number): string;
     pendingCount(n: number): string;
+    /** An obra whose work is on hold (issue #95). A badge, never a warning
+     *  colour: pausing a site is a normal thing a manager does. */
+    jobPaused: string;
+    /** One line saying what pausing actually means, so "em pausa" is never
+     *  read as "something is broken" or "this is gone". */
+    jobPausedHint: string;
     dependsOn(titles: string[]): string;
   };
 
@@ -338,7 +344,9 @@ export interface Catalog {
       jobStatusSuffix: Record<'paused' | 'done', string>;
     };
     jobs: { title: string; subtitle: string; empty: string };
-    jobDetail: { fallbackTitle: string; empty: string };
+    /** One line at the top of a paused site's own screen (issue #95): what
+     *  pausing does and, just as importantly, what it does not do. */
+    jobDetail: { fallbackTitle: string; empty: string; paused: string };
     taskActions: { complete: string; reopen: string; failed: string };
     /** The pending-review control on a board row. Separate from taskActions
      *  because these three buttons resolve a REVIEW, not a task. */

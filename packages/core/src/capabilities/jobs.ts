@@ -56,7 +56,7 @@ export const updateJobInput = z.object({
 export const updateJob: CapoTool<z.infer<typeof updateJobInput>> = {
   name: 'update_job',
   description:
-    'Update an existing job (name, address, client, status, dates). This is a write: only call it directly for an explicit manager command; otherwise use propose.',
+    "Update an existing job (name, address, client, status, dates). This is a write: only call it directly for an explicit manager command; otherwise use propose. Setting status to 'paused' books no work on the job — its tasks stop appearing in the crew's morning message and in the afternoon check-in — but it hides nothing: the job keeps its place on the Obras screen, marked as on hold, and its tasks keep their dates. That is the right tool when the manager DID say when work resumes. When they do not know, use pause_job instead, which also proposes taking the dates off.",
   inputSchema: updateJobInput,
   guarded: true,
   async execute(input, ctx) {

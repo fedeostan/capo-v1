@@ -296,6 +296,47 @@ export async function renderProposal(
       return `${header}\n${rows.join('\n')}`;
     }
 
+    case 'apply_job_pause': {
+      const jn = await jobName(db, companyId, args.job_id, t);
+      const changes: { task_id: string; from_start_date: string | null; from_due_date: string | null }[] =
+        args.changes;
+      if (changes.length === 0) throw new RenderError(t.errors.emptyChange);
+
+      // Read here rather than carried in action_args, for the same reason
+      // apply_reschedule reads the trigger's status: the card must describe
+      // the world as it is at the moment the manager is looking at it. An
+      // obra can be paused by another manager, or from /obras, between the
+      // card being written and being tapped — and "put the obra on hold" is a
+      // sentence that would then be quietly wrong.
+      const { data: job } = await db
+        .from('jobs')
+        .select('status')
+        .eq('id', args.job_id)
+        .eq('company_id', companyId)
+        .maybeSingle();
+
+      const MAX_ROWS = 12;
+      const rows = await Promise.all(
+        changes.slice(0, MAX_ROWS).map(async change =>
+          t.jobPause.row({
+            // One referential re-check per row, same as the cascade's.
+            title: await taskTitle(db, companyId, change.task_id, t),
+            fromStart: change.from_start_date ? fmt(change.from_start_date) : undefined,
+            fromDue: change.from_due_date ? fmt(change.from_due_date) : undefined,
+          }),
+        ),
+      );
+      if (changes.length > MAX_ROWS) rows.push(t.jobPause.more(changes.length - MAX_ROWS));
+      rows.push(t.jobPause.footer);
+
+      const header = t.jobPause.header({
+        jobName: jn,
+        count: changes.length,
+        alreadyPaused: job?.status === 'paused',
+      });
+      return `${header}\n${rows.join('\n')}`;
+    }
+
     case 'apply_company_translation': {
       const { data: company } = await db.from('companies').select('language').eq('id', companyId).maybeSingle();
       if (!company) throw new RenderError(t.errors.companyNotFound);

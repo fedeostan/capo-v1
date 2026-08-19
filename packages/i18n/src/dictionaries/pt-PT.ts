@@ -113,6 +113,8 @@ const dict: Catalog = {
     noTasksRegistered: 'sem tarefas registadas',
     overdueCount: n => `${n} ${n === 1 ? 'atrasada' : 'atrasadas'}`,
     pendingCount: n => `${n} ${n === 1 ? 'pendente' : 'pendentes'}`,
+    jobPaused: 'Em pausa',
+    jobPausedHint: 'Sem trabalho marcado por agora. As tarefas continuam aqui.',
     dependsOn: titles => `⤷ depois de: ${titles.join(', ')}`,
   },
 
@@ -309,10 +311,11 @@ const dict: Catalog = {
       allJobs: 'Todas as obras',
       jobStatusSuffix: { paused: ' (pausada)', done: ' (terminada)' },
     },
-    jobs: { title: 'Obras', subtitle: 'Obras ativas — progresso e atrasos', empty: 'Sem obras ativas.' },
+    jobs: { title: 'Obras', subtitle: 'Progresso, atrasos e obras em pausa', empty: 'Ainda não há obras.' },
     jobDetail: {
       fallbackTitle: 'Obra',
       empty: 'Sem tarefas nesta obra ainda — pede ao Capo para criar o plano.',
+      paused: 'Esta obra está em pausa: não há trabalho marcado e ninguém da equipa é chamado para ela. As tarefas ficam aqui até a retomares.',
     },
     taskActions: { complete: 'Concluir', reopen: 'Reabrir', failed: 'Falhou, tenta outra vez.' },
     taskReview: {

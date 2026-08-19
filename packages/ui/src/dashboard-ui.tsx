@@ -495,7 +495,14 @@ export function TaskBoardList({
   );
 }
 
-// Obras: active jobs with their task tallies and completion progress.
+// Obras: the sites that still have work to book — ACTIVE and PAUSED — with
+// their task tallies and completion progress.
+//
+// A paused site keeps its row, its tallies and its overdue count (issue #95).
+// It is quieter, badged, and carries one line saying what pausing means, so
+// "em pausa" can never be read as "something went wrong". Pausing is a normal
+// thing a manager does; disappearing is not.
+//
 // overdueByObra (obra id → count) is optional so existing callers keep
 // working; when present, obras with overdue tasks get a red badge.
 export function ObrasList({
@@ -518,19 +525,36 @@ export function ObrasList({
         const total = done + (obra.pendentes ?? 0);
         const pct = total > 0 ? Math.round((done / total) * 100) : 0;
         const overdue = obra.id ? (overdueByObra?.[obra.id] ?? 0) : 0;
+        const paused = obra.status === 'paused';
         return (
           <a
             key={obra.id}
             href={obra.id ? `/obras/${obra.id}` : undefined}
-            className="block rounded-xl border border-zinc-500/20 p-3 hover:border-zinc-500/40"
+            className={`block rounded-xl border p-3 hover:border-zinc-500/40 ${
+              // Dashed, not greyed out: a dashed edge reads as "on hold", while
+              // faded text reads as "disabled" — and the row is fully live.
+              paused ? 'border-dashed border-zinc-500/40' : 'border-zinc-500/20'
+            }`}
           >
             <div className="flex items-baseline justify-between gap-2">
               <p className="text-sm font-medium">{obra.name}</p>
-              {overdue > 0 && (
-                <span className="shrink-0 text-xs font-medium text-red-600">{t.overdueCount(overdue)}</span>
-              )}
+              <span className="flex shrink-0 items-baseline gap-2">
+                {paused && (
+                  <span className="rounded-full border border-zinc-500/40 px-2 py-0.5 text-[11px] text-zinc-500">
+                    {t.jobPaused}
+                  </span>
+                )}
+                {/* Still shown on a paused site, on purpose: task_board.overdue
+                    deliberately ignores whether the job is active (0013), so a
+                    deadline that has already passed is still a deadline that
+                    has already passed. */}
+                {overdue > 0 && (
+                  <span className="text-xs font-medium text-red-600">{t.overdueCount(overdue)}</span>
+                )}
+              </span>
             </div>
             {obra.address && <p className="text-xs text-zinc-500">{obra.address}</p>}
+            {paused && <p className="mt-1 text-xs text-zinc-500">{t.jobPausedHint}</p>}
             {total > 0 && (
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-500/15">
                 {/* TODO(Federico): microcopy/visual dial — bar color per taste. */}
