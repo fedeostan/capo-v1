@@ -95,8 +95,6 @@ const dict: Catalog = {
     assignedTo: name => `Assigned to ${name}`,
     noJob: 'No job',
     noDate: 'No date',
-    jobPaused: 'Paused',
-    jobPausedHint: 'No work booked for now. The tasks are still here.',
     talkToCapo: 'Talk to Capo',
     dueBy: shortDate => `due ${shortDate}`,
     risk: {
@@ -111,6 +109,8 @@ const dict: Catalog = {
     noTasksRegistered: 'no tasks yet',
     overdueCount: n => `${n} overdue`,
     pendingCount: n => `${n} pending`,
+    jobPaused: 'Paused',
+    jobPausedHint: 'No work booked for now. The tasks are still here.',
     dependsOn: titles => `⤷ after: ${titles.join(', ')}`,
   },
 

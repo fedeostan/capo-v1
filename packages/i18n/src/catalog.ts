@@ -87,12 +87,6 @@ export interface Catalog {
     assignedTo(name: string): string;
     noJob: string;
     noDate: string;
-    /** An obra whose work is on hold (issue #95). A badge, never a warning
-     *  colour: pausing a site is a normal thing a manager does. */
-    jobPaused: string;
-    /** One line saying what pausing actually means, so "em pausa" is never
-     *  read as "something is broken" or "this is gone". */
-    jobPausedHint: string;
     talkToCapo: string;
     /** Secondary line on a board row grouped by obra, e.g. "até 12/03". */
     dueBy(shortDate: string): string;
@@ -111,6 +105,12 @@ export interface Catalog {
     noTasksRegistered: string;
     overdueCount(n: number): string;
     pendingCount(n: number): string;
+    /** An obra whose work is on hold (issue #95). A badge, never a warning
+     *  colour: pausing a site is a normal thing a manager does. */
+    jobPaused: string;
+    /** One line saying what pausing actually means, so "em pausa" is never
+     *  read as "something is broken" or "this is gone". */
+    jobPausedHint: string;
     dependsOn(titles: string[]): string;
   };
 
