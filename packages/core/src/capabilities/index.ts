@@ -11,6 +11,7 @@ import { translationTools } from './translate';
 import { propose } from './propose';
 import { generatePlan } from './plan';
 import { rescheduleTools } from './reschedule-propose';
+import { jobPauseTools } from './job-pause';
 import { managerInstructionField, runGuarded } from './guard';
 import type { CapoTool, ToolContext } from './types';
 
@@ -23,7 +24,9 @@ import type { CapoTool, ToolContext } from './types';
 // (apply_company_translation) is deliberately absent from this roster and lives
 // only in propose.ts, so it is reachable exclusively through an approved card.
 // reschedule_job is the third of that family — apply_reschedule is likewise
-// absent here.
+// absent here. pause_job (issue #95) is the fourth: apply_job_pause erases
+// dates, which nothing in its payload could put back, so it lives only in
+// propose.ts.
 export const roster: CapoTool[] = [
   ...taskTools,
   ...agendaTools,
@@ -34,6 +37,7 @@ export const roster: CapoTool[] = [
   ...languageTools,
   ...translationTools,
   ...rescheduleTools,
+  ...jobPauseTools,
   propose,
   generatePlan,
 ];

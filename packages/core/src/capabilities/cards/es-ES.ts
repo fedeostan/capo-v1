@@ -132,6 +132,21 @@ export const cards: CardStrings = {
     jobEnd: p => (p.from ? `Fin de la obra: ${p.from} → ${p.to}.` : `Fin de la obra: ${p.to}.`),
   },
 
+  jobPause: {
+    header: p => {
+      const n = `${p.count} tarea${p.count === 1 ? '' : 's'}`;
+      const verb = p.alreadyPaused ? 'Mantener la obra' : 'Poner la obra';
+      return `${verb} «${p.jobName}» en pausa y quitar las fechas a ${n}:`;
+    },
+    row: p => {
+      const before = p.fromStart && p.fromDue ? `${p.fromStart}-${p.fromDue}` : (p.fromDue ?? p.fromStart ?? 'sin fechas');
+      return `• ${p.title}: ${before} → sin fechas`;
+    },
+    more: n => `… y ${n} tarea${n === 1 ? '' : 's'} más.`,
+    footer:
+      'Las tareas siguen en la obra y en el panel. Se quedan sin día previsto, dejan de contar como atrasadas y el equipo deja de recibirlas por la mañana. Cuando sepas las fechas nuevas, se las vuelves a poner.',
+  },
+
   plan: {
     header: p => `Plan para la obra «${p.jobName}» — ${p.count} tarea${p.count === 1 ? '' : 's'}, del ${p.from} al ${p.to}`,
     row: p => {

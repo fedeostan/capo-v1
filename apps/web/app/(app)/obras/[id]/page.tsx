@@ -33,6 +33,16 @@ export default async function ObraDetailPage({ params }: { params: Promise<{ id:
       subtitle={[detail.job.address, detail.job.client_name].filter(Boolean).join(' · ') || undefined}
     >
       <PullToRefresh locale={locale}>
+        {/* Said on the site's own screen, not only as a badge in the list
+            (issue #95): this is where a manager comes to ask "why is nothing
+            happening here?", and pausing is the answer often enough that it
+            should not have to be inferred from a status word. Quiet styling —
+            a paused obra is a decision, not a problem. */}
+        {detail.job.status === 'paused' && (
+          <p className="rounded-xl border border-dashed border-zinc-500/40 p-3 text-xs text-zinc-500">
+            {t.screens.jobDetail.paused}
+          </p>
+        )}
         <p className="text-xs text-zinc-500">
           {total > 0 ? t.dashboard.tasksDone(done, total) : t.dashboard.noTasksRegistered}
         </p>

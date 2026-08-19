@@ -95,6 +95,8 @@ const dict: Catalog = {
     assignedTo: name => `Asignada a ${name}`,
     noJob: 'Sin obra',
     noDate: 'Sin fecha',
+    jobPaused: 'En pausa',
+    jobPausedHint: 'Sin trabajo previsto por ahora. Las tareas siguen aquí.',
     talkToCapo: 'Hablar con el Capo',
     dueBy: shortDate => `hasta ${shortDate}`,
     risk: {
@@ -305,10 +307,11 @@ const dict: Catalog = {
       allJobs: 'Todas las obras',
       jobStatusSuffix: { paused: ' (en pausa)', done: ' (terminada)' },
     },
-    jobs: { title: 'Obras', subtitle: 'Obras activas — progreso y atrasos', empty: 'Sin obras activas.' },
+    jobs: { title: 'Obras', subtitle: 'Progreso, atrasos y obras en pausa', empty: 'Todavía no hay obras.' },
     jobDetail: {
       fallbackTitle: 'Obra',
       empty: 'Todavía no hay tareas en esta obra — pídele al Capo que haga el plan.',
+      paused: 'Esta obra está en pausa: no hay trabajo previsto y no se avisa a nadie del equipo. Las tareas siguen aquí hasta que la retomes.',
     },
     taskActions: { complete: 'Terminar', reopen: 'Reabrir', failed: 'Ha fallado, inténtalo otra vez.' },
     taskReview: {

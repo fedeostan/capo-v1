@@ -133,6 +133,21 @@ export const cards: CardStrings = {
     jobEnd: p => (p.from ? `Job end: ${p.from} → ${p.to}.` : `Job end: ${p.to}.`),
   },
 
+  jobPause: {
+    header: p => {
+      const n = `${p.count} task${p.count === 1 ? '' : 's'}`;
+      const verb = p.alreadyPaused ? 'Keep the' : 'Put the';
+      return `${verb} "${p.jobName}" job on hold and take the dates off ${n}:`;
+    },
+    row: p => {
+      const before = p.fromStart && p.fromDue ? `${p.fromStart}-${p.fromDue}` : (p.fromDue ?? p.fromStart ?? 'no dates');
+      return `• ${p.title}: ${before} → no dates`;
+    },
+    more: n => `… and ${n} more task${n === 1 ? '' : 's'}.`,
+    footer:
+      'The tasks stay on the job and on the board. They lose their booked day, stop counting as overdue, and the crew stops getting them in the morning. Put the dates back when you know them.',
+  },
+
   plan: {
     header: p => `Plan for the "${p.jobName}" job — ${p.count} task${p.count === 1 ? '' : 's'}, ${p.from} to ${p.to}`,
     row: p => {

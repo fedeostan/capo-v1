@@ -146,6 +146,23 @@ export interface CardStrings {
     jobEnd(p: { from?: string; to: string }): string;
   };
 
+  /** Putting an obra on hold with no restart date (apply_job_pause, issue #95).
+   *
+   *  The card has to make TWO things unmissable, because approving it is not
+   *  reversible from anything the payload stores: the dates listed are being
+   *  ERASED rather than moved, and the tasks themselves stay exactly where
+   *  they are. A manager who reads "pause" and expects the board to look the
+   *  same tomorrow has been misled by the card, not by the feature. */
+  jobPause: {
+    header(p: { jobName: string; count: number; alreadyPaused: boolean }): string;
+    row(p: { title: string; fromStart?: string; fromDue?: string }): string;
+    /** Long lists are truncated; the count must be exact — rendered_text is
+     *  the persisted audit artifact, quoted byte-identically on resolution. */
+    more(n: number): string;
+    /** The last line: what does NOT happen. */
+    footer: string;
+  };
+
   plan: {
     header(p: { jobName: string; count: number; from: string; to: string }): string;
     row(p: {
