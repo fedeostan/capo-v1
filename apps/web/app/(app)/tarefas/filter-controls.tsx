@@ -11,7 +11,7 @@
 import { useRouter } from 'next/navigation';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
-import { buildHref, isIsoDate, type TarefasFilters } from './filters';
+import { buildHref, DEFAULT_QUANDO, isIsoDate, type TarefasFilters } from './filters';
 import type { ObraOption } from '@/app/dashboard-data';
 
 const CONTROL = 'min-w-0 flex-1 rounded-lg border border-zinc-500/30 bg-transparent px-2 py-1.5 text-xs';
@@ -58,13 +58,12 @@ export default function FilterControls({
           value={filters.quando.kind === 'date' ? filters.quando.iso : ''}
           onChange={e => {
             const iso = e.target.value;
-            // Clearing the field falls back to today rather than to an empty
-            // list — the date input's own "clear" must mean something.
+            // Clearing the field falls back to the DEFAULT view rather than
+            // to an empty list — the date input's own "clear" must mean
+            // something, and it must mean the same thing as arriving at
+            // /tarefas with no filter at all.
             router.push(
-              buildHref({
-                ...filters,
-                quando: isIsoDate(iso) ? { kind: 'date', iso } : { kind: 'keyword', value: 'hoje' },
-              }),
+              buildHref({ ...filters, quando: isIsoDate(iso) ? { kind: 'date', iso } : DEFAULT_QUANDO }),
             );
           }}
         />

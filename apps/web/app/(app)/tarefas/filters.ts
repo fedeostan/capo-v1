@@ -8,7 +8,12 @@
 // Values only — the labels live in @capo/i18n, keyed by these same strings.
 // The VALUES stay Portuguese on purpose: they are the URL contract (?quando=hoje),
 // shareable and bookmarkable, so translating them would break existing links.
-export const QUANDO_CHIPS = ['hoje', 'amanha', 'atrasadas', 'risco', 'todas'] as const;
+//
+// ORDER IS THE DISPLAYED ORDER, and it reads widest-first: Todas is the whole
+// open board, Hoje/Amanhã narrow it to a day, Atrasadas/Em risco are the two
+// "something is wrong" cuts. Reordering is safe — nothing parses this array
+// positionally, it only decides which chip sits where in the row.
+export const QUANDO_CHIPS = ['todas', 'hoje', 'amanha', 'atrasadas', 'risco'] as const;
 
 export type QuandoKeyword = (typeof QUANDO_CHIPS)[number];
 
@@ -24,7 +29,13 @@ export interface TarefasFilters {
 
 export type RawSearchParams = Record<string, string | string[] | undefined>;
 
-export const DEFAULT_QUANDO: Quando = { kind: 'keyword', value: 'hoje' };
+// Todas, not Hoje (issue #96). A board that opens on one day hides everything
+// that is not on that day — a task with no dates at all, and every task on a
+// paused obra, are both invisible on Hoje and neither is a mistake. The
+// default view must be the one where nothing can be missing; narrowing to a
+// day is one tap away. Under Todas the list groups itself into Atrasadas /
+// Hoje / Amanhã / each later day, so opening wide costs no legibility.
+export const DEFAULT_QUANDO: Quando = { kind: 'keyword', value: 'todas' };
 
 const KEYWORDS: readonly string[] = QUANDO_CHIPS;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

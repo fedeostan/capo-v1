@@ -87,6 +87,12 @@ export interface Catalog {
     assignedTo(name: string): string;
     noJob: string;
     noDate: string;
+    /** Section headings on the wide "Todas" board (issue #96). Deliberately
+     *  the same words as the Hoje / Amanhã / Atrasadas chips: a heading and a
+     *  chip that hold the same tasks must not be named differently. */
+    agendaToday: string;
+    agendaTomorrow: string;
+    agendaOverdue: string;
     talkToCapo: string;
     /** Secondary line on a board row grouped by obra, e.g. "até 12/03". */
     dueBy(shortDate: string): string;
