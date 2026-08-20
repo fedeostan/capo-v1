@@ -623,6 +623,10 @@ export interface Catalog {
   };
 
   auth: {
+    // Shared by every password field on the signed-out screens, so the eye
+    // says the same thing on login, signup and password reset.
+    showPassword: string;
+    hidePassword: string;
     login: {
       title: string;
       email: string;

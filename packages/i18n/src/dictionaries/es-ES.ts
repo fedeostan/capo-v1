@@ -448,6 +448,8 @@ const dict: Catalog = {
   },
 
   auth: {
+    showPassword: 'Mostrar contraseña',
+    hidePassword: 'Ocultar contraseña',
     login: {
       title: 'Capo',
       email: 'Email',
