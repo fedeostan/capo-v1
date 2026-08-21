@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { metadataTitle, publicCatalog } from '@/lib/i18n';
+import PasswordField from '../password-field';
 import { signIn, signInWithGoogle } from './actions';
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -13,7 +14,7 @@ export default async function LoginPage({
   searchParams: Promise<{ erro?: string }>;
 }) {
   const params = await searchParams;
-  const { t } = await publicCatalog();
+  const { locale, t } = await publicCatalog();
   const errors = t.auth.login.errors;
   // The query keys stay Portuguese — they are part of the redirect contract in
   // ./actions and are never shown to anyone.
@@ -41,16 +42,11 @@ export default async function LoginPage({
             className="w-full rounded-lg border border-zinc-500/30 bg-background px-3 py-2.5 text-base outline-none focus:border-orange-600"
           />
         </label>
-        <label className="block space-y-1">
-          <span className="text-sm font-medium">{t.auth.login.password}</span>
-          <input
-            type="password"
-            name="password"
-            required
-            autoComplete="current-password"
-            className="w-full rounded-lg border border-zinc-500/30 bg-background px-3 py-2.5 text-base outline-none focus:border-orange-600"
-          />
-        </label>
+        <PasswordField
+          locale={locale}
+          label={t.auth.login.password}
+          autoComplete="current-password"
+        />
         <button
           type="submit"
           className="w-full rounded-lg bg-orange-600 py-2.5 font-semibold text-white active:bg-orange-700"
