@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { createUserClient } from '@capo/db/user-client';
+import { setPendingEmail } from '@/lib/pending-email';
 import { siteUrl } from '@/lib/site-url';
 
 // Self-serve signup. Confirmation lands on /auth/confirm, which resolves the
@@ -34,5 +35,9 @@ export async function signUp(formData: FormData): Promise<void> {
     console.error('signUp failed:', error.message);
   }
 
-  redirect('/registar?sucesso=1');
+  // Remembered so /confirmar-email can name the address (the typo check) and
+  // offer a resend without asking for it again. Set on the error path too, so
+  // "already registered" keeps looking exactly like a fresh signup.
+  await setPendingEmail(email);
+  redirect('/confirmar-email');
 }

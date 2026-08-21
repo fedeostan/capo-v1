@@ -642,12 +642,41 @@ export interface Catalog {
       title: string;
       subtitle: string;
       submit: string;
-      checkEmailTitle: string;
-      checkEmailText: string;
-      alreadyConfirmed: string;
+      /** Sits under the submit button, BEFORE anything is sent. Issue #99: two
+       *  managers pressed "create account", assumed they were done, and went
+       *  to sign in. Saying what happens next is cheaper than explaining it
+       *  afterwards. */
+      emailNote: string;
       haveAccount: string;
       signIn: string;
       errors: Record<'dados' | 'fechado', string>;
+    };
+    /**
+     * The /confirmar-email screen (issue #99). ONE screen with TWO entrances,
+     * because both arrivals need the same three instructions:
+     *   - straight after signing up, and
+     *   - after a sign-in attempt on an account whose email was never
+     *     confirmed, which used to answer "wrong email or password".
+     * Only `blockedNotice` distinguishes them.
+     */
+    confirmEmail: {
+      title: string;
+      /** Names the address, so a typo is visible rather than mysterious. */
+      sentTo(p: { email: string }): string;
+      /** Same sentence once the pending-email cookie has expired and the
+       *  address is no longer known. */
+      sentToUnknown: string;
+      /** Sign-in entrance only: says why the password appeared to fail. */
+      blockedNotice: string;
+      step1: string;
+      step2: string;
+      step3: string;
+      /** The line that stops somebody walking back here to sign in. */
+      thenWhat: string;
+      resend: string;
+      resent: string;
+      wrongEmail: string;
+      alreadyConfirmed: string;
     };
     recover: {
       title: string;
