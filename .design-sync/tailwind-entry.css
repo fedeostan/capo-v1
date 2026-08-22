@@ -1,0 +1,103 @@
+/* Design-sync stylesheet entry for the Capo design system.
+ *
+ * WHY THIS FILE EXISTS
+ * apps/web/app/globals.css is a Tailwind v4 *source* file, not a stylesheet:
+ * its `@import "tailwindcss"` is an instruction to scan the components and
+ * generate the utilities they use. Shipping it verbatim ships a recipe, and
+ * claude.ai/design has no Tailwind to run it. So this file is compiled to
+ * static CSS (see .design-sync/NOTES.md for the command) and the COMPILED
+ * output is what cfg.cssEntry points at.
+ *
+ * IT IS NOT A COPY. Three deliberate differences from globals.css:
+ *   1. @source covers packages/ui/src AND apps/web/app — the sync ships
+ *      components from both, and a class only present in the app half would
+ *      otherwise be absent from the generated CSS.
+ *   2. --font-geist-sans / --font-geist-mono are DEFINED here. In the app,
+ *      next/font/google injects them onto <html> at runtime; nothing does
+ *      that here, so `font-sans` would resolve to an undefined variable and
+ *      every card would silently render in a fallback face.
+ *   3. globals.css's closing `html, body { overflow: hidden; overscroll-
+ *      behavior: none }` is OMITTED. That rule is an app-shell decision (it
+ *      stops the Capo UI dragging on a touch gesture); this stylesheet is
+ *      applied to every design built with the DS, and a document that can
+ *      never scroll is wrong for most of them.
+ * Everything else below is globals.css verbatim, comments included. */
+
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&display=swap');
+/* source(none) disables Tailwind's AUTOMATIC content detection, which walks
+ * outward from the input file and so makes the generated CSS depend on where
+ * the file sits and where the command is run — two runs of the same input
+ * produced outputs 600 bytes apart. With it off, the @source lines below are
+ * the ONLY inputs, so the output is reproducible on any machine. */
+@import "tailwindcss" source(none);
+
+@source "../packages/ui/src";
+@source "../apps/web/app";
+
+/* Three appearance states, stamped onto <html> by the root layout from the
+   capo_theme cookie: `light` (the default), `dark`, and `system`. Only
+   `system` consults the OS — see lib/theme.ts for the other half of this.
+
+   Tailwind v4's built-in `dark:` is a MEDIA QUERY, so it would keep following
+   the OS while the variables below followed the cookie. Redefining it here is
+   what keeps the ~16 existing `dark:` utilities in step.
+
+   The block form is load-bearing. The selector form —
+   `@custom-variant dark (&:where(.dark, .dark *), @media (…))` — emits its
+   entries as SIBLINGS, so the media branch fires unconditionally and an
+   explicit `.light` root would still pick up dark utilities. Only the block
+   form can nest the selector INSIDE the media query. Every branch needs its
+   own @slot; a branch missing one silently drops the declarations. */
+@custom-variant dark {
+  &:where(.dark, .dark *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(.system, .system *) {
+      @slot;
+    }
+  }
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+  /* Inherited, so it reaches the parts of the page Tailwind cannot paint:
+     native form controls, scrollbars, the UA canvas. */
+  color-scheme: light;
+
+  /* Difference (2) above: next/font/google's job, done statically. */
+  --font-geist-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-geist-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* Both (0,2,0), so they beat the :root above; mutually exclusive by class, so
+   their order relative to each other does not matter. Note the deliberate
+   absence of a bare `:root:not(.light)` fallback — an unstamped root must
+   resolve to LIGHT, because light is the default rather than the fallback. */
+:root.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root.system {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+    color-scheme: dark;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
