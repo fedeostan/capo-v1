@@ -468,15 +468,30 @@ const dict: Catalog = {
       title: 'Crear cuenta',
       subtitle: '14 días gratis. Sin tarjeta de crédito.',
       submit: 'Crear cuenta',
-      checkEmailTitle: 'Confirma tu email',
-      checkEmailText: 'Te hemos enviado un enlace de confirmación — ábrelo para empezar.',
-      alreadyConfirmed: '¿Ya lo has confirmado? Entra aquí',
+      emailNote:
+        'Después te enviamos un email con un enlace. Tienes que abrirlo para que la cuenta funcione.',
       haveAccount: '¿Ya tienes cuenta?',
       signIn: 'Entra aquí',
       errors: {
         dados: 'Introduce un email válido y una contraseña de al menos 8 caracteres.',
         fechado: 'Los registros abren pronto — pide una invitación.',
       },
+    },
+    confirmEmail: {
+      title: 'Confirma tu email',
+      sentTo: ({ email }) => `Hemos enviado un email a ${email}.`,
+      sentToUnknown: 'Te hemos enviado un email con un enlace de confirmación.',
+      blockedNotice:
+        'Tu cuenta ya existe, pero todavía no está confirmada — por eso la contraseña no te dejaba entrar.',
+      step1: 'Abre tu bandeja de entrada.',
+      step2: 'Busca el email de Capo. Si no lo ves, mira en spam o en promociones.',
+      step3: 'Pulsa el enlace que viene dentro.',
+      thenWhat:
+        'Ese enlace abre Capo con tu cuenta lista. No hace falta que vuelvas a esta página.',
+      resend: 'Reenviar el email',
+      resent: 'Lo hemos reenviado. Puede tardar un minuto en llegar.',
+      wrongEmail: '¿Has escrito mal el email? Crear la cuenta otra vez',
+      alreadyConfirmed: '¿Ya has pulsado el enlace? Entrar',
     },
     recover: {
       title: 'Recuperar contraseña',

@@ -14,6 +14,10 @@ import { NextResponse, type NextRequest } from 'next/server';
 // /auth/confirm and /auth/callback are the routes that ESTABLISH a session
 // (email confirmation, password recovery, Google OAuth exchange) — they must
 // be reachable before one exists.
+// /confirmar-email is by definition read by somebody with no session: it is
+// where BOTH a fresh signup and a sign-in blocked on an unconfirmed email land
+// (issue #99). Gating it would bounce them to /login — the exact dead end the
+// screen exists to end.
 // /robots.txt and /sitemap.xml are the crawler contract for the public landing
 // page. A crawler never holds a session, so gating them redirects it to /login
 // and the landing page is never indexed. That failure is SILENT in the only
@@ -30,6 +34,7 @@ const PUBLIC_PATHS = [
   '/robots.txt',
   '/sitemap.xml',
   '/registar',
+  '/confirmar-email',
   '/recuperar',
   '/nova-password',
   '/auth/confirm',

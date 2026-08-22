@@ -468,15 +468,30 @@ const dict: Catalog = {
       title: 'Create account',
       subtitle: '14 days free. No credit card.',
       submit: 'Create account',
-      checkEmailTitle: 'Confirm your email',
-      checkEmailText: "We sent you a confirmation link — open it to get started.",
-      alreadyConfirmed: 'Already confirmed? Sign in here',
+      emailNote:
+        'Next we send you an email with a link. You have to open it before the account works.',
       haveAccount: 'Already have an account?',
       signIn: 'Sign in here',
       errors: {
         dados: 'Enter a valid email and a password of at least 8 characters.',
         fechado: 'Sign-ups open soon — ask for an invite.',
       },
+    },
+    confirmEmail: {
+      title: 'Confirm your email',
+      sentTo: ({ email }) => `We sent an email to ${email}.`,
+      sentToUnknown: 'We sent you an email with a confirmation link.',
+      blockedNotice:
+        "Your account exists, but it isn't confirmed yet — that's why your password wouldn't let you in.",
+      step1: 'Open your inbox.',
+      step2: "Look for the email from Capo. If it isn't there, check spam or promotions.",
+      step3: 'Tap the link inside it.',
+      thenWhat:
+        'That link opens Capo with your account ready. You do not need to come back to this page.',
+      resend: 'Resend the email',
+      resent: 'We sent it again. It can take a minute to arrive.',
+      wrongEmail: 'Wrong email? Create the account again',
+      alreadyConfirmed: 'Already tapped the link? Sign in',
     },
     recover: {
       title: 'Reset password',

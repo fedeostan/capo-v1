@@ -8,26 +8,17 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: await metadataTitle(t => t.auth.signup.title) };
 }
 
+// The "we sent you an email" screen used to live here behind ?sucesso=1. It
+// moved to /confirmar-email (issue #99) because a failed SIGN-IN now lands on
+// it too, and a sign-in dead end pointing at a URL called /registar would read
+// as "we lost your account".
 export default async function RegistarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ erro?: string; sucesso?: string }>;
+  searchParams: Promise<{ erro?: string }>;
 }) {
   const params = await searchParams;
   const { locale, t } = await publicCatalog();
-
-  if (params.sucesso) {
-    return (
-      <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 px-6 pb-16 text-center">
-        <p className="text-4xl">📬</p>
-        <h1 className="text-2xl font-semibold">{t.auth.signup.checkEmailTitle}</h1>
-        <p className="text-sm text-zinc-500">{t.auth.signup.checkEmailText}</p>
-        <Link href="/login" className="text-sm text-orange-600 underline">
-          {t.auth.signup.alreadyConfirmed}
-        </Link>
-      </div>
-    );
-  }
 
   const errors = t.auth.signup.errors;
   const errorText = params.erro ? errors[params.erro as keyof typeof errors] : undefined;
@@ -65,6 +56,10 @@ export default async function RegistarPage({
         >
           {t.auth.signup.submit}
         </button>
+        {/* Said BEFORE the press, not after it. The screen that follows was
+            always there; two managers still assumed the account was live and
+            walked off to sign in. */}
+        <p className="text-sm text-zinc-500">{t.auth.signup.emailNote}</p>
       </form>
 
       {errorText && (
