@@ -68,6 +68,17 @@ export default function DesignGallery() {
               </Badge>
             ))}
           </div>
+          {/* The second reading, shown beside the first because the whole
+              point of it is the width difference. `shape` is 11px uppercase
+              and is for badges recognised rather than read; `sentence` is 13px
+              and is for the ones that are actually words — which is every task
+              status Capo has in Portuguese. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="review">A aguardar controlo</Badge>
+            <Badge tone="review" reading="sentence">
+              A aguardar controlo
+            </Badge>
+          </div>
         </Section>
 
         <Section title="Banners">

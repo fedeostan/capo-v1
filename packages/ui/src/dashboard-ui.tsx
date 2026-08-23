@@ -59,7 +59,14 @@ export function StatusBadge({
   if (status === 'pending' && !showPending) return null;
   const labels = getCatalog(locale).dashboard.taskStatus;
   return (
-    <Badge tone={STATUS_TONES[status] ?? 'neutral'} strikethrough={status === 'cancelled'}>
+    // `sentence`, not the default shape reading: every one of these labels is
+    // a phrase ("A aguardar controlo"), and the board truncates the TASK TITLE
+    // to give the badge whatever width it asks for.
+    <Badge
+      tone={STATUS_TONES[status] ?? 'neutral'}
+      reading="sentence"
+      strikethrough={status === 'cancelled'}
+    >
       {labels[status as keyof typeof labels] ?? status}
     </Badge>
   );
