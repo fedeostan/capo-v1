@@ -46,7 +46,7 @@ export function Field({
   required?: boolean;
   children: (a11y: FieldA11y) => ReactNode;
 }) {
-  const hintId = hint ? `${id}-hint` : undefined;
+  const hintId = hint && !error ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   const describedBy = [hintId, errorId].filter(Boolean).join(' ') || undefined;
 
@@ -92,7 +92,28 @@ export function Textarea(props: Omit<ComponentProps<'textarea'>, 'className'>) {
 
 /** Native <select> on purpose: it works offline, matches the phone's own
  *  picker, and handles keyboards correctly. A custom one would be a modal,
- *  a focus trap and a scroll lock to maintain for no gain. */
+ *  a focus trap and a scroll lock to maintain for no gain.
+ *
+ *  `appearance-none` strips the OS arrow so the control matches the other
+ *  fields, which means we owe it a replacement — a select with no affordance
+ *  does not read as a dropdown at all. The chevron is `pointer-events-none`
+ *  so every click still lands on the select underneath it. */
 export function Select(props: Omit<ComponentProps<'select'>, 'className'>) {
-  return <select {...props} className={`${CONTROL} appearance-none pr-8`} />;
+  return (
+    <span className="relative block">
+      <select {...props} className={`${CONTROL} appearance-none pr-8`} />
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden
+        className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M6 9l6 6 6-6" />
+      </svg>
+    </span>
+  );
 }
