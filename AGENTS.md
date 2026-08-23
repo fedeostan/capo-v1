@@ -1390,12 +1390,12 @@ Structural invariants (do not regress):
   own chip names so the two cannot drift.
   (`dashboard_tasks` is the superseded predecessor, kept only so an old bundle
   served mid-deploy keeps working; do not write new readers against it.)
-- **The design system is TOKENS plus THIRTEEN COMPONENTS, and `pnpm
-  design-check` is what keeps it true.** `packages/ui/src/tokens.css` is the
-  single source of every colour, size, spacing, radius, shadow and timing, and
-  BOTH apps import it — before it, each declared its own `--background`, which
-  is two copies of one rule and therefore an eventual disagreement. Eight
-  things are load-bearing:
+- **The design system is TOKENS plus a fixed set of COMPONENT MODULES, and
+  `pnpm design-check` is what keeps it true.** `packages/ui/src/tokens.css` is
+  the single source of every colour, size, spacing, radius, shadow and timing,
+  and BOTH apps import it — before it, each declared its own `--background`,
+  which is two copies of one rule and therefore an eventual disagreement.
+  Eight things are load-bearing:
   - **Never put `@utility` in `tokens.css`.** Tailwind discards the ENTIRE
     imported file when it finds one — no error, no warning, every token gone.
     It works only in an app's own `globals.css`. Nothing in the design needs
@@ -1431,13 +1431,20 @@ Structural invariants (do not regress):
     this reason, and `apps/web/proxy.ts` carries a NODE_ENV-guarded exemption
     so it renders without a login in development while production's auth
     posture is unchanged (the pages also call `notFound()` there).
-  Components live in `@capo/ui` when they need no browser JavaScript — ten of
-  them: `Button`/`ButtonLink`, `Card`, `ListRow`, `Field`/`Input`/`Textarea`/
-  `Select` (one file, four exports), `Badge`, `Banner`, `EmptyState`,
-  `Skeleton`, `AppBar` — and in `apps/web/app/_ui/` when they must react:
-  `Sheet`, `SegmentedControl`, `TabBar`. `@capo/ui` is `'use client'`-free by
-  contract. `/design-system` and `/design-system/screens` are dev-only and
-  render every component and every hard layout case without a login.
+  **The rule that decides where a component lives is whether it needs browser
+  JavaScript** — if it does, it goes in `apps/web/app/_ui/`; if it does not, it
+  goes in `packages/ui`, which is `'use client'`-free by contract. Naming a
+  bare total invites drift, so list the modules instead of counting them:
+  `packages/ui/src/` holds `button.tsx` (`Button`, `ButtonLink`, `IconButton`
+  — the last with a compiler-required `label` prop, because an unlabelled icon
+  button is invisible to a screen reader), `card.tsx` (`Card`), `list-row.tsx`
+  (`ListRow`), `field.tsx` (`Field`, `Input`, `Select`, `Textarea`),
+  `badge.tsx` (`Badge`), `banner.tsx` (`Banner`), `empty-state.tsx`
+  (`EmptyState`), `skeleton.tsx` (`Skeleton`), and `app-bar.tsx` (`AppBar`).
+  `apps/web/app/_ui/` holds `sheet.tsx` (`Sheet`), `segmented-control.tsx`
+  (`SegmentedControl`), and `tab-bar.tsx` (`TabBar`). `/design-system` and
+  `/design-system/screens` are dev-only and render every component and every
+  hard layout case without a login.
 - **Plan durations are working days, not calendar days.** The scheduler
   advances through `packages/core/src/capabilities/workdays.ts`, which skips
   weekends and the thirteen Portuguese national holidays. Anything that

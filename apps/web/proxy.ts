@@ -17,7 +17,13 @@ export async function proxy(request: NextRequest) {
   // entire purpose is being reviewable without a login. In production the pages
   // themselves call notFound(), so this branch is dead there — the NODE_ENV
   // guard means production's auth posture is unchanged on both layers.
-  if (process.env.NODE_ENV !== 'production' && pathname.startsWith('/design-system')) {
+  // Exact-or-child, never a bare prefix: `startsWith('/design-system')` would
+  // also exempt a future `/design-system-admin`, and a loose match on an auth
+  // path is the kind of thing that is only ever noticed afterwards.
+  if (
+    process.env.NODE_ENV !== 'production' &&
+    (pathname === '/design-system' || pathname.startsWith('/design-system/'))
+  ) {
     return NextResponse.next();
   }
   return await updateSession(request);
