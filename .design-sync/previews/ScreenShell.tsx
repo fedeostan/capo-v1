@@ -1,4 +1,4 @@
-import { ScreenShell, EmptyState, StatusBadge } from '@capo/ui';
+import { ScreenShell, EmptyState, StatusBadge, Button } from '@capo/ui';
 
 // ScreenShell is `flex-1 min-h-0`, so it only has height inside a flex column
 // that has one. In the app that column is <body class="flex h-dvh flex-col">;
@@ -48,7 +48,11 @@ export function AroundAnEmptyScreen() {
   return (
     <Screen>
       <ScreenShell title="Obras" subtitle="Nenhuma obra activa">
-        <EmptyState text="Ainda não há obras registadas." cta={{ href: '/', label: 'Falar com o Capo' }} />
+        <EmptyState
+          title="Ainda não há obras registadas."
+          body="Fala com o Capo e ele cria a primeira por ti."
+          action={<Button size="sm">Falar com o Capo</Button>}
+        />
       </ScreenShell>
     </Screen>
   );
