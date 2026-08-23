@@ -6,7 +6,8 @@
   "exports": {
     "./dashboard-ui": "./src/dashboard-ui.tsx",
     "./task-detail": "./src/task-detail.tsx",
-    "./markdown": "./src/markdown.tsx"
+    "./markdown": "./src/markdown.tsx",
+    "./button": "./src/button.tsx"
   },
   "scripts": {
     "lint": "eslint .",
