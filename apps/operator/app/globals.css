@@ -1,11 +1,18 @@
 @import "tailwindcss";
 
+/* Shared with apps/web. Before this import, operator declared its own
+   --background/--foreground — two copies of one rule, and therefore an
+   eventual disagreement. */
+@import "../../../packages/ui/src/tokens.css";
+
 /* Tailwind v4 auto-detects sources only inside this app — workspace packages
    must be declared or their classes vanish from the built CSS. */
 @source "../../../packages/ui/src";
 
 /* Operator is pinned to LIGHT — an internal tool with no preference to store,
-   so it gets no cookie, no toggle, and no dynamic rendering.
+   so it gets no cookie, no toggle, and no dynamic rendering. It never stamps
+   a theme class, so tokens.css's :root.dark and :root.system blocks are inert
+   here and the light values apply.
 
    This redefinition is not cosmetic. Tailwind v4's built-in `dark:` is a media
    query, and packages/ui is compiled into this app, so without it any `dark:`
@@ -14,14 +21,7 @@
    never matches. */
 @custom-variant dark (&:where(.dark, .dark *));
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-  /* Inherited, so scrollbars and native controls stay light too. */
-  color-scheme: light;
-}
-
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--bg);
+  color: var(--fg);
 }
