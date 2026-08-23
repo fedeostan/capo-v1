@@ -129,6 +129,14 @@ A component never names a colour. It names a role. Dark mode is the same roles
 answering differently, which is why it costs one block rather than 51 screens
 of patches.
 
+> **Naming, settled by a spike on 2026-08-23:** the text-colour tokens are
+> `--fg`, `--fg-muted`, `--fg-faint`, **not** `--text*`. Tailwind v4 owns
+> `--text-*` as its *font-size* namespace, so `--text-muted` would generate a
+> font-size utility named `text-muted`, colliding with the colour utility of
+> the same name. `--fg` yields `text-fg` / `text-fg-muted` for colour and
+> leaves `text-body` / `text-caption` for size. The table below uses the old
+> names for readability; the plan uses `--fg`.
+
 | Token | Light | Dark | Contrast on surface, or purpose |
 |---|---|---|---|
 | `--bg` | `#FAFAF9` | `#0C0A09` | page |
@@ -229,6 +237,19 @@ information.
 | `--duration-slow` | 260ms | sheets, page transitions |
 | `--ease-out` | `cubic-bezier(.2, 0, 0, 1)` | almost everything |
 | `--ease-spring` | `cubic-bezier(.34, 1.3, .64, 1)` | sheet entrance only |
+
+**How these reach a component, verified by spike rather than assumed.** Tailwind
+v4.3.2 has **no `--duration-*` theme namespace**, so `duration-fast` is not a
+utility and would fail silently. Two mechanisms, both confirmed working:
+
+- `--default-transition-duration: 180ms` in `@theme` — a bare `transition-colors`
+  then runs at 180ms with no duration class at all. This covers most components.
+- `duration-(--duration-fast)` — Tailwind v4's variable shorthand, for the
+  places that want 120ms or 260ms. Measured at `0.12s`.
+
+`--ease-out` **is** a real namespace key, so overriding it redefines Tailwind's
+built-in `ease-out` globally, which is intended. And no custom `tap-target`
+utility is needed: `min-h-11 min-w-11` already means 44px.
 
 Fast start, gentle stop — motion that begins instantly feels responsive even
 when it takes 260ms to settle. A global `@media (prefers-reduced-motion: reduce)`
@@ -359,7 +380,8 @@ careless restyle would undo them silently.
 | Theme pills and onboarding pills working pre-hydration | a cold PWA on a slow phone must still save |
 | Materials groups using native `<details>` | collapse state survives a server-action revalidation; React state would not |
 | `ScreenShell` owning no scroller | scrolling belongs to `PullToRefresh`; two would fight |
-| New component files added to Tailwind's `@source` list in **both** apps | otherwise their styles vanish from the build with no error |
+| Components staying **inside** `packages/ui/src` or `apps/web/app` | `@source` is a directory glob, so files there are auto-detected; one placed elsewhere loses every style with no error |
+| **No `@utility` rule inside `tokens.css`** | proven by spike: Tailwind silently discards the *entire imported file*, no error and no warning. `@utility` only works in an app's own `globals.css`. The design needs none — see §4.5 |
 | `viewport.themeColor` staying a single value, not the `[{media, color}]` form | that form keys off `prefers-color-scheme`, the exact signal the theme cookie exists to override |
 
 ## 7. Verification
