@@ -124,6 +124,16 @@ const PAIRS: [string, string, number, string][] = [
   ['--border-control', '--surface-sunken', 3, 'the edge of a filled input'],
   // Large non-text fills only.
   ['--brand-vivid', '--bg', 3, 'a non-text brand fill'],
+  // The `-solid` tokens are pinned to the same value in both themes (Task 2):
+  // a status banner is a fixed signal colour, not a themed surface. These
+  // check the SOLID variants, not `--danger`/`--info` directly — asserting
+  // the wrong pair here is exactly how the dark-mode failure reappears.
+  ['--on-solid', '--danger-solid', 4.5, 'text on a danger banner'],
+  ['--on-solid', '--warn-solid', 4.5, 'text on an at-risk banner'],
+  ['--on-solid', '--success-solid', 4.5, 'text on a success banner'],
+  ['--on-solid', '--info-solid', 4.5, 'text on an info banner'],
+  ['--on-solid', '--review-solid', 4.5, 'text on a review banner'],
+  ['--on-solid', '--brand-solid', 4.5, 'text on a brand banner'],
 ];
 
 for (const [themeName, theme] of [['light', LIGHT], ['dark', DARK]] as const) {
