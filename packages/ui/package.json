@@ -7,7 +7,9 @@
     "./dashboard-ui": "./src/dashboard-ui.tsx",
     "./task-detail": "./src/task-detail.tsx",
     "./markdown": "./src/markdown.tsx",
-    "./button": "./src/button.tsx"
+    "./button": "./src/button.tsx",
+    "./card": "./src/card.tsx",
+    "./list-row": "./src/list-row.tsx"
   },
   "scripts": {
     "lint": "eslint .",
