@@ -9,7 +9,8 @@
     "./markdown": "./src/markdown.tsx",
     "./button": "./src/button.tsx",
     "./card": "./src/card.tsx",
-    "./list-row": "./src/list-row.tsx"
+    "./list-row": "./src/list-row.tsx",
+    "./field": "./src/field.tsx"
   },
   "scripts": {
     "lint": "eslint .",
