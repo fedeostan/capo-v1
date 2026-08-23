@@ -14,8 +14,18 @@
 //
 // It lives in apps/web rather than @capo/ui because it genuinely needs to
 // react; @capo/ui is 'use client'-free by contract.
-import { useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+
+// Whether the component has committed on the client yet. Same
+// server/client-split use of useSyncExternalStore as apps/web/app/platform.ts
+// — nothing here ever changes, so the subscription is a no-op; the point is
+// the getServerSnapshot/getClientSnapshot split, which lets React answer
+// `false` for the server pass and the first client render (so hydration
+// matches) and `true` once mounted, with no setState call for the React
+// Compiler lint to reject (see the sibling reasoning in
+// (app)/_tasks/completion-sheet.tsx).
+const subscribe = () => () => {};
 
 const FOCUSABLE = [
   'a[href]',
@@ -39,6 +49,17 @@ export function Sheet({
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const returnTo = useRef<HTMLElement | null>(null);
+
+  // createPortal reaches for document.body, and Next runs 'use client' render
+  // functions on the SERVER to build the initial HTML — where there is no
+  // document. Rendering nothing until after the first client commit is what
+  // makes a sheet that is open on first paint (a URL param, server-seeded
+  // state) safe rather than a ReferenceError.
+  const mounted = useSyncExternalStore(
+    subscribe,
+    () => true,
+    () => false,
+  );
 
   const focusables = useCallback(
     () => Array.from(panel.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []),
@@ -69,7 +90,15 @@ export function Sheet({
       }
       if (e.key !== 'Tab') return;
       const items = focusables();
-      if (items.length === 0) return;
+      // Nothing focusable inside: keep Tab on the panel rather than letting the
+      // browser walk into the page behind. tabIndex={-1} makes the panel
+      // programmatically focusable but absent from the sequential tab order, so
+      // without this the trap has a hole exactly when the sheet is emptiest.
+      if (items.length === 0) {
+        e.preventDefault();
+        panel.current?.focus();
+        return;
+      }
       const first = items[0];
       const last = items[items.length - 1];
       if (e.shiftKey && document.activeElement === first) {
@@ -96,7 +125,7 @@ export function Sheet({
     };
   }, [open]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
   return createPortal(
     <div

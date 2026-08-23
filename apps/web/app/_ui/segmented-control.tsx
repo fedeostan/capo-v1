@@ -23,6 +23,14 @@ export function SegmentedControl({
   name: string;
   /** Spoken to a screen reader as the question these options answer. */
   legend: string;
+  /**
+   * Sets the INITIAL selection only — it is read once, into `defaultChecked`,
+   * and changing it after mount will not move the rendered pill. That is
+   * deliberate (see the file banner): the radios must select and save from
+   * plain HTML before any JavaScript runs, which a fully controlled `checked`
+   * would fight. A caller that needs to force a different selection should
+   * remount the control with a new `key`, not rely on this prop reacting.
+   */
   value: string;
   options: { value: string; label: string }[];
   onChange?: (value: string) => void;
