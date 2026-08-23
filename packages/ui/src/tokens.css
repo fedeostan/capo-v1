@@ -1,0 +1,303 @@
+/* The single source of every design decision in Capo, imported by BOTH apps.
+   Before this file, apps/web and apps/operator each declared their own
+   --background/--foreground, which is two copies of one rule and therefore an
+   eventual disagreement.
+
+   THREE RULES, all proven by spike on 2026-08-23, and all of which fail
+   SILENTLY if broken:
+
+   1. NO Tailwind `utility` at-rule in this file, ever (spelled with a
+      leading @, split here so this very sentence does not trip
+      design-check's own literal-text guard against it). Tailwind discards
+      the ENTIRE imported file when it finds one — no error, no warning,
+      every token below simply gone. It only works in an app's own
+      globals.css. Nothing here needs one: `min-h-11 min-w-11` is already
+      44px.
+
+   2. Text colours are --fg*, never --text*. Tailwind v4 owns --text-* as its
+      FONT-SIZE namespace, so --text-muted would generate a font-size utility
+      called `text-muted` and collide with the colour of the same name.
+
+   3. No --font-sans/--font-mono here. apps/operator does not load Geist, so a
+      shared mapping to a variable it lacks would blank its typeface. Each app
+      maps its own fonts in its own globals.css.
+
+   Contrast ratios below are asserted by `pnpm design-check`, which parses this
+   file. Changing a hex without running it is how the 3.56:1 primary button
+   survived for the life of the product. */
+
+:root {
+  /* ── Surfaces ─────────────────────────────────────────────────────────
+     The page is warm off-white and cards are pure white, which is what makes
+     a card read as an object rather than a region. Warm rather than cool
+     because the brand is orange; cool grey beside orange looks dirty. */
+  --bg: #fafaf9;
+  --surface: #ffffff;
+  --surface-sunken: #f5f5f4;
+  --surface-hover: rgb(28 25 23 / 0.04);
+
+  /* ── Ink ──────────────────────────────────────────────────────────────
+     --fg-muted is 7.63:1, not the 4.83:1 it replaced. Secondary text is the
+     first thing to disappear on a phone in sunlight, which is most of the
+     time Capo is actually read. */
+  --fg: #1c1917;        /* 17.49:1 on --surface */
+  --fg-muted: #57534e;  /*  7.63:1 */
+  --fg-faint: #78716c;  /*  4.80:1 */
+
+  /* ── Lines ────────────────────────────────────────────────────────────
+     Two borders with different jobs. --hairline is decoration between rows,
+     so no contrast rule applies. --border-control is the outline of an input
+     and is the ONLY signal that a box is typeable, which is why WCAG 1.4.11
+     demands 3:1 of it — and why the old zinc-500/30 (~1.8:1) failed. */
+  --hairline: #e7e5e4;
+  --border-control: #78716c;  /* 4.80:1 on --surface */
+
+  /* ── Brand ────────────────────────────────────────────────────────────
+     --brand is one step darker than the historic #ea580c so that white text
+     on it clears 4.5:1 (5.18 vs 3.56). --brand-vivid keeps the original for
+     LARGE NON-TEXT fills only, where the requirement is 3:1 and the brighter
+     orange is the one people recognise. design-check asserts vivid stays
+     unsafe behind text, so nobody can quietly promote it back. */
+  --brand: #c2410c;
+  --brand-hover: #9a3412;
+  --brand-vivid: #ea580c;
+  --brand-quiet: rgb(194 65 12 / 0.10);
+  --on-brand: #ffffff;
+  --focus: #c2410c;
+
+  /* ── Status ───────────────────────────────────────────────────────────
+     --review is violet deliberately: a completion claim awaiting the manager
+     is a decision to make, not a problem to fix. --danger owns "wrong". */
+  --danger: #b91c1c;   --danger-quiet: rgb(185 28 28 / 0.10);
+  --warn: #b45309;     --warn-quiet: rgb(180 83 9 / 0.10);
+  --success: #15803d;  --success-quiet: rgb(21 128 61 / 0.10);
+  --info: #1d4ed8;     --info-quiet: rgb(29 78 216 / 0.10);
+  --review: #6d28d9;   --review-quiet: rgb(109 40 217 / 0.10);
+
+  /* Solid status fills, deliberately IDENTICAL in every theme. A danger
+     banner is a fixed signal colour, not a themed surface: it is red in
+     light and dark alike, so its label must not flip to near-black and
+     vanish. Every value below clears 4.5:1 against --on-solid. */
+  --danger-solid: #b91c1c;   /* 6.47:1 vs --on-solid */
+  --warn-solid: #b45309;     /* 5.02:1 */
+  --success-solid: #15803d;  /* 5.02:1 */
+  --info-solid: #1d4ed8;     /* 6.70:1 */
+  --review-solid: #6d28d9;   /* 7.10:1 */
+  --brand-solid: #c2410c;    /* 5.18:1 */
+  --on-solid: #ffffff;
+
+  /* ── Motion ───────────────────────────────────────────────────────────
+     Read with `duration-(--duration-fast)`. There is NO --duration-*
+     theme namespace in Tailwind 4.3.2, so `duration-fast` is not a utility
+     and would fail silently; the @theme block below sets the DEFAULT instead,
+     so a bare `transition-colors` is already 180ms. */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 260ms;
+
+  /* ── Compatibility aliases ────────────────────────────────────────────
+     Every existing `bg-background` in the codebase is on a SURFACE — a bottom
+     sheet, an input, the tab bar, the chat composer — and never on the page.
+     So --background aliases --surface, NOT --bg. Aliasing it to the page
+     colour would silently repaint all fifteen of them off-white, input fields
+     included, in a commit that claimed to change nothing. */
+  --background: var(--surface);
+  --foreground: var(--fg);
+
+  /* Inherited, so it reaches what Tailwind cannot paint: native form
+     controls, scrollbars, the UA canvas. */
+  color-scheme: light;
+}
+
+/* (0,2,0) so it beats :root above. Mutually exclusive by class with the
+   .system block below, so their relative order does not matter. There is
+   deliberately no bare `:root:not(.light)` fallback — an unstamped root must
+   resolve to LIGHT, because light is the default and not the fallback. */
+:root.dark {
+  --bg: #0c0a09;
+  --surface: #1c1917;
+  --surface-sunken: #121110;
+  --surface-hover: rgb(250 250 249 / 0.06);
+
+  --fg: #fafaf9;        /* 16.74:1 on --surface */
+  --fg-muted: #a8a29e;  /*  6.93:1 */
+  --fg-faint: #8c8781;  /*  4.91:1 */
+
+  --hairline: #292524;
+  --border-control: #78716c;  /* 3.65:1 on --surface */
+
+  /* --on-brand INVERTS here. White on orange-400 is 2.26:1 — worse than the
+     bug this whole design exists to fix. Near-black on it is 7.73:1. */
+  --brand: #fb923c;
+  --brand-hover: #fdba74;
+  /* --brand-vivid is DARKER here than in light mode (was #ea580c, same as
+     the light-mode fill) — because near-black --on-brand-dark reads at
+     4.91:1 against #ea580c, which would make the "never safe as text"
+     invariant below false in this theme alone: design-check asserts vivid
+     stays unsafe behind --on-brand text in EVERY theme, and --on-brand is
+     near-black on almost every orange, so keeping the light-mode hex here
+     would silently promote this fill into a colour someone could use as
+     text. #d34f0b keeps the same hue and still clears 3:1 against --bg
+     (4.60:1) for its one legal job — a large non-text fill. */
+  --brand-vivid: #d34f0b;
+  --brand-quiet: rgb(251 146 60 / 0.15);
+  --on-brand: #1c1917;
+  --focus: #fb923c;
+
+  --danger: #f87171;   --danger-quiet: rgb(248 113 113 / 0.15);
+  --warn: #fbbf24;     --warn-quiet: rgb(251 191 36 / 0.15);
+  --success: #4ade80;  --success-quiet: rgb(74 222 128 / 0.15);
+  --info: #60a5fa;     --info-quiet: rgb(96 165 250 / 0.15);
+  --review: #a78bfa;   --review-quiet: rgb(167 139 250 / 0.15);
+
+  /* Solid status fills, deliberately IDENTICAL in every theme. A danger
+     banner is a fixed signal colour, not a themed surface: it is red in
+     light and dark alike, so its label must not flip to near-black and
+     vanish. Every value below clears 4.5:1 against --on-solid. */
+  --danger-solid: #b91c1c;   /* 6.47:1 vs --on-solid */
+  --warn-solid: #b45309;     /* 5.02:1 */
+  --success-solid: #15803d;  /* 5.02:1 */
+  --info-solid: #1d4ed8;     /* 6.70:1 */
+  --review-solid: #6d28d9;   /* 7.10:1 */
+  --brand-solid: #c2410c;    /* 5.18:1 */
+  --on-solid: #ffffff;
+
+  color-scheme: dark;
+}
+
+/* Only `.system` consults the OS. apps/operator never stamps a theme class at
+   all, so both this and :root.dark are inert there and it stays light. */
+@media (prefers-color-scheme: dark) {
+  :root.system {
+    --bg: #0c0a09;
+    --surface: #1c1917;
+    --surface-sunken: #121110;
+    --surface-hover: rgb(250 250 249 / 0.06);
+
+    --fg: #fafaf9;
+    --fg-muted: #a8a29e;
+    --fg-faint: #8c8781;
+
+    --hairline: #292524;
+    --border-control: #78716c;
+
+    --brand: #fb923c;
+    --brand-hover: #fdba74;
+    /* Same divergence as :root.dark above: #d34f0b, not the light-mode
+       #ea580c, so this fill stays unsafe as text against near-black
+       --on-brand while still clearing 3:1 against --bg. */
+    --brand-vivid: #d34f0b;
+    --brand-quiet: rgb(251 146 60 / 0.15);
+    --on-brand: #1c1917;
+    --focus: #fb923c;
+
+    --danger: #f87171;   --danger-quiet: rgb(248 113 113 / 0.15);
+    --warn: #fbbf24;     --warn-quiet: rgb(251 191 36 / 0.15);
+    --success: #4ade80;  --success-quiet: rgb(74 222 128 / 0.15);
+    --info: #60a5fa;     --info-quiet: rgb(96 165 250 / 0.15);
+    --review: #a78bfa;   --review-quiet: rgb(167 139 250 / 0.15);
+
+    /* Solid status fills, deliberately IDENTICAL in every theme. A danger
+       banner is a fixed signal colour, not a themed surface: it is red in
+       light and dark alike, so its label must not flip to near-black and
+       vanish. Every value below clears 4.5:1 against --on-solid. */
+    --danger-solid: #b91c1c;   /* 6.47:1 vs --on-solid */
+    --warn-solid: #b45309;     /* 5.02:1 */
+    --success-solid: #15803d;  /* 5.02:1 */
+    --info-solid: #1d4ed8;     /* 6.70:1 */
+    --review-solid: #6d28d9;   /* 7.10:1 */
+    --brand-solid: #c2410c;    /* 5.18:1 */
+    --on-solid: #ffffff;
+
+    color-scheme: dark;
+  }
+}
+
+/* `inline` is what makes each utility resolve var(--x) AT USE TIME, so it
+   follows the theme class rather than freezing the light value. */
+@theme inline {
+  /* Colours → bg-*, text-*, border-*, ring-* */
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-hover: var(--surface-hover);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-faint: var(--fg-faint);
+  --color-hairline: var(--hairline);
+  --color-control: var(--border-control);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-vivid: var(--brand-vivid);
+  --color-brand-quiet: var(--brand-quiet);
+  --color-on-brand: var(--on-brand);
+  --color-focus: var(--focus);
+  --color-danger: var(--danger);
+  --color-danger-quiet: var(--danger-quiet);
+  --color-warn: var(--warn);
+  --color-warn-quiet: var(--warn-quiet);
+  --color-success: var(--success);
+  --color-success-quiet: var(--success-quiet);
+  --color-info: var(--info);
+  --color-info-quiet: var(--info-quiet);
+  --color-review: var(--review);
+  --color-review-quiet: var(--review-quiet);
+  --color-danger-solid: var(--danger-solid);
+  --color-warn-solid: var(--warn-solid);
+  --color-success-solid: var(--success-solid);
+  --color-info-solid: var(--info-solid);
+  --color-review-solid: var(--review-solid);
+  --color-brand-solid: var(--brand-solid);
+  --color-on-solid: var(--on-solid);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  /* Type → text-display … text-micro. The floor is 13px: nothing a human
+     reads is smaller. --text-micro is 11px and is for BADGES only, which are
+     read as shapes rather than as sentences. */
+  --text-display: 2rem;        --text-display--line-height: 2.25rem;
+  --text-title: 1.375rem;      --text-title--line-height: 1.75rem;
+  --text-heading: 1.0625rem;   --text-heading--line-height: 1.5rem;
+  --text-body: 1rem;           --text-body--line-height: 1.5rem;
+  --text-callout: 0.9375rem;   --text-callout--line-height: 1.25rem;
+  --text-caption: 0.8125rem;   --text-caption--line-height: 1.125rem;
+  --text-micro: 0.6875rem;     --text-micro--line-height: 0.875rem;
+
+  /* Radius → rounded-chip … rounded-sheet. Nested radius = outer minus
+     padding, so a button inside a card looks concentric, not accidental. */
+  --radius-chip: 0.5rem;
+  --radius-control: 0.75rem;
+  --radius-card: 1rem;
+  --radius-sheet: 1.25rem;
+
+  /* Depth → shadow-float, shadow-sheet. Level 1 (cards) is a hairline and NO
+     shadow: structure first, shadow only when something genuinely floats.
+     Both are near-invisible on a dark background, which is why dark mode
+     communicates depth by lifting --surface instead. */
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.06), 0 1px 3px rgb(0 0 0 / 0.04);
+  --shadow-sheet: 0 8px 24px rgb(0 0 0 / 0.12), 0 2px 6px rgb(0 0 0 / 0.06);
+
+  /* Motion. Overriding --ease-out replaces Tailwind's built-in `ease-out`
+     everywhere, which is intended — one curve for the whole product.
+     --default-transition-duration is a real Tailwind key: setting it means a
+     bare `transition-colors` already runs at 180ms with no duration class. */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --default-transition-duration: 180ms;
+  --default-transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Reduce Motion is an accessibility setting many older users turn on without
+   knowing they did. Collapsing the durations here means no component has to
+   know it exists. Not 0s: a 0.01ms transition still FIRES its transitionend
+   event, so JavaScript waiting on one does not hang. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
