@@ -24,13 +24,13 @@ import {
 // LAYOUTS. This route freezes the data so the only thing that can change
 // between two screenshots is the design.
 //
-// Dev-only, same posture as /_design (Task 13): notFound() rather than a
+// Dev-only, same posture as /design-system (Task 13): notFound() rather than a
 // redirect, because a redirect announces that the route exists.
 export const dynamic = 'force-dynamic';
 
 const t = getCatalog(DEFAULT_LOCALE);
 
-// A local heading wrapper, not shared with /_design/page.tsx. Six duplicated
+// A local heading wrapper, not shared with /design-system/page.tsx. Six duplicated
 // lines in two development-only routes is correct here — see the task brief.
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -71,7 +71,7 @@ export default function DesignScreens() {
 
   return (
     <div className="mx-auto flex h-dvh w-full max-w-2xl flex-col overflow-y-auto bg-bg">
-      <AppBar title="Real screens, fake data" subtitle="/_design/screens — dev only" />
+      <AppBar title="Real screens, fake data" subtitle="/design-system/screens — dev only" />
       <div className="flex flex-col gap-6 p-4">
         <Section title="1. Normal task board — five tasks, mixed statuses">
           <Card padding="none">

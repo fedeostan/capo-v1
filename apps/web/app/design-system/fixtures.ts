@@ -1,4 +1,4 @@
-// Static sample data for /_design/screens.
+// Static sample data for /design-system/screens.
 //
 // Three reasons this exists rather than logging into a real account:
 //   * it needs no credentials from anybody, ever;

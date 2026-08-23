@@ -13,6 +13,13 @@ export async function proxy(request: NextRequest) {
   if (pathname === '/api/whatsapp' || pathname === '/api/stripe/webhook' || pathname.startsWith('/api/cron/')) {
     return NextResponse.next();
   }
+  // The design-system gallery renders nothing but hardcoded fixtures, and its
+  // entire purpose is being reviewable without a login. In production the pages
+  // themselves call notFound(), so this branch is dead there — the NODE_ENV
+  // guard means production's auth posture is unchanged on both layers.
+  if (process.env.NODE_ENV !== 'production' && pathname.startsWith('/design-system')) {
+    return NextResponse.next();
+  }
   return await updateSession(request);
 }
 
