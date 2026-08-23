@@ -1,0 +1,49 @@
+{
+  "projectId": "6f3dfe80-1663-4f65-9e7d-a8091b1805af",
+  "shape": "package",
+  "pkg": "@capo/ui",
+  "globalName": "Capo",
+  "cssEntry": ".ds-styles/capo.css",
+  "tsconfig": "../../../tsconfig.json",
+  "extraEntries": [
+    "../../../../../.design-sync/named-exports.ts",
+    "../../../../../.design-sync/preview-providers.tsx"
+  ],
+  "componentSrcMap": {
+    "StatusBadge": "src/dashboard-ui.tsx",
+    "ScreenShell": "src/dashboard-ui.tsx",
+    "MaterialsList": "src/dashboard-ui.tsx",
+    "EmptyState": "src/dashboard-ui.tsx",
+    "TaskBoardList": "src/dashboard-ui.tsx",
+    "ObrasList": "src/dashboard-ui.tsx",
+    "TimelineList": "src/dashboard-ui.tsx",
+    "TaskDetail": "src/task-detail.tsx",
+    "Markdown": "src/markdown.tsx",
+    "BottomNav": "../../../app/bottom-nav.tsx",
+    "MicButton": "../../../app/mic-button.tsx",
+    "PullToRefresh": "../../../app/pull-to-refresh.tsx",
+    "FilterChips": "../../../app/(app)/tarefas/filter-chips.tsx",
+    "FilterControls": "../../../app/(app)/tarefas/filter-controls.tsx",
+    "PushCard": "../../../app/(app)/perfil/push-card.tsx",
+    "LanguageDriftNote": "../../../app/(app)/language-drift.tsx",
+    "LanguageDriftStrip": "../../../app/(app)/language-drift.tsx",
+    "TranslationProgress": "../../../app/(app)/perfil/translation-progress.tsx",
+    "PasswordField": "../../../app/(public)/password-field.tsx",
+    "InstallGuide": "../../../app/(public)/instalar/install-guide.tsx"
+  },
+  "dtsPropsFor": {
+    "ScreenShell": "  /** Rendered as the screen's <h1>. On /tarefas/[id] this is the TASK TITLE \u2014 TaskDetail does not render one. */\n  title: string;\n  /** Optional second line. /tarefas/[id] passes `[job.name, job.address].filter(Boolean).join(' \\u00b7 ')`. */\n  subtitle?: string;\n  /** The screen body. ScreenShell is overflow-hidden and carries NO scroller \u2014 the caller supplies one, or content is clipped. */\n  children: React.ReactNode;",
+    "EmptyState": "  text: string;\n  /** The one thing worth doing next. Omit when there is nothing to offer. */\n  cta?: { href: string; label: string };",
+    "Markdown": "  /** Markdown source. remark-gfm and remark-breaks are both enabled, so SINGLE newlines become line breaks \u2014 Capo writes WhatsApp-style, not strict markdown. */\n  text: string;",
+    "StatusBadge": "  /** A task status. null renders nothing. */\n  status: string | null;\n  locale: 'pt-PT' | 'es-ES' | 'en-US';\n  /** Opt back in to the 'pending' badge. Off by default: pending is the status of almost every open task, so a badge for it would occupy the one slot real state belongs in. */\n  showPending?: boolean;",
+    "TaskBoardList": "  tasks: Array<{ id: string; title: string; status: string; description: string | null; duration_days: number | null; materials: string[] | null; job_id: string | null; job_name: string | null; job_status: string | null; worker_name: string | null; assignee_worker_id: string | null; start_date: string | null; due_date: string | null; active_today: boolean; active_tomorrow: boolean; overdue: boolean; days_overdue: number; at_risk: boolean; risk_blocked: boolean; risk_late_start: boolean; risk_due_soon: boolean; risk_late_dependency: boolean; risk_paused_job: boolean; late_dependency_titles: string[]; depends_on_titles: string[]; confirmation_state?: string | null; confirmed_at?: string | null; last_reminder_at?: string | null; proof_count?: number | null }>;\n  /** Shown via EmptyState when `tasks` is empty. */\n  empty: string;\n  groupBy: 'date' | 'obra' | 'agenda';\n  locale: 'pt-PT' | 'es-ES' | 'en-US';\n  /** Today in Europe/Lisbon, from the SAME lisbon_today() clock the rows come from \u2014 never from the browser. Required in practice by the 'agenda' grouping. */\n  today?: string | null;\n  /** Per-row slot in the narrow action column (e.g. Concluir/Reabrir). A render prop so this package never imports a mutation. */\n  renderExtra?: (task: TaskBoardListProps['tasks'][number]) => React.ReactNode;\n  /** Second per-row slot, full width and below the risk reasons. */\n  renderBelow?: (task: TaskBoardListProps['tasks'][number]) => React.ReactNode;",
+    "ObrasList": "  /** Rows of the dashboard_obras view. Since migration 0038 this carries PAUSED obras as well as active ones \u2014 check `status` rather than assuming every row is active. */\n  obras: Array<{ id: string | null; name: string | null; address: string | null; status: string | null; pendentes: number | null; concluidas: number | null; company_id: string | null }>;\n  empty: string;\n  locale: 'pt-PT' | 'es-ES' | 'en-US';\n  /** Overdue task count per obra id, rendered red beside the name. */\n  overdueByObra?: Record<string, number>;",
+    "TimelineList": "  tasks: Array<{ id: string; title: string; status: string; start_date: string | null; due_date: string | null; duration_days: number | null; materials: string[] | null; assignee_name: string | null; depends_on_titles: string[] }>;\n  empty: string;\n  locale: 'pt-PT' | 'es-ES' | 'en-US';\n  renderExtra?: (task: TimelineListProps['tasks'][number]) => React.ReactNode;",
+    "MaterialsList": "  /** One group per obra. Above THREE groups the list opens collapsed. */\n  groups: Array<{ obraId: string | null; obraName: string; items: Array<{ material: string; forTasks: Array<{ id: string; title: string; materials: string[] }> }>; tasks: Array<{ id: string; title: string; materials: string[] }> }>;\n  empty: string;\n  /** Heading for the group holding work with no obra attached. */\n  noJobLabel: string;\n  /** e.g. \"para: Pintar tecto\" \u2014 says WHY each item is on the list. */\n  forLabel: (tasks: string[]) => string;\n  /** e.g. \"4 materiais\" \u2014 what a collapsed group tells you without opening. */\n  countLabel?: (n: number) => string;\n  /** Shown inside a group whose obra has work but nothing recorded yet. */\n  emptyGroupLabel?: string;\n  seeJobLabel?: string;\n  /** The \"add material\" control. Injected, never built here \u2014 this package owns no mutation. */\n  renderGroupAction?: (group: MaterialsListProps['groups'][number]) => React.ReactNode;\n  /** Replaces the plain material name with something tappable. */\n  renderItem?: (item: MaterialsListProps['groups'][number]['items'][number], group: MaterialsListProps['groups'][number]) => React.ReactNode;",
+    "TaskDetail": "  task: { id: string; title: string; status: string; description: string | null; duration_days: number | null; materials: string[] | null; job_id: string | null; job_name: string | null; job_status: string | null; worker_name: string | null; assignee_worker_id: string | null; start_date: string | null; due_date: string | null; active_today: boolean; active_tomorrow: boolean; overdue: boolean; days_overdue: number; at_risk: boolean; risk_blocked: boolean; risk_late_start: boolean; risk_due_soon: boolean; risk_late_dependency: boolean; risk_paused_job: boolean; late_dependency_titles: string[]; depends_on_titles: string[]; confirmation_state?: string | null; confirmed_at?: string | null; last_reminder_at?: string | null; proof_count?: number | null };\n  job: { id: string; name: string; address: string | null; client_name: string | null; status: string } | null;\n  worker: { id: string; name: string; trade: string | null; phone: string | null; active: boolean } | null;\n  /** Everyone else on this task (issue #44) \u2014 helpers, never the assignee. Names only. */\n  collaborators?: Array<{ id: string; name: string }>;\n  /** Proof of the work, newest first. `url` is a SHORT-LIVED signed URL minted per request \u2014 never cache it, and the page rendering it must be dynamic. */\n  photos?: Array<{ id: string; url: string; source: string; createdAt: string }>;\n  locale: 'pt-PT' | 'es-ES' | 'en-US';\n  /** Replaces the read-only assignee line with the worker picker. */\n  renderAssignee?: () => React.ReactNode;\n  /** The \"who else is helping\" control. Its PRESENCE also makes the section render when nobody is helping yet. */\n  renderCollaborators?: () => React.ReactNode;\n  /** The \"edit materials\" control. Its PRESENCE also makes the section render on a task with an empty list. */\n  renderMaterials?: () => React.ReactNode;\n  /** Concluir/Reabrir. */\n  renderActions?: () => React.ReactNode;"
+  },
+  "provider": {
+    "component": "NextPreviewProviders"
+  },
+  "readmeHeader": ".design-sync/conventions.md"
+}
