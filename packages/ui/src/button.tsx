@@ -95,6 +95,12 @@ export function Button({
 }: ButtonProps) {
   return (
     <button
+      // An unspecified `type` inside a <form> defaults to `submit` per the
+      // HTML spec, so a bare <Button onClick={...}>Cancelar</Button> silently
+      // submits the form it sits in. Defaulting it here, BEFORE `...rest` is
+      // spread, means a caller that genuinely wants type="submit" can still
+      // override it.
+      type="button"
       {...rest}
       disabled={disabled || loading}
       aria-busy={loading || undefined}

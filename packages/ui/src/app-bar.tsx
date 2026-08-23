@@ -23,28 +23,31 @@ function BackChevron() {
   );
 }
 
-export function AppBar({
-  title,
-  subtitle,
-  backHref,
-  backLabel,
-  action,
-}: {
+type AppBarBase = {
   title: string;
   subtitle?: string;
-  /** An explicit destination, never router.back(). Browser history can lead
-   *  out of the app entirely; a declared destination cannot. It is also what
-   *  keeps this component free of JavaScript. */
-  backHref?: string;
-  backLabel?: string;
   action?: ReactNode;
-}) {
+};
+
+/** `backHref` is an explicit destination, never router.back(). Browser
+ *  history can lead out of the app entirely; a declared destination cannot.
+ *  It is also what keeps this component free of JavaScript.
+ *
+ *  `backHref` and `backLabel` travel together, enforced by the compiler. The
+ *  label is spoken by a screen reader, and Capo speaks three languages — a
+ *  hardcoded English default would announce "Back" on a Portuguese screen.
+ *  Callers pass an already-translated string, so this package still needs no
+ *  locale of its own. */
+type AppBarProps = AppBarBase &
+  ({ backHref: string; backLabel: string } | { backHref?: undefined; backLabel?: undefined });
+
+export function AppBar({ title, subtitle, backHref, backLabel, action }: AppBarProps) {
   return (
     <header className="sticky top-0 z-10 flex shrink-0 items-center gap-2 border-b border-hairline bg-surface/80 px-4 py-3 backdrop-blur-md">
       {backHref && (
         <a
           href={backHref}
-          aria-label={backLabel ?? 'Back'}
+          aria-label={backLabel}
           className="-ml-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-control text-fg transition-colors ease-out hover:bg-surface-hover outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
         >
           <BackChevron />

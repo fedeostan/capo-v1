@@ -8,7 +8,13 @@
 //   * --brand-vivid used behind text, where it is 3.56:1 and not 5.18:1;
 //   * a screen reverting to raw palette classes, which is how fifteen
 //     spellings of one button happened in the first place;
-//   * a tap target under 44px, invisible until somebody wearing gloves misses.
+//   * a tap target under 44px — NOT CHECKED, deliberately. Expressing "this
+//     element is tappable and shorter than 44px" as a regex over class strings
+//     is not something this file can do honestly: `min-h-11` is a size utility
+//     and `off-scale-spacing` excludes h/w on purpose, so `h-8` on a new icon
+//     button passes here. The 44px floor lives in the Button/IconButton size
+//     maps and in review. A rule this file claims but does not run is worse
+//     than one it never claimed.
 //
 // It reads packages/ui/src/tokens.css itself rather than duplicating the
 // values, for the same reason cost-check.mts reads the live migration: a copy
@@ -16,7 +22,7 @@
 //
 // Run with `pnpm design-check`. Exit 0 = green, 1 = at least one failure.
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 let failures = 0;
@@ -57,22 +63,27 @@ check(
   '@utility in an imported file makes Tailwind drop the entire file silently',
 );
 
-/** Every `--name: value;` inside the block opened by `selector {`. */
+/** Every `--name: value;` inside the block opened by `selector {`.
+ *
+ *  Reads `cssWithoutComments`, not `css` — a brace or a `--name:` sequence
+ *  inside a comment would otherwise be counted as real tokens. No comment
+ *  contains either today, which is exactly why this was one comment away from
+ *  a phantom token before this file started reading the stripped source. */
 function block(selector: string): Record<string, string> {
-  const at = css.indexOf(`${selector} {`);
+  const at = cssWithoutComments.indexOf(`${selector} {`);
   if (at === -1) return {};
-  const open = css.indexOf('{', at);
+  const open = cssWithoutComments.indexOf('{', at);
   let depth = 0;
   let i = open;
-  for (; i < css.length; i += 1) {
-    if (css[i] === '{') depth += 1;
-    else if (css[i] === '}') {
+  for (; i < cssWithoutComments.length; i += 1) {
+    if (cssWithoutComments[i] === '{') depth += 1;
+    else if (cssWithoutComments[i] === '}') {
       depth -= 1;
       if (depth === 0) break;
     }
   }
   const out: Record<string, string> = {};
-  for (const m of css.slice(open + 1, i).matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
+  for (const m of cssWithoutComments.slice(open + 1, i).matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
     out[m[1]] = m[2].trim();
   }
   return out;
@@ -80,9 +91,16 @@ function block(selector: string): Record<string, string> {
 
 const LIGHT = block(':root');
 const DARK = block(':root.dark');
+// :root.system sits inside `@media (prefers-color-scheme: dark)` — a
+// hand-duplicated copy of :root.dark, because the media query cannot share a
+// declaration block with a class selector. block() finds it by the same
+// `selector {` search regardless of the enclosing @media, since it only
+// tracks brace depth from that point.
+const SYSTEM = block(':root.system');
 
 check('light theme block parsed', Object.keys(LIGHT).length > 10, `${Object.keys(LIGHT).length} tokens`);
 check('dark theme block parsed', Object.keys(DARK).length > 10, `${Object.keys(DARK).length} tokens`);
+check('system theme block parsed', Object.keys(SYSTEM).length > 10, `${Object.keys(SYSTEM).length} tokens`);
 
 // ── Contrast ───────────────────────────────────────────────────────────────
 
@@ -136,7 +154,7 @@ const PAIRS: [string, string, number, string][] = [
   ['--on-solid', '--brand-solid', 4.5, 'text on a brand banner'],
 ];
 
-for (const [themeName, theme] of [['light', LIGHT], ['dark', DARK]] as const) {
+for (const [themeName, theme] of [['light', LIGHT], ['dark', DARK], ['system', SYSTEM]] as const) {
   for (const [fg, bg, floor, what] of PAIRS) {
     const fgv = theme[fg];
     const bgv = theme[bg];
@@ -153,6 +171,28 @@ for (const [themeName, theme] of [['light', LIGHT], ['dark', DARK]] as const) {
       `${themeName}: ${fg} on ${bg} (${what})`,
       ratio >= floor,
       `${ratio.toFixed(2)}:1, need ${floor}:1`,
+    );
+  }
+}
+
+// :root.system is a hand-duplicated copy of :root.dark — the media query cannot
+// share a declaration block with a class selector. Duplication is only safe if
+// something asserts the copies agree, or the two drift the first time one is
+// edited and only "Sistema" users see it.
+{
+  const darkKeys = Object.keys(DARK).sort();
+  const systemKeys = Object.keys(SYSTEM).sort();
+  check(
+    ':root.system declares exactly the same tokens as :root.dark',
+    darkKeys.join(',') === systemKeys.join(','),
+    `dark has ${darkKeys.length}, system has ${systemKeys.length}`,
+  );
+  for (const key of darkKeys) {
+    if (SYSTEM[key] === undefined) continue; // already reported by the key check
+    check(
+      `:root.system ${key} matches :root.dark`,
+      SYSTEM[key] === DARK[key],
+      `system ${SYSTEM[key]} vs dark ${DARK[key]}`,
     );
   }
 }
@@ -189,7 +229,7 @@ const SCAN_ROOTS = ['apps/web/app', 'apps/operator/app', 'packages/ui/src'];
 const RULES: { id: string; re: RegExp; why: string }[] = [
   {
     id: 'raw-palette',
-    re: /\b(?:text|bg|border|ring|from|to|via|decoration|outline|divide|placeholder)-(?:zinc|gray|neutral|slate|stone|orange|red|amber|emerald|green|violet|blue|sky|yellow|black|white)(?:-\d{2,3})?(?:\/\d{1,3})?\b/,
+    re: /\b(?:text|bg|border|ring|fill|stroke|from|to|via|decoration|outline|divide|placeholder|shadow|accent|caret)-(?:zinc|gray|neutral|slate|stone|orange|red|amber|emerald|green|violet|blue|sky|yellow|rose|pink|purple|indigo|cyan|teal|lime|fuchsia|black|white)(?:-\d{2,3})?(?:\/\d{1,3})?\b/,
     why: 'raw palette colour — use a role token (bg-surface, text-fg-muted, border-control…)',
   },
   {
@@ -199,8 +239,13 @@ const RULES: { id: string; re: RegExp; why: string }[] = [
   },
   {
     id: 'off-scale-spacing',
-    re: /\b(?:p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|gap|gap-x|gap-y|space-x|space-y)-(?:0\.5|1\.5|2\.5|3\.5|5|7|9|10|11|14)\b/,
+    re: /\b(?:p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|gap|gap-x|gap-y|space-x|space-y)-(?:0\.5|1\.5|2\.5|3\.5|5|7|9|10|11|14)\b/,
     why: 'spacing step outside 1/2/3/4/6/8/12/16 (4/8/12/16/24/32/48/64px)',
+  },
+  {
+    id: 'arbitrary-colour',
+    re: /\b(?:text|bg|border|ring|fill|stroke|from|to|via|outline|decoration|shadow|accent|caret)-\[(?:#|rgb|hsl|oklch|color-mix)/i,
+    why: 'hard-coded colour — use a role token, this is the exact spelling of the 3.56:1 button',
   },
 ];
 
@@ -308,7 +353,9 @@ for (const file of UNCONVERTED) {
   check(
     `ledger entry still needed: ${file}`,
     stillDirty.has(file),
-    'this file is clean now — delete it from UNCONVERTED',
+    existsSync(file)
+      ? 'this file is clean now — delete it from UNCONVERTED'
+      : 'this file no longer exists — delete it from UNCONVERTED',
   );
 }
 

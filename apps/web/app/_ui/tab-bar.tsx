@@ -1,8 +1,9 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { getCatalog } from '@capo/i18n/catalog';
+import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 
 // Hoje/Amanhã/Atrasadas were never separate places — they were one list with a
@@ -18,7 +19,13 @@ import type { Locale } from '@capo/i18n/locale';
 // deficiency and construction is a heavily male trade, so that is a real share
 // of the actual users — and orange-versus-grey is a hard pair for the common
 // type. Colour plus a filled shape works with no colour perception at all.
-const TABS = [
+// `key` is typed against the nav catalog itself — `keyof Catalog['nav']` —
+// rather than left to inference, so a typo'd key (or a `nav` catalog entry
+// renamed without this list following) is a `tsc --noEmit` error at THIS
+// array instead of an empty label discovered by looking at a phone.
+type Tab = { href: string; key: keyof Catalog['nav']; outline: ReactNode; filled: ReactNode };
+
+const TABS: Tab[] = [
   {
     href: '/',
     key: 'chat',
@@ -94,7 +101,7 @@ export function TabBar({ locale }: { locale: Locale }) {
     // it the tabs sit under the iPhone home indicator.
     <nav className="grid shrink-0 grid-cols-5 border-t border-hairline bg-surface/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-md">
       {TABS.map(({ href, key, outline, filled }) => {
-        const label = nav[key as keyof typeof nav];
+        const label = nav[key];
         // Prefix match so /obras/[id] keeps its tab lit. '/' has to stay an
         // exact match or it would claim every route.
         const active = href === '/' ? pathname === '/' : pathname.startsWith(href);

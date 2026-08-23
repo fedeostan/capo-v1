@@ -69,13 +69,17 @@ export function Sheet({
   // Remember who opened it, move focus in, and give it back on close. Without
   // the hand-back, closing a sheet drops focus onto <body> and the next Tab
   // starts from the top of the page.
+  // `mounted` is in the deps deliberately. Without it, a sheet that is already
+  // open on the first render (a URL param, server-seeded state) runs this
+  // effect while the panel is still null — first?.focus() no-ops — and never
+  // runs it again, because flipping `mounted` would not change the deps.
   useEffect(() => {
     if (!open) return;
     returnTo.current = document.activeElement as HTMLElement | null;
     const first = focusables()[0] ?? panel.current;
     first?.focus();
     return () => returnTo.current?.focus();
-  }, [open, focusables]);
+  }, [open, mounted, focusables]);
 
   // Escape closes, and Tab cycles inside. The trap is a wrap-around rather
   // than a barrier: at the last element Tab goes to the first, and
