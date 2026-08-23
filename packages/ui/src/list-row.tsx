@@ -2,6 +2,7 @@
 // the WHOLE row is the target — not the title inside it, which is how a row
 // ends up needing three attempts to hit on a moving van.
 import type { ReactNode } from 'react';
+import type { LinkComponent } from './link-as';
 
 function Chevron() {
   return (
@@ -26,6 +27,7 @@ export function ListRow({
   meta,
   trailing,
   href,
+  linkAs: Link = 'a',
   danger = false,
 }: {
   leading?: ReactNode;
@@ -34,6 +36,10 @@ export function ListRow({
   trailing?: ReactNode;
   /** When present the row renders as a link and gains a chevron. */
   href?: string;
+  /** What to render the link WITH. Defaults to a plain <a>, which is a full
+   *  page load — see link-as.ts. Inside apps/web, import this component from
+   *  app/_ui/nav.tsx, which passes next/link for you. */
+  linkAs?: LinkComponent;
   danger?: boolean;
 }) {
   const inner = (
@@ -61,9 +67,9 @@ export function ListRow({
 
   if (href) {
     return (
-      <a href={href} className={classes}>
+      <Link href={href} className={classes}>
         {inner}
-      </a>
+      </Link>
     );
   }
   return <div className={classes}>{inner}</div>;

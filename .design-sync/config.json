@@ -19,7 +19,7 @@
     "TimelineList": "src/dashboard-ui.tsx",
     "TaskDetail": "src/task-detail.tsx",
     "Markdown": "src/markdown.tsx",
-    "BottomNav": "../../../app/bottom-nav.tsx",
+    "TabBar": "../../../app/_ui/tab-bar.tsx",
     "MicButton": "../../../app/mic-button.tsx",
     "PullToRefresh": "../../../app/pull-to-refresh.tsx",
     "FilterChips": "../../../app/(app)/tarefas/filter-chips.tsx",

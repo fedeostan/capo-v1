@@ -11,6 +11,7 @@
 // No 'use client': every state below — press, hover, focus, disabled — is
 // pure CSS, so this renders on the server and ships no JavaScript.
 import type { ComponentProps, ReactNode } from 'react';
+import type { LinkComponent } from './link-as';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'tertiary' | 'destructive';
 export type ButtonSize = 'sm' | 'md' | 'lg';
@@ -130,25 +131,31 @@ export type ButtonLinkProps = Omit<ComponentProps<'a'>, 'className'> & {
   size?: ButtonSize;
   fullWidth?: boolean;
   icon?: ReactNode;
+  /** What to render the link WITH. Defaults to a plain <a> because @capo/ui
+   *  is shared with apps/operator and must not depend on a router.
+   *
+   *  A plain <a> is a FULL PAGE LOAD. The previous version of this comment
+   *  claimed a same-origin href "is handled by the App Router regardless",
+   *  and that is simply false — the router does not intercept plain anchors.
+   *  See link-as.ts. Inside apps/web, import from app/_ui/nav.tsx, which
+   *  passes next/link for you. */
+  linkAs?: LinkComponent;
 };
 
-/** The same surface over an anchor. Deliberately a plain <a> rather than
- *  next/link: @capo/ui is shared with apps/operator and must not depend on a
- *  router. Callers inside apps/web wrap it or pass a next/link `href` — a
- *  same-origin href in this app is handled by the App Router regardless. */
 export function ButtonLink({
   variant = 'secondary',
   size = 'md',
   fullWidth = false,
   icon,
   children,
+  linkAs: Link = 'a',
   ...rest
 }: ButtonLinkProps) {
   return (
-    <a {...rest} className={buttonClasses(variant, size, fullWidth)}>
+    <Link {...rest} className={buttonClasses(variant, size, fullWidth)}>
       {icon}
       {children}
-    </a>
+    </Link>
   );
 }
 

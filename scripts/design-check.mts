@@ -272,8 +272,6 @@ const UNCONVERTED: string[] = [
   'apps/web/app/(app)/_tasks/materials-editor.tsx',
   'apps/web/app/(app)/_tasks/review-actions.tsx',
   'apps/web/app/(app)/_tasks/task-actions.tsx',
-  'apps/web/app/(app)/language-drift.tsx',
-  'apps/web/app/(app)/layout.tsx',
   'apps/web/app/(app)/materiais/page.tsx',
   'apps/web/app/(app)/notificacoes/mark-all-read.tsx',
   'apps/web/app/(app)/notificacoes/page.tsx',
@@ -308,14 +306,34 @@ const UNCONVERTED: string[] = [
   'apps/web/app/(public)/registar/page.tsx',
   'apps/web/app/(public)/whatsapp/handshake.tsx',
   'apps/web/app/(public)/whatsapp/page.tsx',
-  'apps/web/app/bottom-nav.tsx',
-  'apps/web/app/chat.tsx',
-  'apps/web/app/mic-button.tsx',
-  'apps/web/app/pull-to-refresh.tsx',
   'packages/ui/src/dashboard-ui.tsx',
-  'packages/ui/src/markdown.tsx',
   'packages/ui/src/task-detail.tsx',
 ];
+
+/** Strip WHOLE-LINE comments before applying the usage rules.
+ *
+ *  The rules below are about what the CODE says, and a comment explaining why
+ *  a colour was wrong necessarily quotes the wrong colour. Without this, the
+ *  only way to pass the gate is to delete the explanation — which is exactly
+ *  the trade the tokens.css check above already refuses ("Rewording that
+ *  comment to satisfy a regex would cost the file its most important
+ *  sentence"). The conversion batches are full of lines like "bg-amber-500 +
+ *  text-white flipped to near-black in dark mode"; that sentence is the most
+ *  useful thing in its diff.
+ *
+ *  DELIBERATELY conservative: only lines whose first non-whitespace is `//`,
+ *  `/*` or a JSDoc `*` continuation. A trailing comment on a line of real code
+ *  is still scanned, and so is anything inside a string. The alternative —
+ *  stripping `//` to end of line anywhere — would truncate a line at the `//`
+ *  of an `https://` URL and could hide a real violation after it. A false
+ *  POSITIVE on a trailing comment costs one reworded comment; a false NEGATIVE
+ *  ships a raw colour. */
+function codeOnly(body: string): string {
+  return body
+    .split('\n')
+    .filter(line => !/^\s*(\/\/|\/\*|\*)/.test(line))
+    .join('\n');
+}
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -334,7 +352,7 @@ let scanned = 0;
 for (const root of SCAN_ROOTS) {
   for (const file of sourceFiles(root)) {
     scanned += 1;
-    const body = readFileSync(file, 'utf8');
+    const body = codeOnly(readFileSync(file, 'utf8'));
     const broken = RULES.filter(r => r.re.test(body));
     if (broken.length > 0) stillDirty.add(file);
     if (unconverted.has(file)) continue;

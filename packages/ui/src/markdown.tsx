@@ -26,13 +26,13 @@ export default function Markdown({ text }: { text: string }) {
             </a>
           ),
           code: ({ children }) => (
-            <code className="rounded bg-zinc-500/15 px-1 font-mono text-[0.85em]">{children}</code>
+            <code className="rounded-chip bg-surface-hover px-1 font-mono text-[0.85em]">{children}</code>
           ),
           pre: ({ children }) => (
-            <pre className="overflow-x-auto rounded-lg bg-zinc-500/15 p-2 text-xs">{children}</pre>
+            <pre className="overflow-x-auto rounded-chip bg-surface-hover p-2 text-caption">{children}</pre>
           ),
           blockquote: ({ children }) => (
-            <blockquote className="border-l-2 border-zinc-500/30 pl-2 text-zinc-500">
+            <blockquote className="border-l-2 border-hairline pl-2 text-fg-muted">
               {children}
             </blockquote>
           ),

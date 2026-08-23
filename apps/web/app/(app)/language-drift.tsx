@@ -54,9 +54,9 @@ export function LanguageDriftStrip({ locale, companyLocale }: { locale: Locale; 
   if (locale === companyLocale) return null;
   const t = getCatalog(locale);
   return (
-    <div className="rounded-xl border border-zinc-500/30 bg-zinc-500/5 p-3">
-      <p className="text-xs text-zinc-500">{t.settings.driftBanner(names(locale, companyLocale))}</p>
-      <Link href="/perfil" className="mt-1 inline-block text-xs font-medium text-orange-600 underline">
+    <div className="rounded-card border border-hairline bg-surface p-3">
+      <p className="text-caption text-fg-muted">{t.settings.driftBanner(names(locale, companyLocale))}</p>
+      <Link href="/perfil" className="mt-1 inline-block text-caption font-medium text-brand underline">
         {t.settings.driftAction}
       </Link>
     </div>
@@ -72,7 +72,7 @@ export function LanguageDriftNote({ locale, companyLocale }: { locale: Locale; c
   if (locale === companyLocale) return null;
   const t = getCatalog(locale);
   return (
-    <div className="space-y-1 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+    <div className="space-y-1 rounded-chip bg-warn-quiet px-3 py-2 text-caption text-warn">
       <p className="font-medium">{t.settings.driftBanner(names(locale, companyLocale))}</p>
       <p>{t.settings.driftHint}</p>
     </div>

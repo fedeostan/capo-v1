@@ -35,9 +35,14 @@ const DEAD_ZONE = 6;
     overflow-x-auto row inside this very scroller. */
 const AXIS_BIAS = 1.5;
 
-/** The default <main> classes: what ScreenShell used to render itself. */
+/** The default <main> classes: what ScreenShell used to render itself.
+ *
+ *  `bg-bg`, not `bg-background`. --background aliases --surface (white), and
+ *  this is the PAGE behind the cards, not a card — painting it white is what
+ *  stops a card reading as an object. Gap is 6 (24px), the design's
+ *  between-groups distance; `space-y-5` was off the scale entirely. */
 const DEFAULT_SCROLLER =
-  'flex-1 space-y-5 overflow-y-auto overscroll-contain bg-background px-4 py-4';
+  'flex-1 space-y-6 overflow-y-auto overscroll-contain bg-bg px-4 py-4';
 
 /** Diminishing returns: 1:1 at the start, asymptotic to MAX_PULL. */
 function resist(dy: number): number {
@@ -245,7 +250,7 @@ export default function PullToRefresh({
         style={{ height: `${REST}px` }}
       >
         <span
-          className={`block h-5 w-5 rounded-full border-2 border-zinc-400 border-t-transparent ${
+          className={`block h-5 w-5 rounded-full border-2 border-control border-t-transparent ${
             refreshing ? 'motion-safe:animate-spin' : ''
           }`}
           // While pulling, the spinner fades in and winds up with the finger:

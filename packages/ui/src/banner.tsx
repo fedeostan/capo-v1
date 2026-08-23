@@ -7,6 +7,7 @@
 // component somebody will reach for when adding a third strip.
 import type { ReactNode } from 'react';
 import type { Tone } from './badge';
+import type { LinkComponent } from './link-as';
 
 // The five status tones use the `-solid` tokens, not `--danger`/`--info`
 // directly: those solid tokens are pinned to the same value in both themes
@@ -28,21 +29,25 @@ const SOLID: Record<Tone, string> = {
 export function Banner({
   tone = 'info',
   href,
+  linkAs: Link = 'a',
   icon,
   children,
 }: {
   tone?: Tone;
   href?: string;
+  /** What to render the link WITH — see link-as.ts. Defaults to a plain <a>,
+   *  which is a full page load. apps/web passes next/link via _ui/nav.tsx. */
+  linkAs?: LinkComponent;
   icon?: ReactNode;
   children: ReactNode;
 }) {
   const classes = `flex shrink-0 items-center justify-center gap-2 px-4 py-2 text-center text-caption font-medium no-underline ${SOLID[tone]}`;
   if (href) {
     return (
-      <a href={href} className={classes}>
+      <Link href={href} className={classes}>
         {icon}
         {children}
-      </a>
+      </Link>
     );
   }
   return <div className={classes}>{icon}{children}</div>;

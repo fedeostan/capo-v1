@@ -7,6 +7,10 @@ import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 import Markdown from '@capo/ui/markdown';
+import { Button } from '@capo/ui/button';
+import { Badge } from '@capo/ui/badge';
+import { Card } from '@capo/ui/card';
+import { AppBar } from '@/app/_ui/nav';
 import MicButton from './mic-button';
 import PullToRefresh from './pull-to-refresh';
 
@@ -96,41 +100,42 @@ function ProposalCard({
     />
   );
 
-  const buttonLabel = (decision: 'approve' | 'reject', label: string) =>
-    state === 'busy' && pressed === decision ? (
-      <span className="flex items-center gap-1.5">
-        {spinner}
-        {t.chat.deciding}
-      </span>
-    ) : (
-      label
-    );
-
   return (
-    <div className="my-2 rounded-xl border border-amber-500/60 bg-amber-500/10 p-3 text-sm">
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+    // `warn`, not `review`. Violet means "a completion claim awaiting the
+    // manager"; this is a write awaiting his approval, which is what the amber
+    // card has always said. A restyle does not get to redefine a meaning.
+    <div className="my-2 rounded-card border border-warn bg-warn-quiet p-3 text-body">
+      <div className="mb-1 text-micro font-semibold uppercase tracking-wide text-warn">
         {t.chat.proposalTitle}
       </div>
       <p className="whitespace-pre-wrap">{renderedText}</p>
       {state === 'pending' || state === 'busy' ? (
         <div className="mt-3 flex gap-2" aria-busy={state === 'busy'}>
-          <button
+          {/* Approve is the one primary on this card, and `loading` holds the
+              button's exact width so the pair does not shift under the thumb
+              that just tapped it. The spinner now carries what the "a decidir"
+              label used to say; aria-busy on the row above says it out loud. */}
+          <Button
+            variant="primary"
+            size="sm"
+            loading={state === 'busy' && pressed === 'approve'}
             disabled={state === 'busy'}
             onClick={() => decide('approve')}
-            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
           >
-            {buttonLabel('approve', t.chat.approve)}
-          </button>
-          <button
+            {t.chat.approve}
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            loading={state === 'busy' && pressed === 'reject'}
             disabled={state === 'busy'}
             onClick={() => decide('reject')}
-            className="rounded-lg border border-zinc-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10 disabled:opacity-50"
           >
-            {buttonLabel('reject', t.chat.reject)}
-          </button>
+            {t.chat.reject}
+          </Button>
         </div>
       ) : (
-        <div className="mt-2 flex items-center gap-1.5 text-xs font-medium">
+        <div className="mt-2 flex items-center gap-2 text-caption font-medium">
           {t.chat.cardState[state]}
           {/* The board is still refetching — the decision landed, the screens
               behind it have not caught up yet. */}
@@ -157,10 +162,12 @@ function errorHint(error: Error, t: Catalog): string {
   return t.chat.errorHints.generic;
 }
 
+// The tool-activity marker. Badge is exactly this shape, and being read as a
+// shape rather than as a sentence is why it is the one place 11px is allowed.
 function Chip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="my-1 inline-block rounded-full border border-zinc-500/30 bg-zinc-500/10 px-2 py-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-      {children}
+    <span className="my-1 inline-block">
+      <Badge tone="neutral">{children}</Badge>
     </span>
   );
 }
@@ -323,10 +330,7 @@ export default function Chat({
 
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
-      <header className="shrink-0 border-b border-zinc-500/20 px-4 py-3">
-        <h1 className="text-lg font-semibold">{t.chat.title}</h1>
-        <p className="text-xs text-zinc-500">{t.chat.tagline}</p>
-      </header>
+      <AppBar title={t.chat.title} subtitle={t.chat.tagline} />
 
       {/* Pull-to-refresh is present for consistency with the other tabs, but
           nearly inert here by construction: the thread is bottom-anchored, so
@@ -336,24 +340,24 @@ export default function Chat({
       <PullToRefresh
         locale={locale}
         disabled={busy}
-        className="flex-1 space-y-3 overflow-y-auto overscroll-contain bg-background px-4 py-4"
+        className="flex-1 space-y-3 overflow-y-auto overscroll-contain bg-bg px-4 py-4"
       >
           {orphanedPending.length > 0 && (
-            <section className="rounded-xl border border-zinc-500/20 p-3">
-              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            <Card as="section" padding="sm">
+              <div className="mb-1 text-micro font-semibold uppercase tracking-wide text-fg-muted">
                 {t.chat.pendingProposals}
               </div>
               {orphanedPending.map(p => (
                 <ProposalCard key={p.proposalId} proposalId={p.proposalId} renderedText={p.renderedText} t={t} />
               ))}
-            </section>
+            </Card>
           )}
           {messages.length === 0 && (
-            <p className="pt-10 text-center text-sm text-zinc-500">{t.chat.emptyThread}</p>
+            <p className="pt-12 text-center text-callout text-fg-muted">{t.chat.emptyThread}</p>
           )}
           {messages.map(message =>
             message.role === 'system' ? (
-              <div key={message.id} className="text-center text-xs italic text-zinc-500">
+              <div key={message.id} className="text-center text-caption italic text-fg-muted">
                 {message.parts.map((part, i) => (part.type === 'text' ? <span key={i}>{part.text}</span> : null))}
               </div>
             ) : (
@@ -361,8 +365,8 @@ export default function Chat({
                 <div
                   className={
                     message.role === 'user'
-                      ? 'max-w-[85%] rounded-2xl rounded-br-sm bg-emerald-700 px-3 py-2 text-sm text-white'
-                      : 'max-w-[85%] rounded-2xl rounded-bl-sm bg-zinc-500/10 px-3 py-2 text-sm'
+                      ? 'max-w-[85%] rounded-card rounded-br-sm bg-brand px-3 py-2 text-body text-on-brand'
+                      : 'max-w-[85%] rounded-card rounded-bl-sm border border-hairline bg-surface px-3 py-2 text-body text-fg'
                   }
                 >
                   {message.parts.map((part, i) => (
@@ -379,14 +383,15 @@ export default function Chat({
             ),
           )}
           {busy && (
-            <div className="flex items-center gap-3 text-xs text-zinc-500">
+            <div className="flex items-center gap-3 text-caption text-fg-muted">
               <span>{t.chat.typing}</span>
-              {/* Hover must DARKEN in light and lighten in dark — a single
-                  zinc-400 made the link fade out on a white background. */}
+              {/* The hover no longer needs a dark: twin. It used to, because a
+                  single zinc-400 faded out on white; --fg answers per theme,
+                  so one rule now darkens in light and lightens in dark. */}
               <button
                 type="button"
                 onClick={stop}
-                className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
+                className="underline transition-colors ease-out hover:text-fg"
               >
                 {t.chat.stop}
               </button>
@@ -396,33 +401,26 @@ export default function Chat({
               staring at a message that never got an answer, with nothing to act
               on. Silence is the worst failure mode a chat product has. */}
           {error && (
-            <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-3 text-sm">
-              <p className="font-medium text-red-600 dark:text-red-400">{t.chat.errorTitle}</p>
-              <p className="mt-0.5 text-xs text-zinc-500">{errorHint(error, t)}</p>
+            <div className="rounded-card border border-danger bg-danger-quiet p-3 text-body">
+              <p className="font-medium text-danger">{t.chat.errorTitle}</p>
+              <p className="mt-1 text-caption text-fg-muted">{errorHint(error, t)}</p>
               <div className="mt-2 flex gap-2">
-                {/* Brand orange, not a grey slab: on a light error card the old
-                    bg-zinc-700 read as disabled next to the outlined Dismiss. */}
-                <button
-                  type="button"
-                  onClick={retry}
-                  className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
-                >
+                {/* Retry is primary and Dismiss is secondary, which is the same
+                    hierarchy the old hand-written pair was reaching for when it
+                    picked brand orange over a grey slab that read as disabled. */}
+                <Button variant="primary" size="sm" onClick={retry}>
                   {t.chat.retry}
-                </button>
-                <button
-                  type="button"
-                  onClick={clearError}
-                  className="rounded-lg border border-zinc-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-500/10"
-                >
+                </Button>
+                <Button variant="secondary" size="sm" onClick={clearError}>
                   {t.chat.dismiss}
-                </button>
+                </Button>
               </div>
             </div>
           )}
           <div ref={bottomRef} />
       </PullToRefresh>
 
-      <form onSubmit={handleSubmit} className="flex shrink-0 items-end gap-2 border-t border-zinc-500/20 p-3">
+      <form onSubmit={handleSubmit} className="flex shrink-0 items-end gap-2 border-t border-hairline bg-surface p-3">
         <textarea
           ref={textareaRef}
           rows={1}
@@ -430,7 +428,12 @@ export default function Chat({
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={t.chat.placeholder}
-          className="max-h-[33vh] flex-1 resize-none rounded-xl border border-zinc-500/30 bg-transparent px-3 py-2 text-base outline-none focus:border-emerald-600"
+          // Deliberately NOT the shared <Textarea>: that component fixes a
+          // min-height and a resize handle, and this one has to start at one
+          // row, grow with what is typed and stop at a third of the screen.
+          // @capo/ui components refuse a className prop on purpose, so the
+          // honest answer is bespoke markup built from the same tokens.
+          className="max-h-[33vh] flex-1 resize-none rounded-control border border-control bg-surface px-3 py-2 text-body text-fg outline-none transition-colors ease-out focus:border-brand"
         />
         {/* Transcription only fills the input — the manager reviews and sends. */}
         <MicButton
@@ -441,13 +444,9 @@ export default function Chat({
             setInput(prev => (prev.trim() ? `${prev.trimEnd()} ${text}` : text));
           }}
         />
-        <button
-          type="submit"
-          disabled={busy || input.trim().length === 0}
-          className="shrink-0 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
-        >
+        <Button type="submit" disabled={busy || input.trim().length === 0}>
           {t.chat.send}
-        </button>
+        </Button>
       </form>
     </div>
   );

@@ -5,6 +5,7 @@
 //
 // No 'use client': position:sticky and backdrop-filter are pure CSS.
 import type { ReactNode } from 'react';
+import type { LinkComponent } from './link-as';
 
 function BackChevron() {
   return (
@@ -27,6 +28,10 @@ type AppBarBase = {
   title: string;
   subtitle?: string;
   action?: ReactNode;
+  /** What to render the back link WITH — see link-as.ts. Defaults to a plain
+   *  <a>, which is a full page load. apps/web passes next/link via
+   *  _ui/nav.tsx, so Back does not rebuild the shell. */
+  linkAs?: LinkComponent;
 };
 
 /** `backHref` is an explicit destination, never router.back(). Browser
@@ -41,17 +46,17 @@ type AppBarBase = {
 type AppBarProps = AppBarBase &
   ({ backHref: string; backLabel: string } | { backHref?: undefined; backLabel?: undefined });
 
-export function AppBar({ title, subtitle, backHref, backLabel, action }: AppBarProps) {
+export function AppBar({ title, subtitle, backHref, backLabel, action, linkAs: Link = 'a' }: AppBarProps) {
   return (
     <header className="sticky top-0 z-10 flex shrink-0 items-center gap-2 border-b border-hairline bg-surface/80 px-4 py-3 backdrop-blur-md">
       {backHref && (
-        <a
+        <Link
           href={backHref}
           aria-label={backLabel}
           className="-ml-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-control text-fg transition-colors ease-out hover:bg-surface-hover outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
         >
           <BackChevron />
-        </a>
+        </Link>
       )}
       <div className="flex min-w-0 flex-1 flex-col">
         <h1 className="truncate text-title font-semibold text-fg">{title}</h1>

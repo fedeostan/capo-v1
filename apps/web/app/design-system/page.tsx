@@ -8,6 +8,7 @@ import { Field, Input, Select, Textarea } from '@capo/ui/field';
 import { ListRow } from '@capo/ui/list-row';
 import { Skeleton } from '@capo/ui/skeleton';
 import { AppBar } from '@capo/ui/app-bar';
+import { TabBar } from '@/app/_ui/tab-bar';
 import { InteractiveDemos } from './interactive';
 
 // The design system, visible without logging in. Every component in every
@@ -136,6 +137,20 @@ export default function DesignGallery() {
 
         <Section title="Sheet and SegmentedControl">
           <InteractiveDemos />
+        </Section>
+
+        {/* The shell's own bar, which until the shell batch had been built and
+            rendered NOWHERE — it existed only as a file. What this proves: the
+            five labels still fit at 320px (which is what caps the tab count),
+            the icons, the hairline and the safe-area padding.
+            What it CANNOT show is the active tab: that is derived from
+            usePathname, and no route under /design-system prefixes a tab href,
+            so every tab here is drawn in its inactive, outline form. The active
+            pair — brand colour AND a filled icon, because colour alone is not a
+            signal roughly 1 man in 12 can read — has to be checked on a real
+            route. */}
+        <Section title="TabBar — inactive state only, see the note in the source">
+          <TabBar locale="pt-PT" />
         </Section>
 
         <Section title="Type scale">

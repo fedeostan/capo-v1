@@ -68,7 +68,7 @@ straight at `src/*.tsx`, so the converter runs in synth-entry mode
   they bundle and are then invisible on `window.Capo`; every card fails with
   "Element type is invalid" and nothing points at the cause.
 - **`.design-sync/preview-providers.tsx`** — mounts the real Next App Router
-  contexts. Four components read them (`BottomNav` via `usePathname`,
+  contexts. Four components read them (`TabBar` via `usePathname`,
   `PullToRefresh` / `FilterControls` / `TranslationProgress` via `useRouter`)
   and throw without them.
   ⚠ **Its `next/...` imports are RELATIVE (`../apps/web/node_modules/next/...`)

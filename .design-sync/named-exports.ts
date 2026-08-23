@@ -25,7 +25,6 @@ import './process-shim';
 export { default as Markdown } from '../packages/ui/src/markdown';
 
 // From apps/web.
-export { default as BottomNav } from '../apps/web/app/bottom-nav';
 export { default as MicButton } from '../apps/web/app/mic-button';
 export { default as PullToRefresh } from '../apps/web/app/pull-to-refresh';
 export { default as FilterChips } from '../apps/web/app/(app)/tarefas/filter-chips';
@@ -34,4 +33,7 @@ export { default as PushCard } from '../apps/web/app/(app)/perfil/push-card';
 export { default as PasswordField } from '../apps/web/app/(public)/password-field';
 export { default as InstallGuide } from '../apps/web/app/(public)/instalar/install-guide';
 export { LanguageDriftNote, LanguageDriftStrip } from '../apps/web/app/(app)/language-drift';
+// TabBar replaced BottomNav in the shell batch. It is a NAMED export, so
+// `export * from` already carries it and it needs no rescue line — it is
+// listed here only so the next reader does not go looking for a missing one.
 export { TranslationProgress } from '../apps/web/app/(app)/perfil/translation-progress';
