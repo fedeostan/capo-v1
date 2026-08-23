@@ -2886,3 +2886,53 @@ UNCONVERTED ledger may only shrink."
 **Two deliberate red states.** Task 1 ends with `design-check` failing (no tokens yet) and Task 8 Step 2 ends with it failing on a raw `text-white`. Both are genuine red-green cycles, not oversights — Task 8's is the rule catching a real violation in code written moments earlier, and it is fixed by adding a token held to the same 4.5:1 standard rather than by weakening the rule.
 
 **The plan failed its own spacing rule during review** — `gap-1.5`, `gap-0.5` and `py-0.5` appeared in five components while the rule bans anything outside 1/2/3/4/6/8/12/16. Fixed, and `0.5` was added to the deny pattern, which had missed it.
+
+---
+
+## Carried into the screen-conversion plan
+
+Findings that were real, deliberately not fixed here, and that the next plan
+must not rediscover from scratch. Recorded in the repo rather than in a scratch
+ledger, because a parked finding that dies with its workspace was never parked
+— it was discarded.
+
+- **The reference screens currently show BOTH design systems side by side.**
+  `/design-system/screens` renders the new `Badge` immediately beside the legacy
+  `StatusBadge` from `dashboard-ui.tsx`, which still uses `text-[11px]`, `py-0.5`
+  and raw palette classes. That is the correct, unavoidable consequence of the
+  known gap below — but the route whose job is a clean before/after baseline
+  currently shows a mixed one. Convert `dashboard-ui.tsx` early in the sweep and
+  it resolves itself.
+
+- **`StatusBadge` and `ScreenShell` do not delegate to `Badge` and `AppBar`.**
+  Deliberate: `packages/ui/src/dashboard-ui.tsx` is in `UNCONVERTED` and is read
+  by live screens, so converting it converts screens — which this plan's scope
+  assertion forbids. It is the natural first task of the sweep.
+
+- **Any interactive control placed directly inside `Card padding="none"` needs
+  an INSET focus ring.** `Card` carries `overflow-hidden` (so square-cornered
+  rows do not poke outside its radius), which also clips an *outward* focus ring
+  on a child flush to the edge. `ListRow` is already safe — it uses
+  `focus-visible:-outline-offset-2`. `Button` and `Select` use the outward
+  `outline-offset-2` and would be clipped. Today `padding="none"` only ever
+  wraps `ListRow`, so nothing is broken; the sweep is where that stops being
+  true.
+
+- **`Sheet`'s scrim closes on a drag-release from inside the sheet.** Select text
+  in the sheet body, release the mouse over the scrim, and the click lands on the
+  common ancestor and dismisses it. Not fixed here because it is a behavioural
+  change to the one component whose seven behaviours were verified by hand, and
+  the fix should be re-verified against a real screen. Guard on `onMouseDown`'s
+  target rather than `onClick`.
+
+- **`design-check` does not police tap-target size, and says so.** Expressing
+  "this element is tappable and shorter than 44px" as a regex over class strings
+  cannot be done honestly — `min-h-11` is a size utility and `off-scale-spacing`
+  excludes `h`/`w` deliberately, so `h-8` on a new icon button passes. The 44px
+  floor lives in the `Button`/`IconButton` size maps and in review. If the sweep
+  introduces bespoke tappable elements, that gap widens.
+
+- **`ListRow` has no `onClick`.** It renders a link when given `href` and a plain
+  row otherwise. The first screen that needs a non-navigating tappable row adds
+  the prop then — deliberately not added speculatively to a component in a
+  `'use client'`-free package.
