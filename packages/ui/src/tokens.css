@@ -6,13 +6,10 @@
    THREE RULES, all proven by spike on 2026-08-23, and all of which fail
    SILENTLY if broken:
 
-   1. NO Tailwind `utility` at-rule in this file, ever (spelled with a
-      leading @, split here so this very sentence does not trip
-      design-check's own literal-text guard against it). Tailwind discards
-      the ENTIRE imported file when it finds one — no error, no warning,
-      every token below simply gone. It only works in an app's own
-      globals.css. Nothing here needs one: `min-h-11 min-w-11` is already
-      44px.
+   1. NO @utility in this file, ever. Tailwind discards the ENTIRE imported
+      file when it finds one — no error, no warning, every token below simply
+      gone. @utility only works in an app's own globals.css. Nothing here
+      needs one: `min-h-11 min-w-11` is already 44px.
 
    2. Text colours are --fg*, never --text*. Tailwind v4 owns --text-* as its
       FONT-SIZE namespace, so --text-muted would generate a font-size utility
@@ -130,16 +127,7 @@
      bug this whole design exists to fix. Near-black on it is 7.73:1. */
   --brand: #fb923c;
   --brand-hover: #fdba74;
-  /* --brand-vivid is DARKER here than in light mode (was #ea580c, same as
-     the light-mode fill) — because near-black --on-brand-dark reads at
-     4.91:1 against #ea580c, which would make the "never safe as text"
-     invariant below false in this theme alone: design-check asserts vivid
-     stays unsafe behind --on-brand text in EVERY theme, and --on-brand is
-     near-black on almost every orange, so keeping the light-mode hex here
-     would silently promote this fill into a colour someone could use as
-     text. #d34f0b keeps the same hue and still clears 3:1 against --bg
-     (4.60:1) for its one legal job — a large non-text fill. */
-  --brand-vivid: #d34f0b;
+  --brand-vivid: #ea580c;
   --brand-quiet: rgb(251 146 60 / 0.15);
   --on-brand: #1c1917;
   --focus: #fb923c;
@@ -183,10 +171,7 @@
 
     --brand: #fb923c;
     --brand-hover: #fdba74;
-    /* Same divergence as :root.dark above: #d34f0b, not the light-mode
-       #ea580c, so this fill stays unsafe as text against near-black
-       --on-brand while still clearing 3:1 against --bg. */
-    --brand-vivid: #d34f0b;
+    --brand-vivid: #ea580c;
     --brand-quiet: rgb(251 146 60 / 0.15);
     --on-brand: #1c1917;
     --focus: #fb923c;

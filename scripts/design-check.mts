@@ -43,11 +43,17 @@ try {
 
 check(`${TOKENS_PATH} exists`, true);
 
+// The raw file contains the word inside its own header comment — the one
+// that WARNS about this trap — so test the file with comments stripped.
+// Rewording that comment to satisfy a regex would cost the file its most
+// important sentence.
+const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+
 // tokens.css must never contain @utility: Tailwind silently discards the
 // WHOLE imported file, with no error anywhere. Proven by spike 2026-08-23.
 check(
   'tokens.css contains no @utility rule',
-  !/@utility\b/.test(css),
+  !/@utility\b/.test(cssWithoutComments),
   '@utility in an imported file makes Tailwind drop the entire file silently',
 );
 
@@ -144,12 +150,18 @@ for (const [themeName, theme] of [['light', LIGHT], ['dark', DARK]] as const) {
 // --brand-vivid is the ONE colour that is legal as a fill and illegal behind
 // text. Stating it as its own assertion means a future edit that "tidies" it
 // into --brand's role fails loudly instead of reintroducing a 3.56:1 button.
-for (const [themeName, theme] of [['light', LIGHT], ['dark', DARK]] as const) {
-  const ratio = theme['--brand-vivid'] && theme['--on-brand']
-    ? contrast(theme['--brand-vivid'], theme['--on-brand'])
+//
+// LIGHT ONLY, deliberately. The bug this guards against is WHITE on #ea580c
+// (3.56:1), which is what shipped. In dark mode --on-brand is near-black, and
+// near-black on #ea580c is 4.91:1 — legitimately readable — so the assertion
+// would be false there. A guard that is false in a theme is a guard that gets
+// "fixed" by bending a brand colour, which is the opposite of its purpose.
+{
+  const ratio = LIGHT['--brand-vivid'] && LIGHT['--on-brand']
+    ? contrast(LIGHT['--brand-vivid'], LIGHT['--on-brand'])
     : null;
   check(
-    `${themeName}: --brand-vivid is NOT safe behind --on-brand text`,
+    'light: --brand-vivid is NOT safe behind --on-brand text',
     ratio !== null && ratio < 4.5,
     ratio === null ? 'tokens missing' : `${ratio.toFixed(2)}:1 — if this ever passes, use --brand instead`,
   );
