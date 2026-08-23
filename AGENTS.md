@@ -1390,6 +1390,61 @@ Structural invariants (do not regress):
   own chip names so the two cannot drift.
   (`dashboard_tasks` is the superseded predecessor, kept only so an old bundle
   served mid-deploy keeps working; do not write new readers against it.)
+- **The design system is TOKENS plus a fixed set of COMPONENT MODULES, and
+  `pnpm design-check` is what keeps it true.** `packages/ui/src/tokens.css` is
+  the single source of every colour, size, spacing, radius, shadow and timing,
+  and BOTH apps import it — before it, each declared its own `--background`,
+  which is two copies of one rule and therefore an eventual disagreement.
+  Eight things are load-bearing:
+  - **Never put `@utility` in `tokens.css`.** Tailwind discards the ENTIRE
+    imported file when it finds one — no error, no warning, every token gone.
+    It works only in an app's own `globals.css`. Nothing in the design needs
+    one: `min-h-11 min-w-11` is already 44px.
+  - **Text colours are `--fg*`, never `--text*`.** Tailwind v4 owns `--text-*`
+    as its FONT-SIZE namespace, so `--text-muted` would generate a font-size
+    utility named `text-muted` and collide with the colour of the same name.
+  - **There is no `--duration-*` theme namespace**, so `duration-fast` is not a
+    utility and fails silently. Use `--default-transition-duration` (a bare
+    `transition-colors` is then 180ms) or `duration-(--duration-fast)`.
+  - **`--background` aliases `--surface`, never `--bg`.** Every existing
+    `bg-background` is on a sheet, an input, the tab bar or the chat composer —
+    a surface, never the page. Aliasing it to the page colour silently repaints
+    all fifteen, input fields included.
+  - **`--brand` (`#c2410c`) is the only orange legal behind text**;
+    `--brand-vivid` (`#ea580c`) is 3.56:1 and is for large non-text fills only.
+    `design-check` asserts vivid stays UNSAFE behind text, so it cannot be
+    quietly promoted back into the primary button it used to be.
+  - **Solid status fills are their own tokens, IDENTICAL in both themes.**
+    `--danger-solid --warn-solid --success-solid --info-solid --review-solid
+    --brand-solid` and `--on-solid`. A danger banner is a fixed signal colour,
+    not a themed surface: white on the DARK status colours fails every tone
+    (2.77:1 on danger, 1.67:1 on warn), so the themed `--danger`/`--info`
+    must never be used behind banner text.
+  - **`UNCONVERTED` in `scripts/design-check.mts` may only ever shrink**, and a
+    STALE entry fails too. An allowlist nobody prunes is how a temporary
+    exception becomes permanent; that list is the remaining sweep, written down.
+  - **A route folder may NOT start with an underscore.** App Router treats a
+    leading-underscore folder as PRIVATE and excludes it from route collection
+    entirely — the build succeeds, no error, no warning, and the URL 404s in
+    dev and production alike. `apps/web/app/_ui/` is correct BECAUSE it is
+    components rather than routes. The gallery lives at `/design-system` for
+    this reason, and `apps/web/proxy.ts` carries a NODE_ENV-guarded exemption
+    so it renders without a login in development while production's auth
+    posture is unchanged (the pages also call `notFound()` there).
+  **The rule that decides where a component lives is whether it needs browser
+  JavaScript** — if it does, it goes in `apps/web/app/_ui/`; if it does not, it
+  goes in `packages/ui`, which is `'use client'`-free by contract. Naming a
+  bare total invites drift, so list the modules instead of counting them:
+  `packages/ui/src/` holds `button.tsx` (`Button`, `ButtonLink`, `IconButton`
+  — the last with a compiler-required `label` prop, because an unlabelled icon
+  button is invisible to a screen reader), `card.tsx` (`Card`), `list-row.tsx`
+  (`ListRow`), `field.tsx` (`Field`, `Input`, `Select`, `Textarea`),
+  `badge.tsx` (`Badge`), `banner.tsx` (`Banner`), `empty-state.tsx`
+  (`EmptyState`), `skeleton.tsx` (`Skeleton`), and `app-bar.tsx` (`AppBar`).
+  `apps/web/app/_ui/` holds `sheet.tsx` (`Sheet`), `segmented-control.tsx`
+  (`SegmentedControl`), and `tab-bar.tsx` (`TabBar`). `/design-system` and
+  `/design-system/screens` are dev-only and render every component and every
+  hard layout case without a login.
 - **Plan durations are working days, not calendar days.** The scheduler
   advances through `packages/core/src/capabilities/workdays.ts`, which skips
   weekends and the thirteen Portuguese national holidays. Anything that

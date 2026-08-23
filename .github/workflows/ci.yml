@@ -104,3 +104,11 @@ jobs:
       # history and the run itself, and the per-run write cap.
       - name: Memory consolidation check
         run: pnpm memory-check
+
+      # The design contract: every colour pair's WCAG contrast ratio, computed
+      # from packages/ui/src/tokens.css itself, plus the ban on raw palette
+      # classes outside the shrinking ledger. Credential-free, so it runs on
+      # every PR. It exists because the primary button shipped at 3.56:1 and
+      # nothing anywhere could notice.
+      - name: Design system contract
+        run: pnpm design-check

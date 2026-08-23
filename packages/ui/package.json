@@ -6,7 +6,16 @@
   "exports": {
     "./dashboard-ui": "./src/dashboard-ui.tsx",
     "./task-detail": "./src/task-detail.tsx",
-    "./markdown": "./src/markdown.tsx"
+    "./markdown": "./src/markdown.tsx",
+    "./button": "./src/button.tsx",
+    "./card": "./src/card.tsx",
+    "./list-row": "./src/list-row.tsx",
+    "./field": "./src/field.tsx",
+    "./badge": "./src/badge.tsx",
+    "./banner": "./src/banner.tsx",
+    "./empty-state": "./src/empty-state.tsx",
+    "./skeleton": "./src/skeleton.tsx",
+    "./app-bar": "./src/app-bar.tsx"
   },
   "scripts": {
     "lint": "eslint .",

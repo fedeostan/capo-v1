@@ -17,6 +17,7 @@
     "cost-check": "tsx scripts/cost-check.mts",
     "memory-check": "tsx scripts/memory-check.mts",
     "billing-check": "tsx scripts/billing-check.mts",
+    "design-check": "tsx scripts/design-check.mts",
     "whatsapp-template": "tsx scripts/whatsapp-template.mts",
     "agent-smoke": "tsx scripts/agent-smoke.mts",
     "knowledge-ingest": "tsx scripts/knowledge-ingest.mts"

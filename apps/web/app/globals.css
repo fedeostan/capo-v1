@@ -1,7 +1,13 @@
 @import "tailwindcss";
 
+/* The design system's single source of truth, shared with apps/operator.
+   Must come before anything that consumes a token. */
+@import "../../../packages/ui/src/tokens.css";
+
 /* Tailwind v4 auto-detects sources only inside this app — workspace packages
-   must be declared or their classes vanish from the built CSS. */
+   must be declared or their classes vanish from the built CSS. This is a
+   DIRECTORY glob, so new component files inside it need no edit here; a
+   component placed outside it would silently lose every style. */
 @source "../../../packages/ui/src";
 
 /* Three appearance states, stamped onto <html> by the root layout from the
@@ -29,43 +35,23 @@
   }
 }
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-  /* Inherited, so it reaches the parts of the page Tailwind cannot paint:
-     native form controls, scrollbars, the UA canvas. */
-  color-scheme: light;
-}
-
+/* Fonts are mapped per app, never in tokens.css: apps/operator does not load
+   Geist, so a shared mapping to a variable it lacks would blank its type. */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-/* Both (0,2,0), so they beat the :root above; mutually exclusive by class, so
-   their order relative to each other does not matter. Note the deliberate
-   absence of a bare `:root:not(.light)` fallback — an unstamped root must
-   resolve to LIGHT, because light is the default rather than the fallback. */
-:root.dark {
-  --background: #0a0a0a;
-  --foreground: #ededed;
-  color-scheme: dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root.system {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-    color-scheme: dark;
-  }
-}
-
+/* The page is --bg (warm off-white) while cards are --surface (white). That
+   difference is what makes a card read as an object rather than a region.
+   font-family is DELETED here: it used to say `Arial, Helvetica, sans-serif`,
+   which is a direct declaration on body and therefore beat the inherited
+   --font-geist-sans, so every word in the product rendered in a 1982 typeface
+   while Geist was loaded and thrown away. */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
 }
 
 /* This is an app shell, not a document. Without these two lines the whole UI
