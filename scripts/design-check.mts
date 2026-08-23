@@ -167,6 +167,147 @@ for (const [themeName, theme] of [['light', LIGHT], ['dark', DARK]] as const) {
   );
 }
 
+// ── Usage rules ────────────────────────────────────────────────────────────
+//
+// The rules above protect the tokens. These protect their USE. Without them a
+// screen can quietly go back to `border-zinc-500/30` and the contrast checks
+// stay green while the product drifts — which is precisely how fifteen
+// spellings of one button happened.
+
+const SCAN_ROOTS = ['apps/web/app', 'apps/operator/app', 'packages/ui/src'];
+
+const RULES: { id: string; re: RegExp; why: string }[] = [
+  {
+    id: 'raw-palette',
+    re: /\b(?:text|bg|border|ring|from|to|via|decoration|outline|divide|placeholder)-(?:zinc|gray|neutral|slate|stone|orange|red|amber|emerald|green|violet|blue|sky|yellow|black|white)(?:-\d{2,3})?(?:\/\d{1,3})?\b/,
+    why: 'raw palette colour — use a role token (bg-surface, text-fg-muted, border-control…)',
+  },
+  {
+    id: 'arbitrary-text-size',
+    re: /\btext-\[\d+px\]/,
+    why: 'arbitrary text size — use the scale (text-body, text-caption, text-micro…)',
+  },
+  {
+    id: 'off-scale-spacing',
+    re: /\b(?:p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|gap|gap-x|gap-y|space-x|space-y)-(?:0\.5|1\.5|2\.5|3\.5|5|7|9|10|11|14)\b/,
+    why: 'spacing step outside 1/2/3/4/6/8/12/16 (4/8/12/16/24/32/48/64px)',
+  },
+];
+
+/** Files not yet converted to the design system.
+ *
+ *  This list may ONLY ever shrink. Each screen-conversion task deletes its own
+ *  entries; when it is empty the sweep is finished and this constant goes away
+ *  with it.
+ *
+ *  A stale entry is a FAILURE, not a shrug — see the check below. An allowlist
+ *  nobody prunes is how a temporary exception becomes permanent, and the whole
+ *  point of this ledger is that it is the remaining work, written down. */
+const UNCONVERTED: string[] = [
+  'apps/operator/app/companies/page.tsx',
+  'apps/operator/app/conversations/[companyId]/page.tsx',
+  'apps/operator/app/conversations/page.tsx',
+  'apps/operator/app/cost/page.tsx',
+  'apps/operator/app/dispatch/page.tsx',
+  'apps/operator/app/layout.tsx',
+  'apps/operator/app/page.tsx',
+  'apps/operator/app/signups/page.tsx',
+  'apps/operator/app/tasks/page.tsx',
+  'apps/web/app/(app)/_tasks/completion-sheet.tsx',
+  'apps/web/app/(app)/_tasks/materials-editor.tsx',
+  'apps/web/app/(app)/_tasks/review-actions.tsx',
+  'apps/web/app/(app)/_tasks/task-actions.tsx',
+  'apps/web/app/(app)/language-drift.tsx',
+  'apps/web/app/(app)/layout.tsx',
+  'apps/web/app/(app)/materiais/page.tsx',
+  'apps/web/app/(app)/notificacoes/mark-all-read.tsx',
+  'apps/web/app/(app)/notificacoes/page.tsx',
+  'apps/web/app/(app)/obras/[id]/page.tsx',
+  'apps/web/app/(app)/perfil/automacoes/page.tsx',
+  'apps/web/app/(app)/perfil/memoria/page.tsx',
+  'apps/web/app/(app)/perfil/page.tsx',
+  'apps/web/app/(app)/perfil/profile-forms.tsx',
+  'apps/web/app/(app)/perfil/push-card.tsx',
+  'apps/web/app/(app)/perfil/sign-out-button.tsx',
+  'apps/web/app/(app)/perfil/theme-pills.tsx',
+  'apps/web/app/(app)/perfil/translation-progress.tsx',
+  'apps/web/app/(app)/subscricao/page.tsx',
+  'apps/web/app/(app)/tarefas/[id]/ajuda/loading.tsx',
+  'apps/web/app/(app)/tarefas/[id]/ajuda/page.tsx',
+  'apps/web/app/(app)/tarefas/[id]/assignee-picker.tsx',
+  'apps/web/app/(app)/tarefas/[id]/collaborators-picker.tsx',
+  'apps/web/app/(app)/tarefas/filter-chips.tsx',
+  'apps/web/app/(app)/tarefas/filter-controls.tsx',
+  'apps/web/app/(app)/tarefas/page.tsx',
+  'apps/web/app/(public)/confirmar-email/page.tsx',
+  'apps/web/app/(public)/instalar/install-guide.tsx',
+  'apps/web/app/(public)/instalar/page.tsx',
+  'apps/web/app/(public)/landing/page.tsx',
+  'apps/web/app/(public)/language-switch.tsx',
+  'apps/web/app/(public)/login/page.tsx',
+  'apps/web/app/(public)/nova-password/page.tsx',
+  'apps/web/app/(public)/offline/page.tsx',
+  'apps/web/app/(public)/onboarding/page.tsx',
+  'apps/web/app/(public)/password-field.tsx',
+  'apps/web/app/(public)/recuperar/page.tsx',
+  'apps/web/app/(public)/registar/page.tsx',
+  'apps/web/app/(public)/whatsapp/handshake.tsx',
+  'apps/web/app/(public)/whatsapp/page.tsx',
+  'apps/web/app/bottom-nav.tsx',
+  'apps/web/app/chat.tsx',
+  'apps/web/app/mic-button.tsx',
+  'apps/web/app/pull-to-refresh.tsx',
+  'packages/ui/src/dashboard-ui.tsx',
+  'packages/ui/src/markdown.tsx',
+  'packages/ui/src/task-detail.tsx',
+];
+
+function sourceFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    if (entry === 'node_modules' || entry === '.next' || entry === '.turbo') continue;
+    const path = join(dir, entry);
+    if (statSync(path).isDirectory()) sourceFiles(path, out);
+    else if (/\.tsx?$/.test(path)) out.push(path);
+  }
+  return out;
+}
+
+const unconverted = new Set(UNCONVERTED);
+const stillDirty = new Set<string>();
+let scanned = 0;
+
+for (const root of SCAN_ROOTS) {
+  for (const file of sourceFiles(root)) {
+    scanned += 1;
+    const body = readFileSync(file, 'utf8');
+    const broken = RULES.filter(r => r.re.test(body));
+    if (broken.length > 0) stillDirty.add(file);
+    if (unconverted.has(file)) continue;
+    for (const rule of broken) {
+      check(`${file}: ${rule.id}`, false, rule.why);
+    }
+  }
+}
+
+check('scanned the source tree', scanned > 0, `${scanned} files`);
+
+// A ledger entry that no longer violates anything is stale, and a stale
+// allowlist is how a temporary exception becomes permanent. Failing here is
+// what forces the list to empty out as the sweep proceeds.
+for (const file of UNCONVERTED) {
+  check(
+    `ledger entry still needed: ${file}`,
+    stillDirty.has(file),
+    'this file is clean now — delete it from UNCONVERTED',
+  );
+}
+
+check(
+  'the unconverted ledger only ever shrinks',
+  stillDirty.size <= UNCONVERTED.length,
+  `${stillDirty.size} dirty vs ${UNCONVERTED.length} listed`,
+);
+
 console.log(lines.join('\n'));
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
 process.exit(failures === 0 ? 0 : 1);
