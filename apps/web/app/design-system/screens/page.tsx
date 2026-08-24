@@ -9,6 +9,8 @@ import { Skeleton } from '@capo/ui/skeleton';
 import { getCatalog } from '@capo/i18n/catalog';
 import { DEFAULT_LOCALE } from '@capo/i18n/locale';
 import { ShellCases } from './shell-cases';
+import { activitySentence, activityTime, groupByDay } from '@/app/activity/render';
+import type { ActivityEvent } from '@/app/activity/feed';
 import {
   EMPTY_BOARD,
   LONG_TITLE_BOARD,
@@ -41,6 +43,53 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     </section>
   );
 }
+
+// Four events chosen so each renders through a DIFFERENT branch of
+// activitySentence: a named claim, an anonymous one (the manager declaring a
+// task finished himself — the branch that must never print "null says…"), a
+// collapsed photo group, and a check-in, which has no task and so no link.
+const ACTIVITY_FIXTURE: ActivityEvent[] = [
+  {
+    id: 'f1',
+    kind: 'task_claimed',
+    at: '2026-08-24T17:05:00.000Z',
+    taskId: 'x1',
+    taskTitle: 'Betonilha 2.º andar',
+    jobName: 'Alvalade Rooftop',
+    workerName: 'Rui',
+    count: 0,
+  },
+  {
+    id: 'f2',
+    kind: 'photos_added',
+    at: '2026-08-24T16:30:00.000Z',
+    taskId: 'x2',
+    taskTitle: 'Fachada 4.º andar',
+    jobName: 'Rua Ferreira 12',
+    workerName: null,
+    count: 6,
+  },
+  {
+    id: 'f3',
+    kind: 'checkin_not_done',
+    at: '2026-08-24T15:15:00.000Z',
+    taskId: null,
+    taskTitle: null,
+    jobName: null,
+    workerName: 'Miguel',
+    count: 0,
+  },
+  {
+    id: 'f4',
+    kind: 'task_approved',
+    at: '2026-08-23T18:40:00.000Z',
+    taskId: 'x3',
+    taskTitle: 'Descofragem — vão 3',
+    jobName: 'Alvalade Rooftop',
+    workerName: null,
+    count: 0,
+  },
+];
 
 // task_board types every column nullable (it is a view), so the meta line
 // falls back exactly the way TaskBoardList does: no obra reads as "sem
@@ -141,6 +190,33 @@ export default function DesignScreens() {
             emptyGroupLabel={t.screens.materialsEdit.groupEmpty}
             seeJobLabel={t.screens.materialsEdit.seeJob}
           />
+        </Section>
+
+        <Section title="11. Activity feed — one day boundary, one collapsed photo group">
+          {/* Fixture events rather than a live read, for the reason at the top
+              of this file: the feed is entirely time-based, so a screenshot of
+              real data compares two different DAYS rather than two layouts.
+              These four cover the cases that actually render differently — a
+              named claim, an anonymous one (the manager's own), a collapsed
+              photo group, and a check-in with no task to link to. */}
+          {groupByDay(ACTIVITY_FIXTURE, '2026-08-24', t).map(day => (
+            <div key={day.label} className="flex flex-col gap-2">
+              <h3 className="px-1 text-caption font-semibold text-fg-muted">{day.label}</h3>
+              <Card padding="none">
+                {day.events.map(event => (
+                  <div key={event.id} className="flex gap-3 border-b border-hairline px-4 py-3 last:border-b-0">
+                    <span className="w-10 shrink-0 pt-px text-micro tabular-nums text-fg-faint">
+                      {activityTime(event.at, t)}
+                    </span>
+                    <span className="min-w-0 flex-1 text-callout text-fg">
+                      {activitySentence(event, t)}
+                      {event.jobName && <span className="text-fg-muted"> · {event.jobName}</span>}
+                    </span>
+                  </div>
+                ))}
+              </Card>
+            </div>
+          ))}
         </Section>
 
         {/* The Round 1 shell. These four are the cases the handoff's

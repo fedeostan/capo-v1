@@ -28,11 +28,14 @@ export function ShellCases() {
   return (
     <>
       <Case title="8. Top bar — a company name long enough to fight the buttons">
-        {/* 320px, the narrowest phone this app supports. The name block hides
-            itself below 360px rather than truncating to two ellipses, so at
-            this width the avatar stands alone and the right-hand group keeps
-            its 44px targets — which is the thing to check here. */}
-        <div className="w-80 overflow-hidden rounded-card border border-hairline">
+        {/* CHECK THIS BY RESIZING THE VIEWPORT, not by reading it at desktop
+            width. The name block hides itself below 360px via a media query,
+            and a media query asks the VIEWPORT — so a narrow container here
+            would show the name at any window size and prove nothing. Narrow
+            the window to 320px (the smallest phone this app supports) and the
+            name should disappear, leaving the avatar alone and every control
+            still at its 44px target. */}
+        <div className="overflow-hidden rounded-card border border-hairline">
           <TopBarPreview name="Miguel Ferreira" company="Ferreira &amp; Filhos, Sociedade de Construções Lda" />
         </div>
         <div className="overflow-hidden rounded-card border border-hairline">
