@@ -1,18 +1,40 @@
 import { TabBar } from '@capo/ui';
 
-/** The five tabs, in Portuguese. The lit tab comes from the current route,
- *  and carries a FILLED icon as well as the brand colour — colour alone is
- *  not a signal roughly 1 man in 12 can read. */
+/** EVERY TAB CARRIES TWO ICONS — outline and filled — and that is an
+ *  accessibility requirement rather than a flourish. The bar it replaces
+ *  signalled the active tab by COLOUR ALONE (orange versus grey). Roughly 1
+ *  in 12 men has a colour-vision deficiency and construction is a heavily
+ *  male trade, so that is a real share of the actual users. Colour plus a
+ *  filled shape works with no colour perception at all.
+ *
+ *  The active tab comes from usePathname(), so in a preview it reflects the
+ *  harness route rather than a prop. */
 export function Portuguese() {
-  return <div style={{ maxWidth: 420 }}><TabBar locale="pt-PT" /></div>;
+  return (
+    <div style={{ maxWidth: 400 }}>
+      <TabBar locale="pt-PT" />
+    </div>
+  );
 }
 
-/** Spanish — the labels come from the same catalog, keyed on locale. */
+/** The same five destinations in Spanish — labels come from the shared
+ *  catalog, keyed off `locale`. */
 export function Spanish() {
-  return <div style={{ maxWidth: 420 }}><TabBar locale="es-ES" /></div>;
+  return (
+    <div style={{ maxWidth: 400 }}>
+      <TabBar locale="es-ES" />
+    </div>
+  );
 }
 
-/** English. Five labels have to stay legible at 320px, which is what caps the tab count. */
+/** English, and deliberately the NARROWEST of the three at 320px. That width
+ *  is the constraint the component's own source names: five labels have to
+ *  stay legible there, and it is what caps the tab count at five. Verified in
+ *  the shell batch — every tab 58x56px, no label overflowing. */
 export function English() {
-  return <div style={{ maxWidth: 320 }}><TabBar locale="en-US" /></div>;
+  return (
+    <div style={{ maxWidth: 320 }}>
+      <TabBar locale="en-US" />
+    </div>
+  );
 }

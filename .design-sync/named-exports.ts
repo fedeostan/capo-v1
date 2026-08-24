@@ -33,7 +33,43 @@ export { default as PushCard } from '../apps/web/app/(app)/perfil/push-card';
 export { default as PasswordField } from '../apps/web/app/(public)/password-field';
 export { default as InstallGuide } from '../apps/web/app/(public)/instalar/install-guide';
 export { LanguageDriftNote, LanguageDriftStrip } from '../apps/web/app/(app)/language-drift';
-// TabBar replaced BottomNav in the shell batch. It is a NAMED export, so
-// `export * from` already carries it and it needs no rescue line — it is
-// listed here only so the next reader does not go looking for a missing one.
 export { TranslationProgress } from '../apps/web/app/(app)/perfil/translation-progress';
+
+// ── Name collision: EmptyState ───────────────────────────────────────────────
+// packages/ui exports TWO different components under this name:
+//   src/dashboard-ui.tsx  — {text, cta}, still live on five screens
+//   src/empty-state.tsx   — {icon, title, body, action}, THE design-system one
+// A name exported by two STAR-EXPORTED modules is ambiguous, and esbuild drops
+// it from the bundle entirely — so window.Capo.EmptyState was undefined and
+// every card composing it rendered blank. An explicit re-export here does NOT
+// beat that (verified with a minimal esbuild repro).
+//
+// The fix is in .design-sync/overrides/source-kit.mjs, which keeps
+// dashboard-ui.tsx OUT of the synth entry. That makes THIS file the only
+// provider of its exports, so every one of them must be listed below — an
+// omission here silently removes a component from window.Capo.
+export {
+  ScreenShell,
+  StatusBadge,
+  TaskBoardList,
+  ObrasList,
+  TimelineList,
+  MaterialsList,
+  // Helpers that were already on window.Capo before the fork; listed so the
+  // exclusion changes nothing except which EmptyState wins.
+  riskReasons,
+  formatShortDate,
+} from '../packages/ui/src/dashboard-ui';
+
+// The design-system EmptyState, now unambiguous.
+export { EmptyState } from '../packages/ui/src/empty-state';
+
+// ── apps/web/app/_ui — components that genuinely need the client ─────────────
+// These live outside packages/ui (which is 'use client'-free by contract), so
+// package.json's `exports` never names them and the synth entry cannot see
+// them. They are NAMED exports rather than defaults, but they need this shim
+// for the same reason the defaults above do: the entry only walks
+// packages/ui/src.
+export { Sheet } from '../apps/web/app/_ui/sheet';
+export { SegmentedControl } from '../apps/web/app/_ui/segmented-control';
+export { TabBar } from '../apps/web/app/_ui/tab-bar';

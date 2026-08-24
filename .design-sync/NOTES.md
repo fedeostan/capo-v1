@@ -35,6 +35,18 @@ tailwindcss 4.3.2. `.ds-styles/` is gitignored via `packages/ui/.gitignore`.)
   `html, body { overflow: hidden; overscroll-behavior: none }`. That rule is an
   app-shell decision; this stylesheet is applied to every design built with the
   DS and a document that can never scroll is wrong for most of them.
+- **⚠ RE-DIFF `tailwind-entry.css` AGAINST `globals.css` EVERY RE-SYNC.** This
+  file is a hand-maintained near-copy, and it went badly stale between #102 and
+  #103: `globals.css` was rewritten to `@import "../../../packages/ui/src/tokens.css"`
+  and this file still carried the pre-token `--background`/`--foreground` pair.
+  Nothing errors — the compile succeeds and every component styled with
+  `bg-surface`/`text-fg-muted`/`text-heading` renders with undefined variables.
+  The four deliberate differences are listed in the file's own header; treat
+  everything else as "must match globals.css verbatim".
+- **The Google Fonts `@import` is load-bearing and easy to drop.** Geist is
+  fetched by `next/font/google` at BUILD time in the app, so there is no
+  `@font-face` in the repo to harvest. Removing that line turns the expected
+  `[FONT_REMOTE]` into `[FONT_MISSING]` and every card renders in a system face.
 - **`source(none)` is load-bearing.** Tailwind's automatic content detection
   walks outward from the input file, so output depended on where the file sat
   and where the command ran — two runs of the same input differed by 600 bytes.
@@ -58,13 +70,14 @@ and `@types/react`, which is everything the build and the `.d.ts` pass need.
 
 There is **no `dist/`** — `@capo/ui` has no build script and its `exports` point
 straight at `src/*.tsx`, so the converter runs in synth-entry mode
-(`[NO_DIST] … synthesizing from 3 src files`). That is expected, not a failure.
+(`[NO_DIST] … synthesizing from 11 src files` — 12 minus the excluded
+`dashboard-ui.tsx`, see the EmptyState section). That is expected, not a failure.
 
 ## Two shim files, both required, both committed
 
 - **`.design-sync/named-exports.ts`** — the converter builds its bundle entry
   with `export * from`, and `export *` does NOT carry a module's DEFAULT export.
-  Eleven of the twenty components are `export default function`, so without this
+  Ten of the older components are `export default function`, so without this
   they bundle and are then invisible on `window.Capo`; every card fails with
   "Element type is invalid" and nothing points at the cause.
 - **`.design-sync/preview-providers.tsx`** — mounts the real Next App Router
@@ -87,6 +100,51 @@ straight at `src/*.tsx`, so the converter runs in synth-entry mode
   the WHOLE bundle fails to evaluate, which presents as every component missing
   from `window.Capo` rather than as a routing problem. Empty is correct: an
   unset `__NEXT_*` flag is what a Next app without those features has.
+
+## The EmptyState collision, and the one lib fork
+
+`packages/ui` exports TWO different components called `EmptyState`:
+`src/dashboard-ui.tsx` (`{text, cta}`, still live on five screens) and
+`src/empty-state.tsx` (`{icon, title, body, action}`, the design-system one that
+AGENTS.md names). The synth entry star-exports every src file, and **a name
+exported by two star-exported modules is ambiguous: esbuild drops it from the
+bundle ENTIRELY** — not "one wins". `window.Capo.EmptyState` was `undefined`,
+every card composing it rendered blank, and nothing pointed at the cause.
+
+An explicit re-export in `named-exports.ts` does **not** beat this — verified
+with a minimal esbuild repro (shim listed first, name still dropped). The only
+fix is for exactly one module in the graph to export the name, so:
+
+- `.design-sync/overrides/source-kit.mjs` (declared in `cfg.libOverrides`) keeps
+  `dashboard-ui.tsx` OUT of the synth entry. One added constant, one filter
+  clause; everything else is the bundled adapter verbatim.
+- `named-exports.ts` therefore became **the ONLY provider of dashboard-ui's
+  exports** and lists all eight explicitly (`ScreenShell`, `StatusBadge`,
+  `TaskBoardList`, `ObrasList`, `TimelineList`, `MaterialsList`, `riskReasons`,
+  `formatShortDate`). **Deleting a line there silently removes that component
+  from `window.Capo`.**
+- The three `apps/web/app/_ui` components (`Sheet`, `SegmentedControl`,
+  `TabBar`) also need shim lines — they are named exports, but they live outside
+  `packages/ui/src`, which is the only tree the synth entry walks.
+
+Diagnose any "N/36 not a component on window.Capo" by loading
+`ds-bundle/_ds_bundle.js` in a headless page and dumping `Object.keys(window.Capo)`;
+the validate error names the missing ones directly.
+
+**Adding or removing a fork resets the grade contract** (`scriptsSha` moves), so
+the next sync re-verifies all 36 components once. That is expected, not a bug.
+
+## Render check without downloading a browser
+
+There is no playwright browser cache on this machine and no repo pin. Installing
+chromium is ~200MB and unnecessary: `playwright` itself installs fine with
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`, and both `package-validate.mjs` and
+`package-capture.mjs` honour **`DS_CHROMIUM_PATH`**. Export it for every
+validate/capture/driver run:
+
+```sh
+export DS_CHROMIUM_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+```
 
 ## Known render warns (expected — not new)
 
@@ -126,8 +184,17 @@ excluded as scope (it is the whole chat screen, driven by `useChat`).
   the stopped state at two different counts instead.
 - **`PushCard` / `InstallGuide` / `MicButton`** — all three read the VIEWING
   browser (notification permission, platform, speech-recognition support), so
-  their cards show whatever state the capture browser was in. PushCard currently
-  renders the "blocked" state. This is real output, not a failure.
+  their cards show whatever state the capture browser was in.
+  ⚠ **`PushCard` now captures BLANK, and that is not a regression.** It awaits
+  `navigator.serviceWorker.ready`, which never resolves in a preview page
+  because no service worker is registered there, so it stays in `loading` and
+  `push-card.tsx` returns `null` for that state. Earlier syncs happened to
+  capture the "blocked" state instead — the difference is the capture browser,
+  not the component or the preview. **The uploaded card is HTML that renders in
+  the VIEWER's browser**, so this affects the local screenshot only. It trips
+  `[RENDER_THIN] variants render identically` on every run; graded `needs-work`
+  and deliberately deferred, since nothing short of registering a fake service
+  worker in the harness would change it.
 
 ## Finding for the product (not a sync issue)
 
@@ -138,7 +205,8 @@ renders with browser defaults — no cell padding, columns running together
 
 ## Re-sync risks — what can go stale silently
 
-1. **`cfg.dtsPropsFor` is HAND-WRITTEN for all 9 `packages/ui` components.**
+1. **`cfg.dtsPropsFor` is HAND-WRITTEN for 25 components now** (the 9 older ones
+   plus the 16 added in #103).**
    The converter could not extract props (there is no `.d.ts` tree, and
    synth-entry mode emitted `[key: string]: unknown` for everything — useless as
    an API contract). The bodies were written from source. **If a component's
@@ -163,3 +231,19 @@ renders with browser defaults — no cell padding, columns running together
 5. **Grades are gitignored** (`.design-sync/.cache/`). Cross-machine
    carry-forward comes from the uploaded `_ds_sync.json`; a machine that has
    never synced re-verifies everything, which is correct.
+6. **`tailwind-entry.css` drifting from `globals.css`** — the highest-value
+   thing to check first, every time. See the ⚠ in the pre-step above; it is
+   silent, and it breaks every component that uses a token.
+7. **A new component in `packages/ui/src` is NOT picked up automatically.**
+   Discovery runs off the `.d.ts` tree, which does not exist here, so
+   `cfg.componentSrcMap` is the whole component list. A component added to
+   `package.json`'s `exports` but not to the map simply never appears — no
+   warning. Compare `ls packages/ui/src` and `ls apps/web/app/_ui` against the
+   map on every re-sync.
+8. **A second component sharing a name with an existing one repeats the
+   EmptyState failure** and is equally silent. If validate reports a component
+   "not a component on window.Capo", suspect a duplicate export name first.
+9. **Preview composition sources**: `apps/web/app/design-system/page.tsx` and
+   `fixtures.ts` (added in #103) are the repo's own usage examples and are what
+   the 16 new previews were ported from. Re-read them when a component's API
+   changes — they are maintained by the product, unlike the previews.
