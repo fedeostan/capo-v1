@@ -8,7 +8,7 @@
  * static CSS (see .design-sync/NOTES.md for the command) and the COMPILED
  * output is what cfg.cssEntry points at.
  *
- * IT IS NOT A COPY. Three deliberate differences from globals.css:
+ * IT IS NOT A COPY. Four deliberate differences from globals.css:
  *   1. @source covers packages/ui/src AND apps/web/app — the sync ships
  *      components from both, and a class only present in the app half would
  *      otherwise be absent from the generated CSS.
@@ -21,15 +21,36 @@
  *      stops the Capo UI dragging on a touch gesture); this stylesheet is
  *      applied to every design built with the DS, and a document that can
  *      never scroll is wrong for most of them.
- * Everything else below is globals.css verbatim, comments included. */
+ *   4. The tokens.css @import path is rewritten for THIS file's location
+ *      (.design-sync/, not apps/web/app/). It is otherwise the same file —
+ *      never a copy of it. tokens.css owns every colour, size and the whole
+ *      @theme inline token→utility mapping; duplicating any of it here is how
+ *      the two silently disagree.
+ *
+ * MAINTENANCE: everything below except the marked blocks is globals.css
+ * verbatim, comments included. When globals.css changes, re-diff it against
+ * this file — a stale copy here does not error, it just renders every card
+ * with undefined variables. */
 
+/* Geist is fetched by next/font/google at BUILD time in the app, so there is
+ * no @font-face anywhere in the repo for the converter to harvest. Without
+ * this line validate reports [FONT_MISSING] and every card renders in a
+ * system fallback face; with it, [FONT_REMOTE] — the families load at
+ * runtime from Google Fonts. Must precede the tailwindcss import: CSS
+ * requires every @import to come before other rules. */
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&display=swap');
-/* source(none) disables Tailwind's AUTOMATIC content detection, which walks
- * outward from the input file and so makes the generated CSS depend on where
- * the file sits and where the command is run — two runs of the same input
+
+/* Difference (1). source(none) is load-bearing: Tailwind's automatic content
+ * detection walks outward from the input file, so output depended on where
+ * this file sat and where the command ran — two runs of the same input
  * produced outputs 600 bytes apart. With it off, the @source lines below are
  * the ONLY inputs, so the output is reproducible on any machine. */
 @import "tailwindcss" source(none);
+
+/* The design system's single source of truth, shared with apps/operator.
+   Must come before anything that consumes a token. (Difference (4): path is
+   relative to .design-sync/, not to apps/web/app/.) */
+@import "../packages/ui/src/tokens.css";
 
 @source "../packages/ui/src";
 @source "../apps/web/app";
@@ -59,45 +80,33 @@
   }
 }
 
+/* Difference (2): next/font/google's job, done statically. In the app these
+   two are injected onto <html> at runtime by next/font; here nothing does,
+   so without them `font-sans` resolves to an undefined variable and every
+   card renders in a system fallback face. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-  /* Inherited, so it reaches the parts of the page Tailwind cannot paint:
-     native form controls, scrollbars, the UA canvas. */
-  color-scheme: light;
-
-  /* Difference (2) above: next/font/google's job, done statically. */
   --font-geist-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-geist-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* Fonts are mapped per app, never in tokens.css: apps/operator does not load
+   Geist, so a shared mapping to a variable it lacks would blank its type. */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-/* Both (0,2,0), so they beat the :root above; mutually exclusive by class, so
-   their order relative to each other does not matter. Note the deliberate
-   absence of a bare `:root:not(.light)` fallback — an unstamped root must
-   resolve to LIGHT, because light is the default rather than the fallback. */
-:root.dark {
-  --background: #0a0a0a;
-  --foreground: #ededed;
-  color-scheme: dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root.system {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-    color-scheme: dark;
-  }
-}
-
+/* The page is --bg (warm off-white) while cards are --surface (white). That
+   difference is what makes a card read as an object rather than a region.
+   font-family is DELETED here: it used to say `Arial, Helvetica, sans-serif`,
+   which is a direct declaration on body and therefore beat the inherited
+   --font-geist-sans, so every word in the product rendered in a 1982 typeface
+   while Geist was loaded and thrown away. */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
 }
+
+/* Difference (3): globals.css's `html, body { overflow: hidden;
+   overscroll-behavior: none }` is deliberately NOT here. */
