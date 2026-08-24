@@ -1,5 +1,6 @@
 import { Banner } from '@/app/_ui/nav';
 import { TabBar } from '@/app/_ui/tab-bar';
+import { TopBar } from '@/app/_ui/top-bar';
 import LocaleCookieSync from '@/app/locale-cookie-sync';
 import { getAuthState } from '@capo/db/session';
 import { getCatalog, type Catalog } from '@capo/i18n/catalog';
@@ -89,6 +90,14 @@ export default async function AppLayout({ children }: Readonly<{ children: React
 
   return (
     <>
+      {/* A SIBLING of the strips and of the content column, never a child of
+          it. That column is overflow-hidden — it clips anything absolutely
+          positioned that tries to escape — and the drawer this bar owns is
+          exactly that. The bar decides for itself which routes it appears on;
+          see _ui/top-bar.tsx. */}
+      {state.status === 'ok' && (
+        <TopBar locale={locale} name={state.ctx.fullName} company={state.ctx.companyName} />
+      )}
       <BillingBanner billing={billing} t={t} />
       <NotificationsStrip unread={unread} t={t} />
       {/* overflow-hidden is the shell's backstop: a route that forgets its own

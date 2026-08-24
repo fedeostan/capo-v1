@@ -27,6 +27,24 @@ export interface AuthContext {
    * that is not just this default again.
    */
   confirmPosture: ConfirmPosture;
+  /**
+   * profiles.full_name and companies.name — for the persistent top bar, which
+   * renders on every tab and shows the manager who they are signed in as.
+   *
+   * FREE, and that is why they are here rather than read by the shell. The
+   * query above already selects profiles.* (so full_name was always in the
+   * row, merely unexposed) and already embeds companies (so `name` is one
+   * more column on a join that runs regardless). A shell that fetched these
+   * itself would be a second profile read on every single page load, for two
+   * lines of text.
+   *
+   * Nullable because both genuinely can be: a profile created by
+   * complete_onboarding() before a name is set, and an embed that a future
+   * schema change could drop. The bar renders the avatar alone rather than
+   * the string "null".
+   */
+  fullName: string | null;
+  companyName: string | null;
 }
 
 export type AuthState =
@@ -53,7 +71,7 @@ export async function getAuthState(): Promise<AuthState> {
   // safe posture. One row, own row only — the extra columns cost nothing.
   const { data: profile } = await db
     .from('profiles')
-    .select('*, company:companies(language)')
+    .select('*, company:companies(language, name)')
     .eq('id', userId)
     .maybeSingle();
   if (!profile) return { status: 'no_profile', db, userId };
@@ -71,6 +89,11 @@ export async function getAuthState(): Promise<AuthState> {
       // Same coerce-never-trust stance as the two locales above, and it fails
       // to always_ask: see DEFAULT_CONFIRM_POSTURE.
       confirmPosture: coerceConfirmPosture(profile.confirm_posture),
+      // `name` has existed on companies since 0001, so naming it in the embed
+      // carries none of the deploy-ordering risk that keeps `*` on the profile
+      // row — see the comment above.
+      fullName: profile.full_name ?? null,
+      companyName: profile.company?.name ?? null,
     },
   };
 }
