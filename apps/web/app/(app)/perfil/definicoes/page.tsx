@@ -6,6 +6,7 @@ import { resolveTheme } from '@/lib/theme';
 import { LanguageDriftNote } from '@/app/(app)/language-drift';
 import { revertTranslation, saveLanguage, setCompanyLanguage, setUserLanguage } from '../actions';
 import { RoomShell } from '../room-shell';
+import { DeleteAccountSheet } from './delete-account-sheet';
 import {
   Card,
   ConfirmPosturePills,
@@ -185,6 +186,13 @@ export default async function DefinicoesPage({
           {t.profile.install}
         </Link>
       </Card>
+
+      {/* Last on the screen, below everything, separated from it. A
+          destructive control belongs where nobody reaches it by accident on
+          the way to something else. */}
+      <div className="pt-4">
+        <DeleteAccountSheet locale={locale} companyName={ctx.companyName} />
+      </div>
     </RoomShell>
   );
 }
