@@ -10,7 +10,6 @@ import Markdown from '@capo/ui/markdown';
 import { Button } from '@capo/ui/button';
 import { Badge } from '@capo/ui/badge';
 import { Card } from '@capo/ui/card';
-import { AppBar } from '@/app/_ui/nav';
 import MicButton from './mic-button';
 import PullToRefresh from './pull-to-refresh';
 
@@ -352,7 +351,6 @@ export default function Chat({
 
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
-      <AppBar title={t.chat.title} subtitle={t.chat.tagline} />
 
       {/* Pull-to-refresh is present for consistency with the other tabs, but
           nearly inert here by construction: the thread is bottom-anchored, so

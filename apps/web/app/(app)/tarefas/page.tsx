@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { Catalog } from '@capo/i18n/catalog';
-import { ScreenShell, TaskBoardList } from '@capo/ui/dashboard-ui';
+import { TaskBoardList } from '@capo/ui/dashboard-ui';
+import { TabScreen } from '@/app/_ui/tab-screen';
 import {
   loadBoardTasks,
   loadDayLabel,
@@ -91,7 +92,7 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
       : t.screens.tasks.count(tasks.length));
 
   return (
-    <ScreenShell title={t.screens.tasks.title} subtitle={subtitle}>
+    <TabScreen title={t.screens.tasks.title} subtitle={subtitle}>
       <PullToRefresh locale={locale}>
         <div className="space-y-2">
           <FilterChips filters={filters} locale={locale} />
@@ -138,6 +139,6 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
           }}
         />
       </PullToRefresh>
-    </ScreenShell>
+    </TabScreen>
   );
 }

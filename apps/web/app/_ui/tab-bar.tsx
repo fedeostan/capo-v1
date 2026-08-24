@@ -6,15 +6,25 @@ import { usePathname } from 'next/navigation';
 import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 
-// Hoje/Amanhã/Atrasadas were never separate places — they were one list with a
-// different date filter, so they live behind the chips on /tarefas now. That
-// freed the slots for the surfaces that were actually missing: Perfil, and
-// Materiais, which is the anticipation list 00_VISION calls the killer feature
-// and which nothing in the product surfaced until now. Materiais sits before
-// Perfil because it is a daily-use screen and Perfil is a settings screen.
+// FOUR tabs, not five, and not the design's Home · Tasks · Chat · Obras ·
+// Activity either. Two deliberate departures from the handoff:
+//
+//   Materiais and Perfil left the bar, but neither was DROPPED. Materiais is a
+//   switch on /obras (a daily-use screen deserves one tap, not a hunt) and
+//   Perfil is the drawer behind the persistent top bar. The handoff replaced
+//   Materiais with an Activity tab outright; Federico's call (2026-08-24) was
+//   to relocate both instead, which is why the count came out at four.
+//
+//   There is no Home tab YET. Home does not exist until Round 2, and a Home
+//   tab pointing at / beside a Chat tab pointing at / would light BOTH under
+//   the exact-match rule below. It becomes five when the launchpad ships.
+//
+// Atividade points at /notificacoes for now — not a placeholder, but the
+// closest real surface: it already carries the unread count. Round 3 widens
+// that screen into the full site feed rather than replacing it.
 //
 // EVERY TAB CARRIES TWO ICONS, and that is an accessibility requirement rather
-// than a flourish. The bar it replaces signalled the active tab by COLOUR
+// than a flourish. The bar this replaced signalled the active tab by COLOUR
 // ALONE (orange versus grey). Roughly 1 in 12 men has a colour-vision
 // deficiency and construction is a heavily male trade, so that is a real share
 // of the actual users — and orange-versus-grey is a hard pair for the common
@@ -55,38 +65,14 @@ const TABS: Tab[] = [
     filled: <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4" fill="currentColor" />,
   },
   {
-    href: '/materiais',
-    key: 'materials',
-    outline: (
-      <>
-        <path d="M21 8v13H3V8" />
-        <rect x="1" y="3" width="22" height="5" rx="1" />
-        <path d="M10 12h4" />
-      </>
-    ),
-    filled: (
-      <>
-        <path d="M21 8v13H3V8" fill="currentColor" />
-        <rect x="1" y="3" width="22" height="5" rx="1" fill="currentColor" />
-        <path d="M10 12h4" className="stroke-surface" />
-      </>
-    ),
-  },
-  {
-    href: '/perfil',
-    key: 'profile',
-    outline: (
-      <>
-        <circle cx="12" cy="8" r="4" />
-        <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" />
-      </>
-    ),
-    filled: (
-      <>
-        <circle cx="12" cy="8" r="4" fill="currentColor" />
-        <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" fill="currentColor" />
-      </>
-    ),
+    href: '/notificacoes',
+    key: 'activity',
+    outline: <path d="M3 12h4l3-8 4 16 3-8h4" />,
+    // A pulse line has no interior to fill, so the "filled" twin is a HEAVIER
+    // stroke instead. The rule the two icons exist for is that active must
+    // differ in SHAPE as well as colour — weight satisfies it; duplicating the
+    // outline would not.
+    filled: <path d="M3 12h4l3-8 4 16 3-8h4" strokeWidth="3" />,
   },
 ];
 
@@ -99,7 +85,7 @@ export function TabBar({ locale }: { locale: Locale }) {
     // Translucent + blurred so content is visibly passing underneath, which is
     // a status cue. pb-[env(safe-area-inset-bottom)] is load-bearing: without
     // it the tabs sit under the iPhone home indicator.
-    <nav className="grid shrink-0 grid-cols-5 border-t border-hairline bg-surface/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-md">
+    <nav className="grid shrink-0 grid-cols-4 border-t border-hairline bg-surface/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-md">
       {TABS.map(({ href, key, outline, filled }) => {
         const label = nav[key];
         // Prefix match so /obras/[id] keeps its tab lit. '/' has to stay an

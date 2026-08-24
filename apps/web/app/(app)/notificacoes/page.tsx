@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { Catalog } from '@capo/i18n/catalog';
-import { EmptyState, ScreenShell } from '@capo/ui/dashboard-ui';
+import { EmptyState } from '@capo/ui/dashboard-ui';
+import { TabScreen } from '@/app/_ui/tab-screen';
 import { loadInbox, type InboxItem } from '@/app/notifications/inbox';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { vapidPublicKey } from '@/lib/push';
@@ -119,7 +120,7 @@ export default async function NotificacoesPage() {
   const pushAvailable = vapidPublicKey() !== null;
 
   return (
-    <ScreenShell title={t.notifications.title} subtitle={t.notifications.subtitle}>
+    <TabScreen title={t.notifications.title} subtitle={t.notifications.subtitle}>
       <PullToRefresh locale={locale}>
         {items.length === 0 ? (
           <EmptyState text={t.notifications.empty} />
@@ -149,6 +150,6 @@ export default async function NotificacoesPage() {
           </p>
         )}
       </PullToRefresh>
-    </ScreenShell>
+    </TabScreen>
   );
 }

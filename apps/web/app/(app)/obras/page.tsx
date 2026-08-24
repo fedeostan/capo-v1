@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { loadObras, loadOverdueByObra } from '@/app/dashboard-data';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
-import { ObrasList, ScreenShell } from '@capo/ui/dashboard-ui';
+import { ObrasList } from '@capo/ui/dashboard-ui';
+import { TabScreen } from '@/app/_ui/tab-screen';
 import PullToRefresh from '@/app/pull-to-refresh';
 import { MaterialsView } from './materials-view';
 
@@ -47,7 +48,7 @@ export default async function ObrasPage({
     : [[], {}];
 
   return (
-    <ScreenShell
+    <TabScreen
       title={view === 'obras' ? t.screens.jobs.title : t.screens.materials.title}
       subtitle={view === 'obras' ? t.screens.jobs.subtitle : t.screens.materials.subtitle}
     >
@@ -78,6 +79,6 @@ export default async function ObrasPage({
           <MaterialsView ctx={ctx} />
         )}
       </PullToRefresh>
-    </ScreenShell>
+    </TabScreen>
   );
 }
