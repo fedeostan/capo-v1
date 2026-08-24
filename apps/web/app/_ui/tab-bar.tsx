@@ -6,22 +6,22 @@ import { usePathname } from 'next/navigation';
 import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 
-// FOUR tabs, not five, and not the design's Home · Tasks · Chat · Obras ·
-// Activity either. Two deliberate departures from the handoff:
+// Início · Tarefas · Chat · Obras · Atividade — the handoff's five, reached by
+// a different route than it proposed.
 //
-//   Materiais and Perfil left the bar, but neither was DROPPED. Materiais is a
-//   switch on /obras (a daily-use screen deserves one tap, not a hunt) and
-//   Perfil is the drawer behind the persistent top bar. The handoff replaced
-//   Materiais with an Activity tab outright; Federico's call (2026-08-24) was
-//   to relocate both instead, which is why the count came out at four.
+// Materiais and Perfil left the bar and NEITHER was dropped: Materiais is a
+// switch on /obras (a daily-use screen deserves one tap, not a hunt) and
+// Perfil is the drawer behind the persistent top bar. The handoff replaced
+// Materiais with Activity outright; Federico's call (2026-08-24) was to
+// relocate both, which is what freed the two slots Início and Atividade now
+// hold.
 //
-//   There is no Home tab YET. Home does not exist until Round 2, and a Home
-//   tab pointing at / beside a Chat tab pointing at / would light BOTH under
-//   the exact-match rule below. It becomes five when the launchpad ships.
-//
-// Atividade points at /notificacoes for now — not a placeholder, but the
-// closest real surface: it already carries the unread count. Round 3 widens
-// that screen into the full site feed rather than replacing it.
+// CHAT MOVED OFF `/` TO `/chat` for this. It was the landing screen since the
+// product began, and demoting it is the single biggest behavioural change in
+// this work: opening Capo used to put you in a conversation and now puts you
+// in front of a dashboard, with the conversation one tap away. Everything that
+// linked to `/` meaning "the chat" was repointed — the empty states, the task
+// detail's "ask Capo", and the top bar's mic and +.
 //
 // EVERY TAB CARRIES TWO ICONS, and that is an accessibility requirement rather
 // than a flourish. The bar this replaced signalled the active tab by COLOUR
@@ -38,9 +38,9 @@ type Tab = { href: string; key: keyof Catalog['nav']; outline: ReactNode; filled
 const TABS: Tab[] = [
   {
     href: '/',
-    key: 'chat',
-    outline: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
-    filled: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="currentColor" />,
+    key: 'home',
+    outline: <path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />,
+    filled: <path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" fill="currentColor" />,
   },
   {
     href: '/tarefas',
@@ -59,13 +59,19 @@ const TABS: Tab[] = [
     ),
   },
   {
+    href: '/chat',
+    key: 'chat',
+    outline: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+    filled: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="currentColor" />,
+  },
+  {
     href: '/obras',
     key: 'jobs',
     outline: <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4" />,
     filled: <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4" fill="currentColor" />,
   },
   {
-    href: '/notificacoes',
+    href: '/atividade',
     key: 'activity',
     outline: <path d="M3 12h4l3-8 4 16 3-8h4" />,
     // A pulse line has no interior to fill, so the "filled" twin is a HEAVIER
@@ -85,7 +91,7 @@ export function TabBar({ locale }: { locale: Locale }) {
     // Translucent + blurred so content is visibly passing underneath, which is
     // a status cue. pb-[env(safe-area-inset-bottom)] is load-bearing: without
     // it the tabs sit under the iPhone home indicator.
-    <nav className="grid shrink-0 grid-cols-4 border-t border-hairline bg-surface/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-md">
+    <nav className="grid shrink-0 grid-cols-5 border-t border-hairline bg-surface/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-md">
       {TABS.map(({ href, key, outline, filled }) => {
         const label = nav[key];
         // Prefix match so /obras/[id] keeps its tab lit. '/' has to stay an

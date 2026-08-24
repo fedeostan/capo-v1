@@ -270,7 +270,7 @@ export function EmptyState({ text, cta }: { text: string; cta?: { href: string; 
 // Every dashboard empty state funnels back to the chat — the dashboard is
 // read-mostly, so "nothing here yet" always means "go ask Capo".
 function talkToCapo(locale: Locale) {
-  return { href: '/', label: getCatalog(locale).dashboard.talkToCapo };
+  return { href: '/chat', label: getCatalog(locale).dashboard.talkToCapo };
 }
 
 // The /tarefas board row. Explicit non-null shape rather than

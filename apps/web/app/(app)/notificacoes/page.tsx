@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { Catalog } from '@capo/i18n/catalog';
 import { EmptyState } from '@capo/ui/dashboard-ui';
-import { TabScreen } from '@/app/_ui/tab-screen';
+import { AppBar } from '@/app/_ui/nav';
 import { loadInbox, type InboxItem } from '@/app/notifications/inbox';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { vapidPublicKey } from '@/lib/push';
@@ -120,7 +120,18 @@ export default async function NotificacoesPage() {
   const pushAvailable = vapidPublicKey() !== null;
 
   return (
-    <TabScreen title={t.notifications.title} subtitle={t.notifications.subtitle}>
+    // A drill-down since Atividade took the tab: the inbox is what needs YOU
+    // and is markable as read, while the feed is a record of the site and is
+    // neither. Reached from the unread strip and from Privacidade, so it needs
+    // Back — an explicit destination rather than router.back(), because
+    // browser history can lead out of the app.
+    <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col overflow-hidden">
+      <AppBar
+        title={t.notifications.title}
+        subtitle={t.notifications.subtitle}
+        backHref="/"
+        backLabel={t.nav.home}
+      />
       <PullToRefresh locale={locale}>
         {items.length === 0 ? (
           <EmptyState text={t.notifications.empty} />
@@ -150,6 +161,6 @@ export default async function NotificacoesPage() {
           </p>
         )}
       </PullToRefresh>
-    </TabScreen>
+    </div>
   );
 }

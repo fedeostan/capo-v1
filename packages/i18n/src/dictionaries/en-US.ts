@@ -51,6 +51,45 @@ const dict: Catalog = {
     },
   },
 
+  activity: {
+    title: 'Activity',
+    subtitle: 'What happened on site',
+    empty: 'Nothing has happened here yet.',
+    today: 'Today',
+    yesterday: 'Yesterday',
+    claimed: (task: string, who: string) => `${who} says ${task} is finished.`,
+    claimedAnon: (task: string) => `${task} was reported finished.`,
+    approved: (task: string) => `You confirmed ${task}.`,
+    rejected: (task: string) => `You sent ${task} back to be redone.`,
+    photos: (count: number, task: string) =>
+      count === 1 ? `1 photo added to ${task}.` : `${count} photos added to ${task}.`,
+    checkinDone: (who: string) => `${who} answered that the day is done.`,
+    checkinNotDone: (who: string) => `${who} answered that it is not finished yet.`,
+  },
+
+  home: {
+    greetingMorning: (name: string) => (name ? `Good morning, ${name}` : 'Good morning'),
+    greetingAfternoon: (name: string) => (name ? `Good afternoon, ${name}` : 'Good afternoon'),
+    greetingEvening: (name: string) => (name ? `Good evening, ${name}` : 'Good evening'),
+    summary: (sites: number, openTasks: number) =>
+      `${sites === 1 ? '1 site active' : `${sites} sites active`} · ${openTasks === 1 ? '1 task open' : `${openTasks} tasks open`}`,
+    nextUp: 'Next up today',
+    allTasks: 'All tasks',
+    nothingToday: 'Nothing scheduled for today.',
+    decision: 'Needs your decision',
+    decisionMore: (n: number) => (n === 1 ? '1 more waiting' : `${n} more waiting`),
+    openTask: 'Open task',
+    whatHappened: 'What just happened',
+    seeActivity: 'Activity',
+    crew: "Today's crew",
+    checkedIn: (answered: number, total: number) => `${answered} of ${total} checked in`,
+    silent: (n: number) => (n === 1 ? '1 silent' : `${n} silent`),
+    noCrew: 'Nobody on the team yet.',
+    materialsLow: 'Materials running low',
+    allMaterials: 'All materials',
+    materialsNone: 'Nothing needed for tomorrow.',
+  },
+
   common: {
     signOut: 'Sign out',
     save: 'Save',

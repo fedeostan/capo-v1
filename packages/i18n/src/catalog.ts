@@ -86,6 +86,52 @@ export interface Catalog {
     };
   };
 
+  /** The Activity feed (Round 3) and Home's "what just happened" widget. ONE
+      block for both, because they render the same events from the same loader
+      — two vocabularies would let the tab and the widget describe the same
+      event differently, and the manager would have no way to tell which was
+      right. */
+  activity: {
+    title: string;
+    subtitle: string;
+    empty: string;
+    today: string;
+    yesterday: string;
+    /** A crew member filed a completion claim. */
+    claimed: (task: string, who: string) => string;
+    /** …and the same, when nobody is named (the manager declared it). */
+    claimedAnon: (task: string) => string;
+    approved: (task: string) => string;
+    rejected: (task: string) => string;
+    photos: (count: number, task: string) => string;
+    checkinDone: (who: string) => string;
+    checkinNotDone: (who: string) => string;
+  };
+
+  /** The Home launchpad (Round 2). */
+  home: {
+    greetingMorning: (name: string) => string;
+    greetingAfternoon: (name: string) => string;
+    greetingEvening: (name: string) => string;
+    /** "3 obras activas · 12 tarefas abertas" */
+    summary: (sites: number, openTasks: number) => string;
+    nextUp: string;
+    allTasks: string;
+    nothingToday: string;
+    decision: string;
+    decisionMore: (n: number) => string;
+    openTask: string;
+    whatHappened: string;
+    seeActivity: string;
+    crew: string;
+    checkedIn: (answered: number, total: number) => string;
+    silent: (n: number) => string;
+    noCrew: string;
+    materialsLow: string;
+    allMaterials: string;
+    materialsNone: string;
+  };
+
   common: {
     signOut: string;
     save: string;

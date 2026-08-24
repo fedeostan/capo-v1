@@ -50,6 +50,45 @@ const dict: Catalog = {
     },
   },
 
+  activity: {
+    title: 'Atividade',
+    subtitle: 'O que aconteceu nas obras',
+    empty: 'Ainda não aconteceu nada por aqui.',
+    today: 'Hoje',
+    yesterday: 'Ontem',
+    claimed: (task: string, who: string) => `${who} diz que terminou ${task}.`,
+    claimedAnon: (task: string) => `${task} foi dada como terminada.`,
+    approved: (task: string) => `Confirmaste ${task}.`,
+    rejected: (task: string) => `Devolveste ${task} para ser refeita.`,
+    photos: (count: number, task: string) =>
+      count === 1 ? `1 fotografia adicionada a ${task}.` : `${count} fotografias adicionadas a ${task}.`,
+    checkinDone: (who: string) => `${who} respondeu que acabou o dia.`,
+    checkinNotDone: (who: string) => `${who} respondeu que ainda não acabou.`,
+  },
+
+  home: {
+    greetingMorning: (name: string) => (name ? `Bom dia, ${name}` : 'Bom dia'),
+    greetingAfternoon: (name: string) => (name ? `Boa tarde, ${name}` : 'Boa tarde'),
+    greetingEvening: (name: string) => (name ? `Boa noite, ${name}` : 'Boa noite'),
+    summary: (sites: number, openTasks: number) =>
+      `${sites === 1 ? '1 obra activa' : `${sites} obras activas`} · ${openTasks === 1 ? '1 tarefa aberta' : `${openTasks} tarefas abertas`}`,
+    nextUp: 'Para hoje',
+    allTasks: 'Todas as tarefas',
+    nothingToday: 'Nada marcado para hoje.',
+    decision: 'Precisa da tua decisão',
+    decisionMore: (n: number) => (n === 1 ? 'mais 1 à espera' : `mais ${n} à espera`),
+    openTask: 'Abrir tarefa',
+    whatHappened: 'O que aconteceu',
+    seeActivity: 'Atividade',
+    crew: 'A equipa hoje',
+    checkedIn: (answered: number, total: number) => `${answered} de ${total} responderam`,
+    silent: (n: number) => (n === 1 ? '1 sem resposta' : `${n} sem resposta`),
+    noCrew: 'Ainda não há ninguém na equipa.',
+    materialsLow: 'Materiais a acabar',
+    allMaterials: 'Todos os materiais',
+    materialsNone: 'Não falta nada para amanhã.',
+  },
+
   common: {
     signOut: 'Sair',
     save: 'Guardar',

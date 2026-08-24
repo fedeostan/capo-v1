@@ -26,7 +26,7 @@ export default async function EquipaPage() {
         {/* Read-only on purpose: worker CRUD stays on Capo's add_worker tool.
             The chat writes. */}
         {team.length === 0 ? (
-          <EmptyState text={t.profile.teamEmpty} cta={{ href: '/', label: t.profile.teamEmptyCta }} />
+          <EmptyState text={t.profile.teamEmpty} cta={{ href: '/chat', label: t.profile.teamEmptyCta }} />
         ) : (
           <>
             <ul className="space-y-3">
@@ -87,7 +87,7 @@ export default async function EquipaPage() {
             </ul>
             <p className="text-caption text-fg-muted">
               {t.profile.teamHint}{' '}
-              <Link href="/" className="underline">
+              <Link href="/chat" className="underline">
                 {t.profile.teamHintLink}
               </Link>
               .

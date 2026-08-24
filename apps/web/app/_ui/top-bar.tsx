@@ -18,7 +18,7 @@ import { ProfileDrawer } from './profile-drawer';
 //
 // Exact match, never a prefix: startsWith('/obras') would also claim
 // /obras/[id], where the back link matters more than the avatar.
-const TAB_ROOTS = ['/', '/tarefas', '/obras', '/notificacoes'];
+const TAB_ROOTS = ['/', '/tarefas', '/chat', '/obras', '/atividade'];
 
 // First letter of the first two words. Not a slice of the whole string: "Miguel
 // Ferreira" must read MF, and a manager with one name gets one letter rather
@@ -120,7 +120,7 @@ export function TopBar({
             </IconFrame>
           </button>
 
-          <Link href="/?voice=1" aria-label={t.voiceNote} className={`${iconButton} no-underline`}>
+          <Link href="/chat?voice=1" aria-label={t.voiceNote} className={`${iconButton} no-underline`}>
             <IconFrame>
               <rect x="9" y="2" width="6" height="11" rx="3" />
               <path d="M5 11a7 7 0 0 0 14 0M12 18v4" />
@@ -131,7 +131,7 @@ export function TopBar({
               primary per screen is a design-system rule, and this is the bar
               that appears on every screen. */}
           <Link
-            href="/?compose=1"
+            href="/chat?compose=1"
             aria-label={t.newTask}
             className="ml-1 grid min-h-11 min-w-11 shrink-0 place-items-center rounded-control bg-brand text-on-brand no-underline outline-none transition-colors ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
           >

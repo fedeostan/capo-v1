@@ -51,6 +51,45 @@ const dict: Catalog = {
     },
   },
 
+  activity: {
+    title: 'Actividad',
+    subtitle: 'Qué ha pasado en las obras',
+    empty: 'Todavía no ha pasado nada por aquí.',
+    today: 'Hoy',
+    yesterday: 'Ayer',
+    claimed: (task: string, who: string) => `${who} dice que ha terminado ${task}.`,
+    claimedAnon: (task: string) => `${task} se ha dado por terminada.`,
+    approved: (task: string) => `Has confirmado ${task}.`,
+    rejected: (task: string) => `Has devuelto ${task} para rehacerla.`,
+    photos: (count: number, task: string) =>
+      count === 1 ? `1 foto añadida a ${task}.` : `${count} fotos añadidas a ${task}.`,
+    checkinDone: (who: string) => `${who} ha respondido que ha acabado el día.`,
+    checkinNotDone: (who: string) => `${who} ha respondido que todavía no ha acabado.`,
+  },
+
+  home: {
+    greetingMorning: (name: string) => (name ? `Buenos días, ${name}` : 'Buenos días'),
+    greetingAfternoon: (name: string) => (name ? `Buenas tardes, ${name}` : 'Buenas tardes'),
+    greetingEvening: (name: string) => (name ? `Buenas noches, ${name}` : 'Buenas noches'),
+    summary: (sites: number, openTasks: number) =>
+      `${sites === 1 ? '1 obra activa' : `${sites} obras activas`} · ${openTasks === 1 ? '1 tarea abierta' : `${openTasks} tareas abiertas`}`,
+    nextUp: 'Para hoy',
+    allTasks: 'Todas las tareas',
+    nothingToday: 'Nada previsto para hoy.',
+    decision: 'Necesita tu decisión',
+    decisionMore: (n: number) => (n === 1 ? '1 más esperando' : `${n} más esperando`),
+    openTask: 'Abrir tarea',
+    whatHappened: 'Qué ha pasado',
+    seeActivity: 'Actividad',
+    crew: 'El equipo hoy',
+    checkedIn: (answered: number, total: number) => `${answered} de ${total} han respondido`,
+    silent: (n: number) => (n === 1 ? '1 sin respuesta' : `${n} sin respuesta`),
+    noCrew: 'Todavía no hay nadie en el equipo.',
+    materialsLow: 'Materiales que se acaban',
+    allMaterials: 'Todos los materiales',
+    materialsNone: 'No falta nada para mañana.',
+  },
+
   common: {
     signOut: 'Salir',
     save: 'Guardar',
