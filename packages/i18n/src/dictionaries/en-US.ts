@@ -12,7 +12,44 @@ const dict: Catalog = {
     titleSuffix: 'Capo',
   },
 
-  nav: { chat: 'Chat', tasks: 'Tasks', jobs: 'Jobs', materials: 'Materials', profile: 'Profile' },
+  nav: {
+    home: 'Home',
+    chat: 'Chat',
+    tasks: 'Tasks',
+    jobs: 'Jobs',
+    materials: 'Materials',
+    activity: 'Activity',
+    profile: 'Profile',
+  },
+
+  shell: {
+    openMenu: 'Open menu',
+    profile: 'Profile',
+    search: 'Search',
+    searchUnavailable: 'Search is not available yet',
+    voiceNote: 'Voice note',
+    newTask: 'New task',
+    close: 'Close',
+    role: 'Site manager',
+    version: (v: string) => `Capo ${v}`,
+    rooms: {
+      personal: { title: 'Personal information', sub: 'Company, name, email, phone' },
+      team: { title: 'Team', sub: 'Who works with you' },
+      billing: { title: 'Billing', sub: 'Subscription and payments' },
+      privacy: { title: 'Privacy', sub: 'Memory, notifications, messages' },
+      settings: { title: 'Settings', sub: 'Language, appearance, account' },
+    },
+    deleteAccount: {
+      row: 'Delete account',
+      cannotUndo: 'Cannot be undone',
+      title: 'Delete this account',
+      body: 'Every site, task, photo and message is deleted for the whole team. This cannot be undone.',
+      placeholder: 'Company name',
+      cancel: 'Cancel',
+      confirm: 'Delete forever',
+      unavailable: 'Deleting your account from the app is not available yet. Talk to us and we will take care of it.',
+    },
+  },
 
   common: {
     signOut: 'Sign out',

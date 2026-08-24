@@ -11,7 +11,44 @@ const dict: Catalog = {
     titleSuffix: 'Capo',
   },
 
-  nav: { chat: 'Chat', tasks: 'Tarefas', jobs: 'Obras', materials: 'Materiais', profile: 'Perfil' },
+  nav: {
+    home: 'Início',
+    chat: 'Chat',
+    tasks: 'Tarefas',
+    jobs: 'Obras',
+    materials: 'Materiais',
+    activity: 'Atividade',
+    profile: 'Perfil',
+  },
+
+  shell: {
+    openMenu: 'Abrir menu',
+    profile: 'Perfil',
+    search: 'Pesquisar',
+    searchUnavailable: 'A pesquisa ainda não está disponível',
+    voiceNote: 'Nota de voz',
+    newTask: 'Nova tarefa',
+    close: 'Fechar',
+    role: 'Encarregado',
+    version: (v: string) => `Capo ${v}`,
+    rooms: {
+      personal: { title: 'Informação pessoal', sub: 'Empresa, nome, email, telefone' },
+      team: { title: 'Equipa', sub: 'Quem trabalha consigo' },
+      billing: { title: 'Faturação', sub: 'Subscrição e pagamentos' },
+      privacy: { title: 'Privacidade', sub: 'Memória, notificações, mensagens' },
+      settings: { title: 'Definições', sub: 'Idioma, aspeto, conta' },
+    },
+    deleteAccount: {
+      row: 'Apagar conta',
+      cannotUndo: 'Não pode ser desfeito',
+      title: 'Apagar esta conta',
+      body: 'Todas as obras, tarefas, fotografias e mensagens são apagadas para toda a equipa. Isto não pode ser desfeito.',
+      placeholder: 'Nome da empresa',
+      cancel: 'Cancelar',
+      confirm: 'Apagar para sempre',
+      unavailable: 'Ainda não é possível apagar a conta a partir da aplicação. Fale connosco e tratamos disso.',
+    },
+  },
 
   common: {
     signOut: 'Sair',

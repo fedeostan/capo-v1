@@ -12,7 +12,44 @@ const dict: Catalog = {
     titleSuffix: 'Capo',
   },
 
-  nav: { chat: 'Chat', tasks: 'Tareas', jobs: 'Obras', materials: 'Materiales', profile: 'Perfil' },
+  nav: {
+    home: 'Inicio',
+    chat: 'Chat',
+    tasks: 'Tareas',
+    jobs: 'Obras',
+    materials: 'Materiales',
+    activity: 'Actividad',
+    profile: 'Perfil',
+  },
+
+  shell: {
+    openMenu: 'Abrir menú',
+    profile: 'Perfil',
+    search: 'Buscar',
+    searchUnavailable: 'La búsqueda todavía no está disponible',
+    voiceNote: 'Nota de voz',
+    newTask: 'Nueva tarea',
+    close: 'Cerrar',
+    role: 'Encargado',
+    version: (v: string) => `Capo ${v}`,
+    rooms: {
+      personal: { title: 'Información personal', sub: 'Empresa, nombre, email, teléfono' },
+      team: { title: 'Equipo', sub: 'Quién trabaja contigo' },
+      billing: { title: 'Facturación', sub: 'Suscripción y pagos' },
+      privacy: { title: 'Privacidad', sub: 'Memoria, notificaciones, mensajes' },
+      settings: { title: 'Ajustes', sub: 'Idioma, apariencia, cuenta' },
+    },
+    deleteAccount: {
+      row: 'Eliminar cuenta',
+      cannotUndo: 'No se puede deshacer',
+      title: 'Eliminar esta cuenta',
+      body: 'Todas las obras, tareas, fotos y mensajes se eliminan para todo el equipo. Esto no se puede deshacer.',
+      placeholder: 'Nombre de la empresa',
+      cancel: 'Cancelar',
+      confirm: 'Eliminar para siempre',
+      unavailable: 'Todavía no se puede eliminar la cuenta desde la aplicación. Habla con nosotros y lo hacemos.',
+    },
+  },
 
   common: {
     signOut: 'Salir',
