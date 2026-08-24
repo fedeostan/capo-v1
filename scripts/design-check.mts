@@ -278,7 +278,6 @@ const UNCONVERTED: string[] = [
   'apps/web/app/(app)/obras/[id]/page.tsx',
   'apps/web/app/(app)/perfil/automacoes/page.tsx',
   'apps/web/app/(app)/perfil/memoria/page.tsx',
-  'apps/web/app/(app)/perfil/page.tsx',
   'apps/web/app/(app)/perfil/profile-forms.tsx',
   'apps/web/app/(app)/perfil/push-card.tsx',
   'apps/web/app/(app)/perfil/sign-out-button.tsx',

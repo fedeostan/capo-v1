@@ -63,14 +63,14 @@ export default async function DefinicoesPage({
           — one source, so the screen cannot promise a posture the agent is not
           using. */}
       <Card title={t.settings.confirmPosture}>
-        <p className="text-xs text-zinc-500">{t.settings.confirmPostureHint}</p>
+        <p className="text-caption text-fg-muted">{t.settings.confirmPostureHint}</p>
         <ConfirmPosturePills current={ctx.confirmPosture} t={t} />
       </Card>
 
       {/* Above the language dials on purpose: appearance is personal and
           reversible, while the company language card carries a warning. */}
       <Card title={t.settings.appearance}>
-        <p className="text-xs text-zinc-500">{t.settings.appearanceHint}</p>
+        <p className="text-caption text-fg-muted">{t.settings.appearanceHint}</p>
         <ThemePills current={theme} locale={locale} />
       </Card>
 
@@ -79,7 +79,7 @@ export default async function DefinicoesPage({
           case (a foreman who speaks a different language from the crew), so it
           lives in the disclosure rather than on the surface. */}
       <Card title={t.settings.language}>
-        <p className="text-xs text-zinc-500">{t.settings.languageHint}</p>
+        <p className="text-caption text-fg-muted">{t.settings.languageHint}</p>
 
         {/* Above the control, not inside the "advanced" disclosure: the whole
             failure this notice exists for is a manager who does not know the
@@ -95,7 +95,7 @@ export default async function DefinicoesPage({
 
           {counts.total > 0 ? (
             <>
-              <label className="flex items-start gap-2 text-sm">
+              <label className="flex items-start gap-2 text-callout">
                 {/* Checked by default: carrying the data across is what he
                     means by changing the language. Unchecking is the escape
                     hatch, not the norm. */}
@@ -103,16 +103,16 @@ export default async function DefinicoesPage({
                   type="checkbox"
                   name="traduzir"
                   defaultChecked
-                  className="mt-0.5 size-4 shrink-0 accent-orange-600"
+                  className="mt-1 size-4 shrink-0 accent-brand"
                 />
                 <span>{t.settings.translateExisting(counts)}</span>
               </label>
-              <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+              <p className="rounded-lg bg-warn-quiet px-3 py-2 text-caption text-warn">
                 {t.settings.translateWarning}
               </p>
             </>
           ) : (
-            <p className="text-xs text-zinc-500">{t.settings.translateNothing}</p>
+            <p className="text-caption text-fg-muted">{t.settings.translateNothing}</p>
           )}
 
           <SubmitButton label={t.common.save} />
@@ -131,35 +131,35 @@ export default async function DefinicoesPage({
         )}
 
         {batch && canRevert && (
-          <form action={revertTranslation} className="space-y-2 border-t border-zinc-500/20 pt-3">
+          <form action={revertTranslation} className="space-y-2 border-t border-hairline pt-3">
             <input type="hidden" name="lote" value={batch.id} />
-            <p className="text-xs text-zinc-500">{t.settings.revertHint(30)}</p>
+            <p className="text-caption text-fg-muted">{t.settings.revertHint(30)}</p>
             <button
               type="submit"
-              className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-medium text-red-600 hover:bg-red-600/5"
+              className="w-full rounded-lg border border-control py-2 text-callout font-medium text-danger hover:bg-danger-quiet"
             >
               {t.settings.revert}
             </button>
           </form>
         )}
 
-        <details className="border-t border-zinc-500/20 pt-3">
-          <summary className="cursor-pointer text-xs font-medium text-zinc-500">{t.settings.advanced}</summary>
+        <details className="border-t border-hairline pt-3">
+          <summary className="cursor-pointer text-caption font-medium text-fg-muted">{t.settings.advanced}</summary>
           <div className="space-y-4 pt-3">
-            <p className="text-xs text-zinc-500">{t.settings.advancedHint}</p>
+            <p className="text-caption text-fg-muted">{t.settings.advancedHint}</p>
 
             <div className="space-y-2">
-              <h3 className="text-xs font-semibold">{t.settings.yourLanguage}</h3>
-              <p className="text-xs text-zinc-500">{t.settings.yourLanguageHint}</p>
+              <h3 className="text-caption font-semibold">{t.settings.yourLanguage}</h3>
+              <p className="text-caption text-fg-muted">{t.settings.yourLanguageHint}</p>
               <LanguagePills current={ctx.locale} action={setUserLanguage} save={t.common.save} />
             </div>
 
             <div className="space-y-2">
-              <h3 className="text-xs font-semibold">{t.settings.companyLanguage}</h3>
-              <p className="text-xs text-zinc-500">{t.settings.companyLanguageHint}</p>
+              <h3 className="text-caption font-semibold">{t.settings.companyLanguage}</h3>
+              <p className="text-caption text-fg-muted">{t.settings.companyLanguageHint}</p>
               {/* Still the honest warning for THIS form: setting the dial on
                   its own is the one path that does not retranslate anything. */}
-              <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+              <p className="rounded-lg bg-warn-quiet px-3 py-2 text-caption text-warn">
                 {t.settings.companyLanguageWarning}
               </p>
               <LanguagePills current={ctx.companyLocale} action={setCompanyLanguage} save={t.common.save} />
@@ -174,14 +174,14 @@ export default async function DefinicoesPage({
           (Federico, 2026-08-24): a daily summary at 07:00 is about how Capo is
           used, not about what it discloses. */}
       <Card title={t.automations.title}>
-        <p className="text-xs text-zinc-500">{t.automations.subtitle}</p>
-        <Link href="/perfil/automacoes" className="inline-block text-sm text-orange-600 underline">
+        <p className="text-caption text-fg-muted">{t.automations.subtitle}</p>
+        <Link href="/perfil/automacoes" className="inline-block text-callout text-brand underline">
           {t.automations.profileLink}
         </Link>
       </Card>
 
       <Card title={t.profile.app}>
-        <Link href="/instalar" className="inline-block text-sm text-orange-600 underline">
+        <Link href="/instalar" className="inline-block text-callout text-brand underline">
           {t.profile.install}
         </Link>
       </Card>

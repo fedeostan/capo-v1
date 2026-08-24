@@ -41,7 +41,7 @@ export default async function PessoalPage({
       <Card title={t.profile.yourAccount}>
         {/* Changing the login email is a Supabase auth flow with its own
             confirmation round trip — out of scope here, so it is read-only. */}
-        {email && <p className="text-xs text-zinc-500">{email}</p>}
+        {email && <p className="text-caption text-fg-muted">{email}</p>}
         <AccountForm fullName={profile?.full_name ?? ''} phone={profile?.phone ?? ''} locale={locale} />
       </Card>
     </RoomShell>

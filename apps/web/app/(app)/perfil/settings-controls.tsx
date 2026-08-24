@@ -16,8 +16,8 @@ import { setConfirmPosture, setWhatsAppConsent } from './actions';
 
 export function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-3 rounded-xl border border-zinc-500/20 p-4">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{title}</h2>
+    <section className="space-y-3 rounded-xl border border-hairline p-4">
+      <h2 className="text-caption font-semibold uppercase tracking-wide text-fg-muted">{title}</h2>
       {children}
     </section>
   );
@@ -31,12 +31,12 @@ export function Flash({ guardado, erro, t }: { guardado?: string; erro?: string;
   return (
     <>
       {guardado && (
-        <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-center text-sm text-emerald-700 dark:text-emerald-400">
+        <p className="rounded-lg bg-success-quiet px-3 py-2 text-center text-callout text-success">
           {guardado === 'reversao' ? t.settings.reverted : t.settings.saved}
         </p>
       )}
       {erro && (
-        <p className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-400">
+        <p className="rounded-lg bg-danger-quiet px-3 py-2 text-center text-callout text-danger">
           {erro === 'reversao' ? t.settings.revertFailed : t.settings.failed}
         </p>
       )}
@@ -58,7 +58,7 @@ export function Pills({ current }: { current: Locale }) {
             defaultChecked={option === current}
             className="peer sr-only"
           />
-          <span className="block cursor-pointer rounded-lg border border-zinc-500/30 py-2 text-center text-sm peer-checked:border-orange-600 peer-checked:bg-orange-600/10 peer-checked:font-semibold">
+          <span className="block cursor-pointer rounded-lg border border-control py-2 text-center text-callout peer-checked:border-brand peer-checked:bg-brand-quiet peer-checked:font-semibold">
             {getCatalog(option).meta.languageName}
           </span>
         </label>
@@ -71,7 +71,7 @@ export function SubmitButton({ label }: { label: string }) {
   return (
     <button
       type="submit"
-      className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-semibold hover:bg-zinc-500/10"
+      className="w-full rounded-lg border border-control py-2 text-callout font-semibold hover:bg-surface-hover"
     >
       {label}
     </button>
@@ -112,7 +112,7 @@ export function WhatsAppConsentPills({ consenting, t }: { consenting: boolean; t
               defaultChecked={option === consenting}
               className="peer sr-only"
             />
-            <span className="block cursor-pointer rounded-lg border border-zinc-500/30 py-2 text-center text-sm peer-checked:border-orange-600 peer-checked:bg-orange-600/10 peer-checked:font-semibold">
+            <span className="block cursor-pointer rounded-lg border border-control py-2 text-center text-callout peer-checked:border-brand peer-checked:bg-brand-quiet peer-checked:font-semibold">
               {option ? t.settings.whatsappConsentOption.yes : t.settings.whatsappConsentOption.no}
             </span>
           </label>
@@ -147,9 +147,9 @@ export function ConfirmPosturePills({ current, t }: { current: ConfirmPosture; t
               defaultChecked={option === current}
               className="peer sr-only"
             />
-            <span className="block cursor-pointer rounded-lg border border-zinc-500/30 p-3 peer-checked:border-orange-600 peer-checked:bg-orange-600/10">
-              <span className="block text-sm font-semibold">{t.settings.confirmPostureOption[option]}</span>
-              <span className="mt-0.5 block text-xs text-zinc-500">
+            <span className="block cursor-pointer rounded-lg border border-control p-3 peer-checked:border-brand peer-checked:bg-brand-quiet">
+              <span className="block text-callout font-semibold">{t.settings.confirmPostureOption[option]}</span>
+              <span className="mt-1 block text-caption text-fg-muted">
                 {t.settings.confirmPostureOptionHint[option]}
               </span>
             </span>

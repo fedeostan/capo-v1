@@ -45,14 +45,14 @@ export default async function PrivacidadePage({
       {/* Nothing proactive is sent without this — see hasWhatsAppConsent and
           0025_whatsapp_optin.sql. */}
       <Card title={t.settings.whatsappConsent}>
-        <p className="text-xs text-zinc-500">{t.settings.whatsappConsentHint}</p>
+        <p className="text-caption text-fg-muted">{t.settings.whatsappConsentHint}</p>
         {/* Said on the control that causes it (issue #45): turning consent on
             is what lets Capo introduce itself, and that introduction is a paid
             WhatsApp template. Shown only while consent is OFF — once it is on,
             the welcome has been sent and the sentence is history. */}
-        {!whatsappConsenting && <p className="text-xs text-zinc-500">{t.settings.whatsappConsentCost}</p>}
+        {!whatsappConsenting && <p className="text-caption text-fg-muted">{t.settings.whatsappConsentCost}</p>}
         <p
-          className={`text-xs ${whatsappConsenting ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}
+          className={`text-caption ${whatsappConsenting ? 'text-success' : 'text-warn'}`}
         >
           {whatsappConsenting ? t.settings.whatsappConsentOn : t.settings.whatsappConsentOff}
         </p>
@@ -66,7 +66,7 @@ export default async function PrivacidadePage({
 
       {/* The inbox is what Capo told YOU. */}
       <Card title={t.notifications.title}>
-        <Link href="/notificacoes" className="inline-block text-sm text-orange-600 underline">
+        <Link href="/notificacoes" className="inline-block text-callout text-brand underline">
           {t.notifications.profileLink}
         </Link>
       </Card>
@@ -75,8 +75,8 @@ export default async function PrivacidadePage({
           down by itself at 03:00 (issue #48). It is not a setting: it is a
           list of facts about the manager and his company that he can delete. */}
       <Card title={t.memory.title}>
-        <p className="text-xs text-zinc-500">{t.memory.subtitle}</p>
-        <Link href="/perfil/memoria" className="inline-block text-sm text-orange-600 underline">
+        <p className="text-caption text-fg-muted">{t.memory.subtitle}</p>
+        <Link href="/perfil/memoria" className="inline-block text-callout text-brand underline">
           {t.memory.profileLink}
         </Link>
       </Card>

@@ -35,15 +35,15 @@ export default async function EquipaPage() {
                 return (
                   <li key={worker.id} className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-sm font-medium">{worker.name}</p>
-                      <p className="text-xs text-zinc-500">
+                      <p className="text-callout font-medium">{worker.name}</p>
+                      <p className="text-caption text-fg-muted">
                         {[worker.trade, worker.phone].filter(Boolean).join(' · ') || t.profile.noContact}
                       </p>
                       {/* Load turns the crew list from a phone book into an
                           answer to "who is free?" — the question actually
                           asked before assigning work. */}
                       {load && load.open > 0 && (
-                        <p className="text-xs text-zinc-500">
+                        <p className="text-caption text-fg-muted">
                           {t.profile.workerLoad(load.today, load.tomorrow, load.open)}
                         </p>
                       )}
@@ -58,25 +58,25 @@ export default async function EquipaPage() {
                           the very thing the manager needs to act on. */}
                       {worker.active &&
                         (!worker.phone ? (
-                          <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                          <p className="mt-1 text-micro font-medium text-warn">
                             {t.profile.noWhatsAppWarning}
                           </p>
                         ) : !hasWhatsAppConsent(worker) ? (
-                          <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                          <p className="mt-1 text-micro font-medium text-warn">
                             {t.profile.noConsentWarning}
                           </p>
                         ) : (
-                          <p className="mt-0.5 text-[11px] text-zinc-500">{t.profile.receivesWhatsApp}</p>
+                          <p className="mt-1 text-micro text-fg-muted">{t.profile.receivesWhatsApp}</p>
                         ))}
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
                       {!worker.active && (
-                        <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[11px] text-zinc-500">
+                        <span className="rounded-full bg-surface-sunken px-2 py-1 text-micro text-fg-muted">
                           {t.profile.inactive}
                         </span>
                       )}
                       {load && load.overdue > 0 && (
-                        <span className="text-[11px] font-medium text-red-600">
+                        <span className="text-micro font-medium text-danger">
                           {t.dashboard.overdueCount(load.overdue)}
                         </span>
                       )}
@@ -85,7 +85,7 @@ export default async function EquipaPage() {
                 );
               })}
             </ul>
-            <p className="text-xs text-zinc-500">
+            <p className="text-caption text-fg-muted">
               {t.profile.teamHint}{' '}
               <Link href="/" className="underline">
                 {t.profile.teamHintLink}
@@ -97,7 +97,7 @@ export default async function EquipaPage() {
                 to message gets one welcome, and each welcome is a paid
                 template — so this multiplies by the size of the crew, which
                 is a fact only this screen can show. */}
-            <p className="text-xs text-zinc-500">{t.profile.welcomeCostHint}</p>
+            <p className="text-caption text-fg-muted">{t.profile.welcomeCostHint}</p>
           </>
         )}
       </Card>
