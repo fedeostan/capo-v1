@@ -208,15 +208,25 @@ Three language dials (do not collapse them into one):
   is nullable and the null means "inherit `companies.language`" — do not give
   it a default. See the structural invariant below.
 
-Both dials live on **`/perfil`** (there is no `/definicoes` route). The primary
-control there moves them together and offers to translate the existing rows;
-the bare per-dial forms are demoted into an "advanced" disclosure for the case
-that actually needs them — a manager who does not share the crew's language.
+Both dials live on **`/perfil/definicoes`** — one of the five rooms `/perfil`
+split into when the profile drawer landed. `/perfil` itself is now a five-row
+index (Informação pessoal, Equipa, Faturação, Privacidade, Definições) rather
+than a settings screen, reachable both from the drawer in the persistent top
+bar and as an ordinary page; Faturação points at the pre-existing
+`/subscricao`. The primary control moves both dials together and offers to
+translate the existing rows; the bare per-dial forms are demoted into an
+"advanced" disclosure for the case that actually needs them — a manager who
+does not share the crew's language.
+
+`LanguageDriftNote` sits at the top of that Language card, ABOVE the control
+and never inside the disclosure, for the reason in #55: a manager who does not
+know the split exists will never open a disclosure about it.
 
 Moving `companies.language` **alone** still retranslates nothing, and that is
 why no path offers it casually. The paths that move it together with the data:
 
-- `/perfil` → the Language card with "also translate what already exists".
+- `/perfil/definicoes` → the Language card with "also translate what already
+  exists".
 - chat → `translate_company_data`, which only ever *proposes*. Its applier,
   `apply_company_translation`, is deliberately **absent from the roster** and
   reachable solely through an approved card — same shape as
@@ -1161,12 +1171,18 @@ Structural invariants (do not regress):
     `kind` check constraint and all three dictionaries (the catalog's
     `Record<NotificationKind, …>` makes the second one a `tsc` error).
 
-  The inbox lives at `/notificacoes` and deliberately has **no tab**: all five
-  slots in `bottom-nav.tsx` are taken, and a sixth breaks the labels at 320px.
-  The unread signal is a full-width strip in `(app)/layout.tsx` matching
-  `BillingBanner`, which is also why it cannot be clipped — both strips are
-  siblings of the `overflow-hidden` content column, never children of it.
-  `/perfil` carries the always-present link for when nothing is unread.
+  The inbox lives at `/notificacoes` and **now has a tab** — Atividade, the
+  fourth of four. That reverses the old note here, which said all five slots
+  were taken: Materiais moved behind a switch on `/obras` and Perfil moved into
+  the drawer, which freed two. **The unread strip in `(app)/layout.tsx` stays**
+  and is not made redundant by the tab: a tab label is not a count, and the
+  strip's job is to make an unread decision unmissable. It retires the day that
+  tab carries a badge. Both strips remain siblings of the `overflow-hidden`
+  content column, never children of it, which is why neither can be clipped —
+  and the persistent top bar is a sibling for the identical reason, because the
+  drawer it owns would otherwise be clipped by that column.
+  `/perfil/privacidade` carries the always-present link for when nothing is
+  unread.
 - **Web Push (0026) rides `notifications`; the row IS the queue.** There is no
   push producer and no outbound push ledger. `notifications.pushed_at` /
   `push_attempts` mark delivery, so a push exists if and only if an inbox row

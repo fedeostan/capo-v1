@@ -8,6 +8,7 @@ import { ListRow } from '@capo/ui/list-row';
 import { Skeleton } from '@capo/ui/skeleton';
 import { getCatalog } from '@capo/i18n/catalog';
 import { DEFAULT_LOCALE } from '@capo/i18n/locale';
+import { ShellCases } from './shell-cases';
 import {
   EMPTY_BOARD,
   LONG_TITLE_BOARD,
@@ -141,6 +142,13 @@ export default function DesignScreens() {
             seeJobLabel={t.screens.materialsEdit.seeJob}
           />
         </Section>
+
+        {/* The Round 1 shell. These four are the cases the handoff's
+            screenshots do not cover, and each is one that actually breaks:
+            a company name long enough to fight the 44px targets beside it,
+            the drawer at the narrowest phone width we support, its five rows,
+            and the delete sheet's permanently-disabled confirm. */}
+        <ShellCases />
       </div>
     </div>
   );
