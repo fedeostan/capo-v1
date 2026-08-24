@@ -25,7 +25,6 @@ import './process-shim';
 export { default as Markdown } from '../packages/ui/src/markdown';
 
 // From apps/web.
-export { default as BottomNav } from '../apps/web/app/bottom-nav';
 export { default as MicButton } from '../apps/web/app/mic-button';
 export { default as PullToRefresh } from '../apps/web/app/pull-to-refresh';
 export { default as FilterChips } from '../apps/web/app/(app)/tarefas/filter-chips';

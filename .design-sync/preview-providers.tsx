@@ -1,7 +1,7 @@
 // Mounts the Next.js App Router contexts that four of the synced components
 // read from. Without it they do not merely look wrong — they throw:
 //
-//   BottomNav          usePathname() -> null, then null.startsWith(...)
+//   TabBar          usePathname() -> null, then null.startsWith(...)
 //   PullToRefresh      useRouter()   -> "invariant expected app router to be mounted"
 //   FilterControls     useRouter()   -> same
 //   TranslationProgress useRouter()  -> same
@@ -30,7 +30,7 @@ import {
   PathParamsContext,
 } from '../apps/web/node_modules/next/dist/shared/lib/hooks-client-context.shared-runtime';
 
-// '/tarefas' rather than '/': BottomNav lights the tab whose href prefixes the
+// '/tarefas' rather than '/': TabBar lights the tab whose href prefixes the
 // current path, so a real route shows the active state instead of a dead nav.
 const PATHNAME = '/tarefas';
 

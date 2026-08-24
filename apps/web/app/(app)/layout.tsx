@@ -1,5 +1,5 @@
-import Link from 'next/link';
-import BottomNav from '@/app/bottom-nav';
+import { Banner } from '@/app/_ui/nav';
+import { TabBar } from '@/app/_ui/tab-bar';
 import LocaleCookieSync from '@/app/locale-cookie-sync';
 import { getAuthState } from '@capo/db/session';
 import { getCatalog, type Catalog } from '@capo/i18n/catalog';
@@ -7,20 +7,26 @@ import { DEFAULT_LOCALE, type Locale } from '@capo/i18n/locale';
 import { getBillingState, type BillingState } from '@/lib/billing';
 import { countUnread } from '@/app/notifications/inbox';
 
+// Both strips are Banner now. The tones carry the meaning that the old
+// hand-picked fills only implied: `danger` for locked out, `warn` for a trial
+// running down. Those solid tokens are pinned to the same value in BOTH themes
+// on purpose — a billing warning is a fixed signal colour, not a themed
+// surface — so the label cannot flip to near-black and vanish in dark mode,
+// which is what bg-amber-500 + text-white did.
 function BillingBanner({ billing, t }: { billing: BillingState; t: Catalog }) {
   if (!billing.enabled) return null;
   if (billing.blocked) {
     return (
-      <Link href="/subscricao" className="block shrink-0 bg-red-600 px-4 py-1.5 text-center text-xs font-medium text-white">
+      <Banner tone="danger" href="/subscricao">
         {t.billing.bannerBlocked}
-      </Link>
+      </Banner>
     );
   }
   if (billing.status === 'trialing' && billing.daysLeft <= 7) {
     return (
-      <Link href="/subscricao" className="block shrink-0 bg-amber-500 px-4 py-1.5 text-center text-xs font-medium text-white">
+      <Banner tone="warn" href="/subscricao">
         {billing.daysLeft <= 0 ? t.billing.bannerTrialEnded : t.billing.bannerTrial(billing.daysLeft)}
-      </Link>
+      </Banner>
     );
   }
   return null;
@@ -31,7 +37,7 @@ function BillingBanner({ billing, t }: { billing: BillingState; t: Catalog }) {
 // WHERE THIS LIVES, decided explicitly rather than by default:
 //
 // The tab bar was the obvious home and is the wrong one. All five slots are
-// taken (bottom-nav.tsx), and the two candidate moves are both worse than
+// taken (_ui/tab-bar.tsx), and the two candidate moves are both worse than
 // this: a sixth tab drops every label to ~53px on a 320px phone, where
 // "Materiais" no longer fits, and displacing an existing tab would demote a
 // daily-use screen for a surface the manager visits only when something
@@ -51,13 +57,13 @@ function BillingBanner({ billing, t }: { billing: BillingState; t: Catalog }) {
 function NotificationsStrip({ unread, t }: { unread: number; t: Catalog }) {
   if (unread === 0) return null;
   return (
-    <Link
+    <Banner
+      tone="info"
       href="/notificacoes"
-      className="flex shrink-0 items-center justify-center gap-1.5 bg-blue-600 px-4 py-1.5 text-center text-xs font-medium text-white"
+      icon={<span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-on-solid" />}
     >
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-white" />
       {t.notifications.banner(unread)}
-    </Link>
+    </Banner>
   );
 }
 
@@ -91,7 +97,7 @@ export default async function AppLayout({ children }: Readonly<{ children: React
           positioned that tries to escape the content column — nothing does
           today, but a future custom dropdown would need to live elsewhere. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
-      <BottomNav locale={locale} />
+      <TabBar locale={locale} />
       {state.status === 'ok' && <LocaleCookieSync locale={locale} />}
     </>
   );

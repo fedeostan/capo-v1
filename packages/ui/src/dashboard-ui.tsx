@@ -10,6 +10,8 @@
 import type { Tables } from '@capo/db/types';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
+import { AppBar } from './app-bar';
+import { Badge, type Tone } from './badge';
 
 // Row shape for the obras view — defined here (the shared UI package) so web
 // and operator render from the same contract; data loaders import this type
@@ -19,18 +21,22 @@ export type DashboardObra = Tables<'dashboard_obras'>;
 // The microcopy dial that used to live here (status labels, overdue phrasing,
 // risk reasons) moved to @capo/i18n — one place, three languages, checked by tsc.
 
-const STATUS_STYLES: Record<string, string> = {
-  pending: 'bg-zinc-500/10 text-zinc-500',
-  in_progress: 'bg-orange-600/10 text-orange-600',
-  // Violet, deliberately not amber or red: a completion claim awaiting the
-  // manager is a decision to make, not a problem to fix. blocked (red) and the
-  // overdue reason line (also red) own "something is wrong".
-  pending_review: 'bg-violet-600/10 text-violet-600',
-  blocked: 'bg-red-600/10 text-red-600',
-  done: 'bg-emerald-700/10 text-emerald-700',
-  // zinc-500 rather than 400: 400 is 2.3:1 on white and this file now renders
-  // on a light background by default in both apps.
-  cancelled: 'bg-zinc-500/10 text-zinc-500 line-through',
+// A task status is now expressed as a design-system TONE rather than as a pair
+// of hand-picked colours. The meanings are unchanged and deliberate:
+// `pending_review` is violet because a completion claim awaiting the manager is
+// a DECISION TO MAKE, not a problem to fix — `blocked` (red) and the overdue
+// reason line (also red) own "something is wrong".
+//
+// The old map hard-coded `text-zinc-500`, `text-orange-600` and friends, which
+// meant the badge could not follow the theme and, on `in_progress`, sat at
+// 3.56:1 on white. Every tone below is held to 4.5:1 by `pnpm design-check`.
+const STATUS_TONES: Record<string, Tone> = {
+  pending: 'neutral',
+  in_progress: 'brand',
+  pending_review: 'review',
+  blocked: 'danger',
+  done: 'success',
+  cancelled: 'neutral',
 };
 
 // Exported so the task detail screen renders the same badge as the lists —
@@ -53,11 +59,16 @@ export function StatusBadge({
   if (status === 'pending' && !showPending) return null;
   const labels = getCatalog(locale).dashboard.taskStatus;
   return (
-    <span
-      className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[status] ?? STATUS_STYLES.pending}`}
+    // `sentence`, not the default shape reading: every one of these labels is
+    // a phrase ("A aguardar controlo"), and the board truncates the TASK TITLE
+    // to give the badge whatever width it asks for.
+    <Badge
+      tone={STATUS_TONES[status] ?? 'neutral'}
+      reading="sentence"
+      strikethrough={status === 'cancelled'}
     >
       {labels[status as keyof typeof labels] ?? status}
-    </span>
+    </Badge>
   );
 }
 
@@ -80,11 +91,14 @@ export function ScreenShell({
     <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col overflow-hidden">
       {/* Sign-out used to live here, in a file whose own contract forbids
           forms. It now lives on /perfil, the tab that owns everything about
-          the company and the account. */}
-      <header className="shrink-0 border-b border-zinc-500/20 px-4 py-3">
-        <h1 className="text-lg font-semibold">{title}</h1>
-        {subtitle && <p className="text-xs text-zinc-500">{subtitle}</p>}
-      </header>
+          the company and the account.
+
+          The header itself is now AppBar: same two lines of text, but 22px
+          instead of 18px, translucent and blurred so content is visibly
+          passing underneath. ScreenShell keeps its own signature so no caller
+          changes. It passes no backHref, so AppBar renders no link and needs
+          no `linkAs` — see link-as.ts for why that matters where it does. */}
+      <AppBar title={title} subtitle={subtitle} />
       {children}
     </div>
   );
@@ -226,12 +240,26 @@ export function MaterialsList({
   );
 }
 
+/**
+ * The legacy empty state, on tokens.
+ *
+ * Deliberately NOT yet delegating to `./empty-state`, and deliberately still a
+ * plain <a>. Its `{text, cta}` shape is read by four screens spread across
+ * three later batches (perfil, notificacoes, tarefas/[id]/ajuda) as well as by
+ * the three list components below, so replacing it is their conversion rather
+ * than this one. The new EmptyState also takes an `action` NODE, which for a
+ * link means threading `linkAs` down through every list component — work that
+ * belongs with the callers that will pass it.
+ *
+ * Colours only here, so the shell batch does not leave a raw-palette island in
+ * a file it is already editing.
+ */
 export function EmptyState({ text, cta }: { text: string; cta?: { href: string; label: string } }) {
   return (
-    <div className="py-10 text-center text-sm text-zinc-500">
+    <div className="py-12 text-center text-callout text-fg-muted">
       <p>{text}</p>
       {cta && (
-        <a href={cta.href} className="mt-2 inline-block text-emerald-600 underline dark:text-emerald-400">
+        <a href={cta.href} className="mt-2 inline-block font-medium text-brand underline">
           {cta.label}
         </a>
       )}

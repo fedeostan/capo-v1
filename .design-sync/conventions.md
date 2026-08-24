@@ -21,7 +21,7 @@ you get a type error, not a silent English fallback.
         empty="Nada marcado para hoje." tasks={tasks} />
     </ScreenShell>
   </PullToRefresh>
-  <BottomNav locale="pt-PT" />                 {/* sibling, outside the shell */}
+  <TabBar locale="pt-PT" />                 {/* sibling, outside the shell */}
 </div>
 ```
 

@@ -120,9 +120,12 @@ export default function MicButton({
   return (
     <div className="relative flex items-center">
       {hint && (
-        // A dark tooltip on a light page is the intended convention; the dark:
-        // variant only restores separation from the #0a0a0a background.
-        <span className="absolute -top-8 right-0 whitespace-nowrap rounded-lg bg-zinc-800 px-2 py-1 text-xs text-white dark:bg-zinc-700">
+        // A dark tooltip on a light page is the intended convention, and
+        // `bg-fg text-bg` IS that convention expressed as a rule: it inverts
+        // per theme, so the dark: twin that used to restore separation from
+        // the near-black background is no longer needed. Same pair the
+        // Banner's `neutral` tone uses.
+        <span className="absolute -top-8 right-0 whitespace-nowrap rounded-chip bg-fg px-2 py-1 text-caption text-bg">
           {hint}
         </span>
       )}
@@ -131,21 +134,32 @@ export default function MicButton({
         aria-label={state === 'recording' ? t.stop : t.record}
         disabled={disabled || state === 'transcribing'}
         onClick={state === 'recording' ? stopRecording : startRecording}
+        // Deliberately NOT a <Button> variant, and the reason is the recording
+        // state. A solid red here is a LIVE-RECORDING indicator — a fixed
+        // signal colour, like a Banner and unlike a themed surface — so it uses
+        // the pinned `-solid` pair that clears 4.5:1 in both themes. The
+        // design's `destructive` variant is an outline and means "this deletes
+        // something", which is the wrong sentence for a running microphone that
+        // costs money until it is stopped.
+        //
+        // What it does adopt: min-h-11 (44px — this control was ~36px and is
+        // one of the undersized targets the design set out to fix), the shared
+        // radius, and the focus ring, which nothing in this file had.
         className={
           state === 'recording'
-            ? 'flex items-center gap-1.5 rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white'
-            : 'rounded-xl border border-zinc-500/30 px-3 py-2 text-sm hover:border-emerald-600 disabled:opacity-50'
+            ? 'flex min-h-11 items-center gap-2 rounded-control bg-danger-solid px-3 py-2 text-callout font-semibold text-on-solid outline-none transition-colors ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus'
+            : 'flex min-h-11 items-center justify-center rounded-control border border-control px-3 py-2 text-callout text-fg outline-none transition-colors ease-out hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:pointer-events-none disabled:opacity-50'
         }
       >
         {state === 'idle' && <MicIcon />}
         {state === 'recording' && (
           <>
-            <span className="h-2.5 w-2.5 animate-pulse rounded-sm bg-white" />
+            <span className="h-2 w-2 animate-pulse rounded-chip bg-on-solid" />
             <span className="tabular-nums">{elapsed}s</span>
           </>
         )}
         {state === 'transcribing' && (
-          <span className="block h-4 w-4 animate-spin rounded-full border-2 border-zinc-500 border-t-transparent" />
+          <span className="block h-4 w-4 animate-spin rounded-full border-2 border-control border-t-transparent" />
         )}
       </button>
     </div>
