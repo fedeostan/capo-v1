@@ -24,8 +24,17 @@ export default async function Page({
   // detail). Capped and single-valued: it lands in a textarea the manager
   // reads before sending, but it is still URL input, so it does not get to be
   // arbitrarily long.
-  const rawQ = (await searchParams).q;
+  const sp = await searchParams;
+  const rawQ = sp.q;
   const initialInput = (Array.isArray(rawQ) ? rawQ[0] : rawQ)?.slice(0, 500) ?? '';
+
+  // PRESENCE, not value: these two are triggers rather than data, so a caller
+  // does not have to agree with this page about what "1" means. They are what
+  // the persistent top bar's microphone and + buttons link to — neither had a
+  // destination before, because the recorder existed only as a control inside
+  // the composer and nothing focused the composer.
+  const autoVoice = sp.voice !== undefined;
+  const autoFocus = sp.compose !== undefined;
 
   let initialMessages: UIMessage[] = [];
   const proposalStatuses: Record<string, string> = {};
@@ -73,6 +82,8 @@ export default async function Page({
       proposalStatuses={proposalStatuses}
       orphanedPending={orphanedPending}
       initialInput={initialInput}
+      autoVoice={autoVoice}
+      autoFocus={autoFocus}
     />
   );
 }
