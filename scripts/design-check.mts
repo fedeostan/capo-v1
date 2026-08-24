@@ -272,7 +272,6 @@ const UNCONVERTED: string[] = [
   'apps/web/app/(app)/_tasks/materials-editor.tsx',
   'apps/web/app/(app)/_tasks/review-actions.tsx',
   'apps/web/app/(app)/_tasks/task-actions.tsx',
-  'apps/web/app/(app)/materiais/page.tsx',
   'apps/web/app/(app)/notificacoes/mark-all-read.tsx',
   'apps/web/app/(app)/notificacoes/page.tsx',
   'apps/web/app/(app)/obras/[id]/page.tsx',
