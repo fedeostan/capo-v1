@@ -112,3 +112,14 @@ jobs:
       # nothing anywhere could notice.
       - name: Design system contract
         run: pnpm design-check
+
+      # The activity feed's pure half (Rounds 2/3 of the design handoff). It
+      # exists because the SAME events render on two surfaces — the Atividade
+      # tab and Home's "what just happened" widget — and the whole design
+      # depends on those two never describing one event differently. It also
+      # pins the Lisbon-vs-UTC day boundary: 23:30Z in August is already
+      # tomorrow in Lisbon, so labelling a row from the UTC date files it under
+      # the wrong day. Same class of bug as the cron hour gate, and equally
+      # invisible. Credential-free, so it runs on every PR.
+      - name: Activity feed check
+        run: pnpm activity-check

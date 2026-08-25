@@ -6,15 +6,25 @@ import { usePathname } from 'next/navigation';
 import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 
-// Hoje/Amanhã/Atrasadas were never separate places — they were one list with a
-// different date filter, so they live behind the chips on /tarefas now. That
-// freed the slots for the surfaces that were actually missing: Perfil, and
-// Materiais, which is the anticipation list 00_VISION calls the killer feature
-// and which nothing in the product surfaced until now. Materiais sits before
-// Perfil because it is a daily-use screen and Perfil is a settings screen.
+// Início · Tarefas · Chat · Obras · Atividade — the handoff's five, reached by
+// a different route than it proposed.
+//
+// Materiais and Perfil left the bar and NEITHER was dropped: Materiais is a
+// switch on /obras (a daily-use screen deserves one tap, not a hunt) and
+// Perfil is the drawer behind the persistent top bar. The handoff replaced
+// Materiais with Activity outright; Federico's call (2026-08-24) was to
+// relocate both, which is what freed the two slots Início and Atividade now
+// hold.
+//
+// CHAT MOVED OFF `/` TO `/chat` for this. It was the landing screen since the
+// product began, and demoting it is the single biggest behavioural change in
+// this work: opening Capo used to put you in a conversation and now puts you
+// in front of a dashboard, with the conversation one tap away. Everything that
+// linked to `/` meaning "the chat" was repointed — the empty states, the task
+// detail's "ask Capo", and the top bar's mic and +.
 //
 // EVERY TAB CARRIES TWO ICONS, and that is an accessibility requirement rather
-// than a flourish. The bar it replaces signalled the active tab by COLOUR
+// than a flourish. The bar this replaced signalled the active tab by COLOUR
 // ALONE (orange versus grey). Roughly 1 in 12 men has a colour-vision
 // deficiency and construction is a heavily male trade, so that is a real share
 // of the actual users — and orange-versus-grey is a hard pair for the common
@@ -28,9 +38,9 @@ type Tab = { href: string; key: keyof Catalog['nav']; outline: ReactNode; filled
 const TABS: Tab[] = [
   {
     href: '/',
-    key: 'chat',
-    outline: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
-    filled: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="currentColor" />,
+    key: 'home',
+    outline: <path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />,
+    filled: <path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" fill="currentColor" />,
   },
   {
     href: '/tarefas',
@@ -49,44 +59,26 @@ const TABS: Tab[] = [
     ),
   },
   {
+    href: '/chat',
+    key: 'chat',
+    outline: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+    filled: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="currentColor" />,
+  },
+  {
     href: '/obras',
     key: 'jobs',
     outline: <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4" />,
     filled: <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4" fill="currentColor" />,
   },
   {
-    href: '/materiais',
-    key: 'materials',
-    outline: (
-      <>
-        <path d="M21 8v13H3V8" />
-        <rect x="1" y="3" width="22" height="5" rx="1" />
-        <path d="M10 12h4" />
-      </>
-    ),
-    filled: (
-      <>
-        <path d="M21 8v13H3V8" fill="currentColor" />
-        <rect x="1" y="3" width="22" height="5" rx="1" fill="currentColor" />
-        <path d="M10 12h4" className="stroke-surface" />
-      </>
-    ),
-  },
-  {
-    href: '/perfil',
-    key: 'profile',
-    outline: (
-      <>
-        <circle cx="12" cy="8" r="4" />
-        <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" />
-      </>
-    ),
-    filled: (
-      <>
-        <circle cx="12" cy="8" r="4" fill="currentColor" />
-        <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" fill="currentColor" />
-      </>
-    ),
+    href: '/atividade',
+    key: 'activity',
+    outline: <path d="M3 12h4l3-8 4 16 3-8h4" />,
+    // A pulse line has no interior to fill, so the "filled" twin is a HEAVIER
+    // stroke instead. The rule the two icons exist for is that active must
+    // differ in SHAPE as well as colour — weight satisfies it; duplicating the
+    // outline would not.
+    filled: <path d="M3 12h4l3-8 4 16 3-8h4" strokeWidth="3" />,
   },
 ];
 

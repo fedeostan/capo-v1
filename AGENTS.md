@@ -192,6 +192,13 @@ and say what the alternative would be — he is the one who decides.
   redefined by 0037) to assert it matches the `UsageSurface` union — reading
   0032 alone would be an assertion about history rather than about the live
   schema. Credential-free, so it runs in CI (`pnpm cost-check`).
+- `scripts/activity-check.mts` — the activity feed's pure half: every event
+  kind in all three languages, the anonymous-claim branch (a claim with no
+  worker is the manager's own, and must never render "null says…"), photo
+  pluralisation, day-grouping order, and the Lisbon-vs-UTC day boundary.
+  Credential-free, in CI (`pnpm activity-check`). It covers the render half
+  only; the three database reads in `loadActivity` need credentials and are
+  outside the gate by construction.
 - `scripts/agent-smoke.mts` — drives `handleInbound()` against a throwaway
   seeded tenant. Needs real API keys, so it is a manual gate
   (`pnpm agent-smoke`).
@@ -208,15 +215,25 @@ Three language dials (do not collapse them into one):
   is nullable and the null means "inherit `companies.language`" — do not give
   it a default. See the structural invariant below.
 
-Both dials live on **`/perfil`** (there is no `/definicoes` route). The primary
-control there moves them together and offers to translate the existing rows;
-the bare per-dial forms are demoted into an "advanced" disclosure for the case
-that actually needs them — a manager who does not share the crew's language.
+Both dials live on **`/perfil/definicoes`** — one of the five rooms `/perfil`
+split into when the profile drawer landed. `/perfil` itself is now a five-row
+index (Informação pessoal, Equipa, Faturação, Privacidade, Definições) rather
+than a settings screen, reachable both from the drawer in the persistent top
+bar and as an ordinary page; Faturação points at the pre-existing
+`/subscricao`. The primary control moves both dials together and offers to
+translate the existing rows; the bare per-dial forms are demoted into an
+"advanced" disclosure for the case that actually needs them — a manager who
+does not share the crew's language.
+
+`LanguageDriftNote` sits at the top of that Language card, ABOVE the control
+and never inside the disclosure, for the reason in #55: a manager who does not
+know the split exists will never open a disclosure about it.
 
 Moving `companies.language` **alone** still retranslates nothing, and that is
 why no path offers it casually. The paths that move it together with the data:
 
-- `/perfil` → the Language card with "also translate what already exists".
+- `/perfil/definicoes` → the Language card with "also translate what already
+  exists".
 - chat → `translate_company_data`, which only ever *proposes*. Its applier,
   `apply_company_translation`, is deliberately **absent from the roster** and
   reachable solely through an approved card — same shape as
@@ -1161,12 +1178,19 @@ Structural invariants (do not regress):
     `kind` check constraint and all three dictionaries (the catalog's
     `Record<NotificationKind, …>` makes the second one a `tsc` error).
 
-  The inbox lives at `/notificacoes` and deliberately has **no tab**: all five
-  slots in `bottom-nav.tsx` are taken, and a sixth breaks the labels at 320px.
-  The unread signal is a full-width strip in `(app)/layout.tsx` matching
-  `BillingBanner`, which is also why it cannot be clipped — both strips are
-  siblings of the `overflow-hidden` content column, never children of it.
-  `/perfil` carries the always-present link for when nothing is unread.
+  The inbox lives at `/notificacoes` and is a **drill-down with a Back arrow**,
+  not a tab. It briefly had one; `/atividade` took it. The two are different
+  questions and must not be merged: the inbox is what needs YOU and is markable
+  as read, the feed is a record of the SITE and is neither.
+  **The unread strip in `(app)/layout.tsx` stays**
+  and is not made redundant by the tab: a tab label is not a count, and the
+  strip's job is to make an unread decision unmissable. It retires the day that
+  tab carries a badge. Both strips remain siblings of the `overflow-hidden`
+  content column, never children of it, which is why neither can be clipped —
+  and the persistent top bar is a sibling for the identical reason, because the
+  drawer it owns would otherwise be clipped by that column.
+  `/perfil/privacidade` carries the always-present link for when nothing is
+  unread.
 - **Web Push (0026) rides `notifications`; the row IS the queue.** There is no
   push producer and no outbound push ledger. `notifications.pushed_at` /
   `push_attempts` mark delivery, so a push exists if and only if an inbox row
@@ -1377,6 +1401,55 @@ Structural invariants (do not regress):
   window.** That is the archival tier the research names, and today the window is
   the whole of memory — `/perfil/memoria` says so out loud by labelling rows as
   stored-but-not-carried rather than hiding them.
+- **`/` is the Home launchpad and the chat lives at `/chat`.** Chat was the
+  landing screen from the beginning of the product; moving it is the single
+  biggest behavioural change the design handoff made. Anonymous `/` still
+  rewrites to the marketing landing page (`proxy.ts`), untouched. Anything that
+  linked to `/` meaning "talk to Capo" had to be repointed — the dashboard
+  empty states (`talkToCapo` in `dashboard-ui.tsx`), task detail's "ask Capo"
+  (`/chat?q=`), and the top bar's mic and `+` (`/chat?voice=1`,
+  `/chat?compose=1`). A new empty state that funnels to the chat must use
+  `/chat`; `/` now lands on a dashboard.
+- **The activity feed is ONE loader behind TWO surfaces, and that is the whole
+  design** (`apps/web/app/activity/`). `loadActivity()` feeds both the
+  Atividade tab and Home's "what just happened" widget, and
+  `activitySentence()` is the only place an event becomes words. Two renderers
+  would eventually describe one event differently and the manager would have no
+  way to tell which was right — the same reason push and the inbox share a
+  catalog entry. Five things:
+  - **Three sources merged in TypeScript, not a SQL view**: `task_reviews`
+    (claims, and resolutions as their OWN later event), `task_photos`, and
+    `worker_checkins`. A view would need a migration, and a deploy has landed
+    ahead of its migration on this project before.
+  - **Photos collapse to one row per task per day.** Six photos of one façade
+    is one thing that happened; six rows would bury every other event, which is
+    what the handoff's own "6 photos added" example expects.
+  - **There is no delivery event and there cannot be one.** The handoff's feed
+    showed "Cement delivery signed for — 2 pallets short". Capo has no goods-in
+    concept anywhere in the schema and materials are notes on a task, not stock
+    that is received. Building the row would be a promise the product cannot
+    keep.
+  - **Worker names come from `workers.name`**, typed by the MANAGER — never
+    from anything a crew member wrote. Same boundary #47 draws around thread
+    events, for the same reason.
+  - `pnpm activity-check` (credential-free, in CI) pins the pure half,
+    including the **Lisbon-vs-UTC day boundary**: 23:30Z in August is already
+    tomorrow in Lisbon, so labelling from the UTC date files a row under the
+    wrong day.
+- **Home re-derives NOTHING** (`apps/web/app/(app)/home-data.ts`). Today's
+  tasks come from `task_board` via `loadBoardTasks`, decisions from
+  `loadPendingReviews`, the buy list from `loadMaterials`, the feed from
+  `loadActivity` — the same reads the screens it links to use. A widget with
+  its own query would be a second opinion, and the failure is Capo saying one
+  thing while the screen the manager taps through to says another. It fails
+  SOFT per widget (`home.*_failed` log lines): a launchpad is the first screen
+  of the app, so one broken query must cost one card and never the page. Grep
+  those events before concluding a quiet Home means a quiet day.
+  **The decision card deliberately has no "Confirm" button**, against the
+  handoff: approving a completion claim goes through `resolve_task_review()`
+  and is exactly what `confirm_posture` exists to slow down, so Home links to
+  the task where the real control sits beside the photos. A launchpad points;
+  it does not decide.
 - **One clock, one definition of "today".** The active-window rule
   (`lisbon_today() BETWEEN coalesce(start_date, created_at) AND
   coalesce(due_date, 'infinity')`) and every schedule-risk signal live in SQL,

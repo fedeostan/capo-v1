@@ -29,10 +29,18 @@ export default function MicButton({
   disabled,
   locale,
   onTranscript,
+  autoStart = false,
 }: {
   disabled: boolean;
   locale: Locale;
   onTranscript: (text: string) => void;
+  /** Arm the recorder on mount — the top bar's voice-note button arrives here
+   *  as /?voice=1. Best-effort BY DESIGN: getUserMedia needs a user gesture
+   *  until the site has been granted the microphone once, so the first ever
+   *  use of this link lands on the existing permission-denied hint with the
+   *  button sitting under the thumb, and every use after it records straight
+   *  away. Failing loudly here would be worse than the extra tap. */
+  autoStart?: boolean;
 }) {
   const t = getCatalog(locale).mic;
   const supported = useSyncExternalStore(noSubscribe, isSupported, () => false);
@@ -56,6 +64,15 @@ export default function MicButton({
     },
     [],
   );
+
+  // Fires once, on mount, and never again — `autoStart` is read from the URL
+  // the page was opened with, so a re-render must not re-arm a recorder the
+  // manager has already stopped. `startingRef` inside startRecording is the
+  // second guard.
+  useEffect(() => {
+    if (autoStart && supported && !disabled) void startRecording();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart, supported]);
 
   function clearTimers() {
     clearTimeout(timersRef.current.autoStop);

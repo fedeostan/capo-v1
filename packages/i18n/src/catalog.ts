@@ -28,7 +28,109 @@ export interface Catalog {
     titleSuffix: string;
   };
 
-  nav: { chat: string; tasks: string; jobs: string; materials: string; profile: string };
+  nav: {
+    home: string;
+    chat: string;
+    tasks: string;
+    jobs: string;
+    materials: string;
+    activity: string;
+    profile: string;
+  };
+
+  /** The persistent top bar and the profile drawer.
+   *
+   *  Every icon-only control in the bar is labelled from here rather than
+   *  hardcoded, and that is a requirement rather than tidiness: each of these
+   *  strings is spoken aloud by a screen reader, and Capo speaks three
+   *  languages — a hardcoded default would announce "Open menu" on a
+   *  Portuguese screen.
+   *
+   *  `rooms` are the five sections behind the drawer. `Billing` points at the
+   *  existing /subscricao rather than a new route, so its copy lives here
+   *  while its screen does not. */
+  shell: {
+    openMenu: string;
+    profile: string;
+    search: string;
+    /** Said on hover/long-press only. Search does not exist in Capo at all;
+     *  the control ships disabled rather than as a no-op click handler, so
+     *  assistive technology is not told it works. */
+    searchUnavailable: string;
+    voiceNote: string;
+    newTask: string;
+    close: string;
+    /** The manager's role, shown under their name in the drawer header. Not
+     *  read from the database: Capo has no role model, and inventing one in a
+     *  header is how a fictional feature gets built later to justify a label. */
+    role: string;
+    version: (v: string) => string;
+    rooms: {
+      personal: { title: string; sub: string };
+      team: { title: string; sub: string };
+      billing: { title: string; sub: string };
+      privacy: { title: string; sub: string };
+      settings: { title: string; sub: string };
+    };
+    /** The row ships; the deletion does not. `unavailable` is the line that
+     *  makes the disabled confirm button honest instead of broken. */
+    deleteAccount: {
+      row: string;
+      cannotUndo: string;
+      title: string;
+      body: string;
+      placeholder: string;
+      cancel: string;
+      confirm: string;
+      unavailable: string;
+    };
+  };
+
+  /** The Activity feed (Round 3) and Home's "what just happened" widget. ONE
+      block for both, because they render the same events from the same loader
+      — two vocabularies would let the tab and the widget describe the same
+      event differently, and the manager would have no way to tell which was
+      right. */
+  activity: {
+    title: string;
+    subtitle: string;
+    empty: string;
+    today: string;
+    yesterday: string;
+    /** A crew member filed a completion claim. */
+    claimed: (task: string, who: string) => string;
+    /** …and the same, when nobody is named (the manager declared it). */
+    claimedAnon: (task: string) => string;
+    approved: (task: string) => string;
+    rejected: (task: string) => string;
+    photos: (count: number, task: string) => string;
+    checkinDone: (who: string) => string;
+    checkinNotDone: (who: string) => string;
+  };
+
+  /** The Home launchpad (Round 2). */
+  home: {
+    greetingMorning: (name: string) => string;
+    greetingAfternoon: (name: string) => string;
+    greetingEvening: (name: string) => string;
+    /** "3 obras activas · 12 tarefas abertas" */
+    summary: (sites: number, openTasks: number) => string;
+    nextUp: string;
+    allTasks: string;
+    nothingToday: string;
+    decision: string;
+    decisionMore: (n: number) => string;
+    openTask: string;
+    whatHappened: string;
+    seeActivity: string;
+    crew: string;
+    checkedIn: (answered: number, total: number) => string;
+    silent: (n: number) => string;
+    noCrew: string;
+    materialsLow: string;
+    allMaterials: string;
+    materialsNone: string;
+  };
 
   common: {
     signOut: string;

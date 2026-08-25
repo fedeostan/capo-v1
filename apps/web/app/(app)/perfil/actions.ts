@@ -55,7 +55,7 @@ export async function updateCompanyName(_prev: FormState, formData: FormData): P
   }
 
   logEvent('profile.company_renamed', { companyId });
-  revalidatePath('/perfil');
+  revalidatePath('/perfil/pessoal');
   return { ok: true };
 }
 
@@ -78,7 +78,7 @@ export async function updateProfile(_prev: FormState, formData: FormData): Promi
   }
 
   logEvent('profile.updated', { companyId, userId });
-  revalidatePath('/perfil');
+  revalidatePath('/perfil/pessoal');
   return { ok: true };
 }
 
@@ -112,7 +112,7 @@ export async function updateProfile(_prev: FormState, formData: FormData): Promi
  */
 export async function saveLanguage(formData: FormData): Promise<void> {
   const language = asLocale(String(formData.get('idioma') ?? ''));
-  if (!language) redirect('/perfil?erro=idioma');
+  if (!language) redirect('/perfil/definicoes?erro=idioma');
   const translate = formData.get('traduzir') != null;
 
   const ctx = await requireAuth();
@@ -121,7 +121,7 @@ export async function saveLanguage(formData: FormData): Promise<void> {
   const { error } = await db.from('profiles').update({ language }).eq('id', userId);
   if (error) {
     console.error('saveLanguage failed:', error.message);
-    redirect('/perfil?erro=idioma');
+    redirect('/perfil/definicoes?erro=idioma');
   }
   (await cookies()).set(LOCALE_COOKIE, language, localeCookieOptions);
 
@@ -149,13 +149,13 @@ export async function saveLanguage(formData: FormData): Promise<void> {
         // tab, or an impatient double-submit. Not worth its own message — the
         // running batch is already rendered on the page they land back on.
         console.error('saveLanguage translation failed:', e instanceof Error ? e.message : e);
-        redirect(e instanceof ActiveBatchError ? '/perfil' : '/perfil?erro=idioma');
+        redirect(e instanceof ActiveBatchError ? '/perfil/definicoes' : '/perfil/definicoes?erro=idioma');
       }
     } else {
       const { error: dialError } = await db.from('companies').update({ language }).eq('id', companyId);
       if (dialError) {
         console.error('saveLanguage company dial failed:', dialError.message);
-        redirect('/perfil?erro=idioma');
+        redirect('/perfil/definicoes?erro=idioma');
       }
     }
   }
@@ -164,14 +164,14 @@ export async function saveLanguage(formData: FormData): Promise<void> {
   // 'layout' scope, not the page: the nav and <html lang> live above this route
   // and both just changed language.
   revalidatePath('/', 'layout');
-  redirect(batchId ? `/perfil?traducao=${batchId}` : '/perfil?guardado=idioma');
+  redirect(batchId ? `/perfil/definicoes?traducao=${batchId}` : '/perfil/definicoes?guardado=idioma');
 }
 
 /** Undo, delegated wholesale to the security-definer RPC in 0015 so the replay
  *  is one atomic statement rather than hundreds of round trips. */
 export async function revertTranslation(formData: FormData): Promise<void> {
   const batchId = String(formData.get('lote') ?? '');
-  if (!batchId) redirect('/perfil?erro=reversao');
+  if (!batchId) redirect('/perfil/definicoes?erro=reversao');
 
   const { db, companyId, userId } = await requireAuth();
   try {
@@ -181,11 +181,11 @@ export async function revertTranslation(formData: FormData): Promise<void> {
     logEvent('profile.translation_reverted', { companyId, userId, batchId, ...result });
   } catch (e) {
     console.error('revertTranslation failed:', e instanceof Error ? e.message : e);
-    redirect('/perfil?erro=reversao');
+    redirect('/perfil/definicoes?erro=reversao');
   }
 
   revalidatePath('/', 'layout');
-  redirect('/perfil?guardado=reversao');
+  redirect('/perfil/definicoes?guardado=reversao');
 }
 
 // ── the advanced dials ──────────────────────────────────────────────────────
@@ -194,13 +194,13 @@ export async function revertTranslation(formData: FormData): Promise<void> {
 
 export async function setUserLanguage(formData: FormData): Promise<void> {
   const language = asLocale(String(formData.get('idioma') ?? ''));
-  if (!language) redirect('/perfil?erro=idioma');
+  if (!language) redirect('/perfil/definicoes?erro=idioma');
 
   const { db, userId, companyId } = await requireAuth();
   const { error } = await db.from('profiles').update({ language }).eq('id', userId);
   if (error) {
     console.error('setUserLanguage failed:', error.message);
-    redirect('/perfil?erro=idioma');
+    redirect('/perfil/definicoes?erro=idioma');
   }
 
   // Keep the signed-out surface and <html lang> in step with the DB.
@@ -209,23 +209,23 @@ export async function setUserLanguage(formData: FormData): Promise<void> {
   // 'layout' scope, not the page: the nav and <html lang> live above this
   // route and both just changed language.
   revalidatePath('/', 'layout');
-  redirect('/perfil?guardado=idioma');
+  redirect('/perfil/definicoes?guardado=idioma');
 }
 
 export async function setCompanyLanguage(formData: FormData): Promise<void> {
   const language = asLocale(String(formData.get('idioma') ?? ''));
-  if (!language) redirect('/perfil?erro=idioma');
+  if (!language) redirect('/perfil/definicoes?erro=idioma');
 
   const { db, companyId } = await requireAuth();
   const { error } = await db.from('companies').update({ language }).eq('id', companyId);
   if (error) {
     console.error('setCompanyLanguage failed:', error.message);
-    redirect('/perfil?erro=idioma');
+    redirect('/perfil/definicoes?erro=idioma');
   }
 
   logEvent('profile.company_language_changed', { companyId, language });
   revalidatePath('/', 'layout');
-  redirect('/perfil?guardado=idioma');
+  redirect('/perfil/definicoes?guardado=idioma');
 }
 
 // ── WhatsApp consent ────────────────────────────────────────────────────────
@@ -250,12 +250,12 @@ export async function setWhatsAppConsent(formData: FormData): Promise<void> {
   const { error } = await db.from('profiles').update(patch).eq('id', userId);
   if (error) {
     console.error('setWhatsAppConsent failed:', error.message);
-    redirect('/perfil?erro=whatsapp');
+    redirect('/perfil/privacidade?erro=whatsapp');
   }
 
   logEvent('profile.whatsapp_consent_changed', { companyId, userId, consent });
-  revalidatePath('/perfil');
-  redirect('/perfil?guardado=whatsapp');
+  revalidatePath('/perfil/privacidade');
+  redirect('/perfil/privacidade?guardado=whatsapp');
 }
 
 // ── confirmation posture ────────────────────────────────────────────────────
@@ -279,18 +279,18 @@ export async function setWhatsAppConsent(formData: FormData): Promise<void> {
 // any third value even if this validation were bypassed entirely.
 export async function setConfirmPosture(formData: FormData): Promise<void> {
   const posture = asConfirmPosture(String(formData.get('confirmacao') ?? ''));
-  if (!posture) redirect('/perfil?erro=confirmacao');
+  if (!posture) redirect('/perfil/definicoes?erro=confirmacao');
 
   const { db, userId, companyId } = await requireAuth();
   const { error } = await db.from('profiles').update({ confirm_posture: posture }).eq('id', userId);
   if (error) {
     console.error('setConfirmPosture failed:', error.message);
-    redirect('/perfil?erro=confirmacao');
+    redirect('/perfil/definicoes?erro=confirmacao');
   }
 
   logEvent('profile.confirm_posture_changed', { companyId, userId, posture });
-  revalidatePath('/perfil');
-  redirect('/perfil?guardado=confirmacao');
+  revalidatePath('/perfil/definicoes');
+  redirect('/perfil/definicoes?guardado=confirmacao');
 }
 
 // ── appearance ──────────────────────────────────────────────────────────────
@@ -307,12 +307,12 @@ export async function setConfirmPosture(formData: FormData): Promise<void> {
 
 export async function setTheme(formData: FormData): Promise<void> {
   const theme = asTheme(String(formData.get('tema') ?? ''));
-  if (!theme) redirect('/perfil?erro=tema');
+  if (!theme) redirect('/perfil/definicoes?erro=tema');
 
   (await cookies()).set(THEME_COOKIE, theme, themeCookieOptions);
   logEvent('profile.theme_changed', { theme });
   // 'layout' scope, not the page: the class this sets lives on <html> in the
   // ROOT layout, above this route. Without it the change needs a hard reload.
   revalidatePath('/', 'layout');
-  redirect('/perfil?guardado=tema');
+  redirect('/perfil/definicoes?guardado=tema');
 }

@@ -284,7 +284,7 @@ export function TaskDetail({
                 is about to go out in his name — the same rule as the mic. */}
             <a
               className="block p-3 text-sm hover:bg-zinc-500/5"
-              href={`/?q=${encodeURIComponent(t.askCapoPrompt(task.title))}`}
+              href={`/chat?q=${encodeURIComponent(t.askCapoPrompt(task.title))}`}
             >
               {t.askCapo}
             </a>

@@ -10,7 +10,6 @@ import Markdown from '@capo/ui/markdown';
 import { Button } from '@capo/ui/button';
 import { Badge } from '@capo/ui/badge';
 import { Card } from '@capo/ui/card';
-import { AppBar } from '@/app/_ui/nav';
 import MicButton from './mic-button';
 import PullToRefresh from './pull-to-refresh';
 
@@ -220,6 +219,8 @@ export default function Chat({
   proposalStatuses = {},
   orphanedPending = [],
   initialInput = '',
+  autoVoice = false,
+  autoFocus = false,
 }: {
   initialMessages: UIMessage[];
   locale: Locale;
@@ -227,6 +228,13 @@ export default function Chat({
   orphanedPending?: PendingProposal[];
   /** Composer prefill from ?q= — e.g. "Ask Capo about this task" on /tarefas/[id]. */
   initialInput?: string;
+  /** ?voice=1 — the top bar's voice-note button. Arms the recorder on mount. */
+  autoVoice?: boolean;
+  /** ?compose=1 — the top bar's + button. Puts the cursor in the composer.
+   *  The + goes to the chat rather than a form ON PURPOSE: telling Capo about
+   *  a job IS how a task gets made here (create_task), so this is the product
+   *  rather than a workaround for a missing screen. */
+  autoFocus?: boolean;
 }) {
   const t = getCatalog(locale);
   // Prefill FILLS the composer, it never auto-sends — same rule as the mic
@@ -255,6 +263,19 @@ export default function Chat({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // ?compose=1 puts the cursor in the composer. Mount only: `autoFocus` comes
+  // from the URL the page was opened with, so re-focusing on any later render
+  // would yank the keyboard back up under a manager who had dismissed it.
+  // The caret goes to the END so a ?q= prefill can be typed onto rather than
+  // overwritten.
+  useEffect(() => {
+    if (!autoFocus) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [autoFocus]);
 
   // The front door of the product is "paste the quote". Grow the composer with
   // the text (to a third of the viewport) instead of hiding it in a one-line
@@ -330,7 +351,6 @@ export default function Chat({
 
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
-      <AppBar title={t.chat.title} subtitle={t.chat.tagline} />
 
       {/* Pull-to-refresh is present for consistency with the other tabs, but
           nearly inert here by construction: the thread is bottom-anchored, so
@@ -438,6 +458,7 @@ export default function Chat({
         {/* Transcription only fills the input — the manager reviews and sends. */}
         <MicButton
           disabled={busy}
+          autoStart={autoVoice}
           locale={locale}
           onTranscript={text => {
             transcriptRef.current = transcriptRef.current ? `${transcriptRef.current} ${text}` : text;
