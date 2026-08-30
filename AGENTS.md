@@ -202,6 +202,24 @@ and say what the alternative would be — he is the one who decides.
 - `scripts/agent-smoke.mts` — drives `handleInbound()` against a throwaway
   seeded tenant. Needs real API keys, so it is a manual gate
   (`pnpm agent-smoke`).
+- `scripts/migration-drift.mts` — asks the one question no other check asks:
+  does the LIVE database carry every migration this repo has written? It exists
+  because 0038 sat merged and unapplied for three weeks while the app half of
+  the same feature was live, and the symptom was not an error but a paused obra
+  quietly missing from the Obras screen. Reads the applied history through the
+  Management API (`supabase_migrations` is not a PostgREST-exposed schema, and
+  neither widening the exposed schemas nor adding a SECURITY DEFINER reader in
+  `public` is worth a permanent piece of tenant-facing surface for a check).
+  Needs `SUPABASE_ACCESS_TOKEN`, so it is a manual gate, not CI
+  (`pnpm migration-check`) — run it after any deploy carrying a migration:
+  merge → deploy → apply → check.
+  It is a SET comparison, deliberately: the applied order does not match the
+  repo's numbering and never has (0017 landed after 0018–0020, two streams of
+  work on one day), so a positional check would have cried wolf on a healthy
+  database from its first run. What it does NOT prove: that an applied
+  migration did what its file now says — a file edited after being applied
+  still reads as applied, which is why the never-edit-a-migration rule stays
+  load-bearing.
 
 Three language dials (do not collapse them into one):
 
@@ -1567,6 +1585,13 @@ Structural invariants (do not regress):
     approving again. The reverse order strips dates while the obra still looks
     active — work that has silently vanished from every day view with nothing
     saying why.
+  - **Shipping this feature was TWO events, not one, and only one of them was
+    automatic.** The app half deployed itself on merge; `0038` had to be applied
+    by hand and was not, for three weeks — so the board went on hiding paused
+    obras while every line of code above said it should not. That is the general
+    hazard, not a detail of this feature: a skipped migration presents as a
+    feature silently not working, never as an error. `pnpm migration-check` is
+    now the check that asks.
   Known and NOT changed: `risk_paused_job` still puts every open task on a
   paused obra under **Em risco**. For a deliberate holiday pause that is amber
   noise rather than information, but narrowing it is a product decision about

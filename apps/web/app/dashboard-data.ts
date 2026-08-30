@@ -302,9 +302,11 @@ export async function loadAssignableWorkers(
   return { date, workers };
 }
 
-// Options for the obra filter. Reads `jobs`, NOT dashboard_obras: that view is
-// `where status = 'active'`, so a paused obra — precisely the one whose tasks
-// show up under "Em risco" via risk_paused_job — could never be selected.
+// Options for the obra filter. Reads `jobs`, NOT dashboard_obras. Since 0038
+// that view carries active AND paused, so the paused case is covered there
+// now — but it still excludes `done`, and the filter has to be able to select
+// a finished obra. Reading the base table is what keeps every status
+// selectable regardless of what the view decides to show.
 export async function loadObraOptions({ db, companyId }: AuthContext): Promise<ObraOption[]> {
   const { data } = await db
     .from('jobs')
