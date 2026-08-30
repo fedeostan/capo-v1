@@ -261,6 +261,8 @@ eq('a short body is a single chunk', splitForWhatsApp('curto').length, 1);
 
 // ── button id codec ─────────────────────────────────────────────────────────
 const uuid = '3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33';
+// A second, distinct proposal id — the two-cards-in-one-turn fixture below.
+const uuid2 = '8c40be71-2d93-4a15-b6ef-70a1d5c93b42';
 const approveId = proposalButtonId('approve', uuid);
 eq('button ids round-trip (decision)', parseProposalButtonId(approveId)?.decision, 'approve');
 eq('button ids round-trip (proposal)', parseProposalButtonId(approveId)?.proposalId, uuid);
@@ -1653,14 +1655,28 @@ function toolOutput(output: unknown): UIMessage['parts'][number] {
   } as unknown as UIMessage['parts'][number];
 }
 
-// THE regression guard for defect 1, and for "cards must not pile up at the
-// end": a card has to land where it occurred in the turn.
+// THE regression guard for defect 1 (a card must be delivered, not dropped) and
+// for "a card travels alone": the manager gets ONE message for one decision.
+// The trailing prose these three fixtures drop is the "Got a card up for that,
+// boss — tap approve and you're set" second notification.
 const interleaved = planAssistantMessages([text('antes'), card('Crear tarea: «x».'), text('depois')], labels);
-eq('a card is delivered, not dropped', interleaved.length, 3);
-eq('prose before the card comes first', interleaved[0]?.kind, 'text');
-eq('the card keeps its position', interleaved[1]?.kind, 'interactive');
-eq('prose after the card comes last', interleaved[2]?.kind, 'text');
-eq('trailing prose is not merged into the card', interleaved[2]?.body, 'depois');
+eq('a card turn is exactly one message', interleaved.length, 1);
+eq('and that message is the card', interleaved[0]?.kind, 'interactive');
+eq('the card body is the rendered text', interleaved[0]?.body, 'Crear tarea: «x».');
+
+// Prose BEFORE the card goes too — which is why the planner has to know a card
+// is coming before it walks the parts, rather than discovering it in order.
+const leading = planAssistantMessages([text('antes'), card('Crear tarea: «x».')], labels);
+eq('prose ahead of a card is dropped as well', leading.length, 1);
+eq('leaving only the card', leading[0]?.kind, 'interactive');
+
+// Two cards in one turn: both survive, the prose around them does not.
+const twoCards = planAssistantMessages(
+  [text('antes'), card('Crear tarea: «a».', uuid), text('meio'), card('Crear tarea: «b».', uuid2), text('depois')],
+  labels,
+);
+eq('every card in the turn is delivered', twoCards.length, 2);
+check('and nothing but cards', twoCards.every(m => m.kind === 'interactive'));
 
 // A short card IS the interactive body, byte-identical — rendered_text is the
 // persisted approval artifact and must never be reworded or converted.
@@ -1684,8 +1700,16 @@ const huge = planAssistantMessages([card('L'.repeat(6000))], labels);
 eq('a 6k card splits across two texts + interactive', huge.length, 3);
 eq('the last message carries the buttons', huge[2]?.kind, 'interactive');
 
+// The over-limit branch emits `kind: 'text'` for the CARD's own words. That is
+// card content, not commentary, so it survives "a card travels alone" — while
+// the model's prose in the same turn still does not.
+const bigWithProse = planAssistantMessages([text('antes'), card('L'.repeat(2000)), text('depois')], labels);
+eq('an over-limit card still becomes text + interactive', bigWithProse.length, 2);
+eq('the card text survives (it is the card, not commentary)', bigWithProse[0]?.body, 'L'.repeat(2000));
+eq('and the buttons follow', bigWithProse[1]?.kind, 'interactive');
+
 // Meta's hard limits, asserted across every fixture.
-const all = [...interleaved, ...short, ...literal, ...big, ...huge];
+const all = [...interleaved, ...leading, ...twoCards, ...short, ...literal, ...big, ...huge, ...bigWithProse];
 check(
   'every interactive body fits Meta\'s 1024 limit',
   all.every(m => m.kind !== 'interactive' || m.body.length <= 1024),
@@ -1726,6 +1750,17 @@ const noise = planAssistantMessages(
 );
 eq('non-proposal parts yield only the prose', noise.length, 1);
 eq('and no tool chips leak into WhatsApp', noise[0]?.body, 'pronto');
+
+// THE auto-do path, pinned. A write the guard let through returns
+// `status: 'executed'` — not a card — so the manager gets the model's one-line
+// "done, boss" and nothing else. Silencing that would leave a change to a live
+// job with no trace in the conversation at all.
+const executed = planAssistantMessages(
+  [toolOutput({ status: 'executed', result: { id: uuid } }), text('Feito, chefe. Demolição para o Zé, prazo sexta.')],
+  labels,
+);
+eq('an executed write still gets its confirmation', executed.length, 1);
+eq('and it is the model\'s own line', executed[0]?.body, 'Feito, chefe. Demolição para o Zé, prazo sexta.');
 
 // The old sink returned early when there was no text, swallowing the card.
 const silent = planAssistantMessages([card('Crear tarea: «x».')], labels);

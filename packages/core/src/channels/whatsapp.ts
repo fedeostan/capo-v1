@@ -816,12 +816,40 @@ function asProposalOutput(value: unknown): { proposalId: string; renderedText: s
 // the 1024 boundary, splitting, markdown, button ids — lives here rather than
 // in the send loop, so scripts/whatsapp-check.mts can assert all of it without
 // credentials or a network.
+//
+// ── A CARD TRAVELS ALONE (issue: duplicate approval messages) ───────────────
+// A turn that raises one or more approval cards sends ONLY those cards: every
+// text part the model produced in that turn is dropped here. The card is a
+// self-contained block — the deterministic sentence plus the two buttons — and
+// the follow-up paragraph the model used to write after it ("Got a card up for
+// that, boss… tap approve and you're set") said the same thing a second time,
+// in worse words, in a second notification.
+//
+// This is the STRUCTURAL half of that rule. The prompt half lives in
+// agent/prompts/orchestration.ts, which now tells the model to say nothing when
+// a card is raised — but a prompt is a request, not a guarantee, and the model
+// will sometimes talk anyway. This function is what makes the guarantee.
+//
+// The cost is real and deliberate: if the model ever raises a card AND asks a
+// question in the same turn, the question is dropped and the manager sees only
+// the card. That combination is already ruled out by the prompt (ambiguity
+// about the SUBJECT is answered with a question INSTEAD of a card), and the
+// predictable rule was chosen over one that depends on where in the turn the
+// model happened to speak. If a future change makes that combination legitimate,
+// this is the function to revisit — not the prompt.
 export function planAssistantMessages(
   parts: UIMessage['parts'],
   labels: ApprovalLabels,
 ): WhatsAppOutbound[] {
   const out: WhatsAppOutbound[] = [];
   let prose: string[] = [];
+
+  // First pass. Whether the turn carries a card decides what happens to every
+  // text part, including the ones that came BEFORE the card — so it cannot be
+  // discovered while walking the parts in order.
+  const hasCard = parts.some(
+    part => isToolUIPart(part) && part.state === 'output-available' && asProposalOutput(part.output) !== null,
+  );
 
   // Convert THEN split: splitting first could cut a `**` pair across a chunk
   // boundary, leaving a stray asterisk the converter can no longer pair up.
@@ -836,19 +864,17 @@ export function planAssistantMessages(
 
   for (const part of parts) {
     if (part.type === 'text') {
-      if (part.text) prose.push(part.text);
+      // Dropped outright on a card turn — including prose the model wrote
+      // BEFORE the card, which is why hasCard had to be known up front.
+      if (part.text && !hasCard) prose.push(part.text);
       continue;
     }
     if (!isToolUIPart(part) || part.state !== 'output-available') continue;
     const proposal = asProposalOutput(part.output);
     if (!proposal) continue;
 
-    // Flush first so the card lands where it occurred in the turn, not after
-    // all the prose. Other tool outputs are ignored entirely: WhatsApp has no
-    // room for "✓ Tarefas consultadas" chips and the web thread already shows
-    // them.
-    flush();
-
+    // Other tool outputs are ignored entirely: WhatsApp has no room for
+    // "✓ Tarefas consultadas" chips and the web thread already shows them.
     const buttons = [
       {
         id: proposalButtonId('approve', proposal.proposalId),
@@ -877,6 +903,10 @@ export function planAssistantMessages(
     }
   }
 
+  // No-op on a card turn (nothing was ever buffered). On every other turn this
+  // is the ordinary prose send — including the auto-do path, where the model's
+  // one-line "done, boss" is the ONLY thing the manager receives, because an
+  // executed write returns `status: 'executed'` and asProposalOutput rejects it.
   flush();
   return out;
 }

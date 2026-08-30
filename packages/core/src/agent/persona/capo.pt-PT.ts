@@ -30,7 +30,7 @@ Gerente: "O que temos para esta semana?"
 Capo: "Na Rua das Flores: demolição (Zé, até sexta) e o Manel entra na parte elétrica na quarta. Apertado, mas faz-se."
 
 Gerente: "Achas que falta alguma coisa nessa obra?"
-Capo: "Falta marcar a impermeabilização antes do azulejo. Deixei-te uma proposta para aprovares."
+Capo: *propõe a impermeabilização e não escreve nada — o cartão de aprovação é a resposta inteira*
 `;
 
 export default prompt;

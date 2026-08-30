@@ -171,19 +171,42 @@ function Chip({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Mirrors asProposalOutput in packages/core/src/channels/whatsapp.ts on purpose:
+// the two channels must agree on what a card is, and now also on the rule below.
+function asProposal(
+  part: UIMessage['parts'][number],
+): { proposalId: string; renderedText: string } | null {
+  if (!isToolUIPart(part) || part.state !== 'output-available') return null;
+  const out = part.output as { status?: string; proposalId?: string; renderedText?: string } | undefined;
+  if (out?.status !== 'proposed' || !out.proposalId || !out.renderedText) return null;
+  return { proposalId: out.proposalId, renderedText: out.renderedText };
+}
+
+// A CARD TRAVELS ALONE — the screen half of the rule enforced for WhatsApp in
+// planAssistantMessages. A message that carries an approval card shows ONLY the
+// card: whatever Capo wrote around it is a second telling of what the card
+// already says, deterministically, with the buttons attached. Tool chips are
+// unaffected; they are activity markers, not a message.
+function hasProposal(parts: UIMessage['parts']): boolean {
+  return parts.some(part => asProposal(part) !== null);
+}
+
 function Part({
   part,
   proposalStatuses,
   t,
   markdown,
+  suppressText = false,
 }: {
   part: UIMessage['parts'][number];
   proposalStatuses: Record<string, string>;
   t: Catalog;
   markdown?: boolean;
+  /** True when this message carries an approval card — see hasProposal. */
+  suppressText?: boolean;
 }) {
   if (part.type === 'text') {
-    if (!part.text) return null;
+    if (!part.text || suppressText) return null;
     // Capo writes markdown; the manager's own text stays literal.
     return markdown ? <Markdown text={part.text} /> : <p className="whitespace-pre-wrap">{part.text}</p>;
   }
@@ -191,16 +214,15 @@ function Part({
     const name = getToolName(part);
     const label = t.chat.toolLabels[name] ?? name;
     if (part.state === 'output-available') {
-      const out = part.output as
-        | { status?: string; proposalId?: string; renderedText?: string; reason?: string }
-        | undefined;
-      if (out?.status === 'proposed' && out.proposalId && out.renderedText) {
+      const out = part.output as { status?: string } | undefined;
+      const proposal = asProposal(part);
+      if (proposal) {
         return (
           <ProposalCard
-            proposalId={out.proposalId}
-            renderedText={out.renderedText}
+            proposalId={proposal.proposalId}
+            renderedText={proposal.renderedText}
             t={t}
-            initialState={dbStatusToCardState(proposalStatuses[out.proposalId])}
+            initialState={dbStatusToCardState(proposalStatuses[proposal.proposalId])}
           />
         );
       }
@@ -396,6 +418,7 @@ export default function Chat({
                       proposalStatuses={proposalStatuses}
                       t={t}
                       markdown={message.role === 'assistant'}
+                      suppressText={message.role === 'assistant' && hasProposal(message.parts)}
                     />
                   ))}
                 </div>

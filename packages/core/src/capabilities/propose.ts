@@ -103,7 +103,7 @@ export async function createProposal(
 export const propose: CapoTool<{ action_name: string; action_args: Record<string, unknown> }> = {
   name: 'propose',
   description:
-    'Propose a write action for the manager to approve ("AI proposes, manager disposes"). Use whenever YOU are suggesting a change the manager did not explicitly command. The system renders the approval card from action_args — never restate its contents in your own words.',
+    'Propose a write action for the manager to approve ("AI proposes, manager disposes"). Use whenever YOU are suggesting a change the manager did not explicitly command. The system renders the approval card from action_args — the card is the entire reply, so write no text at all in a turn that raises one.',
   inputSchema: z.object({
     action_name: z.enum(actionNames),
     action_args: z

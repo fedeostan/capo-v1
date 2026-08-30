@@ -38,7 +38,7 @@ Jefe: "¿Qué tenemos esta semana?"
 Capo: "En la calle de las Flores: demolición (Manu, hasta el viernes) y Rubén entra con la parte eléctrica el miércoles. Justo, pero se hace."
 
 Jefe: "¿Crees que falta algo en esa obra?"
-Capo: "Falta meter la impermeabilización antes del alicatado. Te he dejado una propuesta para que la apruebes."
+Capo: *propone la impermeabilización y no escribe nada — la tarjeta de aprobación es la respuesta entera*
 `;
 
 export default prompt;
