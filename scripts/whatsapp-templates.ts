@@ -80,10 +80,30 @@ const CHECKIN_EXAMPLE: Record<Locale, [name: string, taskList: string]> = {
 // strictly better than every worker reading them every morning, and it heals
 // itself the moment the template is updated. See
 // docs/whatsapp-cloud-api-runbook.md.
+//
+// ── THE SHAPE, AND WHY IT IS THE MOST THIS TEMPLATE CAN BE ──────────────────
+// One paragraph is not scannable at 07:00 on a phone held in a work glove, so
+// the body now breaks into four lines: greeting, a labelled header, the list,
+// and the opt-out demoted to the end where it belongs. WhatsApp renders *text*
+// between single asterisks as bold, and the emoji is an anchor for the eye
+// rather than decoration.
+//
+// A bulleted list, one task per line, is IMPOSSIBLE here and always will be:
+// toTemplateParam() flattens every run of whitespace before {{2}} is sent
+// (Meta rejects newlines inside a parameter, error 132000), so {{2}} is one
+// line whatever we do. The per-line list exists on the free-form path instead —
+// renderWorkerFreeForm — which is what a worker who has ever written to us
+// receives.
+//
+// The full stop after {{2}} is deliberate and load-bearing: renderWorkerBriefing
+// appends reminders.languageHint to the parameter for a first-contact worker,
+// and that hint carries no full stop of its own precisely because the body
+// supplies one here. Remove it and a first-contact worker reads
+// "…mudar de idioma" mid-sentence; that is asserted in whatsapp-check.
 const BRIEFING_BODY: Record<Locale, string> = {
-  'pt-PT': 'Bom dia {{1}}. Hoje tens: {{2}}. Responde STOP para deixar de receber.',
-  'es-ES': 'Buenos días {{1}}. Hoy tienes: {{2}}. Responde STOP para dejar de recibir.',
-  'en-US': 'Good morning {{1}}. Today you have: {{2}}. Reply STOP to unsubscribe.',
+  'pt-PT': 'Bom dia {{1}} 👋\n\n*📋 Hoje tens:*\n{{2}}.\n\nResponde STOP para deixar de receber.',
+  'es-ES': 'Buenos días {{1}} 👋\n\n*📋 Hoy tienes:*\n{{2}}.\n\nResponde STOP para dejar de recibir.',
+  'en-US': 'Good morning {{1}} 👋\n\n*📋 Today you have:*\n{{2}}.\n\nReply STOP to unsubscribe.',
 };
 
 const BRIEFING_EXAMPLE: Record<Locale, [name: string, summary: string]> = {

@@ -1411,8 +1411,18 @@ export interface Catalog {
     //     single morning.
     /** Opens the free-form briefing. Followed by a blank line. */
     freeFormGreeting(name: string): string;
-    /** The line introducing the day's list, e.g. "Hoje tens 2 tarefas:". */
+    /** The line introducing the day's list, e.g. "*📋 Hoje tens 2 tarefas:*".
+     *  Carries its own bold markers and emoji: this is a free-form message, so
+     *  WhatsApp renders *text* between single asterisks as bold — the template
+     *  path cannot do this, which is exactly why the two read differently. */
     freeFormHeader(count: number): string;
+    /** The overdue warning closing the free-form briefing, e.g.
+     *  "⚠️ 3 tarefas em atraso". Rendered ONLY when something is actually late:
+     *  a cheerful "0 em atraso" every morning would train people to skip the
+     *  last line, and the day it matters they would skip it too. Counts the
+     *  same tasks already listed above with their own age, restated once at the
+     *  bottom so the size of the backlog is visible without counting. */
+    freeFormOverdue(count: number): string;
     /** A task's own description, indented under its title. Kept as a separate
      *  key so a dictionary can add punctuation or an em-dash of its own. */
     freeFormDescription(text: string): string;

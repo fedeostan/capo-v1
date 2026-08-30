@@ -296,12 +296,26 @@ If you are creating it from scratch instead:
 3. Approval usually takes minutes; the send fails with **132001** until it
    lands.
 
-#### ⚠ OUTSTANDING MANUAL STEP: the language line (issue #49)
+#### ⚠ OUTSTANDING MANUAL STEP: the language line (issue #49) and the new shape
 
-The repo's `BRIEFING_BODY` **no longer contains** "Responde PT, ES ou EN para
-mudar de idioma". The live templates still do, in all three locales, and no code
-in this repository can change that: Meta has no API to rewrite an approved
-name+language pair.
+Two changes are waiting on the same hand-edit, for the same reason: Meta has no
+API to rewrite an approved name+language pair, so `BRIEFING_BODY` can drift from
+what people actually receive.
+
+**The shape.** The body is now four lines — greeting, a bold labelled header,
+the task list, the opt-out at the end — instead of one paragraph with the
+opt-out trailing the tasks. A per-line bulleted list is not possible here and
+never will be: `toTemplateParam()` flattens whitespace before `{{2}}` is sent,
+because Meta rejects newlines inside a parameter (132000). The per-line list
+lives on the free-form path, which needs no approval and is already live.
+
+The full stop straight after `{{2}}` is load-bearing — it closes the sentence
+for a first-contact worker whose language hint is appended to that parameter.
+`pnpm whatsapp-check` fails if it goes missing.
+
+**The language line.** The repo's `BRIEFING_BODY` **no longer contains**
+"Responde PT, ES ou EN para mudar de idioma". The live templates still do, in
+all three locales.
 
 Why it moved: that sentence was on **every single briefing, to everybody,
 forever**, because a template body is fixed at approval time. It now lives in

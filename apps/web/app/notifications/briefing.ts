@@ -715,7 +715,23 @@ export function renderWorkerFreeForm(briefing: WorkerBriefing): string {
 
   if (ordered.length > shown.length) blocks.push(t.andMore(ordered.length - shown.length));
 
-  const body = [greeting, '', t.freeFormHeader(ordered.length), '', blocks.join('\n\n')].join('\n');
+  /**
+   * The overdue count, restated once at the bottom.
+   *
+   * Every one of these tasks is already in the list above, carrying its own
+   * "— atrasada 3d". This line is not new information, it is the SIZE of the
+   * problem: eleven late tasks read as eleven separate annotations scattered
+   * through a list, and as one number they read as a backlog. Counted over
+   * `ordered`, not `shown`, because the ones truncated away by MAX_LISTED are
+   * exactly the ones nobody is looking at.
+   *
+   * Absent when nothing is late. A "0 em atraso" line every morning is a line
+   * people learn to skip, and the morning it says 11 they would skip it too.
+   */
+  const overdue = ordered.filter(task => task.overdue).length;
+  const tail = overdue > 0 ? ['', t.freeFormOverdue(overdue)] : [];
+
+  const body = [greeting, '', t.freeFormHeader(ordered.length), '', blocks.join('\n\n'), ...tail].join('\n');
   // Clamped on the RAW body, not through clamp(), which flattens newlines —
   // the whole point of this renderer is that it may have them.
   return body.length <= FREE_FORM_MAX_CHARS

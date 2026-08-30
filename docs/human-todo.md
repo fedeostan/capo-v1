@@ -261,7 +261,65 @@ allow-list form, so it fired on every send to the only manager on the system
 
    No 2388023 this time — nothing exists yet, so every pair should submit. Repeat
    `status` until all PASS; approval is usually minutes.
-4. **Record consent for the crew.** Migration `0025` gates every proactive send
+4. **The briefing body changed shape — re-approve `capo_daily_briefing`.**
+   The morning message used to be one paragraph: greeting, tasks and the STOP
+   line all running together. It is now four lines — greeting, a bold labelled
+   header, the task list, and the opt-out at the end.
+
+   **If the three `capo_daily_briefing` pairs have NOT yet been created on
+   `715247827972608`** (item 3 above), there is nothing to do here: `create`
+   submits the new body and this item is already done.
+
+   **If they are already approved**, Meta has no API to change an approved
+   template, so `create` will answer `2388023 already exists` and the live
+   message will not change. Each locale has to be edited by hand in WhatsApp
+   Manager → Message Templates → `capo_daily_briefing` → Edit, and re-submitted.
+   Until then `pnpm whatsapp-template status` prints a body-drift WARN for each
+   one; that WARN is the reminder, and it clears itself on approval.
+
+   Paste exactly this, including the blank lines. `{{1}}` is the person's name
+   and `{{2}}` the one-line task list — the same two variables as before, in the
+   same order, so no sample values need changing:
+
+   **pt_PT**
+   ```
+   Bom dia {{1}} 👋
+
+   *📋 Hoje tens:*
+   {{2}}.
+
+   Responde STOP para deixar de receber.
+   ```
+
+   **es_ES**
+   ```
+   Buenos días {{1}} 👋
+
+   *📋 Hoy tienes:*
+   {{2}}.
+
+   Responde STOP para dejar de recibir.
+   ```
+
+   **en_US**
+   ```
+   Good morning {{1}} 👋
+
+   *📋 Today you have:*
+   {{2}}.
+
+   Reply STOP to unsubscribe.
+   ```
+
+   Two things to keep if you edit the wording yourself: the full stop straight
+   after `{{2}}`, which finishes the sentence for a first-contact worker whose
+   language hint is appended there, and the word STOP, which Meta requires a
+   utility template to state. `pnpm whatsapp-check` fails on both.
+
+   Nobody is blocked while this waits. A worker who has ever written to Capo
+   already receives the improved message today, because that one is free-form
+   text the code sends directly rather than a template Meta has to approve.
+5. **Record consent for the crew.** Migration `0025` gates every proactive send
    on an opt-in record and existing rows were deliberately not backfilled, so
    nothing is sent until you do. See §13.
 

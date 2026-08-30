@@ -1998,6 +1998,43 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
   check('a bare task invents no empty address line', !bare.includes('Morada'), bare);
   check('and no empty dependency line', !bare.includes('Depende de'), bare);
 
+  // THE SHAPE OF THE MORNING MESSAGE. The header is bold and anchored, and the
+  // overdue count is restated once at the bottom — but only when something is
+  // actually late, in every locale, and counting the tasks MAX_LISTED hid too.
+  for (const locale of LOCALES) {
+    const t = getCatalog(locale).reminders;
+    const late = (n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        task({ id: `${i}`, overdue: true, days_overdue: i + 1 }),
+      );
+
+    const onTime = renderWorkerFreeForm(briefing({ locale }));
+    check(`${locale} — the free-form header is bold`, onTime.includes(t.freeFormHeader(1)), onTime);
+    check(`${locale} — and carries no overdue line when nothing is late`, !onTime.includes('⚠️'), onTime);
+
+    const mixed = renderWorkerFreeForm(briefing({ locale, tasks: [task(), ...late(3)] }));
+    check(`${locale} — the overdue line counts the late tasks`, mixed.includes(t.freeFormOverdue(3)), mixed);
+    check(`${locale} — and closes the message`, mixed.trimEnd().endsWith(t.freeFormOverdue(3)), mixed);
+
+    // MAX_LISTED truncates the LIST, never the count: the tasks it hides are
+    // precisely the ones nobody would otherwise notice are late.
+    const many = renderWorkerFreeForm(briefing({ locale, tasks: late(8) }));
+    check(`${locale} — a truncated list still counts every late task`, many.includes(t.freeFormOverdue(8)), many);
+
+    // A worker with nothing today gets the greeting and workerNothing, and no
+    // header or warning invented around an empty list.
+    const idle = renderWorkerFreeForm(briefing({ locale, tasks: [] }));
+    check(`${locale} — an idle worker gets no overdue line`, !idle.includes('⚠️'), idle);
+  }
+
+  // The template path is a single flat line and must stay one: the bold header
+  // and the warning belong to the free-form message alone.
+  for (const locale of LOCALES) {
+    const [, summary] = renderWorkerBriefing(briefing({ locale, tasks: [task({ overdue: true, days_overdue: 3 })] }));
+    check(`${locale} — the template summary carries no bold marker`, !summary.includes('*'), summary);
+    check(`${locale} — nor the free-form warning line`, !summary.includes('⚠️'), summary);
+  }
+
   // COMPLAINT 2. Off by default, everywhere, in every locale.
   for (const locale of LOCALES) {
     const hint = getCatalog(locale).reminders.languageHint;
