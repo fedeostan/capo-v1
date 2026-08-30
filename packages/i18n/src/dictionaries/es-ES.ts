@@ -861,6 +861,17 @@ const dict: Catalog = {
     workerStillWorking: 'Sigo mirándolo — dame un momento más.',
   },
 
+  dia: {
+    title: 'Mi día — Capo',
+    dateLine: date => date,
+    todayHeading: count => (count === 1 ? 'Hoy tienes 1 tarea' : `Hoy tienes ${count} tareas`),
+    overdueHeading: count => (count === 1 ? 'Atrasada (1)' : `Atrasadas (${count})`),
+    nothing: 'No tienes nada previsto para hoy. Buen trabajo.',
+    askOnWhatsApp: '¿Alguna duda? Responde a Capo por WhatsApp.',
+    expiredTitle: 'Este enlace ha caducado',
+    expired:
+      'Los enlaces duran un día. Mañana por la mañana recibirás uno nuevo por WhatsApp, con la lista actualizada.',
+  },
   reminders: {
     templateLanguage: 'es_ES',
     taskSeparator: ' · ',
@@ -917,6 +928,7 @@ const dict: Catalog = {
     detailNothingMore: 'No tengo más detalles de esta tarea. Si te hace falta, habla con tu encargado.',
     detailOverdue: title => `${title} — retrasada`,
     languageHint: 'Responde PT, ES o EN para cambiar de idioma',
+    dayLinkCta: '🔗 Mira tu lista completa aquí:',
     welcomeWorker: company =>
       `${company} ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.`,
     welcomeManager: company =>

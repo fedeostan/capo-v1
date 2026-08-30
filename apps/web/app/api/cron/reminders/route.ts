@@ -32,6 +32,7 @@ import {
   withinSendWindow,
 } from '../../../../lib/cron';
 import { readCompanySchedules, scheduleFor } from '../../../../lib/schedule';
+import { dayLinkUrl, mintDayLinks } from '../../../../lib/day-link';
 import { recordCronRun } from '../../../notifications/cron-runs';
 import {
   loadCompanyBriefing,
@@ -376,6 +377,32 @@ export async function GET(request: NextRequest) {
         });
       }
 
+      // ── the crew day links (issue #114) ──────────────────────────────────
+      // One write and one read for the whole company, before the send loop, so
+      // a crew of twelve costs two round trips rather than twenty-four.
+      //
+      // Only for people this run can actually MESSAGE (`briefing.workers` is
+      // already partitioned by consent and reachability): a token minted for
+      // somebody nobody is allowed to write to is a live credential that no
+      // message will ever carry.
+      //
+      // Never throws — see mintDayLinks. A missing table, an unapplied
+      // migration or a revoked grant costs the CTA line and never the briefing,
+      // which is why this is not inside the try that guards the send.
+      //
+      // dry_run mints nothing: it is a read-only rehearsal and must stay one.
+      // The rendered body therefore shows no CTA in a dry run even though the
+      // real send would carry one — stated in the output rather than faked with
+      // a placeholder URL, because an operator checking "what will actually go
+      // out?" is worse served by a plausible lie than by an honest absence.
+      const dayLinks = dryRun
+        ? new Map<string, string>()
+        : await mintDayLinks(db, {
+            companyId: company.id,
+            workerIds: briefing.workers.map(w => w.workerId),
+            today,
+          });
+
       // ── workers ──────────────────────────────────────────────────────────
       for (const worker of briefing.workers) {
         // ── THE LANGUAGE LINE, ONCE (issue #49, complaint 2) ─────────────────
@@ -406,7 +433,10 @@ export async function GET(request: NextRequest) {
         // the dry-run report and the real send can never disagree about which
         // envelope this person was going to get.
         const freeForm = withinFreeFormWindow(worker.lastInboundAt, now);
-        const freeFormBody = renderWorkerFreeForm(worker);
+        const dayLink = dayLinks.get(worker.workerId);
+        const freeFormBody = renderWorkerFreeForm(worker, {
+          dayLinkUrl: dayLink ? dayLinkUrl(dayLink) : undefined,
+        });
 
         // ── the guided briefing (issue #49, complaint 3) ─────────────────────
         // The same body, with today's tasks behind native tappable rows. Null

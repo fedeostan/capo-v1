@@ -18,6 +18,13 @@ import { NextResponse, type NextRequest } from 'next/server';
 // where BOTH a fresh signup and a sign-in blocked on an unconfirmed email land
 // (issue #99). Gating it would bounce them to /login — the exact dead end the
 // screen exists to end.
+// /dia is the CREW DAY PAGE (issue #114) and is public by design: the reader is
+// a worker, and a worker has no account in `auth` at all — no email, no
+// user_id, nothing a session could be established for. Its authorisation is a
+// bearer token in the query string, resolved on the service role against
+// `worker_day_links`, which is deny-all to `anon` and `authenticated` alike.
+// Gating it here would bounce a crew member to a manager login screen they can
+// never get past. The page itself is force-dynamic and noindex/nofollow.
 // /robots.txt and /sitemap.xml are the crawler contract for the public landing
 // page. A crawler never holds a session, so gating them redirects it to /login
 // and the landing page is never indexed. That failure is SILENT in the only
@@ -40,6 +47,7 @@ const PUBLIC_PATHS = [
   '/auth/confirm',
   '/auth/callback',
   '/landing',
+  '/dia',
 ];
 
 function isPublic(pathname: string): boolean {

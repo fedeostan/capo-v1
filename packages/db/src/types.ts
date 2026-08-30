@@ -1959,6 +1959,54 @@ export type Database = {
           },
         ]
       }
+      worker_day_links: {
+        Row: {
+          company_id: string
+          created_at: string
+          expires_at: string
+          last_opened_at: string | null
+          link_date: string
+          opened_count: number
+          token: string
+          worker_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          expires_at: string
+          last_opened_at?: string | null
+          link_date: string
+          opened_count?: number
+          token: string
+          worker_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          expires_at?: string
+          last_opened_at?: string | null
+          link_date?: string
+          opened_count?: number
+          token?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_day_links_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_day_links_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workers: {
         Row: {
           active: boolean
@@ -2184,6 +2232,7 @@ export type Database = {
         Args: { p_event: string; p_id: string; p_status: string }
         Returns: undefined
       }
+      note_day_link_opened: { Args: { p_token: string }; Returns: undefined }
       lisbon_hour: { Args: never; Returns: number }
       lisbon_today: { Args: never; Returns: string }
       open_task_review: {

@@ -200,6 +200,96 @@ export interface CompanyBriefing {
 const BRIEFABLE = new Set(['pending', 'in_progress']);
 
 /**
+ * One task_board row, narrowed to what the fan-out actually touches. Structural
+ * rather than the generated view row for the same reason AddressableCrewRow is:
+ * the same function has to serve a `select('*')` whose columns lead or lag the
+ * live schema.
+ */
+export type FanOutRow = Record<string, unknown> & {
+  id?: string | null;
+  title?: string | null;
+  assignee_worker_id?: string | null;
+  worker_name?: string | null;
+};
+
+/**
+ * Turn task_board rows into "whose day is this on", one entry per person.
+ *
+ * ── ONE ROW, READ ONCE, RENDERED FOR EVERYBODY ON IT (issue #44) ───────────
+ * `collaborator_*` come from task_board's 0035 columns, index-aligned by
+ * construction — the view aggregates both with the same ORDER BY. Reading them
+ * here rather than in a second query is what keeps "who is on this task" a
+ * single definition in SQL, exactly like "what is on today".
+ *
+ * ── WHY IT IS ITS OWN FUNCTION (issue #114) ────────────────────────────────
+ * The crew day page (/dia) shows the same tasks the 07:00 message names, plus
+ * the overdue ones the message structurally cannot carry. Two fan-outs would
+ * mean a helper could read "a ajudar Miguel" in WhatsApp and "em equipa" on the
+ * page, with no way to tell which was right — the same failure two renderers of
+ * one event would cause, and the reason taskHeadline is shared too.
+ *
+ * PURE and row-shape agnostic: it does no filtering of its own, so the CALLER
+ * decides which bucket it is building (today's briefable work, or everything
+ * overdue). That split is the whole reason the page can differ from the message
+ * without either of them re-deriving what a task is.
+ */
+export function fanOutTasks(rows: readonly FanOutRow[]): Map<string, BriefingTask[]> {
+  const byWorker = new Map<string, BriefingTask[]>();
+
+  for (const row of rows) {
+    if (!row.id || !row.title) continue;
+
+    const collaborators = readCollaborators(row);
+    const leadId = row.assignee_worker_id;
+    // A row with neither a lead nor a collaborator reaches nobody. Skipped
+    // BEFORE the shared object is built, so an unassigned task costs nothing.
+    if (!leadId && collaborators.length === 0) continue;
+
+    // Built once and shared by reference across every reader of this task. That
+    // is not a micro-optimisation, it is the proof issue #44 asks for: there is
+    // exactly one `materials` array per task in this whole function, so two
+    // people on one task cannot possibly produce two van-loads. `role` and the
+    // two name fields are the ONLY things that differ per reader, and they are
+    // spread on below.
+    const shared = {
+      id: row.id,
+      title: row.title,
+      job_name: readOptionalText(row, 'job_name'),
+      overdue: row.overdue === true,
+      days_overdue: typeof row.days_overdue === 'number' ? row.days_overdue : 0,
+      description: readOptionalText(row, 'description'),
+      // `materials` is a Postgres text[]; null and an empty array mean the same
+      // thing to a reader, so they are collapsed here rather than at each use.
+      materials: Array.isArray(row.materials) ? row.materials.filter(Boolean) : [],
+      // Read through an index for the same reason readLastInboundAt is: 0027
+      // APPENDS this column to the view, the generated types lead the live
+      // schema, and a deploy landing first must drop the address line rather
+      // than fail the whole morning read.
+      job_address: readOptionalText(row, 'job_address'),
+      waiting_on: Array.isArray(row.depends_on_titles) ? row.depends_on_titles.filter(Boolean) : [],
+      awaiting_review: row.status === 'pending_review',
+      due_date: readOptionalText(row, 'due_date'),
+    };
+
+    const push = (workerId: string, task: BriefingTask) => {
+      byWorker.set(workerId, [...(byWorker.get(workerId) ?? []), task]);
+    };
+
+    if (leadId) {
+      push(leadId, { ...shared, role: 'lead', collaborator_names: collaborators.map(c => c.name) });
+    }
+    for (const collaborator of collaborators) {
+      // `worker_name` is the LEAD's name on this row — task_board joins workers
+      // on assignee_worker_id (0013:38). Null when the task has no lead, which
+      // the copy handles by naming nobody.
+      push(collaborator.id, { ...shared, role: 'collaborator', lead_name: row.worker_name ?? null });
+    }
+  }
+
+  return byWorker;
+}
+
+/**
  * Everything the cron needs for one company, in one read.
  *
  * Reads `task_board` and nothing else, per the house rule that "what is on
@@ -237,63 +327,7 @@ export async function loadCompanyBriefing(
 
   const open = rows ?? [];
   const todayRows = open.filter(r => r.active_today === true && BRIEFABLE.has(r.status ?? ''));
-
-  const byWorker = new Map<string, BriefingTask[]>();
-  for (const row of todayRows) {
-    if (!row.id || !row.title) continue;
-
-    // ── the fan-out (issue #44) ───────────────────────────────────────────
-    // ONE row, read once, rendered for everybody on it. `collaborator_*` come
-    // from task_board's 0035 columns, index-aligned by construction — the view
-    // aggregates both with the same ORDER BY. Reading them here rather than in
-    // a second query is what keeps "who is on this task" a single definition in
-    // SQL, exactly like "what is on today".
-    const collaborators = readCollaborators(row);
-    const leadId = row.assignee_worker_id;
-    // A row with neither a lead nor a collaborator reaches nobody. Skipped
-    // BEFORE the shared object is built, so an unassigned task costs nothing.
-    if (!leadId && collaborators.length === 0) continue;
-
-    // Built once and shared by reference across every reader of this task. That
-    // is not a micro-optimisation, it is the proof the issue asks for: there is
-    // exactly one `materials` array per task in this whole function, so two
-    // people on one task cannot possibly produce two van-loads. `role` and the
-    // two name fields are the ONLY things that differ per reader, and they are
-    // spread on below.
-    const shared = {
-      id: row.id,
-      title: row.title,
-      job_name: row.job_name,
-      overdue: row.overdue === true,
-      days_overdue: row.days_overdue ?? 0,
-      description: row.description,
-      // `materials` is a Postgres text[]; null and an empty array mean the same
-      // thing to a reader, so they are collapsed here rather than at each use.
-      materials: Array.isArray(row.materials) ? row.materials.filter(Boolean) : [],
-      // Read through an index for the same reason readLastInboundAt is: 0027
-      // APPENDS this column to the view, the generated types lead the live
-      // schema, and a deploy landing first must drop the address line rather
-      // than fail the whole morning read.
-      job_address: readOptionalText(row, 'job_address'),
-      waiting_on: Array.isArray(row.depends_on_titles) ? row.depends_on_titles.filter(Boolean) : [],
-      awaiting_review: row.status === 'pending_review',
-      due_date: row.due_date ?? null,
-    };
-
-    const push = (workerId: string, task: BriefingTask) => {
-      byWorker.set(workerId, [...(byWorker.get(workerId) ?? []), task]);
-    };
-
-    if (leadId) {
-      push(leadId, { ...shared, role: 'lead', collaborator_names: collaborators.map(c => c.name) });
-    }
-    for (const collaborator of collaborators) {
-      // `worker_name` is the LEAD's name on this row — task_board joins workers
-      // on assignee_worker_id (0013:38). Null when the task has no lead, which
-      // the copy handles by naming nobody.
-      push(collaborator.id, { ...shared, role: 'collaborator', lead_name: row.worker_name });
-    }
-  }
+  const byWorker = fanOutTasks(todayRows);
 
   const { messageable: consenting, excludedNoConsent, excludedUnreachable, excludedInactive } =
     partitionCrew(crew ?? []);
@@ -694,11 +728,55 @@ export function clamp(value: string, max: number): string {
  * van: where first (you cannot start anywhere else), then what, then what to
  * bring, then what might stop you.
  */
-export function renderWorkerFreeForm(briefing: WorkerBriefing): string {
+export interface WorkerFreeFormOptions {
+  /**
+   * The crew day page's URL for this person, when one was minted (issue #114).
+   *
+   * ── WHY IT IS ONLY EVER ON THIS PATH ───────────────────────────────────────
+   * `toTemplateParam` flattens all whitespace, and `capo_daily_briefing` is
+   * pinned to exactly {{1}} and {{2}} with no button component — so a template
+   * cannot carry a CTA line at all without a new template and a manual Meta
+   * approval. Free-form text has none of those constraints.
+   *
+   * The consequence is real and is NOT hidden: a crew member outside the
+   * 23-hour free-form window gets the paid template and no link that morning.
+   * They are also, by definition, the person who has never written to Capo — so
+   * the link arrives the first time they do. Making it reachable from the
+   * template path is its own follow-up, not a thing to fake here.
+   *
+   * Optional, and absent means "render exactly what this function rendered
+   * before this feature existed": mintDayLinks swallows its own failures, so a
+   * missing table or a revoked grant costs the line and never the briefing.
+   */
+  dayLinkUrl?: string;
+}
+
+export function renderWorkerFreeForm(
+  briefing: WorkerBriefing,
+  options: WorkerFreeFormOptions = {},
+): string {
   const t = getCatalog(briefing.locale).reminders;
   const greeting = t.freeFormGreeting(briefing.name);
+  /**
+   * Two lines, because that is how a link reads on a phone: a sentence saying
+   * what is behind it, then the bare URL on its own line so WhatsApp renders it
+   * as a preview and the tap target is the whole line.
+   *
+   * Reserved from the character budget BEFORE the blocks are laid out, never
+   * appended after the clamp. Appending it after would let a rich day truncate
+   * the URL into a dead string — a link that looks like a link, goes nowhere,
+   * and only ever does so for the busiest people on the crew.
+   */
+  const cta = options.dayLinkUrl ? `${t.dayLinkCta}\n${options.dayLinkUrl}` : null;
+  const withCta = (body: string) => (cta ? `${body}\n\n${cta}` : body);
+  // What the blocks may occupy once the CTA and its two blank lines are set
+  // aside. Floored at 0 rather than at some fraction of the cap: a floor that
+  // reserved room for the body would let CTA + body exceed FREE_FORM_MAX_CHARS
+  // together, which is the one property this arithmetic exists to guarantee.
+  // pnpm whatsapp-check asserts the total in all three locales.
+  const bodyBudget = Math.max(FREE_FORM_MAX_CHARS - (cta ? cta.length + 2 : 0), 0);
 
-  if (briefing.tasks.length === 0) return `${greeting}\n\n${t.workerNothing}`;
+  if (briefing.tasks.length === 0) return withCta(`${greeting}\n\n${t.workerNothing}`);
 
   // Same ordering and same cap as the template path, deliberately: the two
   // envelopes must not disagree about which tasks are "today's", only about how
@@ -717,10 +795,12 @@ export function renderWorkerFreeForm(briefing: WorkerBriefing): string {
 
   const body = [greeting, '', t.freeFormHeader(ordered.length), '', blocks.join('\n\n')].join('\n');
   // Clamped on the RAW body, not through clamp(), which flattens newlines —
-  // the whole point of this renderer is that it may have them.
-  return body.length <= FREE_FORM_MAX_CHARS
-    ? body
-    : `${body.slice(0, FREE_FORM_MAX_CHARS - 1).trimEnd()}…`;
+  // the whole point of this renderer is that it may have them. Clamped against
+  // bodyBudget rather than FREE_FORM_MAX_CHARS so the CTA appended below is
+  // inside the cap rather than pushing the message past it.
+  const clamped =
+    body.length <= bodyBudget ? body : `${body.slice(0, Math.max(bodyBudget - 1, 0)).trimEnd()}…`;
+  return withCta(clamped);
 }
 
 /**

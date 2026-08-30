@@ -860,6 +860,17 @@ const dict: Catalog = {
     workerStillWorking: "Still looking into this — one more moment.",
   },
 
+  dia: {
+    title: 'My day — Capo',
+    dateLine: date => date,
+    todayHeading: count => (count === 1 ? 'You have 1 task today' : `You have ${count} tasks today`),
+    overdueHeading: count => (count === 1 ? 'Overdue (1)' : `Overdue (${count})`),
+    nothing: 'Nothing scheduled for you today. Nice work.',
+    askOnWhatsApp: 'Any questions? Reply to Capo on WhatsApp.',
+    expiredTitle: 'This link has expired',
+    expired:
+      'Links last one day. You will get a fresh one on WhatsApp tomorrow morning, with an up-to-date list.',
+  },
   reminders: {
     templateLanguage: 'en_US',
     taskSeparator: ' · ',
@@ -916,6 +927,7 @@ const dict: Catalog = {
     detailNothingMore: "I don't have any more detail on this one. Ask your foreman if you need it.",
     detailOverdue: title => `${title} — overdue`,
     languageHint: 'Reply PT, ES or EN to change language',
+    dayLinkCta: '🔗 See your full list here:',
     welcomeWorker: company =>
       `${company} added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.`,
     welcomeManager: company =>
