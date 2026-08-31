@@ -33,6 +33,60 @@ export function getProposableTool(name: string): CapoTool | undefined {
   return proposable.find(t => t.name === name);
 }
 
+// ── the duplicate refusal (issue #124) ──────────────────────────────────────
+//
+// One request, one card. On 14 Aug two racing turns filed the same three
+// add_worker cards twice, six seconds apart, the arguments differing only in
+// the capitalisation of `trade` — independently regenerated, not replayed.
+// #125's turn lock removes that mechanism; this is the defence in depth behind
+// it: a lease can expire mid-turn, and a future code path could double-file
+// without ever racing. It lives HERE because every proposal insert in the
+// codebase goes through createProposalForCompany, so no caller can forget it.
+//
+// The twin test is deliberately narrow: same conversation, same action, same
+// NORMALIZED args, against still-`pending` rows only. Normalization is a
+// deep-stable serialization — object keys sorted, strings case-folded —
+// because the live evidence shows regenerated args differ in case and nothing
+// else. A different phone, date, id, extra or missing field is a DIFFERENT
+// proposal and must never be swallowed; arrays stay order-sensitive for the
+// same reason. Erring toward a second card is the safe direction.
+//
+// No unique constraint stands behind this (it would need a migration and a
+// canonical-args column), so two turns racing past the SELECT can still file
+// twins. That is #125's job; this check stops the sequential repeat.
+function canonicalArgs(value: unknown): unknown {
+  if (typeof value === 'string') return value.toLowerCase();
+  if (Array.isArray(value)) return value.map(canonicalArgs);
+  if (value !== null && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort()) {
+      // JSON has no undefined: treat an explicitly-undefined key as absent so
+      // zod output and its jsonb round-trip compare equal.
+      if (source[key] !== undefined) out[key] = canonicalArgs(source[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Stable case-insensitive fingerprint of a proposal's args. Exported for
+ *  scripts/guard-check.mts, which pins what may and may not count as "the
+ *  same card". */
+export function proposalArgsKey(args: unknown): string {
+  return JSON.stringify(canonicalArgs(args));
+}
+
+// Machine-facing, like the guard's reasons: fed back to the model, never shown
+// to a manager. It must read as a settled state, not a failure — a model that
+// reads this as an error will retry, and the retry is the bug.
+const ALREADY_PENDING_MESSAGE =
+  'Not created: an identical approval card already exists in this conversation and is WAITING for the manager to approve or reject it. Nothing failed — do not retry this call and do not raise the card again. Reply with one short line telling the manager the change is already waiting for their decision.';
+
+export type CreateProposalResult =
+  | { status: 'created'; proposalId: string; renderedText: string }
+  | { status: 'already_pending'; proposalId: string; message: string };
+
 /** Everything creating a proposal needs that is NOT a live conversation turn. */
 export interface ProposalTarget {
   companyId: string;
@@ -54,13 +108,43 @@ export async function createProposalForCompany(
   target: ProposalTarget,
   actionName: string,
   args: unknown,
-): Promise<{ proposalId: string; renderedText: string }> {
+): Promise<CreateProposalResult> {
   const action = getProposableTool(actionName);
   if (!action) throw new Error(`Unknown proposable action: ${actionName}`);
 
   const parsed = action.inputSchema.safeParse(args);
   if (!parsed.success) {
     throw new Error(`Invalid args for ${actionName}: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+
+  // The duplicate refusal (see the top of this file). Before the render on
+  // purpose — a refused card should not pay the render's lookups. Fails OPEN:
+  // a broken read here may cost a duplicate card, never the card the manager
+  // is waiting for. An orphaned card (null conversation) is never deduped —
+  // "same conversation" is the boundary the refusal is defined on.
+  if (target.conversationId) {
+    try {
+      const { data: twins, error } = await db
+        .from('proposals')
+        .select('id, action_args')
+        .eq('company_id', target.companyId)
+        .eq('conversation_id', target.conversationId)
+        .eq('action_name', actionName)
+        .eq('status', 'pending');
+      if (error) throw new Error(error.message);
+      const key = proposalArgsKey(parsed.data);
+      const twin = (twins ?? []).find(row => proposalArgsKey(row.action_args) === key);
+      if (twin) return { status: 'already_pending', proposalId: twin.id, message: ALREADY_PENDING_MESSAGE };
+    } catch (err) {
+      console.warn(
+        JSON.stringify({
+          evt: 'proposal.dedup_check_failed',
+          companyId: target.companyId,
+          actionName,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
   }
 
   const renderedText = await renderProposal(db, target.companyId, actionName, parsed.data, target.locale);
@@ -78,14 +162,14 @@ export async function createProposalForCompany(
     .single();
   if (error) throw new Error(`Failed to store proposal: ${error.message}`);
 
-  return { proposalId: data.id, renderedText };
+  return { status: 'created', proposalId: data.id, renderedText };
 }
 
 export async function createProposal(
   ctx: ToolContext,
   actionName: string,
   args: unknown,
-): Promise<{ proposalId: string; renderedText: string }> {
+): Promise<CreateProposalResult> {
   return createProposalForCompany(
     ctx.db,
     {
@@ -112,8 +196,9 @@ export const propose: CapoTool<{ action_name: string; action_args: Record<string
   }),
   async execute(input, ctx) {
     try {
-      const { proposalId, renderedText } = await createProposal(ctx, input.action_name, input.action_args);
-      return { status: 'proposed' as const, proposalId, renderedText };
+      const created = await createProposal(ctx, input.action_name, input.action_args);
+      if (created.status === 'already_pending') return created;
+      return { status: 'proposed' as const, proposalId: created.proposalId, renderedText: created.renderedText };
     } catch (e) {
       // Return the failure to the model so it can fix the args (e.g. wrong id).
       return { status: 'error' as const, message: e instanceof Error ? e.message : String(e) };

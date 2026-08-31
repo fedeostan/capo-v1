@@ -44,7 +44,7 @@ export type GuardDecision =
   | { act: 'propose'; reason: string };
 
 const NO_MATCH_REASON =
-  'No verbatim manager authorization matched their recent messages — downgraded to a proposal awaiting approval.';
+  'No verbatim manager authorization matched their recent messages — downgraded to a proposal awaiting approval. The card is now in front of the manager: do not retry the write, with or without a better quote — a direct write now would duplicate whatever the manager approves on the card.';
 
 const ALWAYS_ASK_REASON =
   'This manager has confirmation set to always-ask, so every change is shown as an approval card before it happens — even one they just asked for in so many words. An approval card is waiting for them. This is their own setting, not a problem with the request: say nothing at all (the card is the whole reply), do not apologise for it, and do not retry the write.';
@@ -95,6 +95,12 @@ export async function runGuarded(
     return { status: 'executed', result };
   }
 
-  const { proposalId, renderedText } = await createProposal(ctx, capoTool.name, args);
-  return { status: 'proposed', proposalId, renderedText, reason: decision.reason };
+  const created = await createProposal(ctx, capoTool.name, args);
+  // The identical card is already pending (issue #124): hand that straight to
+  // the model — its message reads as settled, never as an error to retry. It
+  // must NOT go out as 'proposed': that literal is what both channels render a
+  // card from, and the point of the refusal is that no second card reaches the
+  // manager.
+  if (created.status === 'already_pending') return created;
+  return { status: 'proposed', proposalId: created.proposalId, renderedText: created.renderedText, reason: decision.reason };
 }

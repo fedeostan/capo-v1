@@ -49,13 +49,14 @@ export const translateCompanyData: CapoTool<z.infer<typeof translateCompanyDataI
     }
 
     try {
-      const { proposalId, renderedText } = await createProposal(ctx, 'apply_company_translation', {
+      const created = await createProposal(ctx, 'apply_company_translation', {
         from_language: ctx.locales.company,
         to_language: input.target_language,
       });
+      if (created.status === 'already_pending') return created;
       // Same shape as `propose` returns, so chat.tsx renders it as a
       // ProposalCard with no client-side change at all.
-      return { status: 'proposed' as const, proposalId, renderedText };
+      return { status: 'proposed' as const, proposalId: created.proposalId, renderedText: created.renderedText };
     } catch (e) {
       return { status: 'error' as const, message: e instanceof Error ? e.message : String(e) };
     }

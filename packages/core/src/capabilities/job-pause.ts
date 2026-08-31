@@ -95,7 +95,7 @@ export const pauseJob: CapoTool<z.infer<typeof pauseJobInput>> = {
     }
 
     try {
-      const { proposalId, renderedText } = await createProposal(ctx, 'apply_job_pause', {
+      const created = await createProposal(ctx, 'apply_job_pause', {
         job_id: input.job_id,
         changes: dated.map(task => ({
           task_id: task.id,
@@ -103,7 +103,8 @@ export const pauseJob: CapoTool<z.infer<typeof pauseJobInput>> = {
           from_due_date: task.due_date,
         })),
       });
-      return { status: 'proposed' as const, proposalId, renderedText };
+      if (created.status === 'already_pending') return created;
+      return { status: 'proposed' as const, proposalId: created.proposalId, renderedText: created.renderedText };
     } catch (e) {
       return { status: 'error' as const, message: e instanceof Error ? e.message : String(e) };
     }
