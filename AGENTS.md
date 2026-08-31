@@ -344,9 +344,16 @@ Structural invariants (do not regress):
     app and on `resolveManager` is every manager becoming an unknown WhatsApp
     sender. `coerceConfirmPosture` reads an absent field as `always_ask`.
   - Known and NOT fixed: nothing expires `proposals`. The `'expired'` status has
-    existed since `0001` and is never written. With always-ask as the default,
-    `status='pending'` accumulates much faster, and the chat page's unbounded
-    `select` over `proposals` stacks every stale card above the conversation.
+    existed since `0001` and is never written by any code path. With always-ask
+    as the default, `status='pending'` accumulates much faster. #124 blunted the
+    two sharpest edges — `createProposalForCompany` refuses a card whose
+    NORMALIZED args (sorted keys, case-folded strings, nothing else) match one
+    already `pending` on the same conversation, answering the model
+    `already_pending` instead of `proposed` so neither channel renders a second
+    card; and the chat page stops stacking pending cards older than 14 days
+    above the conversation (`STALE_CARD_DISPLAY_DAYS`, display-only: the rows
+    stay `pending` and resolvable by id) — but a real expiry system remains
+    open.
 - **Billing runs on the LIVE Stripe account, and the webhook URL is the `www`
   host** (issue #85, cut over 2026-08-14). Live account `acct_1TtrERLIxn6Jugmn`,
   price `price_1U4J91LIxn6JugmnvZc5XN12` (€45/month EUR), endpoint
@@ -804,11 +811,26 @@ Structural invariants (do not regress):
     `/api/cron/push`.
   - **Idempotency is `notification_log`, with the DATE removed.** `0033` adds a
     partial unique index `(worker_id, profile_id) nulls not distinct where kind
-    = 'welcome'` — the daily lock's shape minus `notification_date`. The
+    = 'welcome'` — the daily lock's shape minus `notification_date` — and `0041`
+    narrows it with `and status <> 'failed'` (issue #121): a FAILED welcome
+    releases its once-ever claim so the sweep can try again, while `sent`,
+    `skipped` and `pending` rows block forever. 0033's backfill rows are all
+    `skipped`, so the mass-mail protection survives the narrowing BY
+    CONSTRUCTION. The
     already-welcomed read in `loadPendingWelcomes` is an OPTIMISATION so the
     sweep does not attempt a doomed INSERT per person per run; the INDEX is the
     lock, through `claimNotification`'s 23505 → null. Do not trust the read and
-    do not add app-level state beside it.
+    do not add app-level state beside it — with ONE exception, which is #121's
+    retry policy (`apps/web/lib/welcome-retry.ts`, pinned by `pnpm
+    whatsapp-check`): at most `WELCOME_MAX_ATTEMPTS` (3) failed rows per
+    person, only while the NEWEST failure's Meta code classifies as retryable
+    (132001 — template missing, a config error that becomes fixable; an
+    invalid recipient and anything unclassifiable are permanent, failing
+    CLOSED because a retry is a paid template), and at most one attempt per
+    Lisbon day. The per-day bound is also 0016's daily unique key, but the CAP
+    and the classification exist nowhere in the schema — that filter is
+    policy, not optimisation, and removing it retries a dead number daily
+    forever.
   - **The `0033` backfill was mandatory**, exactly as `0026`'s `pushed_at` one
     was: it marks every worker and profile that existed when it was applied as
     `skipped`, or the first deploy introduces Capo by paid template to everybody

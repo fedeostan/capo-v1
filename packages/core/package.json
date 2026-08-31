@@ -23,6 +23,7 @@
     "./capabilities/types": "./src/capabilities/types.ts",
     "./capabilities/propose": "./src/capabilities/propose.ts",
     "./capabilities/plan": "./src/capabilities/plan.ts",
+    "./capabilities/plan-quality": "./src/capabilities/plan-quality.ts",
     "./capabilities/workdays": "./src/capabilities/workdays.ts",
     "./capabilities/collaborators": "./src/capabilities/collaborators.ts",
     "./capabilities/reschedule": "./src/capabilities/reschedule.ts",

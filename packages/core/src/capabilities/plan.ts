@@ -207,11 +207,12 @@ export const generatePlan: CapoTool<z.infer<typeof generatePlanInput>> = {
     const scheduled = scheduleTasks(relativePlan.tasks, input.start_date);
 
     try {
-      const { proposalId, renderedText } = await createProposal(ctx, 'apply_plan', {
+      const created = await createProposal(ctx, 'apply_plan', {
         job_id: input.job_id,
         tasks: scheduled,
       });
-      return { status: 'proposed' as const, proposalId, renderedText };
+      if (created.status === 'already_pending') return created;
+      return { status: 'proposed' as const, proposalId: created.proposalId, renderedText: created.renderedText };
     } catch (e) {
       return { status: 'error' as const, message: e instanceof Error ? e.message : String(e) };
     }

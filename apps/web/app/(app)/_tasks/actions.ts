@@ -187,6 +187,17 @@ async function cascadeReschedule(ctx: AuthContext, taskId: string, jobId: string
       logEvent('dashboard.reschedule_proposed', { companyId, taskId, jobId, proposalId: outcome.proposalId });
       // The card renders on the chat page as a pending proposal.
       revalidatePath('/');
+    } else if (outcome.status === 'already_pending') {
+      // Issue #124: the identical cascade card is already in the thread,
+      // unanswered — e.g. this task was completed, reopened, and completed
+      // again. The existing card is the pending action; nothing new to place.
+      logEvent('dashboard.reschedule_skipped', {
+        companyId,
+        taskId,
+        jobId,
+        reason: 'already_pending',
+        proposalId: outcome.proposalId,
+      });
     } else {
       // Logged rather than swallowed: "no card appeared" is otherwise an
       // unfalsifiable bug report. The dominant reason is no_dependents — a job
