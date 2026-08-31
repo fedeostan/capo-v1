@@ -68,6 +68,19 @@ export function buildLanguageDirective(locales: LocaleContext): string {
     '- `manager_instruction` is the ONE EXCEPTION, and it is absolute: it is the manager\'s own words, copied character-for-character in whatever language he used. NEVER translate, normalize, correct, or paraphrase it. A translated quote fails the authorization check and silently downgrades a direct command into an approval card. This holds most of all when the conversation is ABOUT translation.',
     '- The knowledge base is Portuguese, and its full-text ranking only works in Portuguese. ALWAYS write the `search_knowledge` query in Portuguese no matter what language the conversation is in, then translate the excerpt when you cite it.',
     `- Approval cards are rendered deterministically by the system in ${NAMES[locales.user]}. Never restate a card in your own words.`,
+    // Appended, per the rule above. This is the language-facing half of "a card
+    // travels alone" (agent/prompts/orchestration.ts): a card turn is silent in
+    // EVERY language, so a model that stops writing the announcement in English
+    // but keeps writing it in Portuguese is still wrong.
+    //
+    // ⚠ It also overrides the language-drift nudge above for card turns. That
+    // nudge asks for one sentence at the end of a reply that raises a card —
+    // which planAssistantMessages and the web chat now discard along with
+    // everything else the model wrote in that turn. The nudge was never the
+    // guarantee (see its own comment: the deterministic notice on the Perfil and
+    // language screens is), so it degrades to "said on the next write that is
+    // not a card" rather than to silence about the drift.
+    '- A card is the entire message: when a tool returns `status: "proposed"`, write no text at all in that turn, in any language.',
   );
 
   return lines.join('\n');

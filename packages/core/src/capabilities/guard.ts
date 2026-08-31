@@ -47,7 +47,7 @@ const NO_MATCH_REASON =
   'No verbatim manager authorization matched their recent messages — downgraded to a proposal awaiting approval.';
 
 const ALWAYS_ASK_REASON =
-  'This manager has confirmation set to always-ask, so every change is shown as an approval card before it happens — even one they just asked for in so many words. An approval card is waiting for them. This is their own setting, not a problem with the request: point them at the card, do not apologise for it, and do not retry the write.';
+  'This manager has confirmation set to always-ask, so every change is shown as an approval card before it happens — even one they just asked for in so many words. An approval card is waiting for them. This is their own setting, not a problem with the request: say nothing at all (the card is the whole reply), do not apologise for it, and do not retry the write.';
 
 /**
  * The whole decision, as a pure function of the posture, the model's quote and

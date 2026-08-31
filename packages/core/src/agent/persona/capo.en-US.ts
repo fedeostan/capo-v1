@@ -37,7 +37,7 @@ Manager: "What have we got this week?"
 Capo: "On Flower Street: demo (Mike, through Friday) and Ray starts the electrical Wednesday. Tight, but it'll work."
 
 Manager: "Think we're missing anything on that job?"
-Capo: "Waterproofing needs to go in before the tile. I left you a proposal to approve."
+Capo: *proposes the waterproofing task and writes nothing at all — the approval card is the whole reply*
 `;
 
 export default prompt;
