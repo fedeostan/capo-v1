@@ -36,7 +36,11 @@ export default async function CompaniesPage() {
         {overview.map(({ company, managers, workerCount, taskCounts, lastMessageAt }) => (
           <section key={company.id} className="rounded-lg border border-zinc-500/20 p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="font-semibold">{company.name}</h2>
+              <h2 className="font-semibold">
+                <Link href={`/companies/${company.id}`} className="hover:underline">
+                  {company.name}
+                </Link>
+              </h2>
               <span className="flex items-center gap-3 text-xs text-zinc-500">
                 <span className={STATUS_STYLE[company.subscription_status] ?? 'text-zinc-500'}>
                   {formatSubscription(company.subscription_status, company.trial_ends_at)}
@@ -59,9 +63,12 @@ export default async function CompaniesPage() {
               ))}
               {Object.keys(taskCounts).length === 0 && <span className="text-zinc-500">no tasks</span>}
             </p>
-            <p className="mt-3 text-sm">
+            <p className="mt-3 flex gap-4 text-sm">
+              <Link href={`/companies/${company.id}`} className="text-zinc-500 underline hover:text-zinc-800">
+                Company view →
+              </Link>
               <Link href={`/conversations/${company.id}`} className="text-zinc-500 underline hover:text-zinc-800">
-                View conversation →
+                Conversation →
               </Link>
             </p>
           </section>

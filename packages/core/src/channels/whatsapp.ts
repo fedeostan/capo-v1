@@ -1286,9 +1286,9 @@ export async function sendWhatsAppList(
 }
 
 // Public: the webhook needs a direct send for the voice-note failure path and
-// for the confirmation after a button press. It cannot reuse the sink there,
-// because `delivery` only settles once mergeAssistantStream has been called —
-// and on those paths the agent never runs, so it never would.
+// for the confirmation after a button press. It does not reuse the sink there:
+// the sink's contract is "deliver an assistant STREAM", and on those paths the
+// agent never runs, so there is no stream — only a sentence we already hold.
 // Returns the LAST chunk's provider message id, for the same reason
 // sendWhatsAppTemplate returns one: the daily briefing records it in
 // notification_log, and without it a free-form briefing would be less traceable
@@ -1339,15 +1339,37 @@ async function deliver(stream: ReadableStream<UIMessageChunk>, config: WhatsAppS
 // webhook needs to await the outbound send before the invocation ends — so
 // this factory also returns `delivery`, which settles when the last Graph API
 // send completes (or rejects with the first send error).
-export function whatsappSink(config: WhatsAppSinkConfig): { sink: OutboundSink; delivery: Promise<void> } {
-  let settle!: { resolve: () => void; reject: (err: unknown) => void };
-  const delivery = new Promise<void>((resolve, reject) => {
-    settle = { resolve, reject };
-  });
+//
+// Since issue #125 a MERGED turn can push more than one assistant stream
+// through here — one per turn iteration — and a queued invocation can push
+// none at all. That forces two properties on `delivery`:
+//
+//   - Streams are delivered on a CHAIN, never concurrently. WhatsApp does not
+//     guarantee the ordering of concurrent sends, and iteration 2's answer
+//     landing before iteration 1's would read as nonsense — the same rule
+//     `deliver` applies to the sends inside one stream. A rejected chain
+//     skips every later stream (fail fast, unchanged) and holds the first
+//     error for the route to log.
+//   - `delivery` is a THENABLE that subscribes to the chain AT AWAIT TIME,
+//     not a promise created up front. The route awaits it after handleInbound
+//     resolves, when every stream the turn will produce has been merged — so
+//     one subscription covers them all. And when the turn merged nothing (the
+//     queued path), it resolves immediately; the old promise, settled only by
+//     the first merge, would have hung that invocation to the function
+//     timeout.
+export function whatsappSink(config: WhatsAppSinkConfig): { sink: OutboundSink; delivery: PromiseLike<void> } {
+  let chain: Promise<void> = Promise.resolve();
   const sink: OutboundSink = {
     mergeAssistantStream(stream) {
-      deliver(stream, config).then(settle.resolve, settle.reject);
+      chain = chain.then(() => deliver(stream, config));
+      // The route only subscribes once handleInbound returns; until then a
+      // rejected chain would surface as an unhandled rejection. This marks it
+      // handled without consuming it — later `then`s still see the rejection.
+      chain.catch(() => {});
     },
+  };
+  const delivery: PromiseLike<void> = {
+    then: (onFulfilled, onRejected) => chain.then(onFulfilled, onRejected),
   };
   return { sink, delivery };
 }

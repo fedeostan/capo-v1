@@ -5,6 +5,7 @@
 // through each tenant's own chat.
 import { getDb } from '@capo/db/client';
 import type { Tables } from '@capo/db/types';
+import { hasWhatsAppConsent } from '@capo/core/channels/whatsapp';
 import {
   WHATSAPP_TEMPLATE_USD,
   estimateCostUsd,
@@ -227,12 +228,114 @@ export interface HealthReport {
 // these aggregations into SQL views rather than raising the limit.
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// Federico's dial: a proposal pending this long means Capo asked for a
+// decision and the manager never came back. Fed by loadHealth's cross-company
+// alert AND the per-company view — one constant so the two cannot disagree.
+export const STALE_PROPOSAL_DAYS = 1;
+
 function lisbonDateKey(iso: string): string {
   return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Europe/Lisbon' });
 }
 
 function daysAgo(iso: string | null): number | null {
   return iso == null ? null : Math.floor((Date.now() - new Date(iso).getTime()) / DAY_MS);
+}
+
+// One definition of "where has this company got to", shared by the health
+// overview and the per-company view. The inputs are already company-filtered —
+// this function only classifies, it never queries.
+function deriveActivation(
+  company: Pick<Company, 'id' | 'name' | 'created_at'>,
+  companyJobs: { status: string }[],
+  companyTasks: { status: string; source: string }[],
+  companyWorkers: { active: boolean; phone: string | null }[],
+  lastDispatchAt: string | null,
+  lastMessageAt: string | null,
+): ActivationRow {
+  // 'capo' is the actor recorded when an approved proposal executes — i.e.
+  // the manager actually accepted a generated plan rather than only chatting.
+  const aiTasks = companyTasks.filter(t => t.source === 'capo').length;
+  const reachableWorkers = companyWorkers.filter(w => w.active && w.phone).length;
+
+  const stage: ActivationStage = lastDispatchAt
+    ? 'dispatching'
+    : reachableWorkers > 0 && companyTasks.length > 0
+      ? 'has_crew'
+      : companyTasks.length > 0
+        ? 'has_plan'
+        : companyJobs.length > 0
+          ? 'has_obra'
+          : 'signed_up';
+
+  return {
+    companyId: company.id,
+    companyName: company.name,
+    createdAt: company.created_at,
+    stage,
+    obras: companyJobs.filter(j => j.status === 'active').length,
+    tasks: companyTasks.filter(t => !['done', 'cancelled'].includes(t.status)).length,
+    aiTasks,
+    reachableWorkers,
+    lastDispatchAt,
+    lastMessageAt,
+    daysSinceSignup: daysAgo(company.created_at) ?? 0,
+  };
+}
+
+// The billing dials (past_due/canceled, trial ending within 3 days), shared by
+// loadHealth and the per-company view so the thresholds live once.
+export function billingAlerts(
+  company: Pick<Company, 'name' | 'subscription_status' | 'trial_ends_at'>,
+): Alert[] {
+  const alerts: Alert[] = [];
+  const trialDaysLeft = Math.ceil((new Date(company.trial_ends_at).getTime() - Date.now()) / DAY_MS);
+  if (company.subscription_status === 'past_due' || company.subscription_status === 'canceled') {
+    alerts.push({
+      level: 'critical',
+      title: `${company.name} — subscription ${company.subscription_status}`,
+      detail: 'The manager is locked out of the chat and every write path. WhatsApp still works.',
+      href: '/signups',
+    });
+  } else if (company.subscription_status === 'trialing' && trialDaysLeft <= 3) {
+    alerts.push({
+      level: trialDaysLeft < 0 ? 'critical' : 'warning',
+      title: `${company.name} — trial ${trialDaysLeft < 0 ? 'expired' : `ends in ${trialDaysLeft}d`}`,
+      detail: 'Worth a call before it lapses rather than after.',
+      href: '/signups',
+    });
+  }
+  return alerts;
+}
+
+// The activation dials (2-day no-obra, open tasks with nobody reachable,
+// 7-day quiet), shared for the same reason. At most one alert per company —
+// the chain is deliberate: each condition only matters if the earlier ones
+// don't apply.
+export function activationAlerts(row: ActivationRow): Alert[] {
+  const quiet = daysAgo(row.lastMessageAt);
+  if (row.daysSinceSignup >= 2 && row.stage === 'signed_up') {
+    return [{
+      level: 'warning',
+      title: `${row.companyName} — signed up ${row.daysSinceSignup}d ago, never created an obra`,
+      detail: 'Stuck at the very first step. Onboarding, not product.',
+    }];
+  }
+  if (row.tasks > 0 && row.reachableWorkers === 0) {
+    return [{
+      level: 'warning',
+      title: `${row.companyName} — ${row.tasks} open tasks, nobody reachable on WhatsApp`,
+      detail: 'No active worker has a phone number, so the 07:00 briefing reaches nobody. The daily loop is dead here.',
+    }];
+  }
+  if (quiet != null && quiet >= 7) {
+    return [{
+      level: 'warning',
+      title: `${row.companyName} — quiet for ${quiet} days`,
+      detail: 'No message in either channel. Churn risk.',
+      href: `/companies/${row.companyId}`,
+    }];
+  }
+  return [];
 }
 
 export async function loadHealth(): Promise<HealthReport> {
@@ -272,7 +375,6 @@ export async function loadHealth(): Promise<HealthReport> {
     ]);
 
   const companyOfConversation = new Map(conversations.map(c => [c.id, c.company_id]));
-  const companyOfWorker = new Map(workers.map(w => [w.id, w.company_id]));
 
   const lastMessageByCompany = new Map<string, string>();
   for (const m of messages) {
@@ -285,66 +387,30 @@ export async function loadHealth(): Promise<HealthReport> {
     if (!lastDispatchByCompany.has(d.company_id)) lastDispatchByCompany.set(d.company_id, d.created_at);
   }
 
-  const activation: ActivationRow[] = companies.map(company => {
-    const companyJobs = jobs.filter(j => j.company_id === company.id);
-    const companyTasks = tasks.filter(t => t.company_id === company.id);
-    // 'capo' is the actor recorded when an approved proposal executes — i.e.
-    // the manager actually accepted a generated plan rather than only chatting.
-    const aiTasks = companyTasks.filter(t => t.source === 'capo').length;
-    const reachableWorkers = workers.filter(w => w.company_id === company.id && w.active && w.phone).length;
-    const lastDispatchAt = lastDispatchByCompany.get(company.id) ?? null;
-
-    const stage: ActivationStage = lastDispatchAt
-      ? 'dispatching'
-      : reachableWorkers > 0 && companyTasks.length > 0
-        ? 'has_crew'
-        : companyTasks.length > 0
-          ? 'has_plan'
-          : companyJobs.length > 0
-            ? 'has_obra'
-            : 'signed_up';
-
-    return {
-      companyId: company.id,
-      companyName: company.name,
-      createdAt: company.created_at,
-      stage,
-      obras: companyJobs.filter(j => j.status === 'active').length,
-      tasks: companyTasks.filter(t => !['done', 'cancelled'].includes(t.status)).length,
-      aiTasks,
-      reachableWorkers,
-      lastDispatchAt,
-      lastMessageAt: lastMessageByCompany.get(company.id) ?? null,
-      daysSinceSignup: daysAgo(company.created_at) ?? 0,
-    };
-  });
+  const activation: ActivationRow[] = companies.map(company =>
+    deriveActivation(
+      company,
+      jobs.filter(j => j.company_id === company.id),
+      tasks.filter(t => t.company_id === company.id),
+      workers.filter(w => w.company_id === company.id),
+      lastDispatchByCompany.get(company.id) ?? null,
+      lastMessageByCompany.get(company.id) ?? null,
+    ),
+  );
 
   // ── Alerts ────────────────────────────────────────────────────────────────
   const alerts: Alert[] = [];
 
   for (const company of companies) {
-    const trialDaysLeft = Math.ceil((new Date(company.trial_ends_at).getTime() - Date.now()) / DAY_MS);
-    if (company.subscription_status === 'past_due' || company.subscription_status === 'canceled') {
-      alerts.push({
-        level: 'critical',
-        title: `${company.name} — subscription ${company.subscription_status}`,
-        detail: 'The manager is locked out of the chat and every write path. WhatsApp still works.',
-        href: '/signups',
-      });
-    } else if (company.subscription_status === 'trialing' && trialDaysLeft <= 3) {
-      alerts.push({
-        level: trialDaysLeft < 0 ? 'critical' : 'warning',
-        title: `${company.name} — trial ${trialDaysLeft < 0 ? 'expired' : `ends in ${trialDaysLeft}d`}`,
-        detail: 'Worth a call before it lapses rather than after.',
-        href: '/signups',
-      });
-    }
+    alerts.push(...billingAlerts(company));
   }
 
   // A proposal that has sat pending for over a day means Capo asked for a
   // decision and the manager never came back — the clearest friction signal
   // the product emits, and invisible everywhere else.
-  const stalePending = proposals.filter(p => p.status === 'pending' && (daysAgo(p.created_at) ?? 0) >= 1);
+  const stalePending = proposals.filter(
+    p => p.status === 'pending' && (daysAgo(p.created_at) ?? 0) >= STALE_PROPOSAL_DAYS,
+  );
   if (stalePending.length > 0) {
     const names = new Map(companies.map(c => [c.id, c.name]));
     const byCompany = [...new Set(stalePending.map(p => names.get(p.company_id) ?? '—'))];
@@ -376,27 +442,7 @@ export async function loadHealth(): Promise<HealthReport> {
   }
 
   for (const row of activation) {
-    const quiet = daysAgo(row.lastMessageAt);
-    if (row.daysSinceSignup >= 2 && row.stage === 'signed_up') {
-      alerts.push({
-        level: 'warning',
-        title: `${row.companyName} — signed up ${row.daysSinceSignup}d ago, never created an obra`,
-        detail: 'Stuck at the very first step. Onboarding, not product.',
-      });
-    } else if (row.tasks > 0 && row.reachableWorkers === 0) {
-      alerts.push({
-        level: 'warning',
-        title: `${row.companyName} — ${row.tasks} open tasks, nobody reachable on WhatsApp`,
-        detail: 'No active worker has a phone number, so the 07:00 briefing reaches nobody. The daily loop is dead here.',
-      });
-    } else if (quiet != null && quiet >= 7) {
-      alerts.push({
-        level: 'warning',
-        title: `${row.companyName} — quiet for ${quiet} days`,
-        detail: 'No message in either channel. Churn risk.',
-        href: `/conversations/${row.companyId}`,
-      });
-    }
+    alerts.push(...activationAlerts(row));
   }
 
   const dispatchingCompanies = activation.filter(r => r.stage === 'dispatching').length;
@@ -845,5 +891,351 @@ export async function loadCostReport(windowDays = 30): Promise<CostReport> {
     ledgerError,
     truncated,
     whatsappConfidence: 'estimated',
+  };
+}
+
+// ── Per-company detail (issue #122) ─────────────────────────────────────────
+//
+// One company, everything the support question needs: what is broken, what
+// shape the account is in, and what has actually been said and sent. Strictly
+// read-only — every write action (resend, message a worker) is #123's.
+//
+// SCOPING RULE for everything below: this runs on the SERVICE ROLE, which sees
+// every tenant, so RLS scopes nothing here. Every query MUST carry an explicit
+// .eq('company_id', companyId) (or derive its ids from one that does). A
+// missing filter is not an error — it is another tenant's data on the screen.
+
+export type Job = Tables<'jobs'>;
+export type Worker = Tables<'workers'>;
+export type Profile = Tables<'profiles'>;
+export type Proposal = Tables<'proposals'>;
+export type CronRun = Tables<'cron_runs'>;
+export type SendLogRow = Tables<'notification_log'>;
+export type WorkerMessage = Tables<'worker_messages'>;
+
+/** How many recent notification_log rows the detail view reads. */
+const SEND_WINDOW_ROWS = 1000;
+
+export interface CrewMemberView {
+  worker: Worker;
+  /** hasWhatsAppConsent() — the same latest-wins predicate the crons apply. */
+  consent: boolean;
+  /** Sends inside the loaded window, by status. */
+  sends: { sent: number; failed: number; skipped: number; pending: number };
+  lastSendAt: string | null;
+  /** A worker_conversations row exists — they have talked to the worker agent. */
+  hasThread: boolean;
+}
+
+export interface ManagerView {
+  profile: Profile;
+  consent: boolean;
+}
+
+export interface ProposalView {
+  id: string;
+  actionName: string;
+  status: string;
+  createdAt: string;
+  resolvedAt: string | null;
+  renderedText: string;
+  ageDays: number;
+}
+
+export interface WorkerThreadView {
+  workerId: string;
+  workerName: string;
+  updatedAt: string;
+  /** Chronological, most recent tail of the thread. */
+  messages: WorkerMessage[];
+}
+
+export interface OnboardingChecks {
+  hasObra: boolean;
+  /** An apply_plan proposal was approved, or tasks with source='capo' exist. */
+  planApplied: boolean;
+  hasTasks: boolean;
+  activeCrew: number;
+  reachableCrew: number;
+  consentedCrew: number;
+  briefingEverSent: boolean;
+}
+
+export interface TaskShape {
+  total: number;
+  byStatus: Record<string, number>;
+  assigned: number;
+  unassigned: number;
+  dated: number;
+  /** Neither start_date nor due_date — e.g. after an indefinite obra pause. */
+  undated: number;
+  doneLast7Days: number;
+  /** From task_board — the one clock. Never re-derived here. */
+  overdue: number;
+  atRisk: number;
+}
+
+export interface CompanyDetail {
+  company: Company;
+  activation: ActivationRow;
+  alerts: Alert[];
+  onboarding: OnboardingChecks;
+  /** notification_log rows that never went out (status='failed'). */
+  failedSends: SendLogRow[];
+  /** Claimed but deliberately not sent (status='skipped'), reason in error. */
+  skippedSends: SendLogRow[];
+  /** Claimed and never resolved — the cron died mid-run (status='pending'). */
+  unresolvedSends: SendLogRow[];
+  /** Sent, but Meta later reported a delivery failure (failed_at stamped). */
+  deliveryFailures: SendLogRow[];
+  /** Every send in the window, newest first — communication section groups it. */
+  sends: SendLogRow[];
+  /** True when the window cap was hit, so per-person tallies are floors. */
+  sendsTruncated: boolean;
+  proposals: {
+    pending: ProposalView[];
+    rejected: ProposalView[];
+    failed: ProposalView[];
+    executing: ProposalView[];
+  };
+  cronRuns: CronRun[];
+  obras: Job[];
+  taskShape: TaskShape;
+  crew: CrewMemberView[];
+  managers: ManagerView[];
+  /** Chronological tail of the manager thread (web + WhatsApp). */
+  managerMessages: Message[];
+  workerThreads: WorkerThreadView[];
+}
+
+function toProposalView(p: Proposal): ProposalView {
+  return {
+    id: p.id,
+    actionName: p.action_name,
+    status: p.status,
+    createdAt: p.created_at,
+    resolvedAt: p.resolved_at,
+    renderedText: p.rendered_text,
+    ageDays: daysAgo(p.created_at) ?? 0,
+  };
+}
+
+export async function loadCompanyDetail(companyId: string): Promise<CompanyDetail | null> {
+  const db = getDb();
+
+  const { data: company } = await db.from('companies').select('*').eq('id', companyId).maybeSingle();
+  if (!company) return null;
+
+  // select('*') throughout, deliberately: several of these relations have been
+  // extended by appended columns before (task_board, notification_log), and a
+  // deploy landing ahead of a migration must degrade, not 42703 (AGENTS.md).
+  //
+  // KNOWN LIMIT (pilot-scale, same stance as loadOverview): the capped windows
+  // below mean "ever messaged" and the per-person tallies are really "within
+  // the last N rows". At today's volumes N covers the account's whole life;
+  // sendsTruncated says so on screen when that stops being true.
+  const [jobs, tasks, board, workers, profiles, proposals, sends, cronRuns, workerConversations, workerMessages] =
+    await Promise.all([
+      db.from('jobs').select('*').eq('company_id', companyId).order('created_at').then(r => r.data ?? []),
+      db.from('tasks').select('*').eq('company_id', companyId).then(r => r.data ?? []),
+      db.from('task_board').select('*').eq('company_id', companyId).then(r => r.data ?? []),
+      db.from('workers').select('*').eq('company_id', companyId).order('created_at').then(r => r.data ?? []),
+      db.from('profiles').select('*').eq('company_id', companyId).order('created_at').then(r => r.data ?? []),
+      db
+        .from('proposals')
+        .select('*')
+        .eq('company_id', companyId)
+        .order('created_at', { ascending: false })
+        .limit(200)
+        .then(r => r.data ?? []),
+      db
+        .from('notification_log')
+        .select('*')
+        .eq('company_id', companyId)
+        .order('created_at', { ascending: false })
+        .limit(SEND_WINDOW_ROWS)
+        .then(r => r.data ?? []),
+      db
+        .from('cron_runs')
+        .select('*')
+        .eq('company_id', companyId)
+        .order('ran_at', { ascending: false })
+        .limit(30)
+        .then(r => r.data ?? []),
+      db.from('worker_conversations').select('*').eq('company_id', companyId).then(r => r.data ?? []),
+      // worker_messages carries company_id directly (0027), so this is scoped
+      // without going through the conversation ids.
+      db
+        .from('worker_messages')
+        .select('*')
+        .eq('company_id', companyId)
+        .order('created_at', { ascending: false })
+        .limit(400)
+        .then(r => r.data ?? []),
+    ]);
+
+  // Manager thread: reuse the exact read the Conversations page makes rather
+  // than a second opinion on what "the thread" is.
+  const { messages: managerMessages } = await loadCompanyThread(companyId);
+
+  // ── Health ────────────────────────────────────────────────────────────────
+  const failedSends = sends.filter(s => s.status === 'failed');
+  const skippedSends = sends.filter(s => s.status === 'skipped');
+  const unresolvedSends = sends.filter(s => s.status === 'pending');
+  const deliveryFailures = sends.filter(s => s.status === 'sent' && s.failed_at != null);
+
+  const pendingProposals = proposals.filter(p => p.status === 'pending').map(toProposalView);
+  const rejectedProposals = proposals.filter(p => p.status === 'rejected').map(toProposalView);
+  const failedProposals = proposals.filter(p => p.status === 'failed').map(toProposalView);
+  const executingProposals = proposals.filter(p => p.status === 'executing').map(toProposalView);
+
+  const planApplied =
+    proposals.some(p => p.action_name === 'apply_plan' && p.status === 'approved') ||
+    tasks.some(t => t.source === 'capo');
+
+  const activeWorkers = workers.filter(w => w.active);
+  const onboarding: OnboardingChecks = {
+    hasObra: jobs.length > 0,
+    planApplied,
+    hasTasks: tasks.length > 0,
+    activeCrew: activeWorkers.length,
+    reachableCrew: activeWorkers.filter(w => w.phone).length,
+    consentedCrew: activeWorkers.filter(w => hasWhatsAppConsent(w)).length,
+    briefingEverSent: sends.some(s => s.kind === 'daily_briefing' && s.status === 'sent'),
+  };
+
+  // ── Activation + alerts, through the SAME dials the health page uses ──────
+  const lastDispatchAt = sends.find(s => s.status === 'sent')?.created_at ?? null;
+  const lastMessageAt = managerMessages.at(-1)?.created_at ?? null;
+  const activation = deriveActivation(company, jobs, tasks, workers, lastDispatchAt, lastMessageAt);
+
+  const alerts: Alert[] = [...billingAlerts(company), ...activationAlerts(activation)];
+
+  if (failedSends.length > 0) {
+    alerts.push({
+      level: 'critical',
+      title: `${failedSends.length} WhatsApp send${failedSends.length === 1 ? '' : 's'} failed`,
+      detail: `Most recent: ${failedSends[0].error ?? 'no error recorded'}. Nothing retries these — #123 adds the resend.`,
+    });
+  }
+  if (unresolvedSends.length > 0) {
+    alerts.push({
+      level: 'critical',
+      title: `${unresolvedSends.length} send claim${unresolvedSends.length === 1 ? '' : 's'} never resolved`,
+      detail: 'A claim row stuck at pending means the cron died mid-run — the person got nothing and no failure was recorded.',
+    });
+  }
+  const stalePending = pendingProposals.filter(p => p.ageDays >= STALE_PROPOSAL_DAYS);
+  if (stalePending.length > 0) {
+    alerts.push({
+      level: 'warning',
+      title: `${stalePending.length} approval card${stalePending.length === 1 ? '' : 's'} pending over 24h`,
+      detail: 'Capo asked and nobody decided. Either the card is unclear or the manager never saw it.',
+    });
+  }
+  if (failedProposals.length > 0) {
+    alerts.push({
+      level: 'critical',
+      title: `${failedProposals.length} approval card${failedProposals.length === 1 ? '' : 's'} approved but failed to execute`,
+      detail: `The manager said yes and nothing happened: ${[...new Set(failedProposals.map(p => p.actionName))].join(', ')}.`,
+    });
+  }
+  if (executingProposals.length > 0) {
+    alerts.push({
+      level: 'critical',
+      title: `${executingProposals.length} approval card${executingProposals.length === 1 ? '' : 's'} stuck mid-execution`,
+      detail: 'A crash between claim and finalize. These are never retried automatically — inspect them.',
+    });
+  }
+  if (!planApplied && rejectedProposals.some(p => p.actionName === 'apply_plan')) {
+    alerts.push({
+      level: 'warning',
+      title: 'Generated plan rejected, and no plan ever applied',
+      detail: 'The manager turned the plan card down and never got another — the board is likely empty. The difference between a working tenant and a hollow one.',
+    });
+  }
+
+  const order: Record<AlertLevel, number> = { critical: 0, warning: 1 };
+  alerts.sort((a, b) => order[a.level] - order[b.level]);
+
+  // ── Shape ─────────────────────────────────────────────────────────────────
+  const sevenDaysAgo = new Date(Date.now() - 7 * DAY_MS).toISOString();
+  const taskShape: TaskShape = {
+    total: tasks.length,
+    byStatus: tasks.reduce<Record<string, number>>((acc, t) => {
+      acc[t.status] = (acc[t.status] ?? 0) + 1;
+      return acc;
+    }, {}),
+    assigned: tasks.filter(t => t.assignee_worker_id != null).length,
+    unassigned: tasks.filter(t => t.assignee_worker_id == null).length,
+    dated: tasks.filter(t => t.start_date != null || t.due_date != null).length,
+    undated: tasks.filter(t => t.start_date == null && t.due_date == null).length,
+    doneLast7Days: tasks.filter(t => t.status === 'done' && t.updated_at >= sevenDaysAgo).length,
+    // From the view, never re-derived: "overdue" and "at risk" are the board's
+    // own definitions (one clock, AGENTS.md).
+    overdue: board.filter(t => t.overdue === true).length,
+    atRisk: board.filter(t => t.at_risk === true).length,
+  };
+
+  const threadWorkerIds = new Set(workerConversations.map(c => c.worker_id));
+  const crew: CrewMemberView[] = workers.map(worker => {
+    const workerSends = sends.filter(s => s.worker_id === worker.id);
+    return {
+      worker,
+      consent: hasWhatsAppConsent(worker),
+      sends: {
+        sent: workerSends.filter(s => s.status === 'sent').length,
+        failed: workerSends.filter(s => s.status === 'failed').length,
+        skipped: workerSends.filter(s => s.status === 'skipped').length,
+        pending: workerSends.filter(s => s.status === 'pending').length,
+      },
+      lastSendAt: workerSends[0]?.created_at ?? null,
+      hasThread: threadWorkerIds.has(worker.id),
+    };
+  });
+
+  const managers: ManagerView[] = profiles.map(profile => ({
+    profile,
+    consent: hasWhatsAppConsent(profile),
+  }));
+
+  // ── Communication ─────────────────────────────────────────────────────────
+  const workerName = new Map(workers.map(w => [w.id, w.name]));
+  const workerThreads: WorkerThreadView[] = workerConversations
+    .map(conversation => ({
+      workerId: conversation.worker_id,
+      workerName: workerName.get(conversation.worker_id) ?? 'Unknown worker',
+      updatedAt: conversation.updated_at,
+      messages: workerMessages
+        .filter(m => m.conversation_id === conversation.id)
+        .slice(0, 30)
+        .reverse(),
+    }))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+  return {
+    company,
+    activation,
+    alerts,
+    onboarding,
+    failedSends,
+    skippedSends,
+    unresolvedSends,
+    deliveryFailures,
+    sends,
+    sendsTruncated: sends.length === SEND_WINDOW_ROWS,
+    proposals: {
+      pending: pendingProposals,
+      rejected: rejectedProposals,
+      failed: failedProposals,
+      executing: executingProposals,
+    },
+    cronRuns,
+    obras: jobs,
+    taskShape,
+    crew,
+    managers,
+    managerMessages,
+    workerThreads,
   };
 }
