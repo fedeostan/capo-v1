@@ -97,6 +97,11 @@ export async function renderProposal(
         collaboratorNames: await workerNames(db, companyId, args.collaborator_worker_ids, t),
         startDate: args.start_date ? fmt(args.start_date) : undefined,
         dueDate: args.due_date ? fmt(args.due_date) : undefined,
+        durationDays: args.duration_days,
+        // Length check, not `!= null`: on a create there is nothing to take
+        // off, so an empty list means the same as no list at all.
+        materials: args.materials?.length ? args.materials : undefined,
+        hasDescription: Boolean(args.description),
       });
 
     case 'update_task': {
@@ -121,7 +126,12 @@ export async function renderProposal(
       }
       if (args.start_date) changes.push(t.taskChange.startDate(fmt(args.start_date)));
       if (args.due_date) changes.push(t.taskChange.dueDate(fmt(args.due_date)));
+      if (args.duration_days) changes.push(t.taskChange.duration(args.duration_days));
       if (args.job_id) changes.push(t.taskChange.job(await jobName(db, companyId, args.job_id, t)));
+      // `!= null`, not truthiness, same as collaborators above: update_task
+      // writes the array through wholesale, so an EMPTY array is the explicit
+      // "take every material off" and has to produce its own line (issue #118).
+      if (args.materials != null) changes.push(t.taskChange.materials(args.materials));
       if (args.description) changes.push(t.taskChange.description);
       if (changes.length === 0) throw new RenderError(t.errors.emptyChange);
       return t.updateTask({ title, changes });

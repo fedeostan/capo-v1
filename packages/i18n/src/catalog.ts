@@ -1024,6 +1024,23 @@ export interface Catalog {
     voiceNoteFailed: string;
     /** Sent when transcription succeeded but found no speech. */
     voiceNoteEmpty: string;
+    /**
+     * Sent to a MANAGER when a whole turn fails — the model errored, the agent
+     * loop threw, no reply was produced (issue #126: ten messages, 75 minutes,
+     * total silence). Free-form text inside the window the manager's own
+     * message opened seconds earlier, so it is free and in-window by
+     * construction.
+     *
+     * ⚠ It must promise no retry — the turn is over and nothing runs again
+     * until the manager writes — and must name no cause: provider detail and
+     * error codes are an oracle, and the manager cannot act on them anyway.
+     *
+     * ⚠ It is also the SUPPRESSION MARKER. The route persists the sent apology
+     * into the thread and matches recent rows against this string in EVERY
+     * locale to keep repeated failures quiet (lib/turn-failure.ts), so the
+     * catalog string and the sent bytes must stay identical.
+     */
+    turnFailed: string;
 
     // ── Approval cards ──────────────────────────────────────────────────
     // Deliberately NOT reusing chat.approve / chat.reject. Both fit today,

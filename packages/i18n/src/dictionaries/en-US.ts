@@ -812,6 +812,7 @@ const dict: Catalog = {
   whatsapp: {
     voiceNoteFailed: "Couldn't play that voice note, boss. Can you resend it or type it out?",
     voiceNoteEmpty: "Got the voice note but couldn't make anything out. Can you say that again?",
+    turnFailed: "Sorry, boss — I couldn't answer that just now. Try again in a bit.",
     approveButton: 'Approve',
     rejectButton: 'Reject',
     approvalPrompt: 'Approve this one, boss?',

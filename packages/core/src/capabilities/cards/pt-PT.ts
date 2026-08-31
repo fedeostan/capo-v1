@@ -44,6 +44,9 @@ export const cards: CardStrings = {
     if (p.collaboratorNames?.length) bits.push(`com ${p.collaboratorNames.join(', ')} a ajudar`);
     if (p.startDate) bits.push(`início ${p.startDate}`);
     if (p.dueDate) bits.push(`até ${p.dueDate}`);
+    if (p.durationDays) bits.push(`duração ${p.durationDays} dia${p.durationDays === 1 ? ' útil' : 's úteis'}`);
+    if (p.materials?.length) bits.push(`materiais: ${p.materials.join(', ')}`);
+    if (p.hasDescription) bits.push('com descrição');
     return `${bits.join(', ')}.`;
   },
   updateTask: p => `Alterar tarefa «${p.title}»: ${p.changes.join('; ')}.`,
@@ -55,7 +58,10 @@ export const cards: CardStrings = {
       names.length === 0 ? 'deixar só o responsável' : `a ajudar: ${names.join(', ')}`,
     startDate: v => `início → ${v}`,
     dueDate: v => `prazo → ${v}`,
+    duration: days => `duração → ${days} dia${days === 1 ? ' útil' : 's úteis'}`,
     job: v => `obra → ${v}`,
+    materials: list =>
+      list.length === 0 ? 'tirar todos os materiais' : `materiais → ${list.join(', ')}`,
     description: 'atualizar descrição',
   },
 
