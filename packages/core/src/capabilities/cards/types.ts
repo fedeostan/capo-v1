@@ -200,6 +200,22 @@ export interface CardStrings {
     }): string;
     dependsOn(indices: number[]): string;
     materials(list: string[]): string;
+    /** Materials-quality warnings (issue #119), appended after the task rows.
+     *  Question-shaped: the card still proposes and approving is always
+     *  possible — a warning turns a silent generator mistake into a question,
+     *  it never blocks. When the checker finds nothing the whole section is
+     *  absent, never an empty header. */
+    warnings: {
+      header: string;
+      /** Names that look like ONE material written several ways ("Azulejo",
+       *  "azulejo 30x60") — the buy list aggregates identical strings, so
+       *  each spelling becomes its own line to buy. Raw spellings as the plan
+       *  wrote them, first-seen order. */
+      nameVariants(names: string[]): string;
+      /** A same-trade sibling lists consumables this task does not — the
+       *  "two tiling tasks, only one has grout" case. */
+      tradeGap(p: { trade: string; title: string; missing: string[] }): string;
+    };
   };
 }
 
