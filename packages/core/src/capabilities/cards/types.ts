@@ -54,6 +54,17 @@ export interface CardStrings {
     collaboratorNames?: string[];
     startDate?: string;
     dueDate?: string;
+    /** Estimated length in WORKING days — the scheduler skips weekends and
+     *  holidays, so each locale's wording must say working days, not days
+     *  (issue #118). */
+    durationDays?: number;
+    /** Omitted entirely when empty, like collaboratorNames: on a create there
+     *  is nothing to take off, so an empty list means the same as no list. */
+    materials?: string[];
+    /** The payload carries a description; the card says so without quoting
+     *  it — it can be paragraphs long, and taskChange.description makes the
+     *  same choice. */
+    hasDescription?: boolean;
   }): string;
   updateTask(p: { title: string; changes: string[] }): string;
   taskChange: {
@@ -74,7 +85,21 @@ export interface CardStrings {
     collaborators(names: string[]): string;
     startDate(v: string): string;
     dueDate(v: string): string;
+    /** Estimated length in WORKING days — see createTask.durationDays. */
+    duration(days: number): string;
     job(v: string): string;
+    /**
+     * The materials list, after this change (issue #118).
+     *
+     * Same contract as `collaborators`, for the same reason: update_task
+     * writes the array through wholesale, so the card states the RESULTING
+     * list — "add grout" while the payload also dropped the tiles would be
+     * describing one thing and doing another.
+     *
+     * The empty array is therefore a real and different sentence, not an
+     * omission: it means "take every material off". Each locale writes its own.
+     */
+    materials(list: string[]): string;
     description: string;
   };
 

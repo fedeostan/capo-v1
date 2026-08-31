@@ -39,6 +39,9 @@ export const cards: CardStrings = {
     if (p.collaboratorNames?.length) bits.push(`with ${p.collaboratorNames.join(', ')} helping`);
     if (p.startDate) bits.push(`starting ${p.startDate}`);
     if (p.dueDate) bits.push(`due ${p.dueDate}`);
+    if (p.durationDays) bits.push(`duration ${p.durationDays} working day${p.durationDays === 1 ? '' : 's'}`);
+    if (p.materials?.length) bits.push(`materials: ${p.materials.join(', ')}`);
+    if (p.hasDescription) bits.push('with a description');
     return `${bits.join(', ')}.`;
   },
   updateTask: p => `Update task "${p.title}": ${p.changes.join('; ')}.`,
@@ -50,7 +53,10 @@ export const cards: CardStrings = {
       names.length === 0 ? 'leave only the assignee' : `helping: ${names.join(', ')}`,
     startDate: v => `start → ${v}`,
     dueDate: v => `due → ${v}`,
+    duration: days => `duration → ${days} working day${days === 1 ? '' : 's'}`,
     job: v => `job → ${v}`,
+    materials: list =>
+      list.length === 0 ? 'remove all the materials' : `materials → ${list.join(', ')}`,
     description: 'update description',
   },
 
