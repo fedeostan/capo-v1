@@ -3,6 +3,7 @@ import type { WhatsAppRecipient } from '@capo/core/channels/whatsapp';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
 import { hasWhatsAppConsent, recipientFor } from '../../lib/whatsapp';
+import { decideWelcomeRetry, type WelcomeLedgerEntry } from '../../lib/welcome-retry';
 import { clamp, nameList, partitionCrew, readLastInboundAt } from './briefing';
 
 // ── THE WELCOME (issue #45) ─────────────────────────────────────────────────
@@ -94,6 +95,14 @@ export interface CompanyWelcomes {
   excludedManagers: number;
   /** People already introduced. Not a problem — it is the steady state. */
   alreadyWelcomed: number;
+  /**
+   * People whose welcome has FAILED before and is not being retried on this
+   * run: the last failure's error classifies as permanent, the attempt cap is
+   * spent, or today's one attempt already happened (issue #121). Counted so a
+   * crew that never hears from Capo is visible in this route's report rather
+   * than only in the ledger.
+   */
+  excludedFailed: number;
 }
 
 /**
@@ -105,9 +114,24 @@ export interface CompanyWelcomes {
  * every run, ninety-six times a day. It is NOT what makes the welcome
  * once-ever: two invocations could read this set at the same instant and both
  * find somebody missing from it. What actually refuses the second one is
- * 0033's partial unique index, through claimNotification's 23505 → null. Do not
+ * 0033's partial unique index — narrowed by 0041 to `status <> 'failed'` —
+ * through claimNotification's 23505 → null. Do not
  * "simplify" by trusting this read, and do not add app-level state beside it —
  * the ledger is the lock, exactly as it is for both daily sends.
+ *
+ * ── EXCEPT THE RETRY POLICY, WHICH LIVES ONLY HERE (issue #121) ────────────
+ * Since 0041 a FAILED welcome releases its claim, so a person whose send Meta
+ * refused can be tried again — the pilot tenant's three crew members, failed
+ * on a template Meta did not yet know, were otherwise blocked forever. What
+ * keeps that retry from becoming a repeating paid send is decideWelcomeRetry
+ * (apps/web/lib/welcome-retry.ts): at most WELCOME_MAX_ATTEMPTS failed rows
+ * per person, only while the NEWEST failure's error code classifies as
+ * retryable, and never twice in one Lisbon day. The last rule is also enforced
+ * by Postgres (0016's daily unique key refuses a second claim per person per
+ * day, whatever this read decides), but the CAP and the error classification
+ * are not in the schema at all — this filter is genuinely policy, not an
+ * optimisation, and removing it would retry a permanently dead number once a
+ * day forever.
  *
  * ── THE CONSENT GATE IS partitionCrew, SHARED WITH BOTH DAILY SENDS ────────
  * Crew go through the same function the 07:00 briefing and the late-afternoon
@@ -120,6 +144,10 @@ export interface CompanyWelcomes {
 export async function loadPendingWelcomes(
   db: Db,
   company: { id: string; name: string; language: string | null },
+  /** Today's Lisbon date (`yyyy-mm-dd`), straight from lisbon_today() — the
+   *  retry policy's one-attempt-per-day rule needs it, and taking it as an
+   *  argument keeps this function on the one clock everything else reads. */
+  today: string,
 ): Promise<CompanyWelcomes> {
   const companyLocale = coerceLocale(company.language);
 
@@ -132,9 +160,14 @@ export async function loadPendingWelcomes(
       // the fail-closed direction and stops the send rather than mis-aiming it.
       db.from('workers').select('*').eq('company_id', company.id),
       db.from('profiles').select('*').eq('company_id', company.id).order('created_at'),
+      // status/error/notification_date are 0016 columns — present on every
+      // deploy this code can land on, so naming them is safe — and they are
+      // what the retry policy reads: which rows block, whether the newest
+      // failure is retryable, and whether today's one attempt already
+      // happened.
       db
         .from('notification_log')
-        .select('worker_id, profile_id')
+        .select('worker_id, profile_id, status, error, notification_date')
         .eq('company_id', company.id)
         .eq('kind', WELCOME_KIND),
     ]);
@@ -145,17 +178,40 @@ export async function loadPendingWelcomes(
   // welcomed yet" — which would re-introduce Capo to the entire crew.
   if (doneError) throw new Error(`notification_log read failed: ${doneError.message}`);
 
-  const welcomed = new Set<string>();
+  // One person's whole welcome history, then ONE verdict over it. The map is
+  // keyed on whichever of worker_id/profile_id the row carries (exactly one is
+  // non-null — 0016's notification_log_one_target CHECK).
+  const ledger = new Map<string, WelcomeLedgerEntry[]>();
   for (const row of done ?? []) {
-    if (row.worker_id) welcomed.add(row.worker_id);
-    if (row.profile_id) welcomed.add(row.profile_id);
+    const person = row.worker_id ?? row.profile_id;
+    if (!person) continue;
+    const history = ledger.get(person);
+    if (history) history.push(row);
+    else ledger.set(person, [row]);
+  }
+  // May this person be (re)welcomed? 'never_attempted' is the ordinary case;
+  // 'retry' is #121's failed-and-retryable one; everything else stays out of
+  // `pending` and is counted below so it stays visible.
+  const welcomable = (id: string) => {
+    const verdict = decideWelcomeRetry(ledger.get(id) ?? [], today);
+    return verdict === 'never_attempted' || verdict === 'retry';
+  };
+  // Counted over the LEDGER rather than over today's messageable people, so
+  // the numbers keep their pre-#121 meaning: a person welcomed last year and
+  // since deactivated still counts as introduced.
+  let alreadyWelcomed = 0;
+  let excludedFailed = 0;
+  for (const history of ledger.values()) {
+    const verdict = decideWelcomeRetry(history, today);
+    if (verdict === 'blocked') alreadyWelcomed += 1;
+    else if (verdict !== 'retry') excludedFailed += 1;
   }
 
   const { messageable, excludedNoConsent, excludedUnreachable, excludedInactive } = partitionCrew(crew ?? []);
 
   const pending: WelcomeTarget[] = [];
   for (const { worker, recipient } of messageable) {
-    if (welcomed.has(worker.id)) continue;
+    if (!welcomable(worker.id)) continue;
     pending.push({
       audience: 'worker',
       id: worker.id,
@@ -177,7 +233,7 @@ export async function loadPendingWelcomes(
       excludedManagers += 1;
       continue;
     }
-    if (welcomed.has(manager.id)) continue;
+    if (!welcomable(manager.id)) continue;
     pending.push({
       audience: 'manager',
       id: manager.id,
@@ -197,7 +253,8 @@ export async function loadPendingWelcomes(
     excludedUnreachable,
     excludedInactive,
     excludedManagers,
-    alreadyWelcomed: welcomed.size,
+    alreadyWelcomed,
+    excludedFailed,
   };
 }
 

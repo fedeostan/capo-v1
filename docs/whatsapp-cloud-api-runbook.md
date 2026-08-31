@@ -208,9 +208,25 @@ logged.
 
 ## 6. Message templates
 
-Two of them, both Utility, both in pt_PT + es_ES + en_US. Every proactive send
-goes through one: they are the only way to reach someone outside the 24-hour
-window.
+All Utility, and every one must exist and be APPROVED in all three locales —
+**pt_PT, es_ES and en_US** (`TEMPLATE_LANGUAGES` in
+`scripts/whatsapp-templates.ts`). Every proactive send goes through one: they
+are the only way to reach someone outside the 24-hour window. A missing locale
+is not a partial failure — a send to anybody whose language resolves to it
+fails whole with Meta's **132001**, which is exactly how the pilot's crew went
+unwelcomed for 17 days (issue #121).
+
+| Template | Sent by | Notes |
+|---|---|---|
+| `capo_daily_briefing` | 07:00 briefing (`api/cron/reminders`) | §6a; envelope of last resort since #46/#49 |
+| `capo_task_checkin` | late-afternoon check-in (`api/cron/checkin`) | §6b; two quick-reply buttons, order is a contract |
+| `capo_welcome` | welcome sweep (`api/cron/welcome`) | §6c; approved in all three locales 31 Aug 2026 |
+| `capo_daily_briefing_v2` | nothing yet | submitted 31 Aug 2026 (issue #108); {{2}} on its own paragraph |
+| `capo_message_waiting` | nothing yet | submitted 31 Aug 2026 (issue #123 B); the window-reopener |
+
+All five are in `MANAGED_TEMPLATE_NAMES`, so `pnpm whatsapp-template status`
+checks every name × locale pair and is the way to verify approval actually
+happened — Meta approves each pair separately and tells nobody.
 
 `pnpm whatsapp-template` manages them from the repo:
 
@@ -425,11 +441,18 @@ The first message Capo ever sends somebody (issue #45), from
 `scripts/whatsapp-templates.ts`.
 
 > ⚠ **MANUAL GO-LIVE STEP.** Nothing is sent until this template is APPROVED in
-> all three languages. Until then every welcome fails with **132001**
+> all three languages (done 31 Aug 2026 — verify with
+> `pnpm whatsapp-template status` before trusting this sentence). Until then
+> every welcome fails with **132001**
 > (`template name (capo_welcome) does not exist in <locale>`), recorded as a
-> `failed` row in `notification_log` — and because a failed send keeps its
-> claim, **that person is never retried**. Delete their `welcome` rows after
-> approval if the sweep ran before it.
+> `failed` row in `notification_log`. Since `0041` (issue #121) a failed row no
+> longer holds the once-ever claim: the sweep retries on its own — at most one
+> attempt per person per Lisbon day, at most `WELCOME_MAX_ATTEMPTS` (3) ever,
+> and only while the newest failure's error code classifies as retryable
+> (`apps/web/lib/welcome-retry.ts`; 132001 is retryable, an invalid recipient
+> is not, an unrecognisable error is not — a paid send fails closed). A person
+> whose failures are permanent or whose attempts are spent stays failed;
+> deleting their `welcome` rows is still the manual override for that case.
 
 - Name `capo_welcome`, category **Utility**, `parameter_format` **POSITIONAL**,
   three languages.
@@ -456,10 +479,14 @@ section), so a message asking "do you want to receive messages?" would itself be
 the violation. Consent is collected off WhatsApp — the manager asks on site and
 records it — and this message confirms it and states how to withdraw it.
 
-**Idempotency** is migration `0033`: a partial unique index on
-`notification_log (worker_id, profile_id) where kind = 'welcome'`, i.e. the
-daily lock with the DATE removed. `0033` also backfills a `skipped` welcome row
-for every worker and profile that existed when it was applied, so the first
+**Idempotency** is migration `0033`, narrowed by `0041`: a partial unique index
+on `notification_log (worker_id, profile_id) where kind = 'welcome' and status
+<> 'failed'`, i.e. the daily lock with the DATE removed — and, since #121, with
+failed attempts released for retry. `sent`, `skipped` and `pending` rows block
+forever; only a row recording that Meta refused the send gives the claim back.
+`0033` also backfills a `skipped` welcome row
+for every worker and profile that existed when it was applied — rows the `0041`
+predicate deliberately keeps blocking — so the first
 deploy does not introduce Capo to people who have been using it for a month, and
 creates `welcome_ledger_ready()` — a marker function the sweep asks for before
 it sends anything, so shipping the code without the migration produces silence

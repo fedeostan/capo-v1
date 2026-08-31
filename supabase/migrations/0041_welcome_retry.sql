@@ -1,0 +1,62 @@
+-- A failed welcome may be retried; a sent or skipped one never (issue #121).
+--
+-- 0033's once-ever lock — the partial unique index notification_log_welcome_once
+-- — carries no status predicate, so a row at status = 'failed' holds the claim
+-- exactly as a 'sent' row does. On the first live pilot tenant that turned a
+-- missing pt_PT template (Meta error 132001) into three crew members who can
+-- NEVER be welcomed: the sweep read their failed rows as "already introduced",
+-- claimNotification's 23505 → null agreed, and the ledger had recorded a
+-- failure as a success. The template is approved now; the rows still block.
+--
+-- The fix is one predicate: exclude 'failed' rows from the index. A failed row
+-- then drops out of the lock, so a NEW claim (a fresh 'pending' insert) for the
+-- same person succeeds — and the failed rows stay behind as history, which is
+-- what makes them usable as the ATTEMPT COUNTER for the retry policy the sweep
+-- applies on the read side (WELCOME_MAX_ATTEMPTS, retryable-error-only, at most
+-- one attempt per Lisbon day; apps/web/lib/welcome-retry.ts).
+--
+-- ── what still blocks, and why the 0033 mass-mail protection survives ───────
+-- 'pending' and 'sent' rows are indexed, as before: a claim in flight (or one
+-- whose function died mid-send) and a delivered welcome both refuse a second
+-- claim forever. 'skipped' rows are indexed too — and that is the load-bearing
+-- half of this predicate: 0033's mandatory backfill marked every worker and
+-- profile that existed at apply time with status = 'skipped', precisely so the
+-- first deploy could not introduce Capo, by paid template, to people already
+-- using it. Those rows keep blocking BY CONSTRUCTION under the new predicate.
+-- Only a row that records "we tried to send and Meta refused" releases its
+-- claim; a row that records a decision NOT to send never does.
+--
+-- ── why the retry cannot run away ───────────────────────────────────────────
+-- Two independent bounds, one of them in this schema already:
+--   * notification_log_once_per_day (0016) — unique (kind, audience, worker_id,
+--     profile_id, notification_date), no status predicate — refuses a second
+--     claim for the same person on the same Lisbon day regardless of anything
+--     the read side decides. A still-broken config costs at most one paid
+--     attempt per day, never one per fifteen-minute sweep.
+--   * the read-side policy in loadPendingWelcomes: at most WELCOME_MAX_ATTEMPTS
+--     failed rows per person, and only when the newest failure's error code
+--     classifies as retryable (132001 is; an invalid recipient is not; an
+--     unrecognisable error fails closed to never-retry).
+--
+-- DROP + CREATE rather than a second index beside the old one: two unique
+-- indexes over the same columns with different predicates would both be
+-- consulted on insert, and the wider one would go on refusing the retry this
+-- migration exists to allow. Migrations run in one transaction, so there is no
+-- window in which neither index guards the ledger. The new index is strictly
+-- narrower (it indexes a subset of the old one's rows), so recreating it over
+-- existing data cannot find a duplicate the old index would have allowed.
+drop index notification_log_welcome_once;
+create unique index notification_log_welcome_once
+  on notification_log (worker_id, profile_id)
+  nulls not distinct
+  where kind = 'welcome' and status <> 'failed';
+
+-- ── deliberately absent ─────────────────────────────────────────────────────
+-- No data repair for the three failed pilot rows: with the narrowed index, the
+-- approved template, one failed attempt each (under the cap of three) and a
+-- last failure that classifies as retryable, the sweep re-claims them on its
+-- own within fifteen minutes of the deploy that carries the read-side policy.
+-- No new columns, no new tables, no policy change: notification_log keeps its
+-- 0016 posture — RLS on, zero policies, written only by the cron on the
+-- service role. welcome_ledger_ready() (0033) is untouched; this migration
+-- changes which rows hold the lock, not whether the ledger can enforce it.

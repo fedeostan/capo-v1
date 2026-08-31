@@ -811,11 +811,26 @@ Structural invariants (do not regress):
     `/api/cron/push`.
   - **Idempotency is `notification_log`, with the DATE removed.** `0033` adds a
     partial unique index `(worker_id, profile_id) nulls not distinct where kind
-    = 'welcome'` — the daily lock's shape minus `notification_date`. The
+    = 'welcome'` — the daily lock's shape minus `notification_date` — and `0041`
+    narrows it with `and status <> 'failed'` (issue #121): a FAILED welcome
+    releases its once-ever claim so the sweep can try again, while `sent`,
+    `skipped` and `pending` rows block forever. 0033's backfill rows are all
+    `skipped`, so the mass-mail protection survives the narrowing BY
+    CONSTRUCTION. The
     already-welcomed read in `loadPendingWelcomes` is an OPTIMISATION so the
     sweep does not attempt a doomed INSERT per person per run; the INDEX is the
     lock, through `claimNotification`'s 23505 → null. Do not trust the read and
-    do not add app-level state beside it.
+    do not add app-level state beside it — with ONE exception, which is #121's
+    retry policy (`apps/web/lib/welcome-retry.ts`, pinned by `pnpm
+    whatsapp-check`): at most `WELCOME_MAX_ATTEMPTS` (3) failed rows per
+    person, only while the NEWEST failure's Meta code classifies as retryable
+    (132001 — template missing, a config error that becomes fixable; an
+    invalid recipient and anything unclassifiable are permanent, failing
+    CLOSED because a retry is a paid template), and at most one attempt per
+    Lisbon day. The per-day bound is also 0016's daily unique key, but the CAP
+    and the classification exist nowhere in the schema — that filter is
+    policy, not optimisation, and removing it retries a dead number daily
+    forever.
   - **The `0033` backfill was mandatory**, exactly as `0026`'s `pushed_at` one
     was: it marks every worker and profile that existed when it was applied as
     `skipped`, or the first deploy introduces Capo by paid template to everybody
