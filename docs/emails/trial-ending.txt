@@ -1,0 +1,33 @@
+DRAFT — NOT WIRED TO ANYTHING. Nothing sends this today (see README.md).
+
+CAPO — O teu período de teste está a acabar
+
+O teu período de teste da Capo termina a {{trial_end_date}}. Para
+continuares a falar com o Capo e a tua equipa continuar a receber as
+mensagens da manhã, ativa a subscrição — 45 € por mês, e podes
+cancelar quando quiseres.
+
+Ativar a subscrição:
+https://www.construcapo.com/subscricao
+
+Se não fizeres nada, a conta fica em pausa quando o teste acabar — não
+perdes as tuas obras nem as tuas tarefas, e podes ativar mais tarde.
+
+---
+
+Español — Tu periodo de prueba de Capo termina el {{trial_end_date}}.
+Para seguir usando Capo, activa la suscripción (45 €/mes, cancela
+cuando quieras) en https://www.construcapo.com/subscricao. Si no haces
+nada, la cuenta se pausa — no pierdes tus obras ni tus tareas.
+
+English — Your Capo trial ends on {{trial_end_date}}. To keep using
+Capo, activate your subscription (€45/month, cancel anytime) at
+https://www.construcapo.com/subscricao. If you do nothing, the account
+pauses — your sites and tasks are kept.
+
+---
+
+Recebes este email porque tens uma conta na Capo em período de teste.
+You are receiving this because your Capo account is on a trial.
+
+Capo · construcapo.com
