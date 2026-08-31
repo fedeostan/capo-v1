@@ -692,6 +692,77 @@ Structural invariants (do not regress):
   turn is persisted, and `finalize_proposal` writes the resolution event in the
   same transaction as the status flip), and a push is a delivery of a
   `notifications` row rather than a separate message.
+- **`/dia` is the crew day page, and its whole authorisation is a bearer token
+  in the URL** (`worker_day_links`, migration `0039`, issue #114). A crew member
+  taps a link in their morning message and reads today's work — and the work
+  that is already late — with nothing to install and nothing to log into. It is
+  the only screen in the product a person with no `auth` identity ever reads,
+  which is why almost everything about it is a boundary decision:
+  - **It exists for the tasks the 07:00 message structurally CANNOT carry.**
+    `task_board.active_today` is `today between window_start and
+    coalesce(due_date, 'infinity')` (0013), so a task whose deadline has passed
+    has `active_today = false` and is in NEITHER daily send. The manager sees it
+    under Atrasadas; the person doing the work has never been told. The page's
+    `overdue_tasks` bucket is the first surface that tells them, which is why it
+    renders ABOVE today's work rather than as a badge inside it.
+  - **ONE fan-out, two buckets.** `fanOutTasks` (`notifications/briefing.ts`) is
+    extracted from `loadCompanyBriefing` and used by both, and the page renders
+    through `taskHeadline` / `taskDetailLines` — the same functions the WhatsApp
+    message uses. Two fan-outs or two renderers would let a helper read "a
+    ajudar Miguel" in WhatsApp and "em equipa" on the page with no way to tell
+    which was right. The CALLER decides which rows to fan out; the definition of
+    a task is not re-derived anywhere.
+  - **A row IS a credential, not a record of one**, which is what makes 0039
+    unlike the other deny-all tables. RLS on, zero policies, every grant revoked
+    from `anon` and `authenticated`: a tenant who could READ one would hold
+    their crew's live tokens, and one who could WRITE one could mint a page
+    credential that never goes over WhatsApp at all, so the crew member has no
+    way to know it exists. `scripts/rls-isolation-matrix.mjs` attacks read,
+    insert, update, delete, and the cross-company FK trigger.
+  - **The expiry is a DAY BOUNDARY, never a duration.** The page reads the LIVE
+    board (right: an afternoon reader needs the afternoon's truth), so a token
+    that outlived its Lisbon day would go on exposing tomorrow's work — #114
+    settles that a leaked link exposes today only. `lisbonDayEnd` computes it
+    from `lisbon_today()`'s own answer, and `pnpm scheduler-check` pins both DST
+    seasons plus both transition days, then derives the property that matters: a
+    link is alive all evening and dead before the next briefing, every day of a
+    year. Enforced by the READER, and **nothing sweeps the table** — a sweep
+    that fails leaves live credentials behind and says nothing.
+  - **The CTA is free-form ONLY, and the consequence is stated rather than
+    hidden.** `toTemplateParam` flattens all whitespace and `capo_daily_briefing`
+    is pinned to `{{1}}`/`{{2}}` with no button component, so a template cannot
+    carry a link without a new template and a manual Meta approval. A crew
+    member outside the 23-hour window therefore gets no link that morning — they
+    are also, by definition, somebody who has never written to Capo, so it
+    arrives the first time they do. Making it reachable from the template path
+    is its own follow-up.
+  - **The link is reserved from the character budget BEFORE the blocks are laid
+    out**, never appended after the clamp. Appended after, a rich day truncates
+    the URL into a dead string — a link that looks like a link, goes nowhere,
+    and does so only for the busiest people on the crew. `pnpm whatsapp-check`
+    asserts an intact URL on a pathological briefing in all three languages.
+  - **`mintDayLinks` and the page's own writes never throw.** One upsert and one
+    read per company, made idempotent by `worker_day_links_worker_date_idx`
+    rather than by checking first (two invocations pass the send window every
+    day, #51). Every failure is swallowed into `day_link.mint_failed` and the
+    briefing goes out without the line. Grep that event before concluding
+    nobody uses the page.
+  - **`/dia` sits at the top level, not under `(public)`.** That group's layout
+    renders `LanguageSwitch`, which writes the visitor's locale COOKIE; this
+    page's language is `workers.language ?? companies.language`, the third dial.
+    A switch there would silently disagree with every WhatsApp message the same
+    person gets — the drift #55 exists to stop. `lang` is set on the page's own
+    subtree because the root layout stamps the visitor's locale on `<html>`.
+  - **The page has no control on it and says so.** Declaring a task finished
+    goes through WhatsApp, where Capo can ask for a photo and file the claim
+    against the right task; a button here would need a write path authorised by
+    a token in a URL. `force-dynamic`, `noindex`/`nofollow`, and `/dia`
+    disallowed in `robots.txt`.
+  Known and NOT done: a link tapped after Lisbon midnight is dead and the next
+  one does not arrive until 07:00 — a real gap for a night shift, and the price
+  of the "today only" rule. Nothing lets a crew member request a fresh link, and
+  the manager has no screen showing who has opened theirs (`opened_count` is
+  recorded and read by nobody yet).
 - **There is a THIRD proactive send: the welcome, and it is a SWEEP, not a
   hook** (`apps/web/app/api/cron/welcome`, migration `0033`, issue #45). Capo
   introduces itself to a person the first time it is legally allowed to message

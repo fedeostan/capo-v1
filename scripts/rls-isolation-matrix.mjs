@@ -545,6 +545,23 @@ async function seedTenant(label) {
     `checkin_photo_request(${label})`,
   );
 
+  // 0039 (issue #114): the bearer token behind the crew day page. Seeded so the
+  // deny-all read below cannot pass for want of rows, and so the UPDATE and
+  // DELETE attacks have something real to aim at. `dayLinkToken` is carried out
+  // because the read attack has to present a token an attacker could plausibly
+  // have — a guessed one proves nothing about the policy.
+  const dayLinkToken = randomBytes(32).toString('base64url');
+  await must(
+    admin.from('worker_day_links').insert({
+      token: dayLinkToken,
+      company_id: companyId,
+      worker_id: worker.id,
+      link_date: '2026-01-05',
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    }).select('token').single(),
+    `worker_day_link(${label})`,
+  );
+
   const client = createClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: false },
   });
@@ -561,6 +578,7 @@ async function seedTenant(label) {
     companyMemoryId: companyMemory.id, ownMemoryId: ownMemory.id, colleagueMemoryId: colleagueMemory.id,
     pushEndpoint, colleaguePushEndpoint,
     workerConversationId: workerConversation.id, workerMessageId: workerMessage.id, workerSecret,
+    dayLinkToken,
   };
 }
 
@@ -663,6 +681,8 @@ async function cleanupTenant(t) {
   // FK to each (0034).
   await companyEq(admin.from('checkin_photo_requests').delete());
   await companyEq(admin.from('notification_log').delete());
+  // Before workers: worker_day_links.worker_id is a FK (0039).
+  await companyEq(admin.from('worker_day_links').delete());
   await companyEq(admin.from('workers').delete());
   await companyEq(admin.from('jobs').delete());
   await companyEq(admin.from('profiles').delete());
@@ -820,6 +840,17 @@ async function runMatrix(self, other) {
   {
     const { data, error } = await db.from('checkin_photo_requests').select('id');
     check(`${L}: checkin_photo_requests deny-all (bonus)`, ...readIsDenied(data, error));
+  }
+
+  // worker_day_links (0039, issue #114) — the fifth deny-all relation, and the
+  // only one whose rows ARE credentials rather than describing them. A token
+  // read out of this table is a working read of that crew member's live work
+  // until Lisbon midnight, from any browser, with no session. Both tenants'
+  // rows exist by the time this runs, so a policy exposing every company would
+  // show TWO here.
+  {
+    const { data, error } = await db.from('worker_day_links').select('token');
+    check(`${L}: worker_day_links deny-all (bonus)`, ...readIsDenied(data, error));
   }
 
   // ai_usage (0032) — the THIRD ledger, and the only one with a tenant policy
@@ -1194,6 +1225,93 @@ async function runAdversarial(attacker, victim) {
       'adversarial: tenant DELETE of its own check-in photo request blocked',
       error != null,
       error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
+
+  // ── 0039 worker_day_links (issue #114) ───────────────────────────────────
+  // The crew day page's bearer token. Deny-all with every grant revoked, so
+  // these are grant-layer checks — but what they protect is unlike every other
+  // deny-all table here: a row IS a credential, not a record of one.
+  //
+  // Four attacks, and each buys something different:
+  //   READ  a colleague's token — a working, session-less read of that person's
+  //         live work from any browser until Lisbon midnight.
+  //   INSERT a token of the attacker's choosing pointed at a worker — the same
+  //         thing, minted on demand and never sent over WhatsApp at all, so the
+  //         crew member has no way to know it exists.
+  //   UPDATE an existing row's expires_at — a link that never dies.
+  //   DELETE the row — no trail.
+  //
+  // The read is aimed CROSS-TENANT and the three writes at the attacker's OWN
+  // company, for the reason the checkin_photo_requests block gives: a
+  // cross-tenant write would be refused for the wrong reason (the FK trigger
+  // rather than the grant), and would pass while the grant leaked.
+  {
+    const { data, error } = await db
+      .from('worker_day_links')
+      .select('company_id, worker_id')
+      .eq('token', victim.dayLinkToken);
+    check(
+      'adversarial: reading another tenant\'s crew day token blocked',
+      ...readIsDenied(data, error),
+    );
+  }
+  {
+    const forged = randomBytes(32).toString('base64url');
+    const { error } = await db.from('worker_day_links').insert({
+      token: forged,
+      company_id: attacker.companyId,
+      worker_id: attacker.workerId,
+      link_date: '2026-01-06',
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    check(
+      'adversarial: tenant minting its own crew day token blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a tenant can mint a page credential!',
+    );
+    if (!error) await admin.from('worker_day_links').delete().eq('token', forged);
+  }
+  {
+    const { error } = await db
+      .from('worker_day_links')
+      .update({ expires_at: new Date(Date.now() + 365 * 86_400_000).toISOString() })
+      .eq('token', attacker.dayLinkToken);
+    check(
+      'adversarial: tenant extending its own crew day token blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a tenant can make a link immortal',
+    );
+  }
+  {
+    const { error } = await db
+      .from('worker_day_links')
+      .delete()
+      .eq('token', attacker.dayLinkToken);
+    check(
+      'adversarial: tenant DELETE of its own crew day token blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
+  // The cross-company FK trigger, which is the seam RLS cannot see: a row whose
+  // company_id is honest and whose worker_id belongs to another tenant would
+  // name a stranger's crew member and hand out a page scoped to the attacker's
+  // own company. Attacked on the SERVICE ROLE, because the grant layer already
+  // stops a tenant getting this far — and the trigger has to hold for the cron,
+  // which is the only writer there actually is.
+  {
+    const { error } = await admin.from('worker_day_links').insert({
+      token: randomBytes(32).toString('base64url'),
+      company_id: attacker.companyId,
+      worker_id: victim.workerId,
+      link_date: '2026-01-07',
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    check(
+      'adversarial: cross-company crew day token blocked by the FK trigger',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a token can name another tenant\'s worker!',
     );
   }
 

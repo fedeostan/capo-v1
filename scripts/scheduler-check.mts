@@ -24,6 +24,11 @@ import {
   workdayAfter,
   workdayDelta,
 } from '@capo/core/capabilities/workdays';
+// The crew day link's expiry (issue #114). Same justification as the send-window
+// import below: apps/web/lib/day-link.ts is the seam that owns it, it touches no
+// env at module scope, and the Lisbon-vs-UTC arithmetic in it is exactly the
+// class of defect this file exists to catch.
+import { lisbonDayEnd } from '../apps/web/lib/day-link';
 import {
   dependentsClosure,
   recomputeSchedule,
@@ -710,6 +715,68 @@ check(
   /^0 /.test(consolidateEntries[0]?.schedule ?? ''),
   consolidateEntries[0]?.schedule ?? 'missing',
 );
+
+// ── THE CREW DAY LINK'S EXPIRY (issue #114) ─────────────────────────────────
+//
+// The token is a bearer credential sent in plain text over WhatsApp, and #114
+// settles what a leaked one may expose: TODAY ONLY. The page reads the LIVE
+// board rather than a morning snapshot, so that promise is kept by the EXPIRY
+// and by nothing else — a token that outlives its Lisbon day goes on exposing
+// tomorrow's work, and the day after's.
+//
+// So the expiry is a DAY BOUNDARY, not a duration, and computing a Lisbon day
+// boundary from a UTC clock is the same trap activity-check pins for the feed:
+// wrong by an hour for five months of the year, and only in one direction.
+
+// WINTER — Lisbon runs at UTC+0, so the boundary is plain midnight UTC.
+eq(
+  'a winter link expires at Lisbon midnight',
+  lisbonDayEnd('2026-01-15').toISOString(),
+  '2026-01-16T00:00:00.000Z',
+);
+// SUMMER — Lisbon runs at UTC+1, so local midnight is 23:00 UTC the day before.
+// Get this wrong and every summer link lives an hour into the next day, which
+// is an hour in which it shows work it was never meant to.
+eq(
+  'a summer link expires at Lisbon midnight, an hour before UTC midnight',
+  lisbonDayEnd('2026-07-15').toISOString(),
+  '2026-07-15T23:00:00.000Z',
+);
+// The two DST days themselves, where a single-pass offset lookup is most likely
+// to be wrong. Lisbon transitions at 01:00 UTC, which is why one refinement is
+// enough — asserted rather than asserted-in-a-comment.
+eq(
+  'the spring-forward day still expires at local midnight',
+  lisbonDayEnd('2026-03-29').toISOString(),
+  '2026-03-29T23:00:00.000Z',
+);
+eq(
+  'the autumn fall-back day still expires at local midnight',
+  lisbonDayEnd('2026-10-25').toISOString(),
+  '2026-10-26T00:00:00.000Z',
+);
+
+// The property that actually matters, derived rather than pinned: a link minted
+// during the morning send window must still be alive that evening and dead
+// before the NEXT morning's send. Checked across a whole year so a DST edge
+// cannot hide in a hand-picked date.
+{
+  let alive = 0;
+  let leaks = 0;
+  for (let i = 0; i < 365; i += 1) {
+    const day = new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);
+    const end = lisbonDayEnd(day).getTime();
+    // 20:00 Lisbon on the day itself — a crew member checking after work.
+    const evening = Date.parse(`${day}T19:00:00Z`);
+    // The earliest the next morning's briefing could go out (07:00 Lisbon in
+    // summer is 06:00 UTC), which is when a fresh token replaces this one.
+    const nextMorning = Date.parse(`${day}T06:00:00Z`) + 24 * 60 * 60 * 1000;
+    if (end > evening) alive += 1;
+    if (end > nextMorning) leaks += 1;
+  }
+  eq('a link is alive all evening, every day of the year', alive, 365);
+  eq('and never survives to the next briefing', leaks, 0);
+}
 
 // ── report ──────────────────────────────────────────────────────────────────
 console.log(lines.join('\n'));

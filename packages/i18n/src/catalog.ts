@@ -1290,6 +1290,59 @@ export interface Catalog {
    * drift about what "your tasks today" means. Changing the voice here changes
    * both.
    */
+  /**
+   * The crew day page at /dia (issue #114) — the one screen in the product a
+   * person with no account ever reads.
+   *
+   * ── IT IS NOT A COPY OF THE MANAGER'S BOARD ────────────────────────────────
+   * Everything here is written for somebody standing next to a van, in the
+   * language THEY chose (`workers.language ?? companies.language`), and it must
+   * never suggest an action the page cannot perform: there is no editing, no
+   * "mark as done", no login. A control that is not there must not be described
+   * as missing either — the page is a list, and it says so.
+   *
+   * The per-task lines themselves are NOT here. They come from `reminders`
+   * (taskHeadline / taskDetailLines), which is what the 07:00 message renders
+   * too, so the page and the message cannot describe one task differently.
+   */
+  dia: {
+    /** <title>. Kept short: it is the browser tab on a phone. */
+    title: string;
+    /** "Terça, 30 de agosto" — the day this list is for, already formatted. */
+    dateLine(date: string): string;
+    /** Heading over today's work. `count` is the number of tasks under it. */
+    todayHeading(count: number): string;
+    /** Heading over work whose deadline has already passed.
+     *
+     *  ⚠ These tasks are in NEITHER daily WhatsApp send: `active_today` is
+     *  false once a due date is behind us (0013), so the morning message
+     *  structurally cannot name them. This heading is the first time the person
+     *  doing the work hears about them, which is why it is a heading of its own
+     *  rather than a badge mixed into the list above. */
+    overdueHeading(count: number): string;
+    /** Nothing on today and nothing overdue. Must read as good news, not as an
+     *  error or an empty database. */
+    nothing: string;
+    /** Under the list: what to do with a question, given there is no control
+     *  here to press. Points back at WhatsApp, which is where the person came
+     *  from and where Capo can actually answer. */
+    askOnWhatsApp: string;
+    /**
+     * Shown for a token that is unknown, expired, malformed or unreadable —
+     * ALL FOUR, deliberately one sentence.
+     *
+     * Distinguishing "never existed" from "expired" tells somebody holding a
+     * guessed string whether they guessed a real one, and there is nothing a
+     * crew member could do differently with the distinction: the answer in
+     * every case is "tomorrow's message has a fresh link". It must therefore
+     * not read as an accusation — the overwhelmingly likely reader is a worker
+     * who scrolled up to an old message.
+     */
+    expired: string;
+    /** Heading above `expired`. */
+    expiredTitle: string;
+  };
+
   reminders: {
     /**
      * Meta template locale code — 'pt_PT', 'es_ES', 'en_US'. Underscore, not
@@ -1480,6 +1533,24 @@ export interface Catalog {
      * re-approved in WhatsApp Manager — see docs/whatsapp-cloud-api-runbook.md.
      */
     languageHint: string;
+
+    // ── the crew day link (issue #114) ───────────────────────────────────────
+    /**
+     * The sentence above the URL of the crew day page (/dia).
+     *
+     * ⚠ NO TRAILING NEWLINE and NO URL in the string. The renderer puts the
+     * link on its own line underneath, so that WhatsApp treats the whole line
+     * as the tap target and draws a preview. A sentence with the URL inline
+     * gets a smaller tap target on exactly the phones this is for.
+     *
+     * ⚠ FREE-FORM ONLY. `toTemplateParam` flattens all whitespace and
+     * `capo_daily_briefing` is pinned to {{1}}/{{2}} with no button component,
+     * so this can never ride the paid template — see WorkerFreeFormOptions.
+     *
+     * It says what is behind the link rather than "click here": the crew member
+     * is deciding whether to open a browser while standing next to a van.
+     */
+    dayLinkCta: string;
 
     // ── the WELCOME message (issue #45) ──────────────────────────────────────
     // The first thing Capo ever says to somebody, sent once and never again,

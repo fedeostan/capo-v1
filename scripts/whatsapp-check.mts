@@ -1349,6 +1349,75 @@ check('an unparseable opt-in → no consent', !hasWhatsAppConsent({ whatsapp_opt
     check(`${locale} — leaks no undefined`, !body.includes('undefined'), body);
     check(`${locale} — still carries the materials`, body.includes('tubo PVC 50mm'), body);
   }
+
+  // ── THE CREW DAY LINK (issue #114) ────────────────────────────────────────
+  //
+  // The CTA is free-form ONLY: toTemplateParam flattens whitespace and
+  // capo_daily_briefing is pinned to {{1}}/{{2}} with no button component, both
+  // of which this file already asserts elsewhere. What is checked here is the
+  // half that can regress silently — that the link survives the character cap.
+  const LINK = 'https://www.construcapo.com/dia?t=' + 'k'.repeat(43);
+
+  const withLink = renderWorkerFreeForm(briefing([task()]), { dayLinkUrl: LINK });
+  check('the CTA carries the URL', withLink.includes(LINK), withLink);
+  check('and a sentence above it', withLink.includes('Vê a tua lista completa'), withLink);
+  check(
+    'the URL is on its own line, so WhatsApp gives it the whole tap target',
+    withLink.split('\n').includes(LINK),
+    JSON.stringify(withLink.slice(-120)),
+  );
+  check(
+    'and the CTA is LAST — the work comes first, the control surface after it',
+    withLink.trimEnd().endsWith(LINK),
+    JSON.stringify(withLink.slice(-80)),
+  );
+
+  // Absent by default. mintDayLinks swallows its own failures, so "no link"
+  // must render exactly the message this function rendered before #114.
+  eq('no link means the message is unchanged', renderWorkerFreeForm(briefing([task()])), one);
+
+  // A worker with nothing on still gets the link: "nothing today" is precisely
+  // when somebody wants to check for themselves.
+  check(
+    'an idle day still carries the link',
+    renderWorkerFreeForm(briefing([]), { dayLinkUrl: LINK }).includes(LINK),
+    'missing',
+  );
+
+  // ⚠ THE REGRESSION THIS EXISTS FOR. The CTA is reserved from the character
+  // budget BEFORE the blocks are laid out. Appended after the clamp instead, a
+  // rich day would truncate the URL into a dead string — a link that looks like
+  // a link, goes nowhere, and only ever does so for the busiest people on the
+  // crew, who are the least likely to report it.
+  const pathologicalWithLink = renderWorkerFreeForm(
+    briefing(
+      Array.from({ length: 5 }, (_, i) =>
+        task({
+          title: `${'T'.repeat(400)} ${i}`,
+          description: 'd'.repeat(1000),
+          materials: Array.from({ length: 30 }, () => 'm'.repeat(200)),
+        }),
+      ),
+    ),
+    { dayLinkUrl: LINK },
+  );
+  check(
+    'a pathological briefing still carries an INTACT link',
+    pathologicalWithLink.includes(LINK),
+    'the URL was truncated by the cap',
+  );
+  check(
+    'and still fits one WhatsApp message',
+    pathologicalWithLink.length <= 4000,
+    `${pathologicalWithLink.length} chars`,
+  );
+  eq('so it is still never split', splitForWhatsApp(pathologicalWithLink).length, 1);
+
+  for (const locale of LOCALES) {
+    const body = renderWorkerFreeForm({ ...briefing([task()]), locale }, { dayLinkUrl: LINK });
+    check(`${locale} — the CTA renders`, body.includes(LINK), body);
+    check(`${locale} — and leaks no undefined`, !body.includes('undefined'), body);
+  }
 }
 
 // ── TWO PEOPLE ON ONE TASK (issue #44) ──────────────────────────────────────
