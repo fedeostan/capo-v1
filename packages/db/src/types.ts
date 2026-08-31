@@ -207,6 +207,31 @@
 // writes it on the service role), and company_schedules' tenant INSERT/UPDATE
 // grants are COLUMN-SCOPED — `updated_at`/`updated_by` are stamped by triggers
 // and refused to a client that names them.
+//
+// ── 0040 (issue #125), WRITTEN BY HAND, NOT YET APPLIED ────────────────────
+// The conversation turn lock: three APPENDED nullable columns on
+// `conversations` (turn_lock_token / turn_lock_expires_at / turn_queued_at)
+// and three SECURITY DEFINER RPCs under Functions
+// (claim/finish/renew_conversation_turn). Added by hand for the standing
+// reason: regenerating against a project that lacks them would silently
+// DELETE these rather than add them.
+//
+// Two consequences while the migration is unapplied, both survivable by
+// construction:
+//   - all three RPCs answer PGRST202 ("not in the schema cache") or 42883.
+//     Their ONLY callers are the wrappers in
+//     packages/core/src/agent/turn-lock.ts, every one of which catches that
+//     into a log line and degrades: handleInbound runs UNLOCKED, which is
+//     byte-for-byte the pre-0040 product. A missing migration costs
+//     serialization for a while, never the chat.
+//   - the three columns read as absent. Nothing selects them by name — no
+//     code reads them at all; the RPCs are the only readers and writers.
+//
+// Invisible here as usual: 0040 REVOKES the tenant's UPDATE grant on
+// `conversations` (the lock columns must be unforgeable at the grant layer,
+// and no tenant code path ever updated the table), so the Update shape below
+// is typed because the generator always emits one, not because a tenant may
+// use it.
 export type Json =
   | string
   | number
@@ -563,16 +588,25 @@ export type Database = {
           company_id: string
           created_at: string
           id: string
+          turn_lock_expires_at: string | null
+          turn_lock_token: string | null
+          turn_queued_at: string | null
         }
         Insert: {
           company_id: string
           created_at?: string
           id?: string
+          turn_lock_expires_at?: string | null
+          turn_lock_token?: string | null
+          turn_queued_at?: string | null
         }
         Update: {
           company_id?: string
           created_at?: string
           id?: string
+          turn_lock_expires_at?: string | null
+          turn_lock_token?: string | null
+          turn_queued_at?: string | null
         }
         Relationships: [
           {
@@ -2301,6 +2335,21 @@ export type Database = {
           score: number
           source_ref: string
         }[]
+      }
+      // 0040 (issue #125). The turn lock: SECURITY DEFINER, called only from
+      // packages/core/src/agent/turn-lock.ts, whose wrappers degrade to an
+      // unlocked turn when any of the three is missing — see the header note.
+      claim_conversation_turn: {
+        Args: { p_conversation: string; p_token: string; p_ttl_seconds?: number }
+        Returns: string
+      }
+      finish_conversation_turn: {
+        Args: { p_conversation: string; p_token: string; p_force?: boolean }
+        Returns: string
+      }
+      renew_conversation_turn: {
+        Args: { p_conversation: string; p_token: string; p_ttl_seconds?: number }
+        Returns: boolean
       }
     }
     Enums: {
