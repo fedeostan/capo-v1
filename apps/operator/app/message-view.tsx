@@ -8,10 +8,10 @@ import Markdown from '@capo/ui/markdown';
 // `memories` or `proposals` — this file only ever renders.
 
 export const ROLE_STYLES: Record<string, string> = {
-  user: 'border-zinc-500/40',
-  assistant: 'border-emerald-500/40',
-  tool: 'border-amber-500/30',
-  event: 'border-sky-500/30',
+  user: 'border-control',
+  assistant: 'border-success',
+  tool: 'border-warn',
+  event: 'border-info',
 };
 
 interface MessagePart {
@@ -34,7 +34,7 @@ export function MessageBody({ content }: { content: unknown }) {
         part.type === 'text' && part.text ? (
           <Markdown key={i} text={part.text} />
         ) : (
-          <span key={i} className="mr-2 rounded bg-zinc-500/15 px-1 font-mono text-[0.85em]">
+          <span key={i} className="mr-2 rounded bg-surface-hover px-1 font-mono text-[0.85em]">
             {part.type}
           </span>
         ),
