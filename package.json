@@ -21,7 +21,8 @@
     "whatsapp-template": "tsx scripts/whatsapp-template.mts",
     "agent-smoke": "tsx scripts/agent-smoke.mts",
     "knowledge-ingest": "tsx scripts/knowledge-ingest.mts",
-    "activity-check": "tsx scripts/activity-check.mts"
+    "activity-check": "tsx scripts/activity-check.mts",
+    "migration-check": "tsx scripts/migration-drift.mts"
   },
   "devDependencies": {
     "@ai-sdk/google": "^4.0.8",
