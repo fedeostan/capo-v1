@@ -232,13 +232,126 @@ export function capoWelcome(): TemplateDefinition[] {
   });
 }
 
+/**
+ * capo_daily_briefing_v2 — the 07:00 briefing, laid out for a person (issue #108).
+ *
+ * The original capo_daily_briefing is a single frozen sentence, so everything
+ * a worker reads is one line with tasks glued together by ' · '. A template
+ * body is frozen at approval, but the body's own LINE BREAKS are ours to
+ * declare at submission time — so v2 is the same envelope with the parameter
+ * on its own paragraph: greeting, blank line, {{2}}, blank line, opt-out.
+ *
+ * Under #108's B-then-A decision, {{2}} on this path carries a short personal
+ * knock ("Tens 3 tarefas hoje — responde OK para veres o detalhe"), and the
+ * full formatted briefing arrives free-form after the worker's reply opens the
+ * 24h window. The knock is ONE flat sentence, which is exactly what a Meta
+ * body parameter can hold — toTemplateParam flattens newlines, so a
+ * multi-line {{2}} was never available anyway.
+ *
+ * A NEW NAME rather than an edit: Meta has no API to rewrite an approved
+ * name+language pair, and the send path must be able to fall back to the old
+ * template until every locale of this one is approved. The language line
+ * ("Responde PT, ES ou EN") stays out of the body — that is #49's lesson and
+ * the one thing #108 says any re-approval must not reintroduce. STOP stays:
+ * Meta expects a utility template to state its opt-out.
+ *
+ * No BUTTONS component — same asymmetry as capo_daily_briefing, pinned by
+ * scripts/whatsapp-check.mts: briefing replies are free text, only
+ * capo_task_checkin declares buttons.
+ */
+const BRIEFING_V2_BODY: Record<Locale, string> = {
+  'pt-PT': 'Bom dia {{1}}.\n\n{{2}}\n\nResponde STOP para deixar de receber.',
+  'es-ES': 'Buenos días {{1}}.\n\n{{2}}\n\nResponde STOP para dejar de recibir.',
+  'en-US': 'Good morning {{1}}.\n\n{{2}}\n\nReply STOP to unsubscribe.',
+};
+
+const BRIEFING_V2_EXAMPLE: Record<Locale, [name: string, knock: string]> = {
+  'pt-PT': ['Miguel', 'Tens 3 tarefas hoje — responde OK para veres o detalhe.'],
+  'es-ES': ['Miguel', 'Tienes 3 tareas hoy — responde OK para ver el detalle.'],
+  'en-US': ['Miguel', 'You have 3 tasks today — reply OK to see the details.'],
+};
+
+export function capoDailyBriefingV2(): TemplateDefinition[] {
+  return LOCALES.map(locale => ({
+    name: 'capo_daily_briefing_v2',
+    language: getCatalog(locale).reminders.templateLanguage,
+    category: 'UTILITY' as const,
+    parameter_format: 'POSITIONAL' as const,
+    components: [
+      {
+        type: 'BODY',
+        text: BRIEFING_V2_BODY[locale],
+        example: { body_text: [BRIEFING_V2_EXAMPLE[locale]] },
+      },
+    ],
+  }));
+}
+
+/**
+ * capo_message_waiting — the window-reopener (issue #123, Part B).
+ *
+ * A manager wants to reach a crew member NOW, outside the 24h window free-form
+ * text is legal in. The flow: hold the manager's words server-side, send this
+ * template, and the worker's reply — any reply — opens the window and flushes
+ * the held message. So this body's one job is to make replying feel natural
+ * while saying nothing the manager didn't: the held text itself must never
+ * ride a frozen template body, and anything that varies rides a parameter
+ * (#49's lesson). {{1}} is the worker's name; {{2}} is who is asking —
+ * the company name the manager typed, never worker-authored text.
+ *
+ * Submitted EARLY and ahead of its code half on purpose: Meta approval takes
+ * minutes to days, and the code half (the held-message table) is useless
+ * until every locale of this is approved. No BUTTONS — a reply of any kind
+ * opens the window, and a quick-reply would be a fourth tappable payload
+ * shape to keep disjoint from the other three for no gain (AGENTS.md).
+ */
+const MESSAGE_WAITING_BODY: Record<Locale, string> = {
+  'pt-PT': 'Olá {{1}}. {{2}} tem um recado para ti — responde a esta mensagem para o receberes. Responde STOP para deixar de receber.',
+  'es-ES': 'Hola {{1}}. {{2}} tiene un mensaje para ti — responde a este mensaje para recibirlo. Responde STOP para dejar de recibir.',
+  'en-US': 'Hi {{1}}. {{2}} has a message for you — reply to this message to receive it. Reply STOP to unsubscribe.',
+};
+
+const MESSAGE_WAITING_EXAMPLE: Record<Locale, [name: string, sender: string]> = {
+  'pt-PT': ['Miguel', 'Construções Silva'],
+  'es-ES': ['Miguel', 'Construcciones Silva'],
+  'en-US': ['Miguel', 'Silva Construction'],
+};
+
+export function capoMessageWaiting(): TemplateDefinition[] {
+  return LOCALES.map(locale => ({
+    name: 'capo_message_waiting',
+    language: getCatalog(locale).reminders.templateLanguage,
+    category: 'UTILITY' as const,
+    parameter_format: 'POSITIONAL' as const,
+    components: [
+      {
+        type: 'BODY',
+        text: MESSAGE_WAITING_BODY[locale],
+        example: { body_text: [MESSAGE_WAITING_EXAMPLE[locale]] },
+      },
+    ],
+  }));
+}
+
 /** Every template this repo knows how to submit. */
 export function allTemplates(): TemplateDefinition[] {
-  return [...capoDailyBriefing(), ...capoTaskCheckin(), ...capoWelcome()];
+  return [
+    ...capoDailyBriefing(),
+    ...capoTaskCheckin(),
+    ...capoWelcome(),
+    ...capoDailyBriefingV2(),
+    ...capoMessageWaiting(),
+  ];
 }
 
 /** Templates `status` checks for existence and approval, definition or not. */
-export const MANAGED_TEMPLATE_NAMES = ['capo_daily_briefing', 'capo_task_checkin', 'capo_welcome'];
+export const MANAGED_TEMPLATE_NAMES = [
+  'capo_daily_briefing',
+  'capo_task_checkin',
+  'capo_welcome',
+  'capo_daily_briefing_v2',
+  'capo_message_waiting',
+];
 
 /** The three locale codes every managed template must exist in. */
 export const TEMPLATE_LANGUAGES = LOCALES.map(l => getCatalog(l).reminders.templateLanguage);
