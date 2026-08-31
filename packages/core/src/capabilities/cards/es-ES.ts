@@ -161,6 +161,13 @@ export const cards: CardStrings = {
     },
     dependsOn: indices => `   ⤷ después de: ${indices.join(', ')}`,
     materials: list => `   materiales: ${list.join(', ')}`,
+    warnings: {
+      header: 'Antes de aprobar, confirma:',
+      nameVariants: names =>
+        `• ${names.map(n => `«${n}»`).join(', ')} — ¿es el mismo material escrito de formas distintas, o son materiales diferentes?`,
+      tradeGap: p =>
+        `• Hay más de una tarea de ${p.trade}, pero «${p.title}» no lleva ${p.missing.map(m => `«${m}»`).join(', ')} — ¿está bien?`,
+    },
   },
 };
 

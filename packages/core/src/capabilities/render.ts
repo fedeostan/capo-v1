@@ -1,6 +1,7 @@
 import type { Db } from '@capo/db/client';
 import type { Locale } from '@capo/i18n/locale';
 import { countTranslatable } from '../translation';
+import { checkPlanQuality, renderPlanWarningLines } from './plan-quality';
 import { shiftDaysBetween } from './reschedule';
 import { cards, type CardStrings, type JobStatus, type TaskStatus } from './cards';
 
@@ -177,6 +178,7 @@ export async function renderProposal(
       const tasks: {
         key: string;
         title: string;
+        trade?: string;
         start_date: string;
         due_date: string;
         duration_days: number;
@@ -217,7 +219,13 @@ export async function renderProposal(
         from: fmt(allDates[0]),
         to: fmt(allDates[allDates.length - 1]),
       });
-      return `${header}\n${lines.join('\n')}`;
+      // Materials-quality warnings (issue #119): re-derived from the payload
+      // here rather than carried in action_args, so the card stays a pure
+      // function of args and the section can never disagree with the tasks it
+      // questions. No warnings appends nothing — the card is byte-identical
+      // to a pre-#119 render.
+      const warningLines = renderPlanWarningLines(checkPlanQuality(tasks), t.plan.warnings);
+      return [header, ...lines, ...warningLines].join('\n');
     }
 
     case 'apply_reschedule': {
