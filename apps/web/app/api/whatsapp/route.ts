@@ -54,6 +54,7 @@ import {
   renderTaskDetail,
 } from '../../notifications/worker-menu';
 import { type WhatsAppEnv } from '../../../lib/whatsapp';
+import { sendTurnFailureReply } from '../../../lib/turn-failure';
 import { acknowledgeInbound, withProgressNote } from '../../../lib/whatsapp-feedback';
 import { renderCheckinAnswerEvent } from '../../notifications/briefing';
 import { readThreadLocale, recordThreadEvent } from '../../notifications/thread';
@@ -2389,7 +2390,29 @@ export async function POST(request: NextRequest) {
           await delivery;
         } catch (err) {
           console.error(`whatsapp: failed handling message ${message.id}:`, err);
-          logEvent('whatsapp.send_failure', { companyId, messageId: message.id, error: err instanceof Error ? err.message : String(err) });
+          // Two failures share this catch and the operator must be able to
+          // grep them apart (issue #126): `turn_failed` is the agent breaking
+          // — a model refusal leaves NO other trace, because `recordUsage`
+          // only fires on success, so `ai_usage` going quiet reads as low
+          // traffic — while `send_failure` stays what it always was, Meta
+          // refusing a send we produced.
+          logEvent(
+            err instanceof WhatsAppSendError ? 'whatsapp.send_failure' : 'whatsapp.turn_failed',
+            { companyId, messageId: message.id, error: err instanceof Error ? err.message : String(err) },
+          );
+          // 131047 = outside the 24h window. The apology is free-form and
+          // would be refused the same way — same rule as the worker path.
+          if (err instanceof WhatsAppSendError && err.code === 131047) return;
+          // Silence here is the 31 Aug failure: ten messages, 75 minutes, no
+          // reply and no error. Below sender resolution by construction — this
+          // catch only exists inside the resolved-manager branch. Swallows its
+          // own failures and suppresses repeats; see lib/turn-failure.
+          await sendTurnFailureReply(db, {
+            companyId,
+            messageId: message.id,
+            locale: locales.user,
+            sendConfig,
+          });
         }
       };
 
