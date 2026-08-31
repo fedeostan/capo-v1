@@ -1,0 +1,133 @@
+<!doctype html>
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  DRAFT — NOT WIRED TO ANYTHING. DO NOT PASTE INTO SUPABASE.
+  ═══════════════════════════════════════════════════════════════════════════
+  Capo — "Trial ending soon" email. Issue #113 asked for this draft alongside
+  the two auth emails, but sending it needs a scheduled job that reads each
+  company's trial end date — a separate decision and a separate piece of work.
+  Nothing sends this today, and it is NOT a Supabase Auth template (Supabase
+  only sends auth emails; this one would go out through Resend directly).
+
+  Placeholders — these are OURS, not Supabase's, and a future sender must
+  replace them before sending:
+    {{trial_end_date}}   the trial's last day, already formatted for the reader
+                         (source of truth: Stripe's trial_end, originally from
+                         companies.trial_ends_at via resolveTrialEnd)
+
+  Subject (draft):  O teu per&iacute;odo de teste est&aacute; a acabar · Capo
+
+  Colours are the LIGHT-THEME VALUES from packages/ui/src/tokens.css, hardcoded
+  because email clients cannot read CSS variables:
+    #fafaf9 --bg · #ffffff --surface · #1c1917 --fg · #57534e --fg-muted ·
+    #78716c --fg-faint · #e7e5e4 --hairline · #c2410c --brand · #ffffff --on-brand
+  Radii: 16px = --radius-card, 12px = --radius-control. No dark mode (issue #113).
+-->
+<html lang="pt">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="x-apple-disable-message-reformatting" />
+    <title>O teu período de teste está a acabar · Capo</title>
+  </head>
+  <body style="margin:0;padding:0;background-color:#fafaf9;">
+    <!-- Preview text shown next to the subject in the inbox list; invisible in the open email. -->
+    <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
+      O teu per&iacute;odo de teste termina a {{trial_end_date}}.
+    </div>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#fafaf9" style="background-color:#fafaf9;">
+      <tr>
+        <td align="center" style="padding:24px 16px 40px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:480px;">
+
+            <!-- Wordmark: text, not an image — images are blocked by default in many clients. -->
+            <tr>
+              <td style="padding:8px 4px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:28px;font-weight:700;color:#c2410c;">
+                Capo
+              </td>
+            </tr>
+
+            <!-- Card -->
+            <tr>
+              <td bgcolor="#ffffff" style="background-color:#ffffff;border:1px solid #e7e5e4;border-radius:16px;padding:32px 24px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+
+                  <!-- Portuguese: the primary block -->
+                  <tr>
+                    <td style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:22px;line-height:28px;font-weight:700;color:#1c1917;padding-bottom:12px;">
+                      O teu per&iacute;odo de teste est&aacute; a acabar
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:24px;color:#1c1917;padding-bottom:24px;">
+                      O teu per&iacute;odo de teste da Capo termina a <strong>{{trial_end_date}}</strong>. Para continuares a falar com o Capo e a tua equipa continuar a receber as mensagens da manh&atilde;, ativa a subscri&ccedil;&atilde;o — 45&nbsp;&euro; por m&ecirc;s, e podes cancelar quando quiseres.
+                    </td>
+                  </tr>
+
+                  <!-- Button: one obvious action, full width, ≥48px tall tap target -->
+                  <tr>
+                    <td>
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                        <tr>
+                          <td align="center" bgcolor="#c2410c" style="background-color:#c2410c;border-radius:12px;">
+                            <a href="https://www.construcapo.com/subscricao" target="_blank" style="display:block;padding:15px 24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:24px;font-weight:600;color:#ffffff;text-decoration:none;">
+                              Ativar a subscri&ccedil;&atilde;o
+                            </a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <!-- What happens if nothing is done: stated plainly, no pressure tricks -->
+                  <tr>
+                    <td style="padding-top:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:18px;color:#57534e;">
+                      Se n&atilde;o fizeres nada, a conta fica em pausa quando o teste acabar — n&atilde;o perdes as tuas obras nem as tuas tarefas, e podes ativar mais tarde.
+                    </td>
+                  </tr>
+
+                  <!-- Divider -->
+                  <tr>
+                    <td style="padding:24px 0;">
+                      <div style="border-top:1px solid #e7e5e4;font-size:0;line-height:0;">&nbsp;</div>
+                    </td>
+                  </tr>
+
+                  <!-- Spanish: short -->
+                  <tr>
+                    <td style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:21px;color:#57534e;padding-bottom:16px;">
+                      <strong style="color:#1c1917;">Espa&ntilde;ol</strong> — Tu periodo de prueba de Capo termina el {{trial_end_date}}. Para seguir usando Capo, activa la suscripci&oacute;n (45&nbsp;&euro;/mes, cancela cuando quieras) en <a href="https://www.construcapo.com/subscricao" target="_blank" style="color:#c2410c;">construcapo.com/subscricao</a>. Si no haces nada, la cuenta se pausa — no pierdes tus obras ni tus tareas.
+                    </td>
+                  </tr>
+
+                  <!-- English: short -->
+                  <tr>
+                    <td style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:21px;color:#57534e;">
+                      <strong style="color:#1c1917;">English</strong> — Your Capo trial ends on {{trial_end_date}}. To keep using Capo, activate your subscription (&euro;45/month, cancel anytime) at <a href="https://www.construcapo.com/subscricao" target="_blank" style="color:#c2410c;">construcapo.com/subscricao</a>. If you do nothing, the account pauses — your sites and tasks are kept.
+                    </td>
+                  </tr>
+
+                </table>
+              </td>
+            </tr>
+
+            <!-- Footer -->
+            <tr>
+              <td style="padding:16px 4px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:18px;color:#78716c;">
+                Recebes este email porque tens uma conta na Capo em per&iacute;odo de teste.<br />
+                You are receiving this because your Capo account is on a trial.
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:12px 4px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:18px;color:#78716c;">
+                Capo &middot; <a href="https://www.construcapo.com" target="_blank" style="color:#78716c;">construcapo.com</a>
+              </td>
+            </tr>
+
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
