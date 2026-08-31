@@ -139,7 +139,7 @@ export default async function HealthPage() {
                 {activation.map(row => (
                   <tr key={row.companyId}>
                     <td className="py-2 pr-4">
-                      <Link href={`/conversations/${row.companyId}`} className="underline hover:text-zinc-800">
+                      <Link href={`/companies/${row.companyId}`} className="underline hover:text-zinc-800">
                         {row.companyName}
                       </Link>
                       <span className="block text-xs text-zinc-500">{row.daysSinceSignup}d old</span>
