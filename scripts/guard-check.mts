@@ -8,7 +8,7 @@
 // `pnpm agent-smoke`) this needs NO credentials, no network and no model, so it
 // runs in CI on every PR.
 //
-// It guards four things, and each of them fails SILENTLY in production:
+// It guards six things, and each of them fails SILENTLY in production:
 //
 //   1. The posture branch (issue #57). Under `always_ask` a matching quote must
 //      still produce a card. A regression here does not error — it just starts
@@ -33,6 +33,11 @@
 //      itself would authorize a direct write the moment the model quoted it
 //      back, with no error and no card. That filter is one clause in one
 //      function, so it is asserted here.
+//   6. The duplicate refusal (issue #124). createProposalForCompany refuses a
+//      card whose normalized args match one already `pending` on the same
+//      conversation. Too loose and a genuinely different change is silently
+//      swallowed; too strict and the 14 Aug duplicates come back. Both edges
+//      are pinned below, on the normalization and through the real runGuarded.
 //
 // The last block runs the REAL runGuarded end to end against a fake `Db`, so
 // this file also pins the wiring: that runGuarded consults ctx.confirmPosture at
@@ -44,7 +49,7 @@
 import type { Db } from '@capo/db/client';
 import { CONFIRM_POSTURES, coerceConfirmPosture, DEFAULT_CONFIRM_POSTURE } from '@capo/db/posture';
 import { decideGuard, matchesManagerInstruction, runGuarded } from '@capo/core/capabilities/guard';
-import { getProposableTool } from '@capo/core/capabilities/propose';
+import { getProposableTool, proposalArgsKey } from '@capo/core/capabilities/propose';
 import type { CapoTool, ToolContext } from '@capo/core/capabilities/types';
 // The evidence pool is BUILT here, not in the guard. Since #47 the system
 // writes into `messages` several times a day, so what toThread lets into
@@ -103,6 +108,48 @@ check('an empty evidence pool matches nothing', !matchesManagerInstruction('cria
 check(
   'the newest message is searched too, not only the first',
   matchesManagerInstruction('cancela a obra', ['bom dia', 'cancela a obra Teste QA']),
+);
+
+// ── proposalArgsKey: what counts as "the same card" (issue #124) ────────────
+// The normalization behind the duplicate refusal in createProposalForCompany.
+// The live evidence it is built for: two racing turns regenerated the same
+// three add_worker cards with only `trade` capitalised differently. So: fold
+// case, sort object keys, and NOTHING else — a different phone, date, id, or
+// an extra field is a different proposal, and swallowing one of those would be
+// a worse bug than the duplicate it prevents.
+
+eq(
+  "the 14 Aug case: 'trolha' vs 'Trolha' is the same card",
+  proposalArgsKey({ name: 'Rui', phone: '+351912345678', trade: 'trolha' }),
+  proposalArgsKey({ name: 'Rui', phone: '+351912345678', trade: 'Trolha' }),
+);
+check(
+  'object key order does not matter',
+  proposalArgsKey({ a: 1, b: 'X' }) === proposalArgsKey({ b: 'x', a: 1 }),
+);
+check(
+  'strings fold case at any depth',
+  proposalArgsKey({ tasks: [{ title: 'Pintar Tecto' }] }) === proposalArgsKey({ tasks: [{ title: 'pintar tecto' }] }),
+);
+check(
+  'a different phone is a different card',
+  proposalArgsKey({ name: 'Rui', phone: '+351912345678' }) !== proposalArgsKey({ name: 'Rui', phone: '+351912345679' }),
+);
+check(
+  'an extra field is a different card',
+  proposalArgsKey({ name: 'Rui' }) !== proposalArgsKey({ name: 'Rui', trade: 'trolha' }),
+);
+check(
+  'a number is not the string of itself',
+  proposalArgsKey({ duration: 3 }) !== proposalArgsKey({ duration: '3' }),
+);
+check(
+  'array order is a real difference — erring toward a second card is the safe direction',
+  proposalArgsKey({ ids: ['a', 'b'] }) !== proposalArgsKey({ ids: ['b', 'a'] }),
+);
+check(
+  'accents are NOT folded: José and Jose are different values, unlike in the quote match above',
+  proposalArgsKey({ name: 'José' }) !== proposalArgsKey({ name: 'Jose' }),
 );
 
 // ── WHAT MAY BECOME EVIDENCE AT ALL (issue #47) ─────────────────────────────
@@ -264,23 +311,43 @@ for (const posture of CONFIRM_POSTURES) {
 // 'manager', and that the propose branch really reaches createProposal and
 // stores a card.
 //
-// The fake Db answers exactly one query — the proposals insert. `create_job` is
+// The fake Db answers exactly two queries — the proposals insert, and the
+// duplicate-refusal SELECT that #124 put in front of it. `create_job` is
 // used because its card renders from action_args alone with no lookups
 // (render.ts), so no other table has to be faked. The tool handed to runGuarded
 // is the REAL create_job with only its `execute` swapped for a recorder, so the
 // schema and the rendered card are the production ones and cannot drift from
 // what this file asserts.
 {
+  // insert() stamps the id and the DB-default status, because the dedup SELECT
+  // filters on `status = 'pending'` and a real insert never sends status.
   const inserted: Record<string, unknown>[] = [];
   const fakeDb = {
     from(table: string) {
       if (table !== 'proposals') throw new Error(`guard-check: unexpected table ${table}`);
       return {
+        select(_columns: string) {
+          const filters: Array<[string, unknown]> = [];
+          const builder = {
+            eq(column: string, value: unknown) {
+              filters.push([column, value]);
+              return builder;
+            },
+            then(resolve: (value: { data: Record<string, unknown>[]; error: null }) => void) {
+              resolve({
+                data: inserted.filter(row => filters.every(([column, value]) => row[column] === value)),
+                error: null,
+              });
+            },
+          };
+          return builder;
+        },
         insert(row: Record<string, unknown>) {
-          inserted.push(row);
+          const stored = { ...row, id: `proposal-${inserted.length + 1}`, status: 'pending' };
+          inserted.push(stored);
           return {
             select: () => ({
-              single: async () => ({ data: { id: `proposal-${inserted.length}` }, error: null }),
+              single: async () => ({ data: stored, error: null }),
             }),
           };
         },
@@ -302,9 +369,12 @@ for (const posture of CONFIRM_POSTURES) {
     },
   };
 
-  const ctxFor = (posture: 'always_ask' | 'trust_quote'): ToolContext => ({
+  const ctxFor = (
+    posture: 'always_ask' | 'trust_quote',
+    conversationId = '22222222-2222-2222-2222-222222222222',
+  ): ToolContext => ({
     companyId: '11111111-1111-1111-1111-111111111111',
-    conversationId: '22222222-2222-2222-2222-222222222222',
+    conversationId,
     db: fakeDb,
     actor: 'manager',
     recentUserTexts: ['cria a obra Casa do Zé'],
@@ -340,6 +410,60 @@ for (const posture of CONFIRM_POSTURES) {
     'the proposed result carries a reason the model can relay',
     asked.status === 'proposed' && asked.reason.length > 0 && asked.renderedText.length > 0,
   );
+
+  // ── the duplicate refusal, through the REAL runGuarded (issue #124) ───────
+  // The card stored above ({ name: 'Casa do Zé' }) is still pending. The 14
+  // Aug duplicates were regenerated, not replayed — same people, same phones,
+  // `trade` differing only in case — so the twin here flips case and must
+  // still be refused.
+  const caseFlip = await runGuarded(
+    spyTool,
+    { name: 'CASA DO ZÉ', manager_instruction: 'cria a obra Casa do Zé' },
+    ctxFor('always_ask'),
+  );
+  eq('an identical card differing only in case is refused', caseFlip.status, 'already_pending');
+  eq('and no second card was stored', inserted.length, 1);
+  check(
+    'the refusal names the existing card, so the model knows which one is waiting',
+    caseFlip.status === 'already_pending' && caseFlip.proposalId === inserted[0]!.id,
+  );
+  check(
+    "and its message reads as settled-and-waiting, never as an error to retry",
+    caseFlip.status === 'already_pending' &&
+      /already/i.test(caseFlip.message) &&
+      /do not retry/i.test(caseFlip.message),
+  );
+  check(
+    "it is NOT status 'proposed', the literal both channels render a card from — so no second card can reach the manager",
+    (caseFlip as { status: string }).status !== 'proposed',
+  );
+
+  const different = await runGuarded(
+    spyTool,
+    { name: 'Casa da Ana', manager_instruction: 'cria a obra Casa do Zé' },
+    ctxFor('always_ask'),
+  );
+  eq('genuinely different args still get their own card', different.status, 'proposed');
+  eq('stored as a second row', inserted.length, 2);
+
+  const otherConversation = await runGuarded(
+    spyTool,
+    { name: 'Casa do Zé', manager_instruction: 'cria a obra Casa do Zé' },
+    ctxFor('always_ask', '99999999-9999-9999-9999-999999999999'),
+  );
+  eq('the same args on a DIFFERENT conversation are not a duplicate', otherConversation.status, 'proposed');
+  eq('and stored as a third row', inserted.length, 3);
+
+  // A resolved twin must not block: only a card the manager has NOT answered
+  // yet counts. Flip the original to approved and file the same args again.
+  inserted[0]!.status = 'approved';
+  const afterResolve = await runGuarded(
+    spyTool,
+    { name: 'Casa do Zé', manager_instruction: 'cria a obra Casa do Zé' },
+    ctxFor('always_ask'),
+  );
+  eq('a non-pending twin does not block a new card', afterResolve.status, 'proposed');
+  eq('and it was stored as a fourth row', inserted.length, 4);
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

@@ -35,7 +35,11 @@ export type RescheduleOutcome =
        *  how "the cascade never fires" becomes an unfalsifiable bug report. */
       reason: 'no_job_tasks' | 'trigger_not_found' | 'no_dependents' | 'nothing_moves' | 'too_many_changes';
     }
-  | { status: 'proposed'; proposalId: string; renderedText: string };
+  | { status: 'proposed'; proposalId: string; renderedText: string }
+  // Issue #124: an identical cascade card is already pending on this
+  // conversation — e.g. a task completed, reopened, and completed again with
+  // the first card unanswered. Nothing new was created.
+  | { status: 'already_pending'; proposalId: string; message: string };
 
 export interface RescheduleRequest {
   companyId: string;
@@ -105,7 +109,7 @@ export async function proposeReschedule(db: Db, request: RescheduleRequest): Pro
   const shift = trigger.due_date ? workdayDelta(trigger.due_date, request.completedOn) : 0;
   const reason = !trigger.due_date || shift === 0 ? 'manual' : shift < 0 ? 'early_completion' : 'late_completion';
 
-  const { proposalId, renderedText } = await createProposalForCompany(
+  const created = await createProposalForCompany(
     db,
     { companyId: request.companyId, conversationId: await request.resolveConversationId(), locale: request.locale },
     'apply_reschedule',
@@ -123,7 +127,8 @@ export async function proposeReschedule(db: Db, request: RescheduleRequest): Pro
       })),
     },
   );
-  return { status: 'proposed', proposalId, renderedText };
+  if (created.status === 'already_pending') return created;
+  return { status: 'proposed', proposalId: created.proposalId, renderedText: created.renderedText };
 }
 
 export { RescheduleError };
@@ -198,6 +203,9 @@ export const rescheduleJob: CapoTool<z.infer<typeof rescheduleJobInput>> = {
               : 'The rest of the job already sits where it should. No card was created.',
         };
       }
+      // Issue #124: the identical cascade card is already waiting — the
+      // message tells the model the state is settled, not to retry.
+      if (outcome.status === 'already_pending') return outcome;
       return { status: 'proposed' as const, proposalId: outcome.proposalId, renderedText: outcome.renderedText };
     } catch (e) {
       return { status: 'error' as const, message: e instanceof Error ? e.message : String(e) };

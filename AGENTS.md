@@ -344,9 +344,16 @@ Structural invariants (do not regress):
     app and on `resolveManager` is every manager becoming an unknown WhatsApp
     sender. `coerceConfirmPosture` reads an absent field as `always_ask`.
   - Known and NOT fixed: nothing expires `proposals`. The `'expired'` status has
-    existed since `0001` and is never written. With always-ask as the default,
-    `status='pending'` accumulates much faster, and the chat page's unbounded
-    `select` over `proposals` stacks every stale card above the conversation.
+    existed since `0001` and is never written by any code path. With always-ask
+    as the default, `status='pending'` accumulates much faster. #124 blunted the
+    two sharpest edges — `createProposalForCompany` refuses a card whose
+    NORMALIZED args (sorted keys, case-folded strings, nothing else) match one
+    already `pending` on the same conversation, answering the model
+    `already_pending` instead of `proposed` so neither channel renders a second
+    card; and the chat page stops stacking pending cards older than 14 days
+    above the conversation (`STALE_CARD_DISPLAY_DAYS`, display-only: the rows
+    stay `pending` and resolvable by id) — but a real expiry system remains
+    open.
 - **Billing runs on the LIVE Stripe account, and the webhook URL is the `www`
   host** (issue #85, cut over 2026-08-14). Live account `acct_1TtrERLIxn6Jugmn`,
   price `price_1U4J91LIxn6JugmnvZc5XN12` (€45/month EUR), endpoint

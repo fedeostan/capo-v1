@@ -5,11 +5,29 @@ import Chat, { type PendingProposal } from '@/app/chat';
 
 export const dynamic = 'force-dynamic';
 
+// Display-level cutoff ONLY (issue #124): a pending card older than this stops
+// being stacked above the conversation, but the row is untouched — nothing
+// writes 'expired' yet (the real expiry system remains open; AGENTS.md records
+// it as known-and-not-fixed). A card reached by id — the WhatsApp approve/
+// reject buttons, or a card still inside the visible window — keeps working
+// at any age.
+const STALE_CARD_DISPLAY_DAYS = 14;
+const STALE_CARD_DISPLAY_MS = STALE_CARD_DISPLAY_DAYS * 24 * 60 * 60 * 1000;
+
+// An unparseable timestamp keeps the card visible: hiding is the new
+// behaviour, so anything unexpected falls back to the old one.
+function staleForDisplay(createdAt: string): boolean {
+  const t = Date.parse(createdAt);
+  return Number.isFinite(t) && Date.now() - t > STALE_CARD_DISPLAY_MS;
+}
+
 // Loads the visible window of the perpetual thread (messages after the latest
 // summary watermark) so the UI survives reloads along with Capo's memory.
 // Proposal card state is derived from proposals.status — never from stale
 // client state — and pending proposals whose cards fell behind the summary
-// watermark are surfaced separately so they can always be resolved.
+// watermark are surfaced separately so they can always be resolved (for the
+// first STALE_CARD_DISPLAY_DAYS; after that they stop stacking here but stay
+// pending and resolvable by id).
 export default async function Page({
   searchParams,
 }: {
@@ -64,12 +82,12 @@ export default async function Page({
 
     const { data: proposals } = await db
       .from('proposals')
-      .select('id, status, rendered_text')
+      .select('id, status, rendered_text, created_at')
       .eq('company_id', companyId);
     for (const p of proposals ?? []) {
       if (inViewProposalIds.has(p.id)) {
         proposalStatuses[p.id] = p.status;
-      } else if (p.status === 'pending') {
+      } else if (p.status === 'pending' && !staleForDisplay(p.created_at)) {
         orphanedPending.push({ proposalId: p.id, renderedText: p.rendered_text });
       }
     }

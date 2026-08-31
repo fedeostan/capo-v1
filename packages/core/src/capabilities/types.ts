@@ -57,4 +57,11 @@ export interface CapoTool<In = any, Out = any> {
 
 export type GuardedResult =
   | { status: 'executed'; result: unknown }
-  | { status: 'proposed'; proposalId: string; renderedText: string; reason: string };
+  | { status: 'proposed'; proposalId: string; renderedText: string; reason: string }
+  // Issue #124: the card this call would have raised already exists and is
+  // still pending on this conversation, so nothing was created. Deliberately
+  // NOT 'proposed' — both channels key their card rendering on that literal
+  // (asProposalOutput in channels/whatsapp.ts, proposalFromPart in
+  // apps/web/app/chat.tsx), and the point of the refusal is that no second
+  // card reaches the manager.
+  | { status: 'already_pending'; proposalId: string; message: string };
