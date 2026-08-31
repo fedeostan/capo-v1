@@ -21,5 +21,11 @@ export interface OutboundSink {
   // Deliver the assistant's output stream for this turn. UIMessageChunk is the
   // SDK's channel-neutral representation; non-web sinks can accumulate it into
   // plain text messages.
+  //
+  // Called once per turn ITERATION, which since issue #125 can be more than
+  // once per handleInbound call (a merged turn answers queued messages by
+  // running again) or zero times (a queued message returns without running —
+  // the lock holder answers it). A sink must deliver multiple streams in call
+  // order and must not treat "never called" as an error.
   mergeAssistantStream(stream: ReadableStream<UIMessageChunk>): void;
 }
