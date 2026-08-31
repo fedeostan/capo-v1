@@ -1,17 +1,22 @@
 // The time filter row. Deliberately a server component of plain <Link>s: the
 // whole screen filters correctly before any client JS has loaded, and each
-// chip is a real, shareable URL.
+// chip is a real, shareable URL — which is also why this is not the shared
+// SegmentedControl: that is a client fieldset of radio inputs, and these are
+// links. The pill styling matches it instead, so the two read as one control.
 import Link from 'next/link';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 import { buildHref, QUANDO_CHIPS, type TarefasFilters } from './filters';
 
 function chipClass(active: boolean): string {
-  return `shrink-0 rounded-full border px-3 py-1 text-xs ${
+  return [
+    'flex min-h-11 shrink-0 items-center rounded-full border px-4 text-callout no-underline',
+    'transition-colors ease-out',
+    'outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
     active
-      ? 'border-orange-600 bg-orange-600 font-semibold text-white'
-      : 'border-zinc-500/30 text-zinc-500'
-  }`;
+      ? 'border-brand bg-brand font-semibold text-on-brand'
+      : 'border-control bg-surface text-fg-muted hover:bg-surface-hover',
+  ].join(' ');
 }
 
 export default function FilterChips({ filters, locale }: { filters: TarefasFilters; locale: Locale }) {

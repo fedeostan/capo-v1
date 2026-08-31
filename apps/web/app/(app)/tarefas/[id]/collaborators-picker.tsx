@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState, useTransition } from 'react';
-import { createPortal } from 'react-dom';
+import { useState, useTransition } from 'react';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
+import { Button } from '@capo/ui/button';
+import { Sheet } from '@/app/_ui/sheet';
 import type { AssignableWorker } from '@/app/dashboard-data';
 import { setCollaborators } from './assign-actions';
 
@@ -22,7 +23,7 @@ import { setCollaborators } from './assign-actions';
 //     themselves — which the database drops anyway, silently, leaving a sheet
 //     that appears to have accepted a choice it did not.
 //
-// Everything else — the portalled bottom sheet, the availability labels, the
+// Everything else — the shared bottom Sheet, the availability labels, the
 // never-filter rule — is AssigneePicker's, for AssigneePicker's reasons. See
 // its header.
 
@@ -31,8 +32,8 @@ function Availability({ busyOn, locale }: { busyOn: number | null; locale: Local
   // null is "we could not tell" and renders nothing at all. Saying "free" on a
   // guess is the one outcome this whole family of controls must not produce.
   if (busyOn === null) return null;
-  if (busyOn === 0) return <span className="text-[11px] text-emerald-600">{t.assignFree}</span>;
-  return <span className="text-[11px] text-amber-600">{t.assignBusy(busyOn)}</span>;
+  if (busyOn === 0) return <span className="text-caption text-success">{t.assignFree}</span>;
+  return <span className="text-caption text-warn">{t.assignBusy(busyOn)}</span>;
 }
 
 export default function CollaboratorsPicker({
@@ -65,20 +66,13 @@ export default function CollaboratorsPicker({
   // cannot silently rewrite what the manager has ticked.
   const [draft, setDraft] = useState<string[]>(currentIds);
 
-  const close = useCallback(() => {
+  // Escape and the focus trap come from the Sheet; this only guards against
+  // dismissing while the write is in flight.
+  function close() {
     if (pending) return;
     setOpen(false);
     setError(null);
-  }, [pending]);
-
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') close();
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, close]);
+  }
 
   function start() {
     setDraft(currentIds);
@@ -108,107 +102,79 @@ export default function CollaboratorsPicker({
         type="button"
         onClick={start}
         disabled={pending}
-        className="-mx-1 rounded-lg px-1 py-0.5 text-left text-sm text-zinc-500 underline decoration-dotted underline-offset-4 hover:bg-zinc-500/10 disabled:opacity-50"
+        className="-mx-1 inline-flex min-h-11 items-center rounded-chip px-1 py-1 text-left text-callout text-fg-muted underline decoration-dotted underline-offset-4 outline-none transition-colors ease-out hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50"
       >
         {t.collaboratorsTitle}
       </button>
-      {error && !open && <p className="mt-1 text-[11px] text-red-600">{error}</p>}
+      {error && !open && <p className="mt-1 text-caption text-danger">{error}</p>}
 
-      {open &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
-            onClick={close}
-            role="presentation"
-          >
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-label={t.collaboratorsTitle}
-              onClick={e => e.stopPropagation()}
-              className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-background p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl"
-            >
-              <h2 className="text-sm font-semibold">{t.collaboratorsTitle}</h2>
-              {/* Says out loud that the assignee is unaffected and that the
-                  materials are not duplicated. Both are the questions this
-                  feature exists to answer, and neither is obvious from a list
-                  of names with checkboxes. */}
-              <p className="mt-1 text-xs text-zinc-500">{t.collaboratorsHint}</p>
-              <p className="mt-1 text-xs text-zinc-500">
-                {dateLabel ? t.assignAvailabilityOn(dateLabel) : t.assignAvailabilityUnknown}
-              </p>
+      <Sheet open={open} onClose={close} title={t.collaboratorsTitle}>
+        <h2 className="text-heading font-semibold text-fg">{t.collaboratorsTitle}</h2>
+        {/* Says out loud that the assignee is unaffected and that the
+            materials are not duplicated. Both are the questions this
+            feature exists to answer, and neither is obvious from a list
+            of names with checkboxes. */}
+        <p className="mt-1 text-caption text-fg-muted">{t.collaboratorsHint}</p>
+        <p className="mt-1 text-caption text-fg-muted">
+          {dateLabel ? t.assignAvailabilityOn(dateLabel) : t.assignAvailabilityUnknown}
+        </p>
 
-              {workers.length === 0 ? (
-                <p className="mt-3 text-sm text-zinc-500">{t.assignNoWorkers}</p>
-              ) : (
-                <ul className="mt-3 divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
-                  {workers.map(w => {
-                    const isLead = w.id === leadWorkerId;
-                    const checked = draft.includes(w.id);
-                    return (
-                      <li key={w.id}>
-                        <button
-                          type="button"
-                          // The lead is shown for context and cannot be picked:
-                          // the database drops them from the set anyway, and a
-                          // control that appears to accept a choice it silently
-                          // discards is worse than one that says no.
-                          disabled={pending || isLead}
-                          onClick={() => toggle(w.id)}
-                          aria-pressed={isLead ? undefined : checked}
-                          className="flex w-full items-center justify-between gap-2 p-3 text-left hover:bg-zinc-500/5 disabled:opacity-50"
-                        >
-                          <span className="flex items-center gap-2">
-                            <span
-                              aria-hidden
-                              className={`inline-block h-4 w-4 shrink-0 rounded border ${
-                                checked
-                                  ? 'border-emerald-600 bg-emerald-600'
-                                  : 'border-zinc-500/40'
-                              }`}
-                            />
-                            <span>
-                              <span className="block text-sm">{w.name}</span>
-                              {w.trade && <span className="block text-[11px] text-zinc-500">{w.trade}</span>}
-                            </span>
-                          </span>
-                          <span className="shrink-0 text-right">
-                            <Availability busyOn={w.busyOn} locale={locale} />
-                            {isLead && (
-                              <span className="block text-[11px] text-zinc-500">{t.collaboratorsLead}</span>
-                            )}
-                          </span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-
-              {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
-
-              <div className="mt-4 space-y-2">
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={save}
-                  className="w-full rounded-lg border border-zinc-500/30 px-3 py-2.5 text-sm hover:bg-zinc-500/10 disabled:opacity-50"
-                >
-                  {t.collaboratorsSave}
-                </button>
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={close}
-                  className="w-full px-3 py-1.5 text-xs text-zinc-500 disabled:opacity-50"
-                >
-                  {t.assignCancel}
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body,
+        {workers.length === 0 ? (
+          <p className="mt-3 text-callout text-fg-muted">{t.assignNoWorkers}</p>
+        ) : (
+          <ul className="mt-3 divide-y divide-hairline rounded-control border border-hairline">
+            {workers.map(w => {
+              const isLead = w.id === leadWorkerId;
+              const checked = draft.includes(w.id);
+              return (
+                <li key={w.id}>
+                  <button
+                    type="button"
+                    // The lead is shown for context and cannot be picked:
+                    // the database drops them from the set anyway, and a
+                    // control that appears to accept a choice it silently
+                    // discards is worse than one that says no.
+                    disabled={pending || isLead}
+                    onClick={() => toggle(w.id)}
+                    aria-pressed={isLead ? undefined : checked}
+                    className="flex min-h-14 w-full items-center justify-between gap-2 p-3 text-left outline-none transition-colors ease-out hover:bg-surface-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus disabled:opacity-50"
+                  >
+                    <span className="flex items-center gap-2">
+                      <span
+                        aria-hidden
+                        className={`inline-block h-4 w-4 shrink-0 rounded border ${
+                          checked ? 'border-success bg-success' : 'border-control'
+                        }`}
+                      />
+                      <span>
+                        <span className="block text-body text-fg">{w.name}</span>
+                        {w.trade && <span className="block text-caption text-fg-muted">{w.trade}</span>}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-right">
+                      <Availability busyOn={w.busyOn} locale={locale} />
+                      {isLead && (
+                        <span className="block text-caption text-fg-muted">{t.collaboratorsLead}</span>
+                      )}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         )}
+
+        {error && <p className="mt-2 text-caption text-danger">{error}</p>}
+
+        <div className="mt-4 space-y-2">
+          <Button variant="secondary" fullWidth disabled={pending} onClick={save}>
+            {t.collaboratorsSave}
+          </Button>
+          <Button variant="tertiary" fullWidth disabled={pending} onClick={close}>
+            {t.assignCancel}
+          </Button>
+        </div>
+      </Sheet>
     </>
   );
 }

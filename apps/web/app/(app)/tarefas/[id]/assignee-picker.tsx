@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState, useTransition } from 'react';
-import { createPortal } from 'react-dom';
+import { useState, useTransition } from 'react';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
+import { Button } from '@capo/ui/button';
+import { Sheet } from '@/app/_ui/sheet';
 import type { AssignableWorker } from '@/app/dashboard-data';
 import { assignTask } from './assign-actions';
 
@@ -11,8 +12,8 @@ import { assignTask } from './assign-actions';
 //
 // Deliberately NOT a <select>. Each row has to carry a second line — the trade,
 // and whether that person already has work on this task's day — and an option
-// element can hold nothing but text. It is the same portalled bottom sheet the
-// completion flow uses, for the same reason: the app shell is overflow-hidden
+// element can hold nothing but text. It is the shared bottom Sheet, for the
+// same reason the completion flow portals: the app shell is overflow-hidden
 // and PullToRefresh puts a transform on <main>, which would become the
 // containing block for anything position:fixed rendered in place.
 //
@@ -26,8 +27,8 @@ function Availability({ busyOn, locale }: { busyOn: number | null; locale: Local
   // AssignableWorker.busyOn. Saying "free" on a guess is the one outcome this
   // whole feature must not produce.
   if (busyOn === null) return null;
-  if (busyOn === 0) return <span className="text-[11px] text-emerald-600">{t.assignFree}</span>;
-  return <span className="text-[11px] text-amber-600">{t.assignBusy(busyOn)}</span>;
+  if (busyOn === 0) return <span className="text-caption text-success">{t.assignFree}</span>;
+  return <span className="text-caption text-warn">{t.assignBusy(busyOn)}</span>;
 }
 
 export default function AssigneePicker({
@@ -54,20 +55,13 @@ export default function AssigneePicker({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const close = useCallback(() => {
+  // Escape and the focus trap come from the Sheet; this only guards against
+  // dismissing while the write is in flight.
+  function close() {
     if (pending) return;
     setOpen(false);
     setError(null);
-  }, [pending]);
-
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') close();
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, close]);
+  }
 
   function choose(workerId: string | null) {
     if (workerId === currentWorkerId) {
@@ -97,91 +91,65 @@ export default function AssigneePicker({
         type="button"
         onClick={() => setOpen(true)}
         disabled={pending}
-        className={`-mx-1 rounded-lg px-1 py-0.5 text-left text-sm underline decoration-dotted underline-offset-4 hover:bg-zinc-500/10 disabled:opacity-50 ${
-          currentWorkerName ? '' : 'text-zinc-500'
+        className={`-mx-1 inline-flex min-h-11 items-center rounded-chip px-1 py-1 text-left text-callout underline decoration-dotted underline-offset-4 outline-none transition-colors ease-out hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 ${
+          currentWorkerName ? 'text-fg' : 'text-fg-muted'
         }`}
       >
         {currentWorkerName ?? t.assignUnassigned}
       </button>
-      {error && !open && <p className="mt-1 text-[11px] text-red-600">{error}</p>}
+      {error && !open && <p className="mt-1 text-caption text-danger">{error}</p>}
 
-      {open &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
-            onClick={close}
-            role="presentation"
-          >
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-label={t.assignTitle}
-              onClick={e => e.stopPropagation()}
-              className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-background p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl"
-            >
-              <h2 className="text-sm font-semibold">{t.assignTitle}</h2>
-              <p className="mt-1 text-xs text-zinc-500">
-                {dateLabel ? t.assignAvailabilityOn(dateLabel) : t.assignAvailabilityUnknown}
-              </p>
+      <Sheet open={open} onClose={close} title={t.assignTitle}>
+        <h2 className="text-heading font-semibold text-fg">{t.assignTitle}</h2>
+        <p className="mt-1 text-caption text-fg-muted">
+          {dateLabel ? t.assignAvailabilityOn(dateLabel) : t.assignAvailabilityUnknown}
+        </p>
 
-              {workers.length === 0 ? (
-                <p className="mt-3 text-sm text-zinc-500">{t.assignNoWorkers}</p>
-              ) : (
-                <>
-                  {noneFree && <p className="mt-3 text-sm text-amber-600">{t.assignNoneFree}</p>}
-                  <ul className="mt-3 divide-y divide-zinc-500/15 rounded-xl border border-zinc-500/20">
-                    {workers.map(w => (
-                      <li key={w.id}>
-                        <button
-                          type="button"
-                          disabled={pending}
-                          onClick={() => choose(w.id)}
-                          aria-current={w.id === currentWorkerId ? 'true' : undefined}
-                          className="flex w-full items-center justify-between gap-2 p-3 text-left hover:bg-zinc-500/5 disabled:opacity-50"
-                        >
-                          <span>
-                            <span className="block text-sm">{w.name}</span>
-                            {w.trade && <span className="block text-[11px] text-zinc-500">{w.trade}</span>}
-                          </span>
-                          <span className="shrink-0 text-right">
-                            <Availability busyOn={w.busyOn} locale={locale} />
-                            {w.id === currentWorkerId && (
-                              <span className="block text-[11px] text-zinc-500">{t.assignCurrent}</span>
-                            )}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-
-              {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
-
-              <div className="mt-4 space-y-2">
-                {currentWorkerId && (
+        {workers.length === 0 ? (
+          <p className="mt-3 text-callout text-fg-muted">{t.assignNoWorkers}</p>
+        ) : (
+          <>
+            {noneFree && <p className="mt-3 text-callout text-warn">{t.assignNoneFree}</p>}
+            <ul className="mt-3 divide-y divide-hairline rounded-control border border-hairline">
+              {workers.map(w => (
+                <li key={w.id}>
                   <button
                     type="button"
                     disabled={pending}
-                    onClick={() => choose(null)}
-                    className="w-full rounded-lg border border-zinc-500/30 px-3 py-2.5 text-sm hover:bg-zinc-500/10 disabled:opacity-50"
+                    onClick={() => choose(w.id)}
+                    aria-current={w.id === currentWorkerId ? 'true' : undefined}
+                    className="flex min-h-14 w-full items-center justify-between gap-2 p-3 text-left outline-none transition-colors ease-out hover:bg-surface-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus disabled:opacity-50"
                   >
-                    {t.assignRemove}
+                    <span>
+                      <span className="block text-body text-fg">{w.name}</span>
+                      {w.trade && <span className="block text-caption text-fg-muted">{w.trade}</span>}
+                    </span>
+                    <span className="shrink-0 text-right">
+                      <Availability busyOn={w.busyOn} locale={locale} />
+                      {w.id === currentWorkerId && (
+                        <span className="block text-caption text-fg-muted">{t.assignCurrent}</span>
+                      )}
+                    </span>
                   </button>
-                )}
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={close}
-                  className="w-full px-3 py-1.5 text-xs text-zinc-500 disabled:opacity-50"
-                >
-                  {t.assignCancel}
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body,
+                </li>
+              ))}
+            </ul>
+          </>
         )}
+
+        {error && <p className="mt-2 text-caption text-danger">{error}</p>}
+
+        <div className="mt-4 space-y-2">
+          {currentWorkerId && (
+            <Button variant="secondary" fullWidth disabled={pending} onClick={() => choose(null)}>
+              {t.assignRemove}
+            </Button>
+          )}
+          <Button variant="tertiary" fullWidth disabled={pending} onClick={close}>
+            {t.assignCancel}
+          </Button>
+        </div>
+      </Sheet>
     </>
   );
 }

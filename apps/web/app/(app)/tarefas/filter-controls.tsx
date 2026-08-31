@@ -7,14 +7,15 @@
 //
 // Native <select>/<input type="date"> on purpose — on iOS and Android the
 // platform renders them as its own picker sheet, which is the bottom sheet we
-// wanted, for free and accessible.
+// wanted, for free and accessible. Both render through @capo/ui's Select and
+// Input so they share the one control style (and its 44px+ height) with every
+// other form in the app.
 import { useRouter } from 'next/navigation';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
+import { Input, Select } from '@capo/ui/field';
 import { buildHref, DEFAULT_QUANDO, isIsoDate, type TarefasFilters } from './filters';
 import type { ObraOption } from '@/app/dashboard-data';
-
-const CONTROL = 'min-w-0 flex-1 rounded-lg border border-zinc-500/30 bg-transparent px-2 py-1.5 text-xs';
 
 export default function FilterControls({
   filters,
@@ -32,8 +33,7 @@ export default function FilterControls({
     <div className="flex gap-2">
       <label className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="sr-only">{t.filterByJob}</span>
-        <select
-          className={CONTROL}
+        <Select
           value={filters.obraId ?? ''}
           onChange={e => router.push(buildHref({ ...filters, obraId: e.target.value || null }))}
         >
@@ -48,13 +48,12 @@ export default function FilterControls({
                   : ''}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       <label className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="sr-only">{t.filterByDay}</span>
-        <input
+        <Input
           type="date"
-          className={CONTROL}
           value={filters.quando.kind === 'date' ? filters.quando.iso : ''}
           onChange={e => {
             const iso = e.target.value;
