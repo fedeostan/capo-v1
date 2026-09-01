@@ -2,6 +2,10 @@ import type { Locale } from '@capo/i18n/locale';
 
 // THE DETERMINISTIC LAYER IN FRONT OF THE WORKER AGENT.
 //
+// (Four tables since issue #120; the report table is also the one exception to
+// the whole-message rule, and the only one the MANAGER path consults — see its
+// own comment at the bottom.)
+//
 // Three keyword tables, one rule, and the rule is the point: a whole-message,
 // case-insensitive, EXACT match, never a substring. "es que falta material" is
 // a sentence, not a request to switch to Spanish; "stop, o Zé não vem hoje" is
@@ -152,4 +156,58 @@ export const DETAIL_KEYWORDS = new Set([
 export function detailCommand(text: string | undefined): boolean {
   if (!text) return false;
   return DETAIL_KEYWORDS.has(text.trim().toLowerCase());
+}
+
+/**
+ * "Report a problem" keywords (issue #120), for BOTH sender kinds — the fourth
+ * table, and the first one the manager path consults too.
+ *
+ * The reason it is deterministic is precise and stated in the issue: when
+ * somebody reports that Capo is behaving badly, the last thing that should
+ * decide whether the report is filed is Capo behaving well. A model that is
+ * down, out of credit (31 Aug, issue #126) or wrong must not be able to lose
+ * the message that says so.
+ *
+ * ── THE ONE DELIBERATE BREAK WITH THE WHOLE-MESSAGE RULE ────────────────────
+ * The three tables above match the WHOLE message or nothing. This one also
+ * accepts the keyword as the FIRST WORD with the report in the same message —
+ * "bug o menu não abre" files immediately, because making a person send two
+ * messages to say one thing loses reports. The cost is a real and accepted
+ * false positive: a message that merely STARTS with one of these words
+ * ("problema resolvido, obrigado") is filed as a report instead of reaching
+ * the agent. That is visible, not silent — the sender is told it was
+ * registered as a problem report and can rephrase — and the words were chosen
+ * to make it rare. Mid-sentence occurrences never match: the keyword must be
+ * the first word.
+ *
+ * Disjointness with the three tables above is asserted by `pnpm
+ * whatsapp-check` like every other pair. `es`/`ajuda`/`stop` must keep landing
+ * exactly where they land today.
+ */
+export const REPORT_KEYWORDS = new Set(['bug', 'problema', 'erro', 'problem', 'error', 'fallo']);
+
+export type ReportCommand = { kind: 'arm' } | { kind: 'inline'; text: string };
+
+/**
+ * A bare keyword ("bug", "Problema:") arms the two-message flow; a keyword
+ * followed by words in the same message files those words immediately.
+ * Anything else — including the keyword anywhere but first — is null.
+ *
+ * Trailing punctuation on the keyword itself is stripped ("bug:", "erro —")
+ * because it is how people address a labelled remark; nothing is stripped from
+ * the report text, which is stored verbatim.
+ */
+export function reportCommand(text: string | undefined): ReportCommand | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const firstSpace = trimmed.search(/\s/);
+  const head = (firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace))
+    .toLowerCase()
+    .replace(/[:,.;!—–-]+$/u, '');
+  if (!REPORT_KEYWORDS.has(head)) return null;
+
+  const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace + 1).trim();
+  return rest ? { kind: 'inline', text: rest } : { kind: 'arm' };
 }

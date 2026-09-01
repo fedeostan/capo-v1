@@ -234,7 +234,7 @@ export async function GET(request: NextRequest) {
 
   for (const company of companies) {
     try {
-      const audience = await loadPendingWelcomes(db, company);
+      const audience = await loadPendingWelcomes(db, company, today);
       const batch = audience.pending.slice(0, MAX_PER_COMPANY_PER_RUN);
       const sends: unknown[] = [];
       // Crew names ONLY, and every one of them typed by the MANAGER on /perfil
@@ -313,12 +313,16 @@ export async function GET(request: NextRequest) {
           });
           if (target.audience === 'worker') welcomedCrew.push(target.name);
         } catch (err) {
-          // One unreachable person must never abort the run — and the claim is
-          // KEPT, deliberately. A 132001 means capo_welcome is not approved for
-          // that locale, a 131026 means the number is not on WhatsApp: retrying
-          // either every fifteen minutes forever would be a paid loop against a
-          // wall. The failure is visible in notification_log; to force a retry,
-          // delete that row.
+          // One unreachable person must never abort the run. The claim is kept
+          // for the rest of TODAY — 0016's daily unique key refuses a second
+          // one per person per day — but since 0041 a 'failed' row releases
+          // the once-EVER lock, and loadPendingWelcomes' retry policy decides
+          // what happens next (issue #121): a retryable code like 132001
+          // (capo_welcome not approved for that locale — fixable) earns one
+          // more attempt a day, up to WELCOME_MAX_ATTEMPTS ever; a permanent
+          // one like 131026 (the number is not on WhatsApp) or anything
+          // unclassifiable never does. To force a retry past that policy,
+          // delete the person's failed welcome rows.
           await resolveNotification(db, claimed.id, 'failed', { error: describeSendError(err) });
           logEvent('welcome.send_failed', {
             companyId: company.id,
@@ -356,6 +360,7 @@ export async function GET(request: NextRequest) {
         excludedUnreachable: audience.excludedUnreachable,
         excludedInactive: audience.excludedInactive,
         excludedManagers: audience.excludedManagers,
+        excludedFailed: audience.excludedFailed,
         sends,
       });
     } catch (err) {

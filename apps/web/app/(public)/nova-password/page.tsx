@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { getAuthState } from '@capo/db/session';
+import { Button } from '@capo/ui/button';
 import { metadataTitle, publicCatalog } from '@/lib/i18n';
 import PasswordField from '../password-field';
 import { setNewPassword } from './actions';
@@ -30,7 +31,7 @@ export default async function NovaPasswordPage({
     <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 px-6 pb-16">
       <div className="space-y-2 text-center">
         <p className="text-4xl">🔑</p>
-        <h1 className="text-2xl font-semibold">{t.auth.newPassword.title}</h1>
+        <h1 className="text-title font-semibold">{t.auth.newPassword.title}</h1>
       </div>
 
       <form action={setNewPassword} className="space-y-3">
@@ -40,16 +41,13 @@ export default async function NovaPasswordPage({
           autoComplete="new-password"
           minLength={8}
         />
-        <button
-          type="submit"
-          className="w-full rounded-lg bg-orange-600 py-2.5 font-semibold text-white active:bg-orange-700"
-        >
+        <Button type="submit" fullWidth>
           {t.common.save}
-        </button>
+        </Button>
       </form>
 
       {errorText && (
-        <p className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-400">
+        <p className="rounded-lg bg-danger-quiet px-3 py-2 text-center text-callout text-danger">
           {errorText}
         </p>
       )}

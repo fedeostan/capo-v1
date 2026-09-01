@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Button } from '@capo/ui/button';
 import { metadataTitle, publicCatalog } from '@/lib/i18n';
 import { readPendingEmail } from '@/lib/pending-email';
 import { resendConfirmation } from './actions';
@@ -34,35 +35,37 @@ export default async function ConfirmarEmailPage({
     <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 px-6 pb-16">
       <div className="space-y-2 text-center">
         <p className="text-4xl">📬</p>
-        <h1 className="text-2xl font-semibold">{copy.title}</h1>
+        <h1 className="text-title font-semibold">{copy.title}</h1>
         {/* Naming the address is the typo check: "we sent it to jaoo@…" is the
             only way somebody spots that they mistyped their own email. */}
-        <p className="text-sm text-zinc-500">
+        <p className="text-callout text-fg-muted">
           {email ? copy.sentTo({ email }) : copy.sentToUnknown}
         </p>
       </div>
 
       {blocked && (
-        <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+        <p className="rounded-lg bg-warn-quiet px-3 py-2 text-callout text-warn">
           {copy.blockedNotice}
         </p>
       )}
 
       <ol className="space-y-3">
         {steps.map((step, index) => (
-          <li key={step} className="flex gap-3 text-sm">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-orange-600 text-xs font-semibold text-white">
+          <li key={step} className="flex gap-3 text-callout">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand text-caption font-semibold text-on-brand">
               {index + 1}
             </span>
-            <span className="pt-0.5">{step}</span>
+            {/* leading-6 lines the first text line up with the 24px circle
+                beside it, without off-scale padding. */}
+            <span className="leading-6">{step}</span>
           </li>
         ))}
       </ol>
 
-      <p className="text-sm text-zinc-500">{copy.thenWhat}</p>
+      <p className="text-callout text-fg-muted">{copy.thenWhat}</p>
 
       {params.reenviado === '1' && (
-        <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-center text-sm text-emerald-800 dark:text-emerald-300">
+        <p className="rounded-lg bg-success-quiet px-3 py-2 text-center text-callout text-success">
           {copy.resent}
         </p>
       )}
@@ -74,12 +77,9 @@ export default async function ConfirmarEmailPage({
       {email && (
         <form action={resendConfirmation}>
           {blocked && <input type="hidden" name="pendente" value="1" />}
-          <button
-            type="submit"
-            className="w-full rounded-lg border border-zinc-500/30 py-2.5 text-sm font-semibold hover:bg-zinc-500/10"
-          >
+          <Button type="submit" variant="secondary" fullWidth>
             {copy.resend}
-          </button>
+          </Button>
         </form>
       )}
 
@@ -87,7 +87,7 @@ export default async function ConfirmarEmailPage({
           old screen's ONLY call to action was "already confirmed? sign in
           here", which read as "continue" and walked people straight into the
           wrong-password dead end. */}
-      <div className="space-y-2 text-center text-sm text-zinc-500">
+      <div className="space-y-2 text-center text-callout text-fg-muted">
         <p>
           <Link href="/registar" className="underline">
             {copy.wrongEmail}

@@ -138,7 +138,10 @@ and say what the alternative would be — he is the one who decides.
   write). Since #22 it also carries `checkWorkerTextIsolation`, the one check in
   the file that is not about tenants at all: a service-role sweep proving
   worker-authored text never lands in `messages`, `conversation_summaries`,
-  `memories` or `proposals`. Run with `pnpm rls-matrix` after any change that
+  `memories` or `proposals` (since #120 the tracer is seeded through a worker
+  problem report too, and the report tables get their own deny-all reads,
+  reporter-forgery attacks and a no-`.select()` positive control on the app
+  path's INSERT). Run with `pnpm rls-matrix` after any change that
   touches auth, RLS, Storage, or the DB clients; it must stay green.
   Needs credentials, so it does not run in CI.
   Note what it does NOT prove: every check asserts a REFUSAL, so a policy that
@@ -811,11 +814,26 @@ Structural invariants (do not regress):
     `/api/cron/push`.
   - **Idempotency is `notification_log`, with the DATE removed.** `0033` adds a
     partial unique index `(worker_id, profile_id) nulls not distinct where kind
-    = 'welcome'` — the daily lock's shape minus `notification_date`. The
+    = 'welcome'` — the daily lock's shape minus `notification_date` — and `0041`
+    narrows it with `and status <> 'failed'` (issue #121): a FAILED welcome
+    releases its once-ever claim so the sweep can try again, while `sent`,
+    `skipped` and `pending` rows block forever. 0033's backfill rows are all
+    `skipped`, so the mass-mail protection survives the narrowing BY
+    CONSTRUCTION. The
     already-welcomed read in `loadPendingWelcomes` is an OPTIMISATION so the
     sweep does not attempt a doomed INSERT per person per run; the INDEX is the
     lock, through `claimNotification`'s 23505 → null. Do not trust the read and
-    do not add app-level state beside it.
+    do not add app-level state beside it — with ONE exception, which is #121's
+    retry policy (`apps/web/lib/welcome-retry.ts`, pinned by `pnpm
+    whatsapp-check`): at most `WELCOME_MAX_ATTEMPTS` (3) failed rows per
+    person, only while the NEWEST failure's Meta code classifies as retryable
+    (132001 — template missing, a config error that becomes fixable; an
+    invalid recipient and anything unclassifiable are permanent, failing
+    CLOSED because a retry is a paid template), and at most one attempt per
+    Lisbon day. The per-day bound is also 0016's daily unique key, but the CAP
+    and the classification exist nowhere in the schema — that filter is
+    policy, not optimisation, and removing it retries a dead number daily
+    forever.
   - **The `0033` backfill was mandatory**, exactly as `0026`'s `pushed_at` one
     was: it marks every worker and profile that existed when it was applied as
     `skipped`, or the first deploy introduces Capo by paid template to everybody
@@ -931,6 +949,38 @@ Structural invariants (do not regress):
 
   `handleInbound` and the manager `roster` are **not modified** by this feature.
   If a change needs to touch either, the isolation design has gone wrong.
+- **A problem report is MAIL TO THE OPERATOR, never conversation** (migration
+  `0042`, issue #120). "Reportar um problema" on `/perfil` and the `bug` /
+  `problema` / `erro` keyword on WhatsApp (both sender kinds) file free text
+  into `problem_reports`, read ONLY in apps/operator — tenants hold no SELECT
+  on it at all, because a crew member's report may be about the manager (#128).
+  Five things are load-bearing:
+  - **The keyword flow is deterministic and runs in FRONT of both agents**
+    (`apps/web/lib/problem-report-flow.ts`): a report that Capo is misbehaving
+    must never depend on Capo's model behaving (the 31 Aug outage, #126). On
+    the manager branch it sits above `handleInbound`; on the worker branch it
+    sits with the other keyword tables, below consent (STOP must always
+    unsubscribe) and above everything else.
+  - **`REPORT_KEYWORDS` is the fourth table in `worker-keywords.ts` and the
+    ONE exception to the whole-message rule**: the keyword as FIRST WORD files
+    the rest of the same message immediately. The accepted false positive
+    ("problema resolvido" is filed, visibly acknowledged) is pinned in `pnpm
+    whatsapp-check` along with every table pair's disjointness.
+  - **A bare keyword arms `problem_report_requests`** — "your next message is
+    the report", 0034's staging shape: stages the expectation never the text,
+    deny-all, at most one open row per sender, TTL 30 min enforced by the
+    READER, nothing sweeps it.
+  - **Report text lands in `problem_reports.text` and NOWHERE else** — never
+    `messages`, `worker_messages`, thread notes, summaries, memories,
+    proposals, or logs. The manager's own report stays out of `messages` too:
+    it is not conversation, and it keeps `checkWorkerTextIsolation`'s story
+    uniform (the matrix seeds its worker tracer through a report).
+  - **The app path writes on the tenant's own RLS client** through an INSERT
+    policy + column-scoped grant (`company_id, profile_id, text, context` —
+    `worker_id` and `channel` are withheld at the grant layer; channel defaults
+    to `'app'`). Write-only, so the insert must never chain `.select()` (the
+    ai_usage trap). Deliberately no status/triage columns — that is a later
+    decision (#120), taken once reports actually arrive.
 - **The worker roster is an ALLOWLIST in its own type system, never a filter
   over `roster`.** `packages/core/src/capabilities/worker/` holds four tools
   (`my_tasks`, `search_knowledge`, `declare_task_done`, `set_my_language`) in a

@@ -106,13 +106,13 @@ export default async function TarefasPage({ searchParams }: { searchParams: Prom
         {materialCount > 0 && (
           <Link
             href="/materiais"
-            className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/50 bg-amber-500/10 p-3"
+            className="flex min-h-11 items-center justify-between gap-3 rounded-card border border-warn/50 bg-warn-quiet p-3 no-underline"
           >
-            <span className="text-sm">
+            <span className="text-callout text-fg">
               <span className="font-medium">{t.screens.materials.pending(materialCount)}</span>
-              <span className="block text-xs text-zinc-500">{t.screens.materials.pendingHint}</span>
+              <span className="block text-caption text-fg-muted">{t.screens.materials.pendingHint}</span>
             </span>
-            <span aria-hidden className="shrink-0 text-zinc-500">
+            <span aria-hidden className="shrink-0 text-fg-muted">
               →
             </span>
           </Link>

@@ -1,11 +1,21 @@
-// Read-only, cross-tenant queries for mission control. Everything here runs
-// on getDb() — the service-role SYSTEM client — because the operator sees all
-// companies by design. This app is the reason getDb() exists; nothing in
-// apps/web may import this file. All reads, no writes: mutations happen only
-// through each tenant's own chat.
+// Cross-tenant queries for mission control. Everything here runs on getDb()
+// — the service-role SYSTEM client — because the operator sees all companies
+// by design. This app is the reason getDb() exists; nothing in apps/web may
+// import this file. THIS FILE is reads only; the operator's one write path —
+// #123's welcome resend — lives in the resend route's own actions.ts, behind
+// a preview-and-confirm screen.
 import { getDb } from '@capo/db/client';
 import type { Tables } from '@capo/db/types';
-import { hasWhatsAppConsent } from '@capo/core/channels/whatsapp';
+import { hasWhatsAppConsent, type WhatsAppRecipient } from '@capo/core/channels/whatsapp';
+import { coerceLocale, type Locale } from '@capo/i18n/locale';
+import {
+  OPERATOR_RESEND_WELCOME_KIND,
+  decideOperatorResend,
+  planWelcomeResend,
+  recipientFor,
+  type ResendVerdict,
+  type WelcomeSendPlan,
+} from './welcome-resend';
 import {
   WHATSAPP_TEMPLATE_USD,
   estimateCostUsd,
@@ -1237,5 +1247,144 @@ export async function loadCompanyDetail(companyId: string): Promise<CompanyDetai
     managers,
     managerMessages,
     workerThreads,
+  };
+}
+
+// ── Welcome resend (issue #123, part A) ─────────────────────────────────────
+//
+// Everything the resend preview and its server action need about ONE person,
+// read fresh on every call. The action calls this again at send time rather
+// than trusting anything the page rendered — a consent withdrawn or a number
+// corrected between render and click must win.
+//
+// Same scoping rule as loadCompanyDetail: service role sees every tenant, so
+// every query carries an explicit company filter. The person is looked up by
+// id AND company_id, so a personId belonging to another tenant answers null
+// rather than leaking a row.
+
+export type ResendAudience = 'worker' | 'manager';
+
+export interface WelcomeResendContext {
+  company: Company;
+  audience: ResendAudience;
+  personId: string;
+  personName: string;
+  /** hasWhatsAppConsent() on the row as it is NOW — the gate, fail closed. */
+  consent: boolean;
+  /** Where a send would go, or null when the person has no usable address. */
+  recipient: WhatsAppRecipient | null;
+  locale: Locale;
+  /** Every 'welcome' and operator-resend ledger row for this person, newest first. */
+  ledger: SendLogRow[];
+  verdict: ResendVerdict;
+  /** What would be sent — template, language, exact params, full preview text. */
+  plan: WelcomeSendPlan;
+  /** Today's Lisbon date, for the claim row. */
+  today: string;
+}
+
+export async function loadWelcomeResendContext(
+  companyId: string,
+  audience: ResendAudience,
+  personId: string,
+): Promise<WelcomeResendContext | null> {
+  const db = getDb();
+
+  const { data: company } = await db.from('companies').select('*').eq('id', companyId).maybeSingle();
+  if (!company) return null;
+
+  const person =
+    audience === 'worker'
+      ? await db.from('workers').select('*').eq('company_id', companyId).eq('id', personId).maybeSingle()
+      : await db.from('profiles').select('*').eq('company_id', companyId).eq('id', personId).maybeSingle();
+  if (!person.data) return null;
+
+  const ledgerQuery = db
+    .from('notification_log')
+    .select('*')
+    .eq('company_id', companyId)
+    .in('kind', ['welcome', OPERATOR_RESEND_WELCOME_KIND])
+    .order('created_at', { ascending: false });
+  const { data: ledger, error: ledgerError } = await (audience === 'worker'
+    ? ledgerQuery.eq('worker_id', personId)
+    : ledgerQuery.eq('profile_id', personId));
+  // Throws rather than treating a failed read as an empty ledger: an empty
+  // ledger means "never attempted", and a send decision made on that guess
+  // could introduce Capo twice. Same posture as loadPendingWelcomes.
+  if (ledgerError) throw new Error(`notification_log read failed: ${ledgerError.message}`);
+
+  // One clock (AGENTS.md): the claim's notification_date comes from
+  // lisbon_today(), never from the runtime's own timezone arithmetic.
+  const { data: today, error: todayError } = await db.rpc('lisbon_today');
+  if (todayError || !today) throw new Error(`lisbon_today failed: ${todayError?.message}`);
+
+  const row = person.data as Worker | Profile;
+  const personName = audience === 'worker' ? (row as Worker).name : (row as Profile).full_name;
+  const locale =
+    audience === 'worker'
+      ? coerceLocale((row as Worker).language ?? company.language)
+      : coerceLocale((row as Profile).language);
+
+  return {
+    company,
+    audience,
+    personId,
+    personName,
+    consent: hasWhatsAppConsent(row),
+    recipient: recipientFor(row),
+    locale,
+    ledger: ledger ?? [],
+    verdict: decideOperatorResend(ledger ?? []),
+    plan: planWelcomeResend({ audience, personName, companyName: company.name, locale }),
+    today,
+  };
+}
+
+// ── problem reports (0042, issue #120) ──────────────────────────────────────
+// The ONLY read surface for `problem_reports`, by design: tenants hold no
+// SELECT on it at all (a crew report may be about the manager), so the reports
+// exist to be read here, cross-tenant, on the service role.
+//
+// `text` is untrusted free prose typed by a manager or a crew member. Render
+// it as data — React escapes it — and never feed it onward to anything that
+// treats text as instructions.
+
+export interface ProblemReportRow {
+  id: string;
+  created_at: string;
+  channel: string;
+  text: string;
+  context: unknown;
+  companyName: string;
+  /** The reporter, resolved: a manager's full_name or a worker's name. */
+  reporter: string;
+  audience: 'manager' | 'worker';
+}
+
+export async function loadProblemReports(): Promise<{ rows: ProblemReportRow[]; error: string | null }> {
+  const db = getDb();
+  const { data, error } = await db
+    .from('problem_reports')
+    .select('id, created_at, channel, text, context, worker_id, companies(name), workers(name), profiles(full_name)')
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) {
+    // Most likely 42P01 while 0042 is unapplied. Shown on the page rather than
+    // swallowed: an operator reading "no reports" off a missing table is the
+    // 0038 failure shape all over again.
+    return { rows: [], error: error.message };
+  }
+  return {
+    rows: (data ?? []).map(row => ({
+      id: row.id,
+      created_at: row.created_at,
+      channel: row.channel,
+      text: row.text,
+      context: row.context,
+      companyName: row.companies?.name ?? '—',
+      reporter: row.worker_id ? (row.workers?.name ?? 'Worker') : (row.profiles?.full_name ?? 'Manager'),
+      audience: row.worker_id ? 'worker' : 'manager',
+    })),
+    error: null,
   };
 }

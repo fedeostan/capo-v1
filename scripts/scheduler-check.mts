@@ -15,6 +15,16 @@
 
 import { readFileSync } from 'node:fs';
 import { scheduleTasks } from '@capo/core/capabilities/plan';
+// The plan materials checker (issue #119) is pure by the same contract as the
+// scheduler above it: no Db, no clock, no model. Its heuristics are asserted
+// here because being wrong in EITHER direction is silent — over-flagging
+// erodes the warning's credibility, under-flagging is the bug it exists for.
+import {
+  checkPlanQuality,
+  renderPlanWarningLines,
+  type PlanQualityTask,
+  type PlanWarning,
+} from '@capo/core/capabilities/plan-quality';
 import {
   addWorkdays,
   countWorkdays,
@@ -776,6 +786,181 @@ eq(
   }
   eq('a link is alive all evening, every day of the year', alive, 365);
   eq('and never survives to the next briefing', leaks, 0);
+}
+
+// ── plan materials quality (issue #119) ─────────────────────────────────────
+//
+// The checker behind the plan card's warning section. Both live defects are
+// pinned as positives ("Tiles" vs "Tiles 30x60"; two tiling tasks, one
+// missing grout), and the conservative refusals are pinned as negatives so a
+// well-meant widening cannot land silently: different colours are different
+// materials, different trades are never compared, and same-trade tasks that
+// share nothing (different sub-phases) are left alone.
+
+function qt(
+  title: string,
+  materials: string[] | undefined,
+  trade?: string,
+): PlanQualityTask {
+  return { title, trade, materials };
+}
+
+function variantWarnings(ws: PlanWarning[]) {
+  return ws.filter(w => w.kind === 'material_name_variants');
+}
+function gapWarnings(ws: PlanWarning[]) {
+  return ws.filter(w => w.kind === 'trade_materials_gap');
+}
+
+// A clean plan: consistent spellings, both tiling tasks carrying the same
+// consumables. Zero warnings, and zero warnings must mean ZERO card text.
+{
+  const clean = checkPlanQuality([
+    qt('Azulejo cozinha', ['azulejo 30x60', 'cola de azulejo', 'juntas'], 'azulejo'),
+    qt('Azulejo casa de banho', ['azulejo 30x60', 'cola de azulejo', 'juntas'], 'azulejo'),
+    qt('Pintura', ['tinta branca', 'rolos'], 'pintura'),
+  ]);
+  eq('a consistent plan raises no warnings', clean.length, 0);
+  eq(
+    'no warnings, no card text — not even a header',
+    renderPlanWarningLines(clean, {
+      header: 'H',
+      nameVariants: () => 'v',
+      tradeGap: () => 'g',
+    }).length,
+    0,
+  );
+}
+
+// The first live defect: one material under several spellings. Case, accents,
+// containment and a one-letter typo all collapse into ONE question naming
+// every spelling, in first-seen order.
+{
+  const ws = checkPlanQuality([
+    qt('T1', ['Azulejo', 'cimento cola']),
+    qt('T2', ['azulejo 30x60', 'cemento cola']),
+  ]);
+  const variants = variantWarnings(ws);
+  eq('case + containment + typo variants are all caught', variants.length, 2);
+  eq(
+    'containment cluster carries the raw spellings, first-seen order',
+    JSON.stringify(variants[0]?.kind === 'material_name_variants' ? variants[0].names : []),
+    JSON.stringify(['Azulejo', 'azulejo 30x60']),
+  );
+  eq(
+    'a one-letter typo in a token is the same material',
+    JSON.stringify(variants[1]?.kind === 'material_name_variants' ? variants[1].names : []),
+    JSON.stringify(['cimento cola', 'cemento cola']),
+  );
+}
+{
+  const ws = variantWarnings(
+    checkPlanQuality([qt('T1', ['cerâmica']), qt('T2', ['ceramica'])]),
+  );
+  eq('accent-only spellings are one material', ws.length, 1);
+}
+{
+  const ws = variantWarnings(
+    checkPlanQuality([qt('T1', ['Tiles']), qt('T2', ['tiles']), qt('T3', ['Tiles 30x60'])]),
+  );
+  eq('three spellings come out as ONE question, not three pairs', ws.length, 1);
+  eq(
+    'the cluster lists all three spellings',
+    ws[0]?.kind === 'material_name_variants' ? ws[0].names.length : 0,
+    3,
+  );
+}
+// The conservative refusals. Each of these is a pair a person would NOT ask
+// about, so flagging it would teach the manager to ignore the section.
+eq(
+  'different colours are different materials',
+  checkPlanQuality([qt('T1', ['tinta branca']), qt('T2', ['tinta azul'])]).length,
+  0,
+);
+eq(
+  'a one-character difference in a SIZE is two purchases, not a typo',
+  checkPlanQuality([qt('T1', ['prego 40mm']), qt('T2', ['prego 60mm'])]).length,
+  0,
+);
+eq(
+  'short words never typo-match ("cal" is not "cola")',
+  checkPlanQuality([qt('T1', ['cal']), qt('T2', ['cola'])]).length,
+  0,
+);
+
+// The second live defect: two tiling tasks, only one has grout. The deficient
+// task is named and told exactly what its sibling lists.
+{
+  const ws = gapWarnings(
+    checkPlanQuality([
+      qt('Azulejo cozinha', ['azulejo 30x60', 'cola'], 'azulejo'),
+      qt('Azulejo casa de banho', ['azulejo 30x60', 'cola', 'juntas'], 'azulejo'),
+    ]),
+  );
+  eq('a same-trade consumable gap is caught', ws.length, 1);
+  const gap = ws[0]?.kind === 'trade_materials_gap' ? ws[0] : undefined;
+  eq('…naming the task that is missing it', gap?.title, 'Azulejo cozinha');
+  eq('…and what it is missing', JSON.stringify(gap?.missing), JSON.stringify(['juntas']));
+}
+// A task carrying a VARIANT spelling of a sibling's material is not "missing"
+// it — that pair is already the name-variants question, and repeating it as a
+// gap would be the same doubt stated twice.
+{
+  const ws = checkPlanQuality([
+    qt('T1', ['azulejo 30x60', 'juntas'], 'azulejo'),
+    qt('T2', ['azulejo'], 'azulejo'),
+  ]);
+  eq('variant coverage: the tile pair is a variants question', variantWarnings(ws).length, 1);
+  const gap = gapWarnings(ws)[0];
+  eq(
+    'variant coverage: the gap lists only what is genuinely absent',
+    JSON.stringify(gap?.kind === 'trade_materials_gap' ? gap.missing : []),
+    JSON.stringify(['juntas']),
+  );
+}
+eq(
+  'different trades are never compared',
+  checkPlanQuality([
+    qt('Pintura', ['rolos'], 'pintura'),
+    qt('Azulejo', ['rolos', 'fita'], 'azulejo'),
+  ]).length,
+  0,
+);
+eq(
+  'same trade, disjoint lists = different sub-phases, left alone',
+  checkPlanQuality([
+    qt('Tubagens', ['tubo multicamada', 'abracadeiras'], 'canalizacao'),
+    qt('Loiças', ['torneiras', 'sifoes'], 'canalizacao'),
+  ]).length,
+  0,
+);
+eq(
+  'a task with NO materials is skipped, not flagged as missing everything',
+  checkPlanQuality([
+    qt('Azulejo cozinha', ['azulejo', 'cola', 'juntas'], 'azulejo'),
+    qt('Azulejo casa de banho', undefined, 'azulejo'),
+  ]).length,
+  0,
+);
+eq(
+  'tasks without a trade are never trade-compared',
+  checkPlanQuality([qt('T1', ['cola', 'juntas']), qt('T2', ['cola'])]).length,
+  0,
+);
+
+// The rendered section: header first, one line per warning.
+{
+  const ws = checkPlanQuality([
+    qt('T1', ['Azulejo', 'cola'], 'azulejo'),
+    qt('T2', ['azulejo', 'cola', 'juntas'], 'azulejo'),
+  ]);
+  const rendered = renderPlanWarningLines(ws, {
+    header: 'HEADER',
+    nameVariants: names => `V:${names.join('|')}`,
+    tradeGap: p => `G:${p.title}:${p.missing.join('|')}`,
+  });
+  eq('warnings render as header + one line each', rendered.length, ws.length + 1);
+  eq('the header leads the section', rendered[0], 'HEADER');
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

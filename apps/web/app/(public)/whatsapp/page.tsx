@@ -69,8 +69,8 @@ export default async function WhatsAppPage() {
     <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 px-6 pb-16">
       <div className="space-y-2 text-center">
         <p className="text-4xl">💬</p>
-        <h1 className="text-2xl font-semibold">{t.whatsappHandshake.title}</h1>
-        <p className="text-sm text-zinc-500">{t.whatsappHandshake.subtitle}</p>
+        <h1 className="text-title font-semibold">{t.whatsappHandshake.title}</h1>
+        <p className="text-callout text-fg-muted">{t.whatsappHandshake.subtitle}</p>
       </div>
       <Handshake locale={locale} link={link} qr={qrGeometry(link)} phone={profile?.phone ?? ''} />
     </div>

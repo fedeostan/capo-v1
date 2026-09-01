@@ -48,6 +48,7 @@ import {
 } from '../../../lib/checkin-photo';
 import { dayLinkUrl, mintDayLinks } from '../../../lib/day-link';
 import { logEvent } from '../../../lib/log';
+import { handleProblemReportMessage } from '../../../lib/problem-report-flow';
 import { consentCommand, detailCommand, languageCommand, menuCommand } from '../../../lib/worker-keywords';
 import {
   buildWorkerMenu,
@@ -2013,6 +2014,38 @@ async function handleWorkerReply(
     return true;
   }
 
+  // ── "REPORT A PROBLEM" (issue #120) ────────────────────────────────────────
+  // The fourth keyword table, plus the "your next message is the report"
+  // capture it arms. Deterministic and in front of the agent like the three
+  // around it, for the issue's own reason: a report that Capo is misbehaving
+  // must never depend on Capo's model behaving.
+  //
+  // Its position in the order is load-bearing in both directions:
+  //   - BELOW consent, because STOP must always unsubscribe (Meta requires
+  //     opt-outs honoured) — the one message the armed capture does not get to
+  //     keep, and the only carve-out from its promise.
+  //   - ABOVE the language and menu keywords, because the prompt promised
+  //     "your next message is registered", and honouring that promise — even
+  //     for a message that happens to say "ajuda" or "ES" — is simpler and
+  //     more honest than a list of exceptions the sender cannot see. The
+  //     request expires after 30 minutes, so the cost of the promise is
+  //     bounded.
+  //
+  // The text, when consumed, goes to `problem_reports` and NOWHERE else — in
+  // particular never to `worker_messages`, because a report is mail to the
+  // operator, not conversation with Capo.
+  if (message.type === 'text' && message.text?.body) {
+    const consumed = await handleProblemReportMessage(
+      db,
+      { audience: 'worker', companyId: worker.company_id, workerId: worker.id },
+      message.text.body,
+      current,
+      sendConfig,
+      message.id,
+    );
+    if (consumed) return true;
+  }
+
   // THE LANGUAGE KEYWORD FAST PATH — still in front of the agent, still zero
   // model calls, and byte-identical in behaviour to what it has always done
   // (including the case where the requested language is already the current
@@ -2449,6 +2482,36 @@ export async function POST(request: NextRequest) {
       // Free by construction — a status update is not a message, so there is
       // no template and nothing to bill. See lib/whatsapp-feedback.
       await acknowledgeInbound(message.id, sendConfig, { typing: true, companyId });
+
+      // ── "REPORT A PROBLEM" (issue #120) ─────────────────────────────────
+      // The same deterministic keyword flow the worker path runs, and the
+      // first keyword table the MANAGER path consults at all. It sits ABOVE
+      // handleInbound for the issue's stated reason, sharpened by 31 Aug
+      // (issue #126): when the model provider is down or out of credit, "bug"
+      // must still file — the message that says Capo is broken cannot be
+      // routed through the broken part.
+      //
+      // A consumed message never reaches handleInbound and is therefore never
+      // persisted to `messages`: a report is mail to the operator, not
+      // conversation, and keeping the manager's own reports out of the thread
+      // keeps the isolation story uniform with the crew's (#22's sweep stays
+      // simple). Voice notes are deliberately excluded — recognising a spoken
+      // "bug" needs a transcription model, which is exactly the dependency
+      // this path exists to avoid; a dictated report reaches the agent as
+      // always. One known wrinkle follows from that: a manager who is ARMED
+      // and answers with a voice note gets an agent turn, and their next TEXT
+      // within 30 minutes is still captured as the report.
+      if (message.type === 'text') {
+        const consumed = await handleProblemReportMessage(
+          db,
+          { audience: 'manager', companyId, profileId: userId },
+          message.text!.body,
+          locales.user,
+          sendConfig,
+          message.id,
+        );
+        if (consumed) return;
+      }
 
       // The turn itself: media download, transcription, and the agent loop.
       // Extracted so withProgressNote below can wrap ALL of it. Wrapping only

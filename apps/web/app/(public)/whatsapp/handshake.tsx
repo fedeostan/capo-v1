@@ -95,16 +95,16 @@ export default function Handshake({
 
   return (
     <div className="space-y-6">
-      <label className="flex items-start gap-3 rounded-lg border border-zinc-500/30 px-3 py-2.5">
+      <label className="flex items-start gap-3 rounded-control border border-hairline px-3 py-3">
         <input
           type="checkbox"
           checked={optIn}
           onChange={e => setOptIn(e.target.checked)}
-          className="mt-0.5 h-5 w-5 shrink-0 accent-orange-600"
+          className="mt-1 h-5 w-5 shrink-0 accent-brand"
         />
-        <span className="text-sm">
+        <span className="text-callout">
           {t.consentLabel}
-          <span className="mt-0.5 block text-xs text-zinc-500">{t.consentHint}</span>
+          <span className="mt-1 block text-caption text-fg-muted">{t.consentHint}</span>
         </span>
       </label>
 
@@ -112,13 +112,16 @@ export default function Handshake({
         <div className="space-y-2">
           {/* White card and black modules in BOTH themes, deliberately. An
               inverted QR is legal but many scanners will not lock onto one, and
-              a code that fails to scan looks identical to a code that works. */}
-          <div className="mx-auto w-48 rounded-lg bg-white p-3">
+              a code that fails to scan looks identical to a code that works.
+              An inline style, not a token: this is a physical requirement of
+              scanners, exactly like the path's fill, and must never follow the
+              theme — which is what every colour token does. */}
+          <div className="mx-auto w-48 rounded-lg p-3" style={{ backgroundColor: '#ffffff' }}>
             <svg viewBox={qr.viewBox} className="block h-full w-full" role="img" aria-label={t.qrHint}>
               <path d={qr.path} fill="#000000" />
             </svg>
           </div>
-          <p className="text-center text-xs text-zinc-500">{t.qrHint}</p>
+          <p className="text-center text-caption text-fg-muted">{t.qrHint}</p>
         </div>
       )}
 
@@ -131,36 +134,41 @@ export default function Handshake({
           backgrounded tab, so the poll may never even run. Same-tab means
           Back returns here, which remounts and re-confirms immediately
           because arrival is sticky by design (see actions.ts). */}
+      {/* The mobile button is WhatsApp-green on purpose — it opens WhatsApp,
+          and orange would promise a Capo screen. success-solid is the token
+          spelling of that green: pinned to the same value in both themes, with
+          --on-solid guaranteed readable on it. Hand-styled because the shared
+          Button has no green variant, mirroring its size and press feedback. */}
       <a
         href={link}
         {...(desktop ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
         className={
           desktop
-            ? 'block text-center text-sm text-zinc-500 underline'
-            : 'block w-full rounded-lg bg-emerald-600 py-2.5 text-center font-semibold text-white active:bg-emerald-700'
+            ? 'block text-center text-callout text-fg-muted underline'
+            : 'flex min-h-12 w-full items-center justify-center rounded-control bg-success-solid text-center font-semibold text-on-solid transition-transform duration-(--duration-fast) ease-out active:scale-[0.97]'
         }
       >
         {desktop ? t.webLink : t.openButton}
       </a>
 
       {status === 'arrived' ? (
-        <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-center text-sm text-emerald-700 dark:text-emerald-400">
+        <p className="rounded-lg bg-success-quiet px-3 py-2 text-center text-callout text-success">
           {t.arrived}
         </p>
       ) : status === 'stalled' ? (
         <div className="space-y-2">
-          <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-center text-sm text-amber-700 dark:text-amber-400">
+          <p className="rounded-lg bg-warn-quiet px-3 py-2 text-center text-callout text-warn">
             {t.stalled(phone)}
           </p>
-          <Link href="/perfil" className="block text-center text-sm underline">
+          <Link href="/perfil" className="block text-center text-callout underline">
             {t.fixNumber}
           </Link>
         </div>
       ) : (
-        <p className="text-center text-sm text-zinc-500">{t.waiting}</p>
+        <p className="text-center text-callout text-fg-muted">{t.waiting}</p>
       )}
 
-      <Link href="/instalar" className="block text-center text-sm text-zinc-500 underline">
+      <Link href="/instalar" className="block text-center text-callout text-fg-muted underline">
         {t.skip}
       </Link>
     </div>

@@ -124,6 +124,14 @@ export function ProfileDrawer({
             ))}
           </Card>
 
+          {/* "Report a problem" (issue #120) — its own card, not a sixth room:
+              the five rooms are places, this is an action, and keeping it
+              visually separate is what keeps it findable when the person
+              opening the drawer is already annoyed at the app. */}
+          <Card padding="none">
+            <ListRow href="/perfil/reportar" title={t.report.row.title} meta={t.report.row.sub} />
+          </Card>
+
           {/* Deliberately minimal — label only. The full explanation lives on
               /instalar; a marketing block inside a settings drawer is something
               a manager scrolls past every single time. */}

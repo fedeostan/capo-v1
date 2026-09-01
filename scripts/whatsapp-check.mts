@@ -128,6 +128,14 @@ import {
   renderWelcomeFreeForm,
   WELCOME_KIND,
 } from '../apps/web/app/notifications/welcome.ts';
+// The welcome RETRY POLICY (issue #121). Pure — no Db, no clock: `today`
+// arrives as a string — which is what lets this file pin the three rules that
+// keep a released failed claim (0041) from becoming a repeating paid send.
+import {
+  classifyWelcomeError,
+  decideWelcomeRetry,
+  WELCOME_MAX_ATTEMPTS,
+} from '../apps/web/lib/welcome-retry.ts';
 // The three keyword tables that sit IN FRONT of the worker agent. They moved
 // out of the Next route precisely so this file could assert them: three sets
 // that must stay pairwise disjoint cannot be checked by reading.
@@ -137,11 +145,23 @@ import {
   MENU_KEYWORDS,
   OPT_IN_KEYWORDS,
   OPT_OUT_KEYWORDS,
+  REPORT_KEYWORDS,
   consentCommand,
   detailCommand,
   languageCommand,
   menuCommand,
+  reportCommand,
 } from '../apps/web/lib/worker-keywords.ts';
+// The pure half of "report a problem" (issue #120): the staging TTL and the
+// text clamp. Same reasoning as checkin-photo above — no Db, no clock beyond a
+// `now` argument, no network.
+import {
+  REPORT_REQUEST_TTL_MS,
+  REPORT_TEXT_MAX,
+  clampReportText,
+  reportRequestExpiry,
+  reportRequestLive,
+} from '../apps/web/lib/problem-report.ts';
 // The pure half of "a worker tapped Sim, terminei" (issue #54). Same reasoning
 // as the briefing import above: no Db, no clock, no network.
 import {
@@ -1950,7 +1970,12 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     ['opt-out', OPT_OUT_KEYWORDS],
     ['opt-in', OPT_IN_KEYWORDS],
     ['menu', MENU_KEYWORDS],
+    // Issue #120 — the report table, the only one both sender kinds
+    // consult; issue #108 — the detail table, the knock's reply. Every pair
+    // including both is asserted below like the others, which is what proves
+    // "ok" can never file a report and "bug" can never fetch the day.
     ['detail', DETAIL_KEYWORDS],
+    ['report', REPORT_KEYWORDS],
   ];
   for (let i = 0; i < tables.length; i += 1) {
     for (let j = i + 1; j < tables.length; j += 1) {
@@ -2007,6 +2032,60 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
   for (const word of ['bug', 'problema', 'erro', 'problem', 'error', 'fallo']) {
     check(`the detail table never claims "${word}"`, !DETAIL_KEYWORDS.has(word), word);
   }
+}
+
+// ── "report a problem" (issue #120) ─────────────────────────────────────────
+// The fourth keyword table, and the ONE deliberate break with the
+// whole-message rule: a keyword as the FIRST WORD files the rest of the same
+// message immediately ("bug o menu não abre"), because a report split across
+// two messages is a report half of which never arrives. Every behaviour of
+// that exception is pinned here, because the exception is exactly where a
+// future edit would quietly widen the match into reading sentences as
+// commands.
+{
+  eq('a bare "bug" arms the two-message flow', reportCommand('bug')?.kind, 'arm');
+  eq('case- and whitespace-insensitive', reportCommand('  BUG  ')?.kind, 'arm');
+  eq('a labelled bare keyword still arms ("problema:")', reportCommand('problema:')?.kind, 'arm');
+  eq('all six words arm', ['bug', 'problema', 'erro', 'problem', 'error', 'fallo']
+    .map(w => reportCommand(w)?.kind)
+    .join(','), 'arm,arm,arm,arm,arm,arm');
+
+  const inline = reportCommand('bug o menu não abre');
+  eq('keyword-first files inline', inline?.kind, 'inline');
+  eq('with the rest of the message as the report, verbatim',
+    inline?.kind === 'inline' ? inline.text : null, 'o menu não abre');
+  const labelled = reportCommand('erro: não recebo o resumo das 07:00');
+  eq('a labelled inline report drops the label punctuation',
+    labelled?.kind === 'inline' ? labelled.text : null, 'não recebo o resumo das 07:00');
+
+  // The false-positive direction that must stay CLOSED: the keyword anywhere
+  // but first is a sentence, not a command.
+  eq('mid-sentence "bug" is not a report', reportCommand('o menu tem um bug'), null);
+  eq('a sentence about a site problem does not start the flow', reportCommand('temos um problema na obra'), null);
+  eq('an unrelated message is untouched', reportCommand('es que falta material'), null);
+  eq('empty and undefined are no command', `${reportCommand('')}/${reportCommand(undefined)}`, 'null/null');
+
+  // The other three tables never claim these words, and vice versa — the
+  // disjointness loop above asserts every pair, but the two words most likely
+  // to collide by future edit are pinned by name.
+  eq('the menu never claims "bug"', menuCommand('bug'), false);
+  eq('a bare ES is still Spanish, never a report', reportCommand('ES'), null);
+
+  // The staging TTL (0042): enforced by the READER, nothing sweeps the table.
+  eq('the request TTL is 30 minutes', REPORT_REQUEST_TTL_MS, 30 * 60 * 1000);
+  const armedAt = Date.parse('2026-01-05T10:00:00Z');
+  const expiry = reportRequestExpiry(armedAt);
+  check('a request is live inside its TTL', reportRequestLive(expiry, armedAt + REPORT_REQUEST_TTL_MS - 1));
+  check('and dead the moment it passes', !reportRequestLive(expiry, armedAt + REPORT_REQUEST_TTL_MS));
+  check('an unparseable expires_at reads as expired', !reportRequestLive('not a date', armedAt));
+  check('and so does a missing one', !reportRequestLive(null, armedAt));
+
+  // The clamp mirrors the column CHECK (0042): a long report is truncated,
+  // never refused — and counted in code points, so it can never exceed what
+  // char_length() counts nor split a surrogate pair.
+  eq('a short report passes through trimmed', clampReportText('  a lista duplica  '), 'a lista duplica');
+  eq('a long report is clamped to the CHECK bound', [...clampReportText('x'.repeat(REPORT_TEXT_MAX + 500))].length, REPORT_TEXT_MAX);
+  eq('emoji count as one, matching char_length()', [...clampReportText('📷'.repeat(REPORT_TEXT_MAX + 5))].length, REPORT_TEXT_MAX);
 }
 
 // ── the interactive list payload ────────────────────────────────────────────
@@ -2591,6 +2670,15 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     { id: 'w4', name: 'Rui', active: true, phone: null, whatsapp_opt_in_at: optedIn },
     // switched off
     { id: 'w5', name: 'Antigo', active: false, phone: '351955555555', whatsapp_opt_in_at: optedIn },
+    // ── #121's four retry cases, all consenting and reachable ──
+    // failed yesterday on a retryable code — the pilot's exact shape
+    { id: 'w6', name: 'Tó', active: true, phone: '351966666601', whatsapp_opt_in_at: optedIn },
+    // failed TODAY — one paid attempt per Lisbon day
+    { id: 'w7', name: 'Nuno', active: true, phone: '351966666602', whatsapp_opt_in_at: optedIn },
+    // failed on a permanent code — a number that is not on WhatsApp
+    { id: 'w8', name: 'Ivo', active: true, phone: '351966666603', whatsapp_opt_in_at: optedIn },
+    // failed three times — the cap is spent
+    { id: 'w9', name: 'Gil', active: true, phone: '351966666604', whatsapp_opt_in_at: optedIn },
   ];
   const managers = [
     { id: 'p1', full_name: 'Federico', language: 'pt-PT', phone: '+5491178876189', whatsapp_opt_in_at: optedIn },
@@ -2598,22 +2686,51 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     // is not consent to be messaged on WhatsApp.
     { id: 'p2', full_name: 'Sócio', language: 'pt-PT', phone: '+351966666666', whatsapp_opt_in_at: null },
   ];
-  const done = [{ worker_id: 'w2', profile_id: null }];
+  const today = '2026-08-31';
+  const failed132001 = (date: string) => ({
+    status: 'failed',
+    error: `WhatsApp send failed (404, code 132001): template name (capo_welcome) does not exist in pt_PT`,
+    notification_date: date,
+  });
+  const done = [
+    { worker_id: 'w2', profile_id: null, status: 'sent', error: null, notification_date: '2026-08-20' },
+    { worker_id: 'w6', profile_id: null, ...failed132001('2026-08-30') },
+    { worker_id: 'w7', profile_id: null, ...failed132001(today) },
+    {
+      worker_id: 'w8',
+      profile_id: null,
+      status: 'failed',
+      error: 'WhatsApp send failed (400, code 131026): Message Undeliverable',
+      notification_date: '2026-08-30',
+    },
+    { worker_id: 'w9', profile_id: null, ...failed132001('2026-08-27') },
+    { worker_id: 'w9', profile_id: null, ...failed132001('2026-08-28') },
+    { worker_id: 'w9', profile_id: null, ...failed132001('2026-08-29') },
+  ];
 
   const audience = await loadPendingWelcomes(
     fakeBriefingDb({ workers: crew, profiles: managers, notification_log: done }),
     { id: 'co', name: 'Construções Silva', language: 'pt-PT' },
+    today,
   );
 
   const ids = audience.pending.map(p => p.id).sort();
-  eq('only the never-welcomed, consenting, reachable people are pending', ids.join(','), 'p1,w1');
+  eq('only the never-welcomed, consenting, reachable people are pending', ids.join(','), 'p1,w1,w6');
   check('a worker with no recorded opt-in is NEVER pending', !ids.includes('w3'));
   check('a manager with no recorded opt-in is NEVER pending either', !ids.includes('p2'));
   check('an already-welcomed worker is not welcomed twice', !ids.includes('w2'));
+  // #121: the retry policy applied through the real loader, not just the pure
+  // function — one person per rule.
+  check('a failed welcome from yesterday, on a retryable code, IS pending again', ids.includes('w6'));
+  check('a failure from TODAY is not retried until tomorrow', !ids.includes('w7'));
+  check('a permanent failure is never retried', !ids.includes('w8'));
+  check('a spent attempt cap is final', !ids.includes('w9'));
   eq('the consent exclusion is counted, not silent', audience.excludedNoConsent, 1);
   eq('and so is the unreachable one', audience.excludedUnreachable, 1);
   eq('and the inactive one', audience.excludedInactive, 1);
   eq('and the manager one', audience.excludedManagers, 1);
+  eq('and the not-retried failures are too', audience.excludedFailed, 3);
+  eq('only truly blocking rows count as already welcomed', audience.alreadyWelcomed, 1);
 
   const worker = audience.pending.find(p => p.id === 'w1')!;
   const manager = audience.pending.find(p => p.id === 'p1')!;
@@ -2674,6 +2791,97 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     check(`${locale} — the welcome thread note names who was introduced`, note.includes('Zé') && note.includes('Pepe'), note);
     check(`${locale} — and leaks no undefined`, !note.includes('undefined'), note);
   }
+}
+
+// ── the welcome retry policy (issue #121) ───────────────────────────────────
+//
+// 0041 narrows the once-ever lock so a FAILED welcome releases its claim, and
+// these three rules — an error allowlist, an attempt cap, one attempt per
+// Lisbon day — are all that stands between that and a repeating paid send.
+// They live in apps/web/lib/welcome-retry.ts, pure, so every branch is pinned
+// here. The posture under test is FAIL CLOSED: every ambiguity — an unknown
+// code, a code-less error, an undatable row, an unreadable status — must
+// resolve toward NOT paying for another template.
+{
+  eq(
+    '132001 — template missing in a locale — is retryable (the pilot case)',
+    classifyWelcomeError('WhatsApp send failed (404, code 132001): template name (capo_welcome) does not exist in pt_PT'),
+    'retryable',
+  );
+  eq(
+    '130429 — rate limited — is retryable',
+    classifyWelcomeError('WhatsApp send failed (400, code 130429): Rate limit hit'),
+    'retryable',
+  );
+  eq(
+    '131026 — undeliverable recipient — is permanent',
+    classifyWelcomeError('WhatsApp send failed (400, code 131026): Message Undeliverable'),
+    'permanent',
+  );
+  eq(
+    'a code-less failure is permanent — unknown must not earn a paid loop',
+    classifyWelcomeError('WhatsApp send failed (503): upstream unavailable'),
+    'permanent',
+  );
+  eq('an unparseable error is permanent', classifyWelcomeError('fetch failed'), 'permanent');
+  eq('an absent error is permanent', classifyWelcomeError(null), 'permanent');
+
+  // Three attempts, ever. The failed rows ARE the counter, one per Lisbon day
+  // by 0016's daily unique key — so the constant is also the number of days a
+  // broken config gets before somebody has to intervene by hand.
+  eq('the attempt cap is three', WELCOME_MAX_ATTEMPTS, 3);
+
+  const today = '2026-08-31';
+  const failed = (date: string | null, code = 132001) => ({
+    status: 'failed',
+    error: `WhatsApp send failed (400, code ${code}): x`,
+    notification_date: date,
+  });
+
+  eq('no history — never attempted', decideWelcomeRetry([], today), 'never_attempted');
+  eq(
+    'a sent row blocks forever',
+    decideWelcomeRetry([{ status: 'sent', error: null, notification_date: '2026-08-01' }], today),
+    'blocked',
+  );
+  eq(
+    'a skipped row blocks forever — 0033 backfill rows stay untouchable',
+    decideWelcomeRetry([{ status: 'skipped', error: null, notification_date: '2026-08-01' }], today),
+    'blocked',
+  );
+  eq(
+    'a pending row blocks — a claim in flight is not a failure',
+    decideWelcomeRetry([failed('2026-08-30'), { status: 'pending', error: null, notification_date: today }], today),
+    'blocked',
+  );
+  eq(
+    'a row with no readable status blocks — fail closed',
+    decideWelcomeRetry([{ notification_date: '2026-08-01' }], today),
+    'blocked',
+  );
+  eq('yesterday, retryable, first attempt — retry', decideWelcomeRetry([failed('2026-08-30')], today), 'retry');
+  eq('a failure from TODAY cools down — one paid attempt per Lisbon day', decideWelcomeRetry([failed(today)], today), 'cooldown');
+  eq(
+    'a future-dated failure cools down too — a weird clock must not fail open',
+    decideWelcomeRetry([failed('2027-01-01')], today),
+    'cooldown',
+  );
+  eq('an undatable failure cools down', decideWelcomeRetry([failed(null)], today), 'cooldown');
+  eq(
+    'the NEWEST failure governs: retryable after permanent — retry',
+    decideWelcomeRetry([failed('2026-08-29', 131026), failed('2026-08-30', 132001)], today),
+    'retry',
+  );
+  eq(
+    'and permanent after retryable — permanent',
+    decideWelcomeRetry([failed('2026-08-29', 132001), failed('2026-08-30', 131026)], today),
+    'permanent',
+  );
+  eq(
+    'three failures — exhausted, whatever the codes say',
+    decideWelcomeRetry([failed('2026-08-27'), failed('2026-08-28'), failed('2026-08-29')], today),
+    'exhausted',
+  );
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

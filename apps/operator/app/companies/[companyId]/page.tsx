@@ -14,8 +14,10 @@ import { MessageBody, ROLE_STYLES } from '../../message-view';
 export const dynamic = 'force-dynamic';
 
 // The per-company mini-app (issue #122): open a tenant and see its actual
-// state, not just its transcript. Strictly read-only — the resend and
-// message-a-worker buttons belong to #123, which will sit inside this page.
+// state, not just its transcript. This page itself only reads; the one write
+// action it links to is #123's welcome resend, which lives behind its own
+// preview-and-confirm screen (./resend-welcome/...). Briefing/check-in resends
+// and the message-a-worker flow (#123 part B) are still to come.
 
 function formatWhen(iso: string | null): string {
   if (!iso) return '—';
@@ -26,6 +28,7 @@ const KIND_LABEL: Record<string, string> = {
   daily_briefing: '07:00 briefing',
   task_checkin: 'Afternoon check-in',
   welcome: 'Welcome',
+  operator_resend_welcome: 'Welcome (operator resend)',
 };
 
 const STATUS_STYLE: Record<string, string> = {
@@ -86,7 +89,31 @@ function deliveryState(row: SendLogRow): string {
   return 'accepted by Meta';
 }
 
-function SendTable({ rows, showRecipient, names }: { rows: SendLogRow[]; showRecipient?: boolean; names?: Map<string, string> }) {
+/**
+ * The path to the resend preview for a row, or null when no resend exists for
+ * its kind. Welcome only (issue #123, part A): a failed briefing or check-in
+ * self-heals at the next day's send, and their resend needs the shared
+ * renderers, which live in apps/web — see the PR for why they wait.
+ */
+function resendHref(companyId: string, row: SendLogRow): string | null {
+  if (row.kind !== 'welcome') return null;
+  const personId = row.worker_id ?? row.profile_id;
+  if (!personId) return null;
+  return `/companies/${companyId}/resend-welcome/${row.worker_id ? 'worker' : 'manager'}/${personId}`;
+}
+
+function SendTable({
+  rows,
+  showRecipient,
+  names,
+  resendCompanyId,
+}: {
+  rows: SendLogRow[];
+  showRecipient?: boolean;
+  names?: Map<string, string>;
+  /** When set, welcome rows get a link to the resend preview (#123). */
+  resendCompanyId?: string;
+}) {
   if (rows.length === 0) return <p className="text-sm text-fg-muted">Nothing in the window.</p>;
   return (
     <div className="overflow-x-auto">
@@ -99,11 +126,13 @@ function SendTable({ rows, showRecipient, names }: { rows: SendLogRow[]; showRec
             <Th>Status</Th>
             <Th>Delivery</Th>
             <Th>Detail</Th>
+            {resendCompanyId && <Th>Action</Th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-hairline">
           {rows.map(row => {
             const recipientId = row.worker_id ?? row.profile_id;
+            const resend = resendCompanyId ? resendHref(resendCompanyId, row) : null;
             return (
               <tr key={row.id}>
                 <Td className="whitespace-nowrap text-xs text-fg-muted">{formatWhen(row.created_at)}</Td>
@@ -114,6 +143,17 @@ function SendTable({ rows, showRecipient, names }: { rows: SendLogRow[]; showRec
                 <Td className={STATUS_STYLE[row.status] ?? ''}>{row.status}</Td>
                 <Td className={row.failed_at ? 'text-danger' : 'text-xs text-fg-muted'}>{deliveryState(row)}</Td>
                 <Td className="text-xs text-fg-muted">{row.error ?? row.delivery_error ?? ''}</Td>
+                {resendCompanyId && (
+                  <Td className="whitespace-nowrap text-xs">
+                    {resend ? (
+                      <Link href={resend} className="underline hover:text-fg">
+                        Resend →
+                      </Link>
+                    ) : (
+                      <span className="text-fg-muted">—</span>
+                    )}
+                  </Td>
+                )}
               </tr>
             );
           })}
@@ -257,7 +297,9 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
           </Link>
         </p>
         <p className="text-xs text-fg-muted">
-          Read-only. Resend and outreach actions arrive with #123.
+          Failed or stuck welcomes can be resent from the tables below (#123); briefing and check-in resends are not
+          built yet — a failed one self-heals at the next day&rsquo;s send. Worker outreach outside the 24h window is
+          #123 part B.
           {sendsTruncated && ' Send window is capped — per-person tallies below are floors, not totals.'}
         </p>
       </section>
@@ -310,7 +352,7 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
             {failedSends.length > 0 && (
               <div className="space-y-1">
                 <h3 className="text-xs font-semibold text-danger">Failed ({failedSends.length})</h3>
-                <SendTable rows={failedSends} showRecipient names={recipientNames} />
+                <SendTable rows={failedSends} showRecipient names={recipientNames} resendCompanyId={company.id} />
               </div>
             )}
             {unresolvedSends.length > 0 && (
@@ -318,7 +360,7 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
                 <h3 className="text-xs font-semibold text-warn">
                   Claimed but never resolved ({unresolvedSends.length}) — the cron died mid-run
                 </h3>
-                <SendTable rows={unresolvedSends} showRecipient names={recipientNames} />
+                <SendTable rows={unresolvedSends} showRecipient names={recipientNames} resendCompanyId={company.id} />
               </div>
             )}
             {deliveryFailures.length > 0 && (

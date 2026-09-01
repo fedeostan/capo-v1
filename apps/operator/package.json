@@ -12,6 +12,7 @@
   "dependencies": {
     "@capo/core": "workspace:*",
     "@capo/db": "workspace:*",
+    "@capo/i18n": "workspace:*",
     "@capo/ui": "workspace:*",
     "next": "16.2.10",
     "react": "19.2.4",

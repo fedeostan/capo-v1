@@ -724,6 +724,31 @@ export interface Catalog {
     };
   };
 
+  /**
+   * "Report a problem" — the app half of issue #120. One row in the drawer and
+   * on /perfil, one page with one textarea. The WhatsApp half's strings live
+   * under `whatsapp` above.
+   *
+   * The copy must frame the report as going to CAPO'S TEAM, not to the
+   * manager or the crew — and must promise nothing about replies or fixes:
+   * triage is deliberately out of scope.
+   */
+  report: {
+    /** The drawer/index row and the page title. */
+    row: { title: string; sub: string };
+    /** One sentence above the form: what happens to what they write. */
+    intro: string;
+    label: string;
+    placeholder: string;
+    submit: string;
+    /** The immediate confirmation state after a successful submit. */
+    sent: string;
+    /** The report was empty. */
+    empty: string;
+    /** The insert failed — honest, never pretends it was registered. */
+    failed: string;
+  };
+
   auth: {
     // Shared by every password field on the signed-out screens, so the eye
     // says the same thing on login, signup and password reset.
@@ -1294,6 +1319,25 @@ export interface Catalog {
     /** See `stillWorking`. The crew's copy of it — same job, plainer register,
      *  and read in `workers.language`. */
     workerStillWorking: string;
+
+    // ── "report a problem" (issue #120) ─────────────────────────────────────
+    // The deterministic keyword flow, shared by BOTH sender kinds and answered
+    // with zero model calls — a report about Capo must never depend on Capo's
+    // model working. All three strings must frame the report as being about
+    // CAPO / the app and going to CAPO'S TEAM, not to the manager: a crew
+    // member describing a cement shortage here would otherwise believe their
+    // boss was told.
+
+    /** After a bare keyword ("bug"): your NEXT message is the report. Must say
+     *  next-message-is-recorded plainly — that promise is what the capture
+     *  branch then honours. */
+    reportPrompt: string;
+    /** After the report is stored. Must NOT promise a reply or a fix — triage
+     *  is deliberately out of scope (#120). */
+    reportAck: string;
+    /** Filing failed (the likeliest cause: migration 0042 not yet applied).
+     *  Honest, asks to try again — never pretends it was registered. */
+    reportFailed: string;
   };
 
   /**
