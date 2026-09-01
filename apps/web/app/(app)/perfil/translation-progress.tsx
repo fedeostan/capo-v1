@@ -78,18 +78,18 @@ export function TranslationProgress({
   }, [batchId, router, attempt]);
 
   if (state.status === 'completed') {
-    return <p className="text-xs text-emerald-700 dark:text-emerald-400">{t.translationDone(state.done)}</p>;
+    return <p className="text-caption text-success">{t.translationDone(state.done)}</p>;
   }
 
   const pct = state.total > 0 ? Math.round((state.done / state.total) * 100) : 0;
 
   return (
     <div className="space-y-2">
-      <p className="text-xs text-zinc-500">
+      <p className="text-caption text-fg-muted">
         {state.status === 'failed' ? t.translationFailed : t.translationRunning({ done: state.done, total: state.total })}
       </p>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-500/20">
-        <div className="h-full rounded-full bg-orange-600 transition-[width]" style={{ width: `${pct}%` }} />
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken">
+        <div className="h-full rounded-full bg-brand transition-[width]" style={{ width: `${pct}%` }} />
       </div>
       {state.status === 'failed' && (
         <button
@@ -100,7 +100,7 @@ export function TranslationProgress({
             setState(s => ({ ...s, status: 'running' }));
             setAttempt(a => a + 1);
           }}
-          className="text-xs font-medium text-orange-600 underline"
+          className="text-caption font-medium text-brand underline"
         >
           {t.translationResume}
         </button>

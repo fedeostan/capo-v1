@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
+import { Button } from '@capo/ui/button';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 import { useDetectedPlatform } from '@/app/platform';
@@ -161,14 +162,14 @@ export default function PushCard({
   if (state === 'loading' || state === 'unsupported') return null;
 
   return (
-    <section className="space-y-3 rounded-xl border border-zinc-500/20 p-4">
-      <h2 className="text-sm font-semibold">{t.push.title}</h2>
+    <section className="space-y-3 rounded-xl border border-hairline p-4">
+      <h2 className="text-caption font-semibold uppercase tracking-wide text-fg-muted">{t.push.title}</h2>
 
       {state === 'ios-needs-install' && (
         <div className="space-y-1">
-          <p className="text-sm">{t.push.iosTitle}</p>
-          <p className="text-xs text-zinc-500">{t.push.iosHelp}</p>
-          <Link href="/instalar" className="inline-block text-xs text-orange-600 underline">
+          <p className="text-callout">{t.push.iosTitle}</p>
+          <p className="text-caption text-fg-muted">{t.push.iosHelp}</p>
+          <Link href="/instalar" className="inline-block text-callout text-brand underline">
             {t.push.iosLink}
           </Link>
         </div>
@@ -176,38 +177,30 @@ export default function PushCard({
 
       {state === 'denied' && (
         <div className="space-y-1">
-          <p className="text-sm">{t.push.deniedTitle}</p>
-          <p className="text-xs text-zinc-500">{t.push.deniedHelp}</p>
+          <p className="text-callout">{t.push.deniedTitle}</p>
+          <p className="text-caption text-fg-muted">{t.push.deniedHelp}</p>
         </div>
       )}
 
       {state === 'off' && (
         <div className="space-y-2">
-          <p className="text-xs text-zinc-500">{t.push.subtitle}</p>
-          <button
-            onClick={enable}
-            disabled={busy}
-            className="w-full rounded-lg bg-orange-600 py-2 text-sm font-semibold text-white active:bg-orange-700 disabled:opacity-60"
-          >
+          <p className="text-caption text-fg-muted">{t.push.subtitle}</p>
+          <Button type="button" onClick={enable} disabled={busy} fullWidth>
             {busy ? t.push.working : t.push.enable}
-          </button>
+          </Button>
         </div>
       )}
 
       {state === 'on' && (
         <div className="space-y-2">
-          <p className="text-sm text-emerald-700 dark:text-emerald-400">{t.push.enabled}</p>
-          <button
-            onClick={disable}
-            disabled={busy}
-            className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-medium active:bg-zinc-500/10 disabled:opacity-60"
-          >
+          <p className="text-callout text-success">{t.push.enabled}</p>
+          <Button type="button" variant="secondary" onClick={disable} disabled={busy} fullWidth>
             {busy ? t.push.working : t.push.disable}
-          </button>
+          </Button>
         </div>
       )}
 
-      {failed && <p className="text-xs text-red-600">{t.push.failed}</p>}
+      {failed && <p className="text-caption text-danger">{t.push.failed}</p>}
     </section>
   );
 }

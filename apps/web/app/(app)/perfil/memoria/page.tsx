@@ -8,6 +8,7 @@ import {
 } from '@capo/core/memory/prompt';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import PullToRefresh from '@/app/pull-to-refresh';
+import { Card } from '../settings-controls';
 import { forgetMemory } from './actions';
 
 // Perfil → Memória (issue #48).
@@ -26,15 +27,6 @@ export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: await metadataTitle(t => t.memory.title) };
-}
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="space-y-3 rounded-xl border border-zinc-500/20 p-4">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{title}</h2>
-      {children}
-    </section>
-  );
 }
 
 /** Europe/Lisbon, always — one clock, the rule the whole product follows. */
@@ -62,17 +54,17 @@ function MemoryItem({ row, carried, t }: { row: Row; carried: boolean; t: Catalo
   // it falls back to the raw value rather than rendering a blank label.
   const kindLabel = t.memory.kind[row.kind as keyof Catalog['memory']['kind']] ?? row.kind;
   return (
-    <li className="flex items-start justify-between gap-3 border-t border-zinc-500/15 pt-3 first:border-0 first:pt-0">
+    <li className="flex items-start justify-between gap-3 border-t border-hairline pt-3 first:border-0 first:pt-0">
       <div className="min-w-0 space-y-1">
-        <p className={carried ? 'text-sm' : 'text-sm text-zinc-500'}>{row.content}</p>
-        <p className="text-xs text-zinc-500">
+        <p className={carried ? 'text-callout' : 'text-callout text-fg-muted'}>{row.content}</p>
+        <p className="text-caption text-fg-muted">
           {kindLabel} · {day(row.created_at, t)}
           {carried ? '' : ` · ${t.memory.storedNotCarried}`}
         </p>
       </div>
       <form action={forgetMemory} className="shrink-0">
         <input type="hidden" name="memoria" value={row.id} />
-        <button type="submit" className="text-xs text-orange-600 underline">
+        <button type="submit" className="text-caption font-medium text-brand underline">
           {t.memory.forget}
         </button>
       </form>
@@ -95,9 +87,9 @@ function Group({
 }) {
   return (
     <Card title={title}>
-      <p className="text-sm text-zinc-500">{hint}</p>
+      <p className="text-caption text-fg-muted">{hint}</p>
       {rows.length === 0 ? (
-        <p className="text-sm text-zinc-500">{t.memory.empty}</p>
+        <p className="text-caption text-fg-muted">{t.memory.empty}</p>
       ) : (
         <ul className="space-y-3">
           {rows.map(row => (
@@ -156,10 +148,18 @@ export default async function MemoriaPage({
   return (
     <PullToRefresh locale={locale}>
       <ScreenShell title={t.memory.title} subtitle={t.memory.subtitle}>
-        {params.esquecido && <p className="text-sm text-emerald-600">{t.memory.forgotten}</p>}
-        {params.erro && <p className="text-sm text-red-600">{t.memory.forgetFailed}</p>}
+        {params.esquecido && (
+          <p className="rounded-lg bg-success-quiet px-3 py-2 text-center text-callout text-success">
+            {t.memory.forgotten}
+          </p>
+        )}
+        {params.erro && (
+          <p className="rounded-lg bg-danger-quiet px-3 py-2 text-center text-callout text-danger">
+            {t.memory.forgetFailed}
+          </p>
+        )}
 
-        <p className="text-sm text-zinc-500">{t.memory.explainer}</p>
+        <p className="text-callout text-fg-muted">{t.memory.explainer}</p>
 
         {rows.length === 0 ? (
           <EmptyState text={t.memory.empty} />
@@ -180,21 +180,21 @@ export default async function MemoriaPage({
               t={t}
             />
             <Card title={t.memory.capTitle}>
-              <p className="text-sm text-zinc-500">
+              <p className="text-caption text-fg-muted">
                 {t.memory.capHint(carried.length, MEMORY_PROMPT_ROWS)}
               </p>
-              <p className="text-sm text-zinc-500">{t.memory.forgetNote}</p>
+              <p className="text-caption text-fg-muted">{t.memory.forgetNote}</p>
             </Card>
           </>
         )}
 
         <Card title={t.memory.reviewTitle}>
-          <p className="text-sm">
+          <p className="text-callout">
             {lastRun?.completed_at
               ? t.memory.lastReviewed(day(lastRun.completed_at, t))
               : t.memory.neverReviewed}
           </p>
-          <p className="text-sm text-zinc-500">{t.memory.reviewHint}</p>
+          <p className="text-caption text-fg-muted">{t.memory.reviewHint}</p>
         </Card>
       </ScreenShell>
     </PullToRefresh>

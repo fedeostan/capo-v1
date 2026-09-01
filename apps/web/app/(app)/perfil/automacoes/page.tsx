@@ -2,9 +2,11 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { Catalog } from '@capo/i18n/catalog';
 import { EmptyState, ScreenShell } from '@capo/ui/dashboard-ui';
+import { Field, Select } from '@capo/ui/field';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { SEND_HOUR_CHOICES, scheduleWindow, type JobKind } from '@/lib/schedule';
 import PullToRefresh from '@/app/pull-to-refresh';
+import { Card, SubmitButton } from '../settings-controls';
 import { saveSchedule } from './actions';
 import { loadAutomations, type CronRunRow, type SendRow } from './data';
 
@@ -26,15 +28,6 @@ export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: await metadataTitle(t => t.automations.title) };
-}
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="space-y-3 rounded-xl border border-zinc-500/20 p-4">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{title}</h2>
-      {children}
-    </section>
-  );
 }
 
 /** Europe/Lisbon hours, always two digits. Never the reader's device clock —
@@ -123,57 +116,49 @@ function ScheduleForm({
       <input type="hidden" name="mensagem" value={jobKind} />
 
       <div>
-        <p className="text-sm font-semibold">{job.name}</p>
-        <p className="mt-0.5 text-xs text-zinc-500">{job.what}</p>
-        <p className="mt-0.5 text-xs text-zinc-500">{job.who}</p>
+        <p className="text-callout font-semibold">{job.name}</p>
+        <p className="mt-1 text-caption text-fg-muted">{job.what}</p>
+        <p className="mt-1 text-caption text-fg-muted">{job.who}</p>
       </div>
 
-      <div className="rounded-lg bg-zinc-500/5 px-3 py-2">
-        <p className="text-xs">{t.automations.aimedAt(hhmm(sendHour))}</p>
+      <div className="rounded-lg bg-surface-sunken px-3 py-2">
+        <p className="text-caption">{t.automations.aimedAt(hhmm(sendHour))}</p>
         {/* The WINDOW, said out loud. "07:00" is what was promised on 13 August
             and 07:49 is what arrived; stating the range is how the product
             stops claiming a precision the platform does not have. */}
-        <p className="mt-0.5 text-xs text-zinc-500">
+        <p className="mt-1 text-caption text-fg-muted">
           {t.automations.window(hhmm(window.from), lastMinuteOf(window.to))}
         </p>
-        {!chosen && <p className="mt-0.5 text-[11px] text-zinc-500">{t.automations.usingDefault}</p>}
+        {!chosen && <p className="mt-1 text-caption text-fg-muted">{t.automations.usingDefault}</p>}
       </div>
 
-      <label className="block space-y-1">
-        <span className="text-xs font-medium text-zinc-500">{t.automations.hourLabel}</span>
-        <select
-          name="hora"
-          defaultValue={String(sendHour)}
-          className="w-full rounded-lg border border-zinc-500/30 bg-transparent px-3 py-2 text-sm"
-        >
-          {SEND_HOUR_CHOICES.map(hour => (
-            <option key={hour} value={hour}>
-              {hhmm(hour)}
-            </option>
-          ))}
-        </select>
-      </label>
+      <Field id={`hora-${jobKind}`} label={t.automations.hourLabel}>
+        {a11y => (
+          <Select {...a11y} name="hora" defaultValue={String(sendHour)}>
+            {SEND_HOUR_CHOICES.map(hour => (
+              <option key={hour} value={hour}>
+                {hhmm(hour)}
+              </option>
+            ))}
+          </Select>
+        )}
+      </Field>
 
       {/* A checkbox rather than the radio pair /perfil uses for consent: this
           one only ever reduces spend, so a mis-tap costs a message rather than
           withdrawing a permission. It still needs an explicit Save. */}
-      <label className="flex items-start gap-2 text-sm">
+      <label className="flex items-start gap-2 text-callout">
         <input
           type="checkbox"
           name="activa"
           value="1"
           defaultChecked={enabled}
-          className="mt-0.5 size-4 shrink-0 accent-orange-600"
+          className="mt-1 size-4 shrink-0 accent-brand"
         />
         <span>{t.automations.enabledLabel}</span>
       </label>
 
-      <button
-        type="submit"
-        className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-semibold hover:bg-zinc-500/10"
-      >
-        {t.common.save}
-      </button>
+      <SubmitButton label={t.common.save} />
     </form>
   );
 }
@@ -181,34 +166,34 @@ function ScheduleForm({
 function Recipient({ send, t }: { send: SendRow; t: Catalog }) {
   const tone =
     send.outcome === 'failed'
-      ? 'text-red-600 dark:text-red-400'
+      ? 'text-danger'
       : send.outcome === 'read' || send.outcome === 'delivered'
-        ? 'text-emerald-700 dark:text-emerald-400'
-        : 'text-zinc-500';
+        ? 'text-success'
+        : 'text-fg-muted';
   const codeKey = send.errorCode === null ? null : (String(send.errorCode) as keyof Catalog['automations']['metaError']);
   const explained = codeKey && codeKey in t.automations.metaError ? t.automations.metaError[codeKey] : null;
 
   return (
-    <li className="border-t border-zinc-500/10 py-2 first:border-t-0">
+    <li className="border-t border-hairline py-2 first:border-t-0">
       <div className="flex items-baseline justify-between gap-2">
-        <p className="min-w-0 truncate text-sm">
+        <p className="min-w-0 truncate text-callout">
           {send.name ?? '—'}
-          <span className="ml-1 text-[11px] text-zinc-500">
+          <span className="ml-1 text-caption text-fg-muted">
             {send.audience === 'manager' ? t.automations.recipientManager : t.automations.recipientWorker}
           </span>
         </p>
-        <p className={`shrink-0 text-xs font-medium ${tone}`}>{t.automations.outcome[send.outcome]}</p>
+        <p className={`shrink-0 text-caption font-medium ${tone}`}>{t.automations.outcome[send.outcome]}</p>
       </div>
-      <p className="mt-0.5 text-[11px] text-zinc-500">{t.automations.outcomeHint[send.outcome]}</p>
+      <p className="mt-1 text-caption text-fg-muted">{t.automations.outcomeHint[send.outcome]}</p>
       {send.outcome === 'failed' && (
-        <div className="mt-1 rounded-lg bg-red-500/5 px-2 py-1">
+        <div className="mt-1 rounded-lg bg-danger-quiet px-2 py-1">
           {/* Plain language FIRST, then Meta's own words. The code is kept
               because it is what a support conversation with Meta needs, and
               the raw text because our explanation may be for the wrong code. */}
-          <p className="text-[11px] text-red-700 dark:text-red-400">
+          <p className="text-caption text-danger">
             {explained ?? t.automations.metaErrorUnknown}
           </p>
-          <p className="mt-0.5 break-words text-[11px] text-zinc-500">
+          <p className="mt-1 break-words text-caption text-fg-muted">
             {send.errorCode !== null && <>{t.automations.metaErrorLabel(send.errorCode)} · </>}
             {send.errorText}
           </p>
@@ -225,24 +210,24 @@ function Run({ run, sends, t }: { run: CronRunRow; sends: SendRow[]; t: Catalog 
     run.excludedNoConsent + run.excludedUnreachable + run.excludedInactive + run.managersNoConsent;
 
   return (
-    <details className="rounded-xl border border-zinc-500/20 p-3">
+    <details className="rounded-xl border border-hairline p-3">
       <summary className="cursor-pointer list-none">
         <div className="flex items-baseline justify-between gap-2">
-          <p className="text-sm font-medium">{job?.name ?? run.jobKind}</p>
-          <p className="shrink-0 text-[11px] text-zinc-500">{dayLabel(run.runDate, t)}</p>
+          <p className="text-callout font-medium">{job?.name ?? run.jobKind}</p>
+          <p className="shrink-0 text-caption text-fg-muted">{dayLabel(run.runDate, t)}</p>
         </div>
         {/* THE TWO TIMES, SIDE BY SIDE. This single line is what would have
             answered 13 August without a hosting-company log. */}
-        <p className="mt-1 text-xs">
-          <span className="text-zinc-500">{t.automations.due}</span> {hhmm(run.dueHour)}
+        <p className="mt-1 text-caption">
+          <span className="text-fg-muted">{t.automations.due}</span> {hhmm(run.dueHour)}
           {' · '}
-          <span className="text-zinc-500">{t.automations.ran}</span> {stamp(run.ranAt, t)}
+          <span className="text-fg-muted">{t.automations.ran}</span> {stamp(run.ranAt, t)}
           {' · '}
-          <span className={late >= 30 ? 'font-medium text-amber-700 dark:text-amber-400' : 'text-zinc-500'}>
+          <span className={late >= 30 ? 'font-medium text-warn' : 'text-fg-muted'}>
             {late >= 1 ? t.automations.lateBy(minutesLabel(late)) : t.automations.onTime}
           </span>
         </p>
-        <p className="mt-0.5 text-[11px] text-zinc-500">
+        <p className="mt-1 text-caption text-fg-muted">
           {run.messaged === 0 && run.failed === 0 && run.skippedIdle === 0
             ? t.automations.nothingSent
             : [
@@ -257,31 +242,31 @@ function Run({ run, sends, t }: { run: CronRunRow; sends: SendRow[]; t: Catalog 
 
       <div className="mt-3 space-y-2">
         {excluded > 0 && (
-          <ul className="space-y-1 rounded-lg bg-amber-500/5 px-2 py-1.5">
+          <ul className="space-y-1 rounded-lg bg-warn-quiet px-2 py-2">
             {run.excludedNoConsent > 0 && (
-              <li className="text-[11px] text-amber-700 dark:text-amber-400">
+              <li className="text-caption text-warn">
                 {run.excludedNoConsent} · {t.automations.reason.noConsent}
               </li>
             )}
             {run.excludedUnreachable > 0 && (
-              <li className="text-[11px] text-amber-700 dark:text-amber-400">
+              <li className="text-caption text-warn">
                 {run.excludedUnreachable} · {t.automations.reason.unreachable}
               </li>
             )}
             {run.excludedInactive > 0 && (
-              <li className="text-[11px] text-amber-700 dark:text-amber-400">
+              <li className="text-caption text-warn">
                 {run.excludedInactive} · {t.automations.reason.inactive}
               </li>
             )}
             {run.managersNoConsent > 0 && (
-              <li className="text-[11px] text-amber-700 dark:text-amber-400">
+              <li className="text-caption text-warn">
                 {run.managersNoConsent} · {t.automations.reason.managerNoConsent}
               </li>
             )}
           </ul>
         )}
         {run.noManagerAccount && (
-          <p className="rounded-lg bg-amber-500/5 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+          <p className="rounded-lg bg-warn-quiet px-2 py-2 text-caption text-warn">
             {t.automations.reason.noManagerAccount}
           </p>
         )}
@@ -314,12 +299,12 @@ export default async function AutomacoesPage({
     <ScreenShell title={t.automations.title} subtitle={t.automations.subtitle}>
       <PullToRefresh locale={locale}>
         {guardado && (
-          <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-center text-sm text-emerald-700 dark:text-emerald-400">
+          <p className="rounded-lg bg-success-quiet px-3 py-2 text-center text-callout text-success">
             {t.automations.saved}
           </p>
         )}
         {erro && (
-          <p className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-400">
+          <p className="rounded-lg bg-danger-quiet px-3 py-2 text-center text-callout text-danger">
             {erro === 'hora' ? t.automations.invalidHour : t.automations.saveFailed}
           </p>
         )}
@@ -327,7 +312,7 @@ export default async function AutomacoesPage({
         {/* THE COST, at the top, before any control that adds any. A schedule
             screen is a spending screen — every recipient of every send is a
             paid WhatsApp template. */}
-        <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+        <p className="rounded-lg bg-warn-quiet px-3 py-2 text-caption text-warn">
           {t.automations.costNote}
         </p>
 
@@ -347,42 +332,42 @@ export default async function AutomacoesPage({
             third message deserves to know it is Meta's approval process in the
             way and not a missing screen. */}
         <Card title={t.automations.addTitle}>
-          <p className="text-xs text-zinc-500">{t.automations.addExplanation}</p>
+          <p className="text-caption text-fg-muted">{t.automations.addExplanation}</p>
         </Card>
 
         <Card title={t.automations.reasonTitle}>
-          <p className="text-xs text-zinc-500">{t.automations.reasonNamesHint}</p>
+          <p className="text-caption text-fg-muted">{t.automations.reasonNamesHint}</p>
           {data.skips.length === 0 && data.managerNoConsent.length === 0 && !data.noManagerAccount ? (
-            <p className="text-xs text-zinc-500">{t.automations.reasonNobody}</p>
+            <p className="text-caption text-fg-muted">{t.automations.reasonNobody}</p>
           ) : (
-            <ul className="space-y-1.5">
+            <ul className="space-y-2">
               {data.skips.map(skip => (
-                <li key={`${skip.name}-${skip.reason}`} className="text-sm">
+                <li key={`${skip.name}-${skip.reason}`} className="text-callout">
                   {skip.name}
-                  <span className="ml-1 text-xs text-zinc-500">{t.automations.reason[skip.reason]}</span>
+                  <span className="ml-1 text-caption text-fg-muted">{t.automations.reason[skip.reason]}</span>
                 </li>
               ))}
               {data.managerNoConsent.map(name => (
-                <li key={`m-${name}`} className="text-sm">
+                <li key={`m-${name}`} className="text-callout">
                   {name}
-                  <span className="ml-1 text-xs text-zinc-500">{t.automations.reason.managerNoConsent}</span>
+                  <span className="ml-1 text-caption text-fg-muted">{t.automations.reason.managerNoConsent}</span>
                 </li>
               ))}
               {data.noManagerAccount && (
-                <li className="text-sm text-amber-700 dark:text-amber-400">
+                <li className="text-callout text-warn">
                   {t.automations.reason.noManagerAccount}
                 </li>
               )}
             </ul>
           )}
-          <Link href="/perfil" className="inline-block text-xs text-orange-600 underline">
+          <Link href="/perfil" className="inline-block text-callout text-brand underline">
             {t.profile.title}
           </Link>
         </Card>
 
         <Card title={t.automations.historyTitle}>
-          <p className="text-xs text-zinc-500">{t.automations.historyHint}</p>
-          <p className="text-[11px] text-zinc-500">{t.automations.debugHint}</p>
+          <p className="text-caption text-fg-muted">{t.automations.historyHint}</p>
+          <p className="text-caption text-fg-muted">{t.automations.debugHint}</p>
           {data.runs.length === 0 ? (
             <EmptyState text={t.automations.historyEmpty} />
           ) : (
@@ -401,7 +386,7 @@ export default async function AutomacoesPage({
               is a database function, and a deploy that lands before its
               migration has none. The runs above still render. */}
           {data.historyUnavailable && (
-            <p className="text-[11px] text-zinc-500">{t.automations.debugTitle} — {t.automations.historyEmpty}</p>
+            <p className="text-caption text-fg-muted">{t.automations.debugTitle} — {t.automations.historyEmpty}</p>
           )}
         </Card>
       </PullToRefresh>
