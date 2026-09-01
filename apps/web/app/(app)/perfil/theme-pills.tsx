@@ -83,7 +83,7 @@ export default function ThemePills({ current, locale }: { current: Theme; locale
               onChange={() => applyTheme(option)}
               className="peer sr-only"
             />
-            <span className="block cursor-pointer rounded-lg border border-zinc-500/30 py-2 text-center text-sm peer-checked:border-orange-600 peer-checked:bg-orange-600/10 peer-checked:font-semibold">
+            <span className="block cursor-pointer rounded-lg border border-control py-2 text-center text-callout peer-checked:border-brand peer-checked:bg-brand-quiet peer-checked:font-semibold">
               {t.settings.themeOption[option]}
             </span>
           </label>
@@ -91,7 +91,7 @@ export default function ThemePills({ current, locale }: { current: Theme; locale
       </div>
       <button
         type="submit"
-        className="w-full rounded-lg border border-zinc-500/30 py-2 text-sm font-semibold hover:bg-zinc-500/10"
+        className="w-full rounded-lg border border-control py-2 text-callout font-semibold hover:bg-surface-hover"
       >
         {t.common.save}
       </button>

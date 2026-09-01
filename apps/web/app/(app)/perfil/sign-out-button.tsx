@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Button } from '@capo/ui/button';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 
@@ -82,13 +83,9 @@ export default function SignOutButton({ locale }: { locale: Locale }) {
 
   return (
     <form method="post" action="/auth/signout" onSubmit={submit}>
-      <button
-        type="submit"
-        disabled={busy}
-        className="w-full rounded-xl border border-zinc-500/20 py-2.5 text-sm font-medium text-red-600 hover:bg-red-600/5 disabled:opacity-60"
-      >
+      <Button type="submit" variant="destructive" fullWidth disabled={busy}>
         {t.common.signOut}
-      </button>
+      </Button>
     </form>
   );
 }
