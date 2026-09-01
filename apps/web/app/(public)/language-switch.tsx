@@ -22,17 +22,22 @@ async function setPublicLocale(formData: FormData): Promise<void> {
 
 export default function LanguageSwitch({ current }: { current: Locale }) {
   return (
-    <div className="flex justify-center gap-1 pt-3 text-xs">
+    <div className="flex justify-center gap-1 pt-3 text-caption">
       {LOCALES.map(locale => (
         <form key={locale} action={setPublicLocale}>
           <input type="hidden" name="locale" value={locale} />
+          {/* min-h-11: the 44px floor. These read as small text pills but they
+              are the only way out of a wrong-language guess, so they must be
+              hittable with a thumb. The selected tint is brand-quiet to match
+              the radio pills on /onboarding — the other "which language" control
+              on this surface. */}
           <button
             type="submit"
             aria-current={locale === current ? 'true' : undefined}
             className={
               locale === current
-                ? 'rounded-full bg-zinc-500/15 px-2.5 py-1 font-semibold'
-                : 'rounded-full px-2.5 py-1 text-zinc-500 hover:bg-zinc-500/10'
+                ? 'flex min-h-11 items-center rounded-full bg-brand-quiet px-3 font-semibold'
+                : 'flex min-h-11 items-center rounded-full px-3 text-fg-muted hover:bg-surface-hover'
             }
           >
             {getCatalog(locale).meta.languageName}

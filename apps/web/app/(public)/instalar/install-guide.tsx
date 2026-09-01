@@ -1,9 +1,11 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { Button } from '@capo/ui/button';
 import { getCatalog, type Catalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
+import Link from 'next/link';
+import { ButtonLink } from '@/app/_ui/nav';
 import { useDetectedPlatform } from '@/app/platform';
 
 // Chrome/Edge fire beforeinstallprompt; capturing it lets us show a real
@@ -55,11 +57,12 @@ function GenericSteps({ t }: { t: Catalog }) {
 
 function Step({ n, children }: { n: number; children: React.ReactNode }) {
   return (
-    <li className="flex items-start gap-3 text-sm">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-orange-600 text-xs font-bold text-white">
+    <li className="flex items-start gap-3 text-callout">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand text-caption font-bold text-on-brand">
         {n}
       </span>
-      <span className="pt-0.5">{children}</span>
+      {/* leading-6 lines the first text line up with the 24px circle. */}
+      <span className="leading-6">{children}</span>
     </li>
   );
 }
@@ -95,15 +98,12 @@ export default function InstallGuide({ locale }: { locale: Locale }) {
   if (platform === 'standalone' || installed) {
     return (
       <div className="space-y-4 text-center">
-        <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
+        <p className="rounded-lg bg-success-quiet px-3 py-2 text-callout text-success">
           {t.install.alreadyInstalled}
         </p>
-        <Link
-          href="/"
-          className="block w-full rounded-lg bg-orange-600 py-2.5 text-center font-semibold text-white active:bg-orange-700"
-        >
+        <ButtonLink href="/" variant="primary" fullWidth>
           {t.install.open}
-        </Link>
+        </ButtonLink>
       </div>
     );
   }
@@ -111,19 +111,16 @@ export default function InstallGuide({ locale }: { locale: Locale }) {
   return (
     <div className="space-y-6">
       {deferredPrompt ? (
-        <button
-          onClick={install}
-          className="w-full rounded-lg bg-orange-600 py-2.5 font-semibold text-white active:bg-orange-700"
-        >
+        <Button onClick={install} fullWidth>
           {t.install.installButton}
-        </button>
+        </Button>
       ) : platform === 'ios' ? (
         <IosSteps t={t} />
       ) : platform === 'other' ? (
         <GenericSteps t={t} />
       ) : null}
 
-      <Link href="/" className="block text-center text-sm text-zinc-500 underline">
+      <Link href="/" className="block text-center text-callout text-fg-muted underline">
         {t.install.skip}
       </Link>
     </div>

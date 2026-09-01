@@ -8,8 +8,8 @@ export default async function OfflinePage() {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
       <p className="text-4xl">📡</p>
-      <h1 className="text-lg font-semibold">{t.offline.title}</h1>
-      <p className="text-sm text-zinc-500">{t.offline.text}</p>
+      <h1 className="text-heading font-semibold">{t.offline.title}</h1>
+      <p className="text-callout text-fg-muted">{t.offline.text}</p>
     </div>
   );
 }
