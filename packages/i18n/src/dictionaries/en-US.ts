@@ -204,12 +204,42 @@ const dict: Catalog = {
     profileLink: 'Notifications',
     kind: {
       review_pending: subject => `“${subject}” is waiting for your review.`,
+      worker_request: subject => `${subject} asked for something on site.`,
     },
     noSubject: 'A task',
     noteLabel: 'What they wrote:',
     openSubject: 'Open in tasks',
     pushNudge: 'Want these on your phone?',
     pushNudgeLink: 'Turn on alerts',
+  },
+
+  requests: {
+    title: 'Crew requests',
+    seeAll: 'See all',
+    more: n => `+${n} more`,
+    category: {
+      material: 'Material',
+      tool: 'Tool',
+      machine: 'Machine',
+      delivery: 'Delivery',
+      other: 'Other',
+    },
+    when: ({ kind, dateLabel }) => {
+      if (kind === 'today') return 'for today';
+      if (kind === 'tomorrow') return 'for tomorrow';
+      if (kind === 'overdue') return dateLabel ? `was needed by ${dateLabel}` : 'the day has passed';
+      if (kind === 'later') return dateLabel ? `for ${dateLabel}` : 'for later on';
+      return 'no date given';
+    },
+    quoteLabel: name => `${name} wrote:`,
+    whatsapp: ({ name, when, quote, task }) => {
+      const where = task ? ` · ${task}` : '';
+      return `Request from ${name}${where} — ${when}.\n\n“${quote}”\n\nIt is saved in your notifications. I have not ordered anything.`;
+    },
+    event: ({ name, when, task }) => {
+      const where = task ? `, on the task “${task}”` : '';
+      return `${name} asked for something over WhatsApp${where} — ${when}. It is in your notifications, in their own words.`;
+    },
   },
 
   automations: {

@@ -48,10 +48,14 @@
 // note when the late-afternoon check-in goes out, and one note per crew member
 // who taps an answer to it. Those notes may carry counts, crew NAMES (typed by
 // the manager) and which of two buttons was tapped; they may never carry
-// worker-authored prose. So the tracer is now seeded in TWO places: the worker
-// agent's own thread, and `task_reviews.note` — the one column where a crew
-// member's words legitimately reach the manager, and therefore the one a
-// well-meaning "let's also quote what they said" change would draw from.
+// worker-authored prose. So the tracer is seeded in every place a crew
+// member's words legitimately live — the worker agent's own thread,
+// `task_reviews.note`, `problem_reports.text` (#120) and, since #152,
+// `worker_requests.text` — because those are exactly the columns a
+// well-meaning "let's also quote what they said" change would draw from. The
+// last one is the sharpest: a request is DESIGNED to be shown to the manager on
+// three surfaces, and it already has a chat-thread note beside it that is
+// allowed to carry a crew NAME and a date and nothing else.
 //
 // 0023 is the first surface here that is not only Postgres. task_photos is an
 // ordinary RLS table and rides in the visibility matrix like any other, but
@@ -410,6 +414,31 @@ async function seedTenant(label) {
     `problem_report(${label})`,
   );
 
+  // A CREW REQUEST (0043, issue #152), carrying the SAME tracer. Written as the
+  // service role, which is the only writer in production too — the WhatsApp
+  // webhook, through the fifth worker tool. A request is worker-authored prose
+  // that the MANAGER is meant to read, which makes it the FOURTH seeded source
+  // of worker text: checkWorkerTextIsolation asserts it landed here (positive
+  // control) and then sweeps the four manager-context tables for the tracer, so
+  // the day some change starts quoting a request into the thread, a summary, a
+  // memory or a card, that sweep fails. That is the whole reason it is seeded
+  // rather than merely attacked: a request is deliberately shown to the manager
+  // on three surfaces, and "shown to the manager" is one careless step away
+  // from "written into the manager's agent context".
+  //
+  // `needed_by` is set so the row also exercises the urgency column; nothing in
+  // this file asserts on it (the arithmetic is pinned by pnpm whatsapp-check,
+  // credential-free).
+  const workerRequest = await must(
+    admin.from('worker_requests').insert({
+      company_id: companyId, worker_id: worker.id, task_id: task1.id,
+      text: `request ${label} ${run} ${workerSecret}`,
+      category: 'material',
+      needed_by: new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
+    }).select().single(),
+    `worker_request(${label})`,
+  );
+
   // An OPEN report staging row (0042) for the adversarial repoint/erase
   // attacks below — the same job photoRequest does for 0034.
   const reportRequest = await must(
@@ -602,6 +631,7 @@ async function seedTenant(label) {
     conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
     photoPath, checkinAskId: checkinAsk.id, photoRequestId: photoRequest.id,
     problemReportId: problemReport.id, reportRequestId: reportRequest.id,
+    workerRequestId: workerRequest.id,
     colleagueId, ownNotificationId, colleagueNotificationId,
     companyMemoryId: companyMemory.id, ownMemoryId: ownMemory.id, colleagueMemoryId: colleagueMemory.id,
     pushEndpoint, colleaguePushEndpoint,
@@ -697,6 +727,10 @@ async function cleanupTenant(t) {
   // a task delete, but worker_id deliberately does not — so leaving these until
   // the workers sweep would fail the FK and strand a company.
   await companyEq(admin.from('task_assignees').delete());
+  // Before tasks and before workers: worker_requests holds a FK to each (0043).
+  // task_id is `on delete set null`, so the row would survive a task delete —
+  // but worker_id is a plain FK and would strand the company.
+  await companyEq(admin.from('worker_requests').delete());
   await admin.from('task_dependencies').delete().in('task_id', t.taskIds);
   await companyEq(admin.from('tasks').delete());
   await companyEq(admin.from('memories').delete());
@@ -749,7 +783,13 @@ async function runMatrix(self, other) {
   // asserted by checkMemoryScope, which is where a dropped
   // `profile_id = auth.uid()` clause would fail. This loop cannot see that
   // regression — a colleague's memory carries the caller's own company_id.
-  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'task_assignees', 'worker_checkins', 'task_photos', 'worker_conversations', 'worker_messages', 'company_schedules', 'cron_runs', 'memory_consolidations']) {
+  //
+  // `worker_requests` (0043) IS in this list, unlike problem_reports: a crew
+  // request is meant to be READ by the manager, so the tenant holds SELECT and
+  // the interesting question is the ordinary one — own rows visible, zero
+  // foreign rows. Its write-side refusals are attacked separately below,
+  // because SELECT is the ONLY grant it has.
+  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'task_assignees', 'worker_checkins', 'task_photos', 'worker_conversations', 'worker_messages', 'company_schedules', 'cron_runs', 'memory_consolidations', 'worker_requests']) {
     const { data, error } = await db.from(table).select('*');
     const rows = data ?? [];
     const ownKey = table === 'companies' ? 'id' : 'company_id';
@@ -1445,6 +1485,108 @@ async function runAdversarial(attacker, victim) {
       error != null,
       error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
     );
+  }
+
+  // ── 0043 worker_requests (issue #152) ────────────────────────────────────
+  // READ-ONLY for tenants: a SELECT policy scoped to their own company, and NO
+  // insert, update or delete policy or grant at all. Every write is the service
+  // role (the WhatsApp webhook), so there is nothing a tenant needs a write for
+  // — and each of the three writes below would be a specific lie:
+  //
+  //   INSERT — manufacture "a crew member asked for this". Attacker-chosen text
+  //            attributed to a real, named person, rendered as a QUOTE on Home,
+  //            in the inbox and on a colleague's WhatsApp. The forgery is not
+  //            of a row, it is of somebody's words.
+  //   UPDATE — rewrite what a crew member actually said, or move `needed_by` so
+  //            an urgent request sinks to the bottom of the ranking.
+  //   DELETE — erase the request entirely. The schema's only DELETE policy is
+  //            still push_subscriptions (0026) and this must not become the
+  //            second.
+  //
+  // The read half is covered by the per-company visibility loop above, which is
+  // why there is no positive control here: `worker_requests` appears in that
+  // list, so a policy that hid every request from its own company already fails
+  // there. That is the pairing problem_reports could not have (it has no read
+  // surface at all) and is why its block needs a positive control and this one
+  // does not.
+  {
+    const { error } = await db.from('worker_requests').insert({
+      company_id: attacker.companyId,
+      worker_id: attacker.helperWorkerId,
+      text: 'forged crew request',
+    });
+    check(
+      'adversarial: tenant cannot forge a crew request',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : "ACCEPTED — a manager can put words in a crew member's mouth!",
+    );
+    if (!error) {
+      await admin.from('worker_requests').delete()
+        .eq('company_id', attacker.companyId).eq('text', 'forged crew request');
+    }
+  }
+  {
+    const { error } = await db.from('worker_requests').insert({
+      company_id: victim.companyId,
+      worker_id: victim.workerId,
+      text: 'forged cross-tenant request',
+    });
+    check(
+      'adversarial: tenant cannot file a crew request into another company',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — cross-tenant request forgery',
+    );
+    if (!error) {
+      await admin.from('worker_requests').delete()
+        .eq('company_id', victim.companyId).eq('text', 'forged cross-tenant request');
+    }
+  }
+  {
+    const { error } = await db
+      .from('worker_requests')
+      .update({ text: 'rewritten by the manager', needed_by: null })
+      .eq('id', attacker.workerRequestId);
+    check(
+      "adversarial: tenant rewriting a crew member's own words blocked",
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — update grant leaked',
+    );
+    // Belt and braces: a policy-less UPDATE matches zero rows and reports
+    // SUCCESS in PostgREST, so the refusal above must be checked against what
+    // the row actually says. Read back on the service role — the tenant's own
+    // read would be indistinguishable if the write had landed.
+    {
+      const { data } = await admin
+        .from('worker_requests')
+        .select('text')
+        .eq('id', attacker.workerRequestId)
+        .maybeSingle();
+      check(
+        "adversarial: the crew member's words are unchanged after that attempt",
+        (data?.text ?? '') !== 'rewritten by the manager',
+        JSON.stringify((data?.text ?? '').slice(0, 40)),
+      );
+    }
+  }
+  {
+    const { error } = await db.from('worker_requests').delete().eq('id', attacker.workerRequestId);
+    check(
+      'adversarial: tenant DELETE of a crew request blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+    {
+      const { data } = await admin
+        .from('worker_requests')
+        .select('id')
+        .eq('id', attacker.workerRequestId)
+        .maybeSingle();
+      check(
+        'adversarial: the crew request still exists after that attempt',
+        data?.id === attacker.workerRequestId,
+        data ? 'still there' : 'GONE — a request was deleted by a tenant',
+      );
+    }
   }
 
   // ── 0039 worker_day_links (issue #114) ───────────────────────────────────
@@ -2441,6 +2583,27 @@ async function checkWorkerTextIsolation(tenant) {
       .maybeSingle();
     check(
       `${L}: the problem report IS worker-authored text (positive control)`,
+      (data?.text ?? '').includes(secret),
+      JSON.stringify(data?.text ?? null),
+    );
+  }
+
+  // Fourth positive control (issue #152): the tracer really is in the crew
+  // member's REQUEST too. This one is the most load-bearing of the four,
+  // because a request is deliberately SHOWN to the manager — quoted on Home, in
+  // the inbox and on WhatsApp — and "shown to the manager" is one careless step
+  // away from "written into the manager's agent context". The obvious such step
+  // is the chat-thread note the webhook writes for every request: it is allowed
+  // to carry a crew NAME and a date, and the day somebody adds "…and this is
+  // what they said" to it, the `messages` sweep below fails.
+  {
+    const { data } = await admin
+      .from('worker_requests')
+      .select('text')
+      .eq('id', tenant.workerRequestId)
+      .maybeSingle();
+    check(
+      `${L}: the crew request IS worker-authored text (positive control)`,
       (data?.text ?? '').includes(secret),
       JSON.stringify(data?.text ?? null),
     );

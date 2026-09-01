@@ -257,6 +257,28 @@
 // channel are refused at the grant layer) and no SELECT at all; a tenant
 // insert must never chain .select(), whose RETURNING needs the SELECT nobody
 // holds. problem_report_requests is deny-all with every grant revoked.
+//
+// ── 0043 (issue #152), WRITTEN BY HAND, NOT YET APPLIED ────────────────────
+// worker_requests — "diz ao chefe que preciso de mais tinta", filed by the
+// fifth crew tool. Added by hand for the standing reason: regenerating against
+// a project that lacks the table would silently DELETE this block rather than
+// add it. Verify it column-for-column against a real
+// generate_typescript_types run once 0043 is applied.
+//
+// Consequences while the migration is unapplied:
+//   - the table answers 42P01. The tool catches it and answers the crew member
+//     that it could not record the request, rather than a false "sent to the
+//     manager"; the manager-side loader and the WhatsApp ping both fail soft
+//     (home.requests_failed / request.ping_failed) and cost one card and one
+//     line, never a page or a reply.
+//   - notifications.kind still refuses 'worker_request', so even a row that
+//     somehow landed would produce no inbox entry. Both halves arrive together.
+//
+// Invisible here as usual: worker_requests grants tenants SELECT and NOTHING
+// else (no INSERT, no UPDATE, no DELETE — a manager must not be able to forge
+// "a worker asked for this", nor rewrite what one wrote). Every write is the
+// service role, which bypasses grants. tsc will happily let you build an
+// Insert/Update object for it; the database answers 42501.
 export type Json =
   | string
   | number
@@ -2183,6 +2205,64 @@ export type Database = {
           },
           {
             foreignKeyName: "worker_day_links_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      worker_requests: {
+        Row: {
+          category: string | null
+          company_id: string
+          created_at: string
+          id: string
+          manager_notified_at: string | null
+          needed_by: string | null
+          task_id: string | null
+          text: string
+          worker_id: string
+        }
+        Insert: {
+          category?: string | null
+          company_id: string
+          created_at?: string
+          id?: string
+          manager_notified_at?: string | null
+          needed_by?: string | null
+          task_id?: string | null
+          text: string
+          worker_id: string
+        }
+        Update: {
+          category?: string | null
+          company_id?: string
+          created_at?: string
+          id?: string
+          manager_notified_at?: string | null
+          needed_by?: string | null
+          task_id?: string | null
+          text?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_requests_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_requests_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_requests_worker_id_fkey"
             columns: ["worker_id"]
             isOneToOne: false
             referencedRelation: "workers"

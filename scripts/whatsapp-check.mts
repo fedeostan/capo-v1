@@ -136,6 +136,21 @@ import {
   decideWelcomeRetry,
   WELCOME_MAX_ATTEMPTS,
 } from '../apps/web/lib/welcome-retry.ts';
+// CREW REQUESTS (issue #152). The urgency arithmetic and the two envelopes the
+// manager reads. Pure — `today` arrives as a string — which is what lets this
+// file pin the rule that replaces "the model decides how urgent this sounds",
+// and the boundary that keeps a crew member's words out of `messages`.
+import {
+  describeUrgency,
+  isPressing,
+  renderRequestEvent,
+  renderRequestMessage,
+  urgencyRank,
+  type RequestUrgency,
+} from '../apps/web/lib/worker-request.ts';
+// The fifth crew tool's date guard. In @capo/core because the tool is, and
+// re-exported from the worker roster's index for exactly this import.
+import { neededByIsSane } from '@capo/core/capabilities/worker';
 // The three keyword tables that sit IN FRONT of the worker agent. They moved
 // out of the Next route precisely so this file could assert them: three sets
 // that must stay pairwise disjoint cannot be checked by reading.
@@ -2882,6 +2897,110 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     decideWelcomeRetry([failed('2026-08-27'), failed('2026-08-28'), failed('2026-08-29')], today),
     'exhausted',
   );
+}
+
+// ── crew requests: urgency is a DATE, and the thread note carries no quote ──
+//
+// Issue #152. Two things are pinned here and they are different in kind.
+//
+// The FIRST is the arithmetic. The whole feature turns on urgency being derived
+// from `needed_by` minus lisbon_today() rather than from a model's reading of
+// tone, and getting it wrong is silent in both directions: too high cries wolf
+// until the manager stops looking, too low buries the one that mattered.
+// `describeUrgency` is pure — `today` arrives as a string — so every branch,
+// including the DST-transition days that would break a naive hour-based diff,
+// is assertable with no credentials.
+//
+// The SECOND is a SAFETY boundary, and it is the reason this section exists at
+// all. A request carries the crew member's own words, and two envelopes go out
+// about it: a WhatsApp line to the manager's phone, which MAY quote them, and a
+// `role='event'` row in `messages`, which may NOT — that table is what
+// thread.recentUserTexts reads, and those last three user rows are the evidence
+// pool runGuarded matches a manager's quote against before executing a
+// manager-level write directly (0027, AGENTS.md). Same assertion shape as the
+// check-in answer note above, for the same reason.
+{
+  const today = '2026-08-31';
+  eq('needed_by today — "today"', describeUrgency('2026-08-31', today), 'today');
+  eq('needed_by tomorrow — "tomorrow"', describeUrgency('2026-09-01', today), 'tomorrow');
+  eq('needed_by next week — "later"', describeUrgency('2026-09-07', today), 'later');
+  eq('needed_by yesterday — "overdue"', describeUrgency('2026-08-30', today), 'overdue');
+  eq('no date — "undated", never a guess', describeUrgency(null, today), 'undated');
+  eq('an empty date — "undated"', describeUrgency('', today), 'undated');
+  eq('garbage — "undated", never a rank', describeUrgency('soon', today), 'undated');
+  eq('no clock — "undated" rather than a wrong bucket', describeUrgency('2026-08-31', null), 'undated');
+
+  // The two Lisbon DST transitions. A diff computed in local hours would make
+  // one of these 23 hours and the other 25, so "amanhã" would round to today or
+  // to the day after — on exactly two days a year, which is precisely the bug
+  // nobody would ever reproduce. Both dates are parsed as UTC midnight, so the
+  // difference is whole days by construction.
+  eq('spring forward: 28 Mar → 29 Mar is still tomorrow', describeUrgency('2026-03-29', '2026-03-28'), 'tomorrow');
+  eq('autumn back: 24 Oct → 25 Oct is still tomorrow', describeUrgency('2026-10-25', '2026-10-24'), 'tomorrow');
+
+  // Ranking: the order Facu described, and undated LAST.
+  const order: RequestUrgency[] = ['overdue', 'today', 'tomorrow', 'later', 'undated'];
+  check(
+    'ranking is overdue < today < tomorrow < later < undated',
+    order.every((u, i) => i === 0 || urgencyRank(order[i - 1]!) < urgencyRank(u)),
+  );
+  check(
+    'only overdue/today/tomorrow count as pressing',
+    isPressing('overdue') && isPressing('today') && isPressing('tomorrow') &&
+      !isPressing('later') && !isPressing('undated'),
+  );
+
+  const QUOTE = 'preciso de mais tinta na obra do Paco';
+  for (const locale of LOCALES) {
+    const message = renderRequestMessage(
+      { workerName: 'Miguel', text: QUOTE, neededBy: '2026-09-01', taskTitle: 'Pintar tecto' },
+      today,
+      locale,
+    );
+    check(`${locale}: the WhatsApp line QUOTES the crew member verbatim`, message.includes(QUOTE));
+    check(`${locale}: and names them`, message.includes('Miguel'));
+    check(`${locale}: and says which day it is for`, message.includes(getCatalog(locale).requests.when({ kind: 'tomorrow', dateLabel: null })));
+
+    // THE ONE THAT MATTERS. The thread note is our own copy around a crew name
+    // the manager typed, a date and a task title — and nothing else. If this
+    // ever fails, worker prose has reached `messages`.
+    const note = renderRequestEvent(
+      { workerName: 'Miguel', neededBy: '2026-09-01', taskTitle: 'Pintar tecto' },
+      today,
+      locale,
+    );
+    check(`${locale}: the THREAD NOTE never quotes the crew member`, !note.includes(QUOTE));
+    check(`${locale}: the thread note still names who asked`, note.includes('Miguel'));
+    check(`${locale}: the thread note still says when for`, note.includes(getCatalog(locale).requests.when({ kind: 'tomorrow', dateLabel: null })));
+
+    // An undated request must read as a fact on both surfaces, not as an
+    // absence: Capo asked once and did not guess, and the manager has to be
+    // able to tell "no date" from "we forgot to say".
+    const undated = renderRequestEvent({ workerName: 'Ana', neededBy: null, taskTitle: null }, today, locale);
+    check(`${locale}: an undated request SAYS it is undated`, undated.includes(getCatalog(locale).requests.when({ kind: 'undated', dateLabel: null })));
+  }
+}
+
+// ── the fifth crew tool's date guard (issue #152) ───────────────────────────
+//
+// `needed_by` is computed by the model from the date at the top of its prompt,
+// and the one mistake with NO symptom is computing "amanhã" into the wrong
+// YEAR: the request files as "later", never surfaces, and nobody finds out
+// until the paint runs out. neededByIsSane is the refusal, and it is pure
+// (`now` injected) so the band is pinned rather than assumed.
+{
+  const now = Date.parse('2026-08-31T00:00:00Z');
+  check('tomorrow is sane', neededByIsSane('2026-09-01', now));
+  check('yesterday is sane — "era para ontem" is a real request', neededByIsSane('2026-08-30', now));
+  check('three months out is sane', neededByIsSane('2026-11-30', now));
+  // The band exists for exactly this pair: a model computing "amanhã" into the
+  // wrong year. Both must be refused, or the request files as "later" and is
+  // never seen again.
+  check('a year out is refused', !neededByIsSane('2027-09-01', now));
+  check('a year back is refused', !neededByIsSane('2025-08-30', now));
+  check('30 February is refused rather than rolled into March', !neededByIsSane('2026-02-30', now));
+  check('a non-date is refused', !neededByIsSane('amanhã', now));
+  check('a timestamp is refused — the column is a DAY', !neededByIsSane('2026-09-01T08:00:00Z', now));
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

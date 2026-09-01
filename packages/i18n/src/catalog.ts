@@ -244,7 +244,7 @@ export interface Catalog {
      *  translated. Keyed by the `kind` check constraint in
      *  0023_notifications.sql, so widening that constraint without adding
      *  copy in all three dictionaries is a tsc error. */
-    kind: Record<'review_pending', (subject: string) => string>;
+    kind: Record<'review_pending' | 'worker_request', (subject: string) => string>;
     /** Stand-in when the row carries no title — an unnamed task. */
     noSubject: string;
     /** Label above the worker's quoted note. Sits ABOVE it and is never
@@ -259,6 +259,76 @@ export interface Catalog {
      *  a deliberate press. */
     pushNudge: string;
     pushNudgeLink: string;
+  };
+
+  /**
+   * ── FEDERICO: what the crew ASKED FOR (issue #152). ──
+   *
+   * A crew member on site tells Capo they need something — paint, a grinder, a
+   * skip, anything — and it reaches you: in the inbox, on your lock screen, on
+   * Home, and on WhatsApp when you are already mid-conversation with Capo.
+   * Before this, Capo told them to phone you themselves.
+   *
+   * Two rules govern every string below.
+   *
+   * FIRST: their words are QUOTED AND ATTRIBUTED, never rewritten into Capo's
+   * voice. `quote` and `text` here always carry what one person typed on a
+   * building site, and the copy around them exists to make that obvious — the
+   * same rule the review note follows, for the same reason (AGENTS.md, on
+   * worker-authored text).
+   *
+   * SECOND: urgency is a DATE, never a tone. `when` renders the result of plain
+   * subtraction against today, and `undated` is a real answer that must read as
+   * a fact rather than an apology — Capo asks once and does not guess.
+   */
+  requests: {
+    /** Home's section heading. */
+    title: string;
+    /** Link out of the Home card, to the inbox where the full record lives. */
+    seeAll: string;
+    /** "+2 pedidos" beneath the rows Home shows. */
+    more(n: number): string;
+    /**
+     * The coarse filing hint, keyed by the `category` CHECK in
+     * 0043_worker_requests.sql — the same tsc-error device notifications.kind
+     * uses. Deliberately coarse: an enum here is a list of things a person on
+     * site is allowed to need, so 'other' is a first-class answer and the real
+     * content is always the quote.
+     */
+    category: Record<'material' | 'tool' | 'machine' | 'delivery' | 'other', string>;
+    /**
+     * When it is needed FOR, as a sentence fragment ("para amanhã").
+     *
+     * `kind` comes from subtracting today from `needed_by`; `dateLabel` is
+     * already formatted in the reader's own locale and is null for every branch
+     * except 'later' and 'overdue'. 'undated' must not read as a complaint
+     * about the crew member — nobody did anything wrong, we simply do not know.
+     */
+    when(args: {
+      kind: 'overdue' | 'today' | 'tomorrow' | 'later' | 'undated';
+      dateLabel: string | null;
+    }): string;
+    /** Label above the quoted words, naming who wrote them. Sits ABOVE the
+     *  quote and is never merged into it. */
+    quoteLabel(name: string): string;
+    /**
+     * The free-form WhatsApp line to the manager, sent only inside their own
+     * 24-hour window. Carries the quote, attributed. `task` is the title of the
+     * task they named, or null — company-owned text either way.
+     */
+    whatsapp(args: { name: string; when: string; quote: string; task: string | null }): string;
+    /**
+     * The manager's CHAT-THREAD note.
+     *
+     * ⚠ It takes NO quote and must never be given one. A `role='event'` row is
+     * permanent, model-visible input read by thread.recentUserTexts — the
+     * evidence pool the write guard matches a manager's quote against. Our own
+     * copy, a crew name the MANAGER typed, a date and a task title: that is the
+     * complete list of what may be in this sentence. See
+     * apps/web/app/notifications/thread.ts for why that is a safety boundary
+     * and not a style rule.
+     */
+    event(args: { name: string; when: string; task: string | null }): string;
   };
 
   /**
