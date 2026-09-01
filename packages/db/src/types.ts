@@ -232,6 +232,31 @@
 // and no tenant code path ever updated the table), so the Update shape below
 // is typed because the generator always emits one, not because a tenant may
 // use it.
+//
+// ── 0042 (issue #120), WRITTEN BY HAND, NOT YET APPLIED ────────────────────
+// problem_reports (the "something is broken" report, read only by the
+// operator) and problem_report_requests (the WhatsApp "your next message is
+// the report" staging row). Added by hand for the standing reason:
+// regenerating against a project that lacks them would silently DELETE these
+// rather than add them.
+//
+// Consequences while the migration is unapplied, all survivable by
+// construction:
+//   - both tables answer 42P01. The WhatsApp flow
+//     (apps/web/lib/problem-report-flow.ts) catches every failure: a keyword
+//     command is answered with the "could not register" apology rather than a
+//     false "registered", and the armed-capture read simply reports "not
+//     armed", so ordinary messages fall through to the agents exactly as
+//     before the feature.
+//   - the app form's insert fails and the page shows its error state — honest,
+//     never a silent swallow, because a bug report Capo loses is the one
+//     failure this feature exists to end.
+//
+// Invisible here as usual: problem_reports is INSERT-only for tenants with a
+// COLUMN-SCOPED grant (company_id, profile_id, text, context — worker_id and
+// channel are refused at the grant layer) and no SELECT at all; a tenant
+// insert must never chain .select(), whose RETURNING needs the SELECT nobody
+// holds. problem_report_requests is deny-all with every grant revoked.
 export type Json =
   | string
   | number
@@ -1065,6 +1090,130 @@ export type Database = {
             columns: ["profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      problem_report_requests: {
+        Row: {
+          close_reason: string | null
+          closed_at: string | null
+          company_id: string
+          created_at: string
+          expires_at: string
+          id: string
+          profile_id: string | null
+          worker_id: string | null
+        }
+        Insert: {
+          close_reason?: string | null
+          closed_at?: string | null
+          company_id: string
+          created_at?: string
+          expires_at: string
+          id?: string
+          profile_id?: string | null
+          worker_id?: string | null
+        }
+        Update: {
+          close_reason?: string | null
+          closed_at?: string | null
+          company_id?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          profile_id?: string | null
+          worker_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "problem_report_requests_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "problem_report_requests_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "problem_report_requests_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["worker_id"]
+          },
+          {
+            foreignKeyName: "problem_report_requests_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      problem_reports: {
+        Row: {
+          channel: string
+          company_id: string
+          context: Json
+          created_at: string
+          id: string
+          profile_id: string | null
+          text: string
+          worker_id: string | null
+        }
+        Insert: {
+          channel?: string
+          company_id: string
+          context?: Json
+          created_at?: string
+          id?: string
+          profile_id?: string | null
+          text: string
+          worker_id?: string | null
+        }
+        Update: {
+          channel?: string
+          company_id?: string
+          context?: Json
+          created_at?: string
+          id?: string
+          profile_id?: string | null
+          text?: string
+          worker_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "problem_reports_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "problem_reports_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "problem_reports_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "dispatch_tasks_today"
+            referencedColumns: ["worker_id"]
+          },
+          {
+            foreignKeyName: "problem_reports_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
             referencedColumns: ["id"]
           },
         ]

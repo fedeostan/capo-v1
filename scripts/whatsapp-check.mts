@@ -136,10 +136,22 @@ import {
   MENU_KEYWORDS,
   OPT_IN_KEYWORDS,
   OPT_OUT_KEYWORDS,
+  REPORT_KEYWORDS,
   consentCommand,
   languageCommand,
   menuCommand,
+  reportCommand,
 } from '../apps/web/lib/worker-keywords.ts';
+// The pure half of "report a problem" (issue #120): the staging TTL and the
+// text clamp. Same reasoning as checkin-photo above — no Db, no clock beyond a
+// `now` argument, no network.
+import {
+  REPORT_REQUEST_TTL_MS,
+  REPORT_TEXT_MAX,
+  clampReportText,
+  reportRequestExpiry,
+  reportRequestLive,
+} from '../apps/web/lib/problem-report.ts';
 // The pure half of "a worker tapped Sim, terminei" (issue #54). Same reasoning
 // as the briefing import above: no Db, no clock, no network.
 import {
@@ -1948,6 +1960,9 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     ['opt-out', OPT_OUT_KEYWORDS],
     ['opt-in', OPT_IN_KEYWORDS],
     ['menu', MENU_KEYWORDS],
+    // Issue #120 — the fourth table, and the only one both sender kinds
+    // consult. Every pair including it is asserted below like the others.
+    ['report', REPORT_KEYWORDS],
   ];
   for (let i = 0; i < tables.length; i += 1) {
     for (let j = i + 1; j < tables.length; j += 1) {
@@ -1976,6 +1991,60 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
   eq('a sentence starting with ajuda is not a menu request', menuCommand('ajuda-me a perceber isto'), false);
   eq('an empty message is no command at all', menuCommand(''), false);
   eq('and neither is undefined', menuCommand(undefined), false);
+}
+
+// ── "report a problem" (issue #120) ─────────────────────────────────────────
+// The fourth keyword table, and the ONE deliberate break with the
+// whole-message rule: a keyword as the FIRST WORD files the rest of the same
+// message immediately ("bug o menu não abre"), because a report split across
+// two messages is a report half of which never arrives. Every behaviour of
+// that exception is pinned here, because the exception is exactly where a
+// future edit would quietly widen the match into reading sentences as
+// commands.
+{
+  eq('a bare "bug" arms the two-message flow', reportCommand('bug')?.kind, 'arm');
+  eq('case- and whitespace-insensitive', reportCommand('  BUG  ')?.kind, 'arm');
+  eq('a labelled bare keyword still arms ("problema:")', reportCommand('problema:')?.kind, 'arm');
+  eq('all six words arm', ['bug', 'problema', 'erro', 'problem', 'error', 'fallo']
+    .map(w => reportCommand(w)?.kind)
+    .join(','), 'arm,arm,arm,arm,arm,arm');
+
+  const inline = reportCommand('bug o menu não abre');
+  eq('keyword-first files inline', inline?.kind, 'inline');
+  eq('with the rest of the message as the report, verbatim',
+    inline?.kind === 'inline' ? inline.text : null, 'o menu não abre');
+  const labelled = reportCommand('erro: não recebo o resumo das 07:00');
+  eq('a labelled inline report drops the label punctuation',
+    labelled?.kind === 'inline' ? labelled.text : null, 'não recebo o resumo das 07:00');
+
+  // The false-positive direction that must stay CLOSED: the keyword anywhere
+  // but first is a sentence, not a command.
+  eq('mid-sentence "bug" is not a report', reportCommand('o menu tem um bug'), null);
+  eq('a sentence about a site problem does not start the flow', reportCommand('temos um problema na obra'), null);
+  eq('an unrelated message is untouched', reportCommand('es que falta material'), null);
+  eq('empty and undefined are no command', `${reportCommand('')}/${reportCommand(undefined)}`, 'null/null');
+
+  // The other three tables never claim these words, and vice versa — the
+  // disjointness loop above asserts every pair, but the two words most likely
+  // to collide by future edit are pinned by name.
+  eq('the menu never claims "bug"', menuCommand('bug'), false);
+  eq('a bare ES is still Spanish, never a report', reportCommand('ES'), null);
+
+  // The staging TTL (0042): enforced by the READER, nothing sweeps the table.
+  eq('the request TTL is 30 minutes', REPORT_REQUEST_TTL_MS, 30 * 60 * 1000);
+  const armedAt = Date.parse('2026-01-05T10:00:00Z');
+  const expiry = reportRequestExpiry(armedAt);
+  check('a request is live inside its TTL', reportRequestLive(expiry, armedAt + REPORT_REQUEST_TTL_MS - 1));
+  check('and dead the moment it passes', !reportRequestLive(expiry, armedAt + REPORT_REQUEST_TTL_MS));
+  check('an unparseable expires_at reads as expired', !reportRequestLive('not a date', armedAt));
+  check('and so does a missing one', !reportRequestLive(null, armedAt));
+
+  // The clamp mirrors the column CHECK (0042): a long report is truncated,
+  // never refused — and counted in code points, so it can never exceed what
+  // char_length() counts nor split a surrogate pair.
+  eq('a short report passes through trimmed', clampReportText('  a lista duplica  '), 'a lista duplica');
+  eq('a long report is clamped to the CHECK bound', [...clampReportText('x'.repeat(REPORT_TEXT_MAX + 500))].length, REPORT_TEXT_MAX);
+  eq('emoji count as one, matching char_length()', [...clampReportText('📷'.repeat(REPORT_TEXT_MAX + 5))].length, REPORT_TEXT_MAX);
 }
 
 // ── the interactive list payload ────────────────────────────────────────────
