@@ -34,14 +34,15 @@ import {
 import { readCompanySchedules, scheduleFor } from '../../../../lib/schedule';
 import { dayLinkUrl, mintDayLinks } from '../../../../lib/day-link';
 import { recordCronRun } from '../../../notifications/cron-runs';
+import { briefingTemplateFor } from '../../../../lib/briefing-template';
 import {
   loadCompanyBriefing,
   readLastInboundAt,
   renderManagerBriefing,
   renderManagerEvent,
   renderManagerFreeForm,
-  renderWorkerBriefing,
   renderWorkerFreeForm,
+  renderWorkerKnock,
 } from '../../../notifications/briefing';
 import { buildWorkerMenu } from '../../../notifications/worker-menu';
 import { recordThreadEvent, threadLocale } from '../../../notifications/thread';
@@ -86,12 +87,14 @@ export const maxDuration = 300;
  */
 const KIND = 'daily_briefing';
 
-/**
- * The Meta template. Must already be approved in WhatsApp Manager for every
- * locale in @capo/i18n — see docs/whatsapp-cloud-api-runbook.md. Two body
- * parameters: {{1}} the recipient's name, {{2}} the one-line summary.
- */
-const TEMPLATE_NAME = 'capo_daily_briefing';
+// The Meta template is no longer one name (issue #108): capo_daily_briefing_v2
+// carries the same {{1}}/{{2}} contract in a line-broken body, and goes out
+// wherever its locale is approved. The per-locale switch is briefingTemplateFor
+// in apps/web/lib/briefing-template.ts — a hand-maintained mirror of Meta's
+// approval state, deliberately not a Graph API lookup, so 07:00 gains no
+// network dependency. The old name stays the fallback for any locale still
+// pending; both must be approved in WhatsApp Manager for every locale they
+// serve — see docs/whatsapp-cloud-api-runbook.md.
 
 /**
  * ── FEDERICO: message a worker who has nothing scheduled today?
@@ -174,7 +177,10 @@ async function deliverBriefing(args: {
   const template = () =>
     sendWhatsAppTemplate(
       {
-        name: TEMPLATE_NAME,
+        // Per locale since #108: v2 where approved, the old name otherwise.
+        // Both carry the same two positional parameters, so nothing else here
+        // knows which one went out — the caller's briefing_sent log records it.
+        name: briefingTemplateFor(args.templateLanguage),
         languageCode: args.templateLanguage,
         bodyParams: args.templateParams,
       },
@@ -425,7 +431,15 @@ export async function GET(request: NextRequest) {
         // is not null. #46 had already banned the line from the free-form
         // briefing for the same reason.
         const languageHint = !worker.hasChosenLanguage && worker.lastInboundAt === null;
-        const [name, summary] = renderWorkerBriefing(worker, { languageHint });
+        // ── THE KNOCK (issue #108) ───────────────────────────────────────────
+        // {{2}} is no longer the squashed task list. These two parameters are
+        // only ever read on the TEMPLATE path — a worker we cannot reach
+        // free-form — and there they now state the size of the day and ask for
+        // a reply ("responde OK"), which the webhook answers with the full
+        // free-form briefing the reply itself just made legal. The check-in
+        // still renders its {{2}} through renderWorkerBriefing, untouched:
+        // there the parameter really is a task list.
+        const [name, summary] = renderWorkerKnock(worker, { languageHint });
         const taskIds = worker.tasks.map(t => t.id);
         const idle = worker.tasks.length === 0;
 
@@ -484,6 +498,12 @@ export async function GET(request: NextRequest) {
             // money?" before it does. `body` is what would actually be sent on
             // the free-form path — the template path sends `summary`.
             path: freeForm ? (list ? 'menu' : 'free_form') : 'template',
+            // WHICH template name a paid send would use (issue #108): v2 where
+            // the locale is approved, the old one otherwise. The operator's
+            // pre-flight way to see the switch-over without sending anything.
+            template: freeForm
+              ? undefined
+              : briefingTemplateFor(getCatalog(worker.locale).reminders.templateLanguage),
             body: freeForm ? freeFormBody : undefined,
             // What a tap would offer. The operator's only pre-flight way to see
             // whether a rich day fell back to plain text for want of room.
@@ -540,6 +560,12 @@ export async function GET(request: NextRequest) {
             // briefing still went out as text. Nothing else would show it.
             listRejected: delivery.listRejected,
             languageHint,
+            // Which template NAME a paid send used (#108's v2 switch-over).
+            // notification_log has no column for it, same reasoning as `path`.
+            template:
+              delivery.path === 'template'
+                ? briefingTemplateFor(getCatalog(worker.locale).reminders.templateLanguage)
+                : undefined,
           });
           notified += 1;
           notifiedNames.push(worker.name);
@@ -629,6 +655,9 @@ export async function GET(request: NextRequest) {
             name,
             summary,
             path: freeForm ? 'free_form' : 'template',
+            template: freeForm
+              ? undefined
+              : briefingTemplateFor(getCatalog(locale).reminders.templateLanguage),
             body: freeForm ? freeFormBody : undefined,
           });
           continue;
@@ -680,6 +709,10 @@ export async function GET(request: NextRequest) {
             audience: 'manager',
             path: delivery.path,
             fellBack: delivery.fellBack,
+            template:
+              delivery.path === 'template'
+                ? briefingTemplateFor(getCatalog(locale).reminders.templateLanguage)
+                : undefined,
           });
         } catch (err) {
           await resolveNotification(db, claimed.id, 'failed', { error: describeSendError(err) });

@@ -901,6 +901,14 @@ const dict: Catalog = {
     taskAsTeam: title => `${title} — en equipo`,
     freeFormWith: names => `Contigo: ${names}`,
     workerNothing: 'Nada previsto para hoy.',
+    // issue #108. The day's size and how to see it — never the squashed task
+    // list. One line, no trailing full stop: the OLD template body continues
+    // "…{{2}}. Responde STOP…" straight after it.
+    workerKnock: ({ count, overdue }) => {
+      const head = `${count} ${count === 1 ? 'tarea' : 'tareas'} hoy`;
+      const late = overdue > 0 ? `, ${overdue} ${overdue === 1 ? 'retrasada' : 'retrasadas'}` : '';
+      return `${head}${late} — responde OK para ver el detalle`;
+    },
     managerSummary: ({ today, unassigned, overdue }) => {
       const parts = [`${today} ${today === 1 ? 'tarea' : 'tareas'} para hoy`];
       if (unassigned > 0) parts.push(`${unassigned} sin responsable`);

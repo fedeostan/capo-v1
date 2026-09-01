@@ -96,14 +96,22 @@ import { allTemplates, MANAGED_TEMPLATE_NAMES, TEMPLATE_LANGUAGES } from './what
 // reaches apps/web/lib/cron — it is pure, so no credentials come with it.
 import {
   loadCompanyBriefing,
+  loadWorkerBriefing,
   renderCheckinAnswerEvent,
   renderCheckinEvent,
   renderManagerEvent,
   renderWorkerBriefing,
   renderWorkerFreeForm,
+  renderWorkerKnock,
   type BriefingTask,
   type WorkerBriefing,
 } from '../apps/web/app/notifications/briefing.ts';
+// The KNOCK's per-locale template switch (issue #108). A hand-maintained
+// mirror of Meta's approval state, pure so the whole matrix is assertable.
+import {
+  BRIEFING_V2_APPROVED_LANGUAGES,
+  briefingTemplateFor,
+} from '../apps/web/lib/briefing-template.ts';
 // The GUIDED MENU (issue #49). Pure renderers over the same rows the briefing
 // reads, reached the same way — no Db, no clock, no network.
 import {
@@ -132,12 +140,14 @@ import {
 // out of the Next route precisely so this file could assert them: three sets
 // that must stay pairwise disjoint cannot be checked by reading.
 import {
+  DETAIL_KEYWORDS,
   LANGUAGE_KEYWORDS,
   MENU_KEYWORDS,
   OPT_IN_KEYWORDS,
   OPT_OUT_KEYWORDS,
   REPORT_KEYWORDS,
   consentCommand,
+  detailCommand,
   languageCommand,
   menuCommand,
   reportCommand,
@@ -1960,8 +1970,11 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     ['opt-out', OPT_OUT_KEYWORDS],
     ['opt-in', OPT_IN_KEYWORDS],
     ['menu', MENU_KEYWORDS],
-    // Issue #120 — the fourth table, and the only one both sender kinds
-    // consult. Every pair including it is asserted below like the others.
+    // Issue #120 — the report table, the only one both sender kinds
+    // consult; issue #108 — the detail table, the knock's reply. Every pair
+    // including both is asserted below like the others, which is what proves
+    // "ok" can never file a report and "bug" can never fetch the day.
+    ['detail', DETAIL_KEYWORDS],
     ['report', REPORT_KEYWORDS],
   ];
   for (let i = 0; i < tables.length; i += 1) {
@@ -1991,6 +2004,34 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
   eq('a sentence starting with ajuda is not a menu request', menuCommand('ajuda-me a perceber isto'), false);
   eq('an empty message is no command at all', menuCommand(''), false);
   eq('and neither is undefined', menuCommand(undefined), false);
+
+  // ── the FOURTH table: the knock's answer (issue #108) ─────────────────────
+  // "Responde OK para veres o detalhe" is a promise the paid template makes;
+  // this table is what keeps it. Whole-message, case- and whitespace-
+  // insensitive, zero model calls — and the punctuated forms are members of
+  // the SET, not a stripped match, so the discipline stays identical to the
+  // other three tables.
+  eq('a bare OK summons the full briefing', detailCommand('OK'), true);
+  eq('and is case- and whitespace-insensitive', detailCommand('  ok  '), true);
+  eq('a thumb-typed "Ok." works too', detailCommand('Ok.'), true);
+  eq('and "ok!"', detailCommand('ok!'), true);
+  eq('DETALHE works in all three languages', `${detailCommand('detalhe')}/${detailCommand('detalle')}/${detailCommand('details')}`, 'true/true/true');
+  eq('a sentence starting with ok is not a request', detailCommand('ok, e o material?'), false);
+  eq('an empty message asks for nothing', detailCommand(''), false);
+  eq('and neither does undefined', detailCommand(undefined), false);
+  // None of the older tables may claim the trained word — the knock teaches
+  // every crew member that OK means "show me my day", and a collision would
+  // silently reroute it.
+  eq('the menu never claims ok', menuCommand('ok'), false);
+  eq('nor does the language table', languageCommand('ok'), null);
+  eq('nor does consent', consentCommand('ok'), null);
+  // Words that read as REPORTING A PROBLEM must never be answered with a task
+  // list. Reserved here so no future edit to this table can quietly take them:
+  // a worker saying "problema" is telling us something is wrong, and the wrong
+  // answer is a cheerful briefing.
+  for (const word of ['bug', 'problema', 'erro', 'problem', 'error', 'fallo']) {
+    check(`the detail table never claims "${word}"`, !DETAIL_KEYWORDS.has(word), word);
+  }
 }
 
 // ── "report a problem" (issue #120) ─────────────────────────────────────────
@@ -2338,6 +2379,173 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     check(`${locale} — and leaks no undefined`, !s2.includes('undefined'), s2);
     const m = buildWorkerMenu({ tasks: [task()], body: 'x', locale });
     check(`${locale} — the menu labels leak no undefined`, !JSON.stringify(m).includes('undefined'), JSON.stringify(m));
+  }
+}
+
+// ── the KNOCK and the v2 template it rides (issue #108) ─────────────────────
+// The paid template's {{2}} is no longer the squashed task list: it states the
+// size of the day and asks for a reply ("responde OK"), which the webhook
+// answers with the full free-form briefing. Everything here is the pure half
+// of that: the copy in three languages, the punctuation that only ever shows
+// on a live send, the fact that the knock survives Meta's parameter rules, and
+// the per-locale old-vs-v2 template switch.
+{
+  function task(over: Partial<BriefingTask> = {}): BriefingTask {
+    return {
+      id: uuid,
+      title: 'Canalização',
+      job_name: 'Casa de Paco',
+      overdue: false,
+      days_overdue: 0,
+      description: null,
+      materials: [],
+      job_address: null,
+      waiting_on: [],
+      awaiting_review: false,
+      due_date: null,
+      role: 'lead',
+      ...over,
+    };
+  }
+  function briefing(over: Partial<WorkerBriefing> = {}): WorkerBriefing {
+    return {
+      workerId: uuid,
+      name: 'Miguel',
+      recipient: { kind: 'phone', waId },
+      locale: 'pt-PT',
+      hasChosenLanguage: false,
+      tasks: [task()],
+      lastInboundAt: null,
+      ...over,
+    };
+  }
+  const threeTasks = [task(), task({ overdue: true, days_overdue: 2 }), task()];
+
+  for (const locale of LOCALES) {
+    const t = getCatalog(locale).reminders;
+
+    // The copy itself, count-aware. The digit is not enough — the NOUN must
+    // change too, so replacing the digit in the singular must not produce the
+    // plural sentence.
+    const oneTask = t.workerKnock({ count: 1, overdue: 0 });
+    const twoTasks = t.workerKnock({ count: 2, overdue: 0 });
+    check(`${locale} — the knock counts one task`, oneTask.includes('1'), oneTask);
+    check(`${locale} — and two`, twoTasks.includes('2'), twoTasks);
+    check(`${locale} — with a real plural, not just a digit swap`, oneTask.replace('1', '2') !== twoTasks, `${oneTask} / ${twoTasks}`);
+
+    // Lateness is a clause, present exactly when there is something late.
+    const calm = t.workerKnock({ count: 3, overdue: 0 });
+    const late = t.workerKnock({ count: 3, overdue: 1 });
+    check(`${locale} — a late day reads differently`, calm !== late, late);
+    check(`${locale} — and names how many are late`, late.includes('1'), late);
+
+    // ⚠ The punctuation rule languageHint already follows, for the same
+    // reason: the OLD template body continues "…{{2}}. Responde STOP…", so a
+    // trailing stop renders as ".." on a live send and nowhere else.
+    check(`${locale} — the knock carries no trailing full stop`, !/[.。]$/.test(late), late);
+
+    // A template parameter is one flat line. If toTemplateParam has to CHANGE
+    // the knock, the copy contains something Meta would have rejected.
+    eq(`${locale} — the knock needs no flattening`, toTemplateParam(late), late);
+    check(`${locale} — and is newline-free`, !/[\n\t]/.test(late), late);
+
+    // The renderer around it: the same hint and zero-task mechanics as the
+    // task-list renderer, through the same helper — an idle worker's message
+    // and a first-contact worker's language line must not depend on which
+    // renderer the route reached for.
+    const [knockName, knock] = renderWorkerKnock(briefing({ locale, tasks: threeTasks }));
+    eq(`${locale} — the knock renderer names the worker`, knockName, 'Miguel');
+    check(`${locale} — and counts the day`, knock.includes('3'), knock);
+    check(`${locale} — including the late ones`, knock.includes('1'), knock);
+    const [, hinted] = renderWorkerKnock(briefing({ locale, tasks: threeTasks }), { languageHint: true });
+    check(`${locale} — the hint appends on request`, hinted.endsWith(t.languageHint), hinted);
+    check(`${locale} — and never by default`, !knock.includes(t.languageHint), knock);
+    check(`${locale} — with no doubled full stop`, !hinted.includes('..'), hinted);
+    eq(
+      `${locale} — a worker with nothing today reads exactly what the old renderer said`,
+      renderWorkerKnock(briefing({ locale, tasks: [] }), { languageHint: true })[1],
+      renderWorkerBriefing(briefing({ locale, tasks: [] }), { languageHint: true })[1],
+    );
+
+    // The knock composed into BOTH live bodies — the v2 it was written for and
+    // the old one it rides until every locale is approved. '..' anywhere in
+    // the composition is the failure that only ever shows on a live send.
+    for (const name of ['capo_daily_briefing', 'capo_daily_briefing_v2']) {
+      const def = allTemplates().find(d => d.name === name && d.language === t.templateLanguage)!;
+      check(`${locale} — ${name} exists for this locale`, !!def);
+      const bodyText = String((def.components.find(c => c.type === 'BODY') as { text?: string } | undefined)?.text ?? '');
+      const composed = bodyText.replace('{{1}}', 'Miguel').replace('{{2}}', hinted);
+      check(`${locale} — the knock reads cleanly inside ${name}`, !composed.includes('..'), composed);
+      check(`${locale} — and arrives intact`, composed.includes(knock), composed);
+    }
+
+    // The v2 body's whole point is the layout: {{2}} on its own paragraph,
+    // no language line (#49's lesson — any re-approval must not reintroduce
+    // it), the opt-out still stated, and literal text at both ends (Meta
+    // rejects a body that begins or ends with a parameter).
+    const v2 = allTemplates().find(d => d.name === 'capo_daily_briefing_v2' && d.language === t.templateLanguage)!;
+    const v2Body = String((v2.components.find(c => c.type === 'BODY') as { text?: string } | undefined)?.text ?? '');
+    check(`${locale} — v2 gives {{2}} its own paragraph`, /\n\n\{\{2\}\}\n\n/.test(v2Body), JSON.stringify(v2Body));
+    check(`${locale} — v2 never offers PT/ES/EN`, !/\bPT\b/.test(v2Body), v2Body);
+    check(`${locale} — v2 still states the opt-out`, /STOP/i.test(v2Body), v2Body);
+    check(`${locale} — v2 starts and ends with literal text`, !v2Body.startsWith('{{') && !v2Body.endsWith('}}'), v2Body);
+  }
+
+  // ── the per-locale template switch ──────────────────────────────────────
+  // A hand-maintained mirror of Meta's approval state (see the module's own
+  // comment for why it is not a Graph API lookup). What is assertable here:
+  // the matrix as of 2026-09-01, and the fail-safe direction — anything not
+  // explicitly approved falls to the OLD name, which all three locales have.
+  eq('pt_PT sends the v2 template', briefingTemplateFor('pt_PT'), 'capo_daily_briefing_v2');
+  eq('en_US sends the v2 template', briefingTemplateFor('en_US'), 'capo_daily_briefing_v2');
+  eq('es_ES stays on the old template until Meta approves', briefingTemplateFor('es_ES'), 'capo_daily_briefing');
+  eq('an unknown locale falls back to the old template', briefingTemplateFor('fr_FR'), 'capo_daily_briefing');
+  for (const language of BRIEFING_V2_APPROVED_LANGUAGES) {
+    check(`approved code ${language} is one this repo submits`, TEMPLATE_LANGUAGES.includes(language), language);
+    check(
+      `and has a v2 definition to diff against Meta`,
+      allTemplates().some(d => d.name === 'capo_daily_briefing_v2' && d.language === language),
+      language,
+    );
+  }
+
+  // ── the OK reply's loader, through the real function ──────────────────────
+  // loadWorkerBriefing must fan out exactly what loadCompanyBriefing fans out
+  // — same filter, same roles — or the knock's promise ("reply OK to see the
+  // detail") is answered with a different day than the morning message
+  // described. Driven against the fake Db, like the loaders above.
+  {
+    const LEAD = '11111111-1111-4111-8111-111111111111';
+    const HELPER = '22222222-2222-4222-8222-222222222222';
+    const board = [
+      // On today, briefable: the row both loaders must fan out.
+      { id: uuid, title: 'Pintar tecto', job_name: 'Casa de Paco', status: 'pending', is_open: true, active_today: true, assignee_worker_id: LEAD, worker_name: 'Miguel', collaborator_worker_ids: [HELPER], collaborator_names: ['João'], materials: ['tinta 10L'] },
+      // Declared finished — BRIEFABLE excludes it, so the OK reply must not
+      // nag about it either (the same reason the two daily sends do not).
+      { id: '33333333-3333-4333-8333-333333333333', title: 'Rebocar', status: 'pending_review', is_open: true, active_today: true, assignee_worker_id: LEAD },
+      // Not on today at all.
+      { id: '44444444-4444-4444-8444-444444444444', title: 'Amanhã', status: 'pending', is_open: true, active_today: false, assignee_worker_id: LEAD },
+    ];
+    const args = { companyId: 'co', name: 'Miguel', recipient: { kind: 'phone', waId } as const, locale: 'pt-PT' as const, hasChosenLanguage: false };
+
+    const lead = await loadWorkerBriefing(fakeBriefingDb({ task_board: board }), { ...args, workerId: LEAD });
+    eq('the OK reply carries exactly the briefable-today tasks', lead.tasks.length, 1);
+    eq('as the lead', lead.tasks[0]?.role, 'lead');
+    check('a task in review is not nagged about', !lead.tasks.some(t => t.id.startsWith('3333')), JSON.stringify(lead.tasks.map(t => t.title)));
+
+    const helper = await loadWorkerBriefing(fakeBriefingDb({ task_board: board }), { ...args, workerId: HELPER, name: 'João' });
+    eq('a helper gets the task too', helper.tasks.length, 1);
+    eq('told they are helping', helper.tasks[0]?.role, 'collaborator');
+    eq('and by whom', helper.tasks[0]?.lead_name, 'Miguel');
+    // The knock's promised detail is the SAME renderer the 07:00 free-form
+    // send uses, so this body is asserted to carry the role wording that #44
+    // made a requirement.
+    const helperBody = renderWorkerFreeForm(helper);
+    check(
+      'the OK reply tells a helper whose job it is',
+      helperBody.includes(getCatalog('pt-PT').reminders.taskAsCollaborator('Pintar tecto (Casa de Paco)', 'Miguel')),
+      helperBody,
+    );
   }
 }
 

@@ -900,6 +900,14 @@ const dict: Catalog = {
     taskAsTeam: title => `${title} — as a team`,
     freeFormWith: names => `With you: ${names}`,
     workerNothing: 'Nothing scheduled for today.',
+    // issue #108. The day's size and how to see it — never the squashed task
+    // list. One line, no trailing full stop: the OLD template body continues
+    // "…{{2}}. Reply STOP…" straight after it.
+    workerKnock: ({ count, overdue }) => {
+      const head = `${count} ${count === 1 ? 'task' : 'tasks'} today`;
+      const late = overdue > 0 ? `, ${overdue} late` : '';
+      return `${head}${late} — reply OK to see the details`;
+    },
     managerSummary: ({ today, unassigned, overdue }) => {
       const parts = [`${today} ${today === 1 ? 'task' : 'tasks'} for today`];
       if (unassigned > 0) parts.push(`${unassigned} unassigned`);
