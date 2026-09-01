@@ -138,7 +138,10 @@ and say what the alternative would be — he is the one who decides.
   write). Since #22 it also carries `checkWorkerTextIsolation`, the one check in
   the file that is not about tenants at all: a service-role sweep proving
   worker-authored text never lands in `messages`, `conversation_summaries`,
-  `memories` or `proposals`. Run with `pnpm rls-matrix` after any change that
+  `memories` or `proposals` (since #120 the tracer is seeded through a worker
+  problem report too, and the report tables get their own deny-all reads,
+  reporter-forgery attacks and a no-`.select()` positive control on the app
+  path's INSERT). Run with `pnpm rls-matrix` after any change that
   touches auth, RLS, Storage, or the DB clients; it must stay green.
   Needs credentials, so it does not run in CI.
   Note what it does NOT prove: every check asserts a REFUSAL, so a policy that
@@ -946,6 +949,38 @@ Structural invariants (do not regress):
 
   `handleInbound` and the manager `roster` are **not modified** by this feature.
   If a change needs to touch either, the isolation design has gone wrong.
+- **A problem report is MAIL TO THE OPERATOR, never conversation** (migration
+  `0042`, issue #120). "Reportar um problema" on `/perfil` and the `bug` /
+  `problema` / `erro` keyword on WhatsApp (both sender kinds) file free text
+  into `problem_reports`, read ONLY in apps/operator — tenants hold no SELECT
+  on it at all, because a crew member's report may be about the manager (#128).
+  Five things are load-bearing:
+  - **The keyword flow is deterministic and runs in FRONT of both agents**
+    (`apps/web/lib/problem-report-flow.ts`): a report that Capo is misbehaving
+    must never depend on Capo's model behaving (the 31 Aug outage, #126). On
+    the manager branch it sits above `handleInbound`; on the worker branch it
+    sits with the other keyword tables, below consent (STOP must always
+    unsubscribe) and above everything else.
+  - **`REPORT_KEYWORDS` is the fourth table in `worker-keywords.ts` and the
+    ONE exception to the whole-message rule**: the keyword as FIRST WORD files
+    the rest of the same message immediately. The accepted false positive
+    ("problema resolvido" is filed, visibly acknowledged) is pinned in `pnpm
+    whatsapp-check` along with every table pair's disjointness.
+  - **A bare keyword arms `problem_report_requests`** — "your next message is
+    the report", 0034's staging shape: stages the expectation never the text,
+    deny-all, at most one open row per sender, TTL 30 min enforced by the
+    READER, nothing sweeps it.
+  - **Report text lands in `problem_reports.text` and NOWHERE else** — never
+    `messages`, `worker_messages`, thread notes, summaries, memories,
+    proposals, or logs. The manager's own report stays out of `messages` too:
+    it is not conversation, and it keeps `checkWorkerTextIsolation`'s story
+    uniform (the matrix seeds its worker tracer through a report).
+  - **The app path writes on the tenant's own RLS client** through an INSERT
+    policy + column-scoped grant (`company_id, profile_id, text, context` —
+    `worker_id` and `channel` are withheld at the grant layer; channel defaults
+    to `'app'`). Write-only, so the insert must never chain `.select()` (the
+    ai_usage trap). Deliberately no status/triage columns — that is a later
+    decision (#120), taken once reports actually arrive.
 - **The worker roster is an ALLOWLIST in its own type system, never a filter
   over `roster`.** `packages/core/src/capabilities/worker/` holds four tools
   (`my_tasks`, `search_knowledge`, `declare_task_done`, `set_my_language`) in a

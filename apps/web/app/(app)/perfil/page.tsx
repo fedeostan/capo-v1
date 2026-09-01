@@ -54,6 +54,11 @@ export default async function PerfilPage() {
             <ListRow key={room.href} href={room.href} title={room.title} meta={room.sub} />
           ))}
         </Card>
+        {/* Same second card the drawer shows — two doors to one place, so the
+            two cannot drift (issue #120). */}
+        <Card padding="none">
+          <ListRow href="/perfil/reportar" title={t.report.row.title} meta={t.report.row.sub} />
+        </Card>
         <SignOutButton locale={locale} />
       </PullToRefresh>
     </div>

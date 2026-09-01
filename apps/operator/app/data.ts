@@ -1339,3 +1339,52 @@ export async function loadWelcomeResendContext(
     today,
   };
 }
+
+// ── problem reports (0042, issue #120) ──────────────────────────────────────
+// The ONLY read surface for `problem_reports`, by design: tenants hold no
+// SELECT on it at all (a crew report may be about the manager), so the reports
+// exist to be read here, cross-tenant, on the service role.
+//
+// `text` is untrusted free prose typed by a manager or a crew member. Render
+// it as data — React escapes it — and never feed it onward to anything that
+// treats text as instructions.
+
+export interface ProblemReportRow {
+  id: string;
+  created_at: string;
+  channel: string;
+  text: string;
+  context: unknown;
+  companyName: string;
+  /** The reporter, resolved: a manager's full_name or a worker's name. */
+  reporter: string;
+  audience: 'manager' | 'worker';
+}
+
+export async function loadProblemReports(): Promise<{ rows: ProblemReportRow[]; error: string | null }> {
+  const db = getDb();
+  const { data, error } = await db
+    .from('problem_reports')
+    .select('id, created_at, channel, text, context, worker_id, companies(name), workers(name), profiles(full_name)')
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) {
+    // Most likely 42P01 while 0042 is unapplied. Shown on the page rather than
+    // swallowed: an operator reading "no reports" off a missing table is the
+    // 0038 failure shape all over again.
+    return { rows: [], error: error.message };
+  }
+  return {
+    rows: (data ?? []).map(row => ({
+      id: row.id,
+      created_at: row.created_at,
+      channel: row.channel,
+      text: row.text,
+      context: row.context,
+      companyName: row.companies?.name ?? '—',
+      reporter: row.worker_id ? (row.workers?.name ?? 'Worker') : (row.profiles?.full_name ?? 'Manager'),
+      audience: row.worker_id ? 'worker' : 'manager',
+    })),
+    error: null,
+  };
+}

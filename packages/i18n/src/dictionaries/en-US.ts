@@ -641,6 +641,18 @@ const dict: Catalog = {
     },
   },
 
+  report: {
+    row: { title: 'Report a problem', sub: "Tell us what isn't working" },
+    intro:
+      "Tell us what went wrong, in your own words. It goes straight to the Capo team, along with the screen details — no need to explain where you were.",
+    label: 'What happened?',
+    placeholder: 'E.g.: the materials list shows the same tile twice',
+    submit: 'Send',
+    sent: "Got it, thanks. The Capo team will take a look.",
+    empty: 'Write what happened first.',
+    failed: "Couldn't log the report. Try again.",
+  },
+
   settings: {
     language: 'Language',
     languageHint:
@@ -859,6 +871,10 @@ const dict: Catalog = {
     checkinError: "I couldn't record your answer. Talk to your foreman.",
     stillWorking: "Still working on this, boss — one more moment.",
     workerStillWorking: "Still looking into this — one more moment.",
+    reportPrompt:
+      "Tell me what's wrong with the app or my messages — your next message gets logged for the Capo team.",
+    reportAck: 'Got it, thanks. Logged for the Capo team to look at.',
+    reportFailed: "I couldn't log your report just now. Please try again in a bit.",
   },
 
   dia: {

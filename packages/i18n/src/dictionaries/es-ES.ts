@@ -641,6 +641,18 @@ const dict: Catalog = {
     },
   },
 
+  report: {
+    row: { title: 'Informar de un problema', sub: 'Cuéntanos qué no está funcionando' },
+    intro:
+      'Cuenta qué ha ido mal, con tus palabras. Va directo al equipo de Capo, junto con la información de la pantalla — no hace falta que expliques dónde estabas.',
+    label: '¿Qué ha pasado?',
+    placeholder: 'Ej.: la lista de materiales muestra el mismo azulejo dos veces',
+    submit: 'Enviar',
+    sent: 'Recibido, gracias. El equipo de Capo le echará un vistazo.',
+    empty: 'Escribe primero qué ha pasado.',
+    failed: 'No se ha podido registrar el aviso. Inténtalo otra vez.',
+  },
+
   settings: {
     language: 'Idioma',
     languageHint:
@@ -860,6 +872,10 @@ const dict: Catalog = {
     checkinError: 'No he podido registrar tu respuesta. Habla con tu encargado.',
     stillWorking: 'Sigo con ello, jefe — dame un momento más.',
     workerStillWorking: 'Sigo mirándolo — dame un momento más.',
+    reportPrompt:
+      'Dime qué está fallando en la aplicación o en mis mensajes — tu próximo mensaje queda registrado para el equipo de Capo.',
+    reportAck: 'Recibido, gracias. Queda registrado para que el equipo de Capo le eche un vistazo.',
+    reportFailed: 'No he podido registrar tu aviso ahora. Inténtalo otra vez en un rato.',
   },
 
   dia: {

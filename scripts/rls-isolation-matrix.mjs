@@ -393,6 +393,33 @@ async function seedTenant(label) {
     `worker_message(${label})`,
   );
 
+  // A worker PROBLEM REPORT (0042, issue #120), carrying the SAME tracer.
+  // Written as the service role, which is the only writer of
+  // channel='whatsapp' rows in production too — the WhatsApp webhook. A report
+  // is worker-authored prose stored for the OPERATOR, which makes it the THIRD
+  // seeded source of worker text: checkWorkerTextIsolation asserts it landed
+  // here (positive control) and then sweeps the four manager-context tables
+  // for the tracer, so the day some change starts quoting a report into the
+  // thread, a summary, a memory or a card, that sweep fails.
+  const problemReport = await must(
+    admin.from('problem_reports').insert({
+      company_id: companyId, worker_id: worker.id, channel: 'whatsapp',
+      text: `report ${label} ${run} ${workerSecret}`,
+      context: { source: 'whatsapp', via: 'armed' },
+    }).select().single(),
+    `problem_report(${label})`,
+  );
+
+  // An OPEN report staging row (0042) for the adversarial repoint/erase
+  // attacks below — the same job photoRequest does for 0034.
+  const reportRequest = await must(
+    admin.from('problem_report_requests').insert({
+      company_id: companyId, worker_id: worker.id,
+      expires_at: new Date(Date.now() + 1800_000).toISOString(),
+    }).select().single(),
+    `problem_report_request(${label})`,
+  );
+
   // A COMPLETED batch whose single item is APPLIED — i.e. one that
   // revert_translation_batch would genuinely act on. Seeding it 'pending'
   // instead would make the adversarial check below pass for the wrong reason
@@ -574,6 +601,7 @@ async function seedTenant(label) {
     workerBsuid: worker.whatsapp_user_id, jobId: job.id, taskIds: [task1.id, task2.id],
     conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
     photoPath, checkinAskId: checkinAsk.id, photoRequestId: photoRequest.id,
+    problemReportId: problemReport.id, reportRequestId: reportRequest.id,
     colleagueId, ownNotificationId, colleagueNotificationId,
     companyMemoryId: companyMemory.id, ownMemoryId: ownMemory.id, colleagueMemoryId: colleagueMemory.id,
     pushEndpoint, colleaguePushEndpoint,
@@ -677,6 +705,9 @@ async function cleanupTenant(t) {
   await companyEq(admin.from('conversations').delete());
   // Before workers: worker_checkins.worker_id is a FK.
   await companyEq(admin.from('worker_checkins').delete());
+  // Before workers and profiles: both 0042 tables hold FKs to each.
+  await companyEq(admin.from('problem_reports').delete());
+  await companyEq(admin.from('problem_report_requests').delete());
   // Before workers and before notification_log: checkin_photo_requests holds a
   // FK to each (0034).
   await companyEq(admin.from('checkin_photo_requests').delete());
@@ -851,6 +882,28 @@ async function runMatrix(self, other) {
   {
     const { data, error } = await db.from('worker_day_links').select('token');
     check(`${L}: worker_day_links deny-all (bonus)`, ...readIsDenied(data, error));
+  }
+
+  // problem_reports (0042, issue #120) — write-only for tenants, like ai_usage
+  // below: an INSERT policy exists (the app's report form writes on the
+  // tenant's own client) but there is no SELECT policy and no SELECT grant,
+  // because a crew member's report may be ABOUT the manager and #128's
+  // decision is that reports are read in the operator app only. Both tenants'
+  // seeded reports exist by the time this runs, so a policy exposing the table
+  // would show rows here.
+  {
+    const { data, error } = await db.from('problem_reports').select('id');
+    check(`${L}: problem_reports read deny-all (bonus)`, ...readIsDenied(data, error));
+  }
+
+  // problem_report_requests (0042) — deny-all with every grant revoked,
+  // checkin_photo_requests' posture. A row says "this person's next WhatsApp
+  // message is quietly diverted into the report table": reading one tells an
+  // attacker who is mid-report; writing one diverts a colleague's next
+  // message.
+  {
+    const { data, error } = await db.from('problem_report_requests').select('id');
+    check(`${L}: problem_report_requests deny-all (bonus)`, ...readIsDenied(data, error));
   }
 
   // ai_usage (0032) — the THIRD ledger, and the only one with a tenant policy
@@ -1223,6 +1276,172 @@ async function runAdversarial(attacker, victim) {
       .eq('id', attacker.photoRequestId);
     check(
       'adversarial: tenant DELETE of its own check-in photo request blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
+
+  // ── 0042 problem_reports (issue #120) ────────────────────────────────────
+  // Write-only for tenants: an INSERT policy pins company_id to the caller's
+  // own company and profile_id to auth.uid(), and the column-scoped grant
+  // (company_id, profile_id, text, context) withholds worker_id and channel
+  // entirely. Four refusals and a positive control — the refusals alone would
+  // pass on a table nobody can write to, and then the app's report button
+  // would be a form that swallows every report silently.
+
+  // Attack: file a report into another company. company_id is what the policy
+  // pins, so this is the whole cross-tenant claim.
+  {
+    const { error } = await db.from('problem_reports').insert({
+      company_id: victim.companyId,
+      profile_id: attacker.userId,
+      text: 'forged cross-tenant report',
+    });
+    check(
+      'adversarial: tenant cannot file a problem report into another company',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — cross-tenant report forgery',
+    );
+    if (!error) {
+      await admin.from('problem_reports').delete()
+        .eq('company_id', victim.companyId).eq('text', 'forged cross-tenant report');
+    }
+  }
+
+  // Attack: file a report in a COLLEAGUE's name. profile_id = auth.uid() in
+  // the policy is the reporter attribution — the operator reads these as "who
+  // said the app is broken", and a forged reporter would put words in a real
+  // colleague's mouth on a screen Federico acts on.
+  {
+    const { error } = await db.from('problem_reports').insert({
+      company_id: attacker.companyId,
+      profile_id: attacker.colleagueId,
+      text: 'forged colleague report',
+    });
+    check(
+      "adversarial: tenant cannot file a report in a colleague's name",
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — reporter attribution forgeable',
+    );
+    if (!error) {
+      await admin.from('problem_reports').delete()
+        .eq('company_id', attacker.companyId).eq('text', 'forged colleague report');
+    }
+  }
+
+  // Attack: file a report AS A CREW MEMBER. worker_id is absent from the
+  // column grant, so this is refused at the grant layer (42501) before the
+  // policy is even consulted — a manager must not be able to put words in
+  // their own crew's mouths either.
+  {
+    const { error } = await db.from('problem_reports').insert({
+      company_id: attacker.companyId,
+      worker_id: attacker.workerId,
+      text: 'forged worker report',
+    });
+    check(
+      "adversarial: tenant cannot file a report as a crew member (worker_id not granted)",
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — crew attribution forgeable',
+    );
+    if (!error) {
+      await admin.from('problem_reports').delete()
+        .eq('company_id', attacker.companyId).eq('text', 'forged worker report');
+    }
+  }
+
+  // Attack: claim the WhatsApp channel from the app. channel is absent from
+  // the grant and defaults to 'app'; the policy's channel = 'app' is the
+  // belt-and-braces restatement.
+  {
+    const { error } = await db.from('problem_reports').insert({
+      company_id: attacker.companyId,
+      profile_id: attacker.userId,
+      channel: 'whatsapp',
+      text: 'forged channel report',
+    });
+    check(
+      'adversarial: tenant cannot claim the whatsapp channel (channel not granted)',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — channel forgeable',
+    );
+    if (!error) {
+      await admin.from('problem_reports').delete()
+        .eq('company_id', attacker.companyId).eq('text', 'forged channel report');
+    }
+  }
+
+  // POSITIVE CONTROL. Every check above asserts a refusal, so a dropped
+  // policy or a revoked grant would pass all four while the app's report form
+  // silently stopped working. Mirrors the server action EXACTLY
+  // (apps/web/app/(app)/perfil/reportar/actions.ts): NO `.select()` chained —
+  // problem_reports is write-only for a tenant, RETURNING needs the SELECT
+  // nobody holds, and `.insert(...).select('id')` would be refused 42501 on a
+  // perfectly healthy database (the ai_usage trap). The row is confirmed on
+  // the service role, the only actor that can read this table at all.
+  {
+    const marker = `own report ${attacker.label} ${Date.now()}`;
+    const { error } = await db.from('problem_reports').insert({
+      company_id: attacker.companyId,
+      profile_id: attacker.userId,
+      text: marker,
+      context: { source: 'app', screen: '/perfil/reportar' },
+    });
+    const { data: landed } = await admin
+      .from('problem_reports')
+      .select('id, channel')
+      .eq('company_id', attacker.companyId)
+      .eq('text', marker);
+    check(
+      'positive control: a manager CAN file their own report from the app',
+      !error && (landed ?? []).length === 1 && landed[0].channel === 'app',
+      error ? error.message : `${(landed ?? []).length} rows, channel=${landed?.[0]?.channel}`,
+    );
+    if ((landed ?? []).length > 0) {
+      await admin.from('problem_reports').delete().in('id', landed.map(r => r.id));
+    }
+  }
+
+  // ── 0042 problem_report_requests (issue #120) ────────────────────────────
+  // Deny-all with every grant revoked — checkin_photo_requests' posture, and
+  // the same three attacks for the same reasons. A row here says "this
+  // person's next WhatsApp message is diverted into the report table": INSERT
+  // arms that against a crew member of the attacker's choosing, UPDATE
+  // repoints or immortalises an existing one, DELETE erases the trail.
+  {
+    const { error } = await db.from('problem_report_requests').insert({
+      company_id: attacker.companyId,
+      worker_id: attacker.helperWorkerId,
+      expires_at: new Date(Date.now() + 1800_000).toISOString(),
+    });
+    check(
+      'adversarial: tenant arming a report capture blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : "ACCEPTED — a tenant can divert a colleague's next message!",
+    );
+    if (!error) {
+      await admin.from('problem_report_requests').delete()
+        .eq('company_id', attacker.companyId).eq('worker_id', attacker.helperWorkerId);
+    }
+  }
+  {
+    const { error } = await db
+      .from('problem_report_requests')
+      .update({ expires_at: new Date(Date.now() + 86_400_000).toISOString() })
+      .eq('id', attacker.reportRequestId);
+    check(
+      'adversarial: tenant immortalising a report capture blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — update grant leaked',
+    );
+  }
+  {
+    const { error } = await db
+      .from('problem_report_requests')
+      .delete()
+      .eq('id', attacker.reportRequestId);
+    check(
+      'adversarial: tenant DELETE of a report capture blocked',
       error != null,
       error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
     );
@@ -2206,6 +2425,24 @@ async function checkWorkerTextIsolation(tenant) {
       `${L}: the review note IS worker-authored text (positive control)`,
       (data?.note ?? '').includes(secret),
       JSON.stringify(data?.note ?? null),
+    );
+  }
+
+  // Third positive control (issue #120): the tracer really is in the worker's
+  // problem report too. A report is the third seeded source of worker-authored
+  // text — after the worker thread and the review note — and without this
+  // assertion, a change that stopped writing report text (or wrote it
+  // elsewhere) would make every sweep below pass for the wrong reason.
+  {
+    const { data } = await admin
+      .from('problem_reports')
+      .select('text')
+      .eq('id', tenant.problemReportId)
+      .maybeSingle();
+    check(
+      `${L}: the problem report IS worker-authored text (positive control)`,
+      (data?.text ?? '').includes(secret),
+      JSON.stringify(data?.text ?? null),
     );
   }
 

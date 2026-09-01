@@ -647,6 +647,18 @@ const dict: Catalog = {
     },
   },
 
+  report: {
+    row: { title: 'Reportar um problema', sub: 'Diz-nos o que não está a funcionar' },
+    intro:
+      'Conta o que correu mal, nas tuas palavras. Vai direto para a equipa do Capo, junto com a informação do ecrã — não precisas de explicar onde estavas.',
+    label: 'O que aconteceu?',
+    placeholder: 'Ex.: a lista de materiais mostra o mesmo azulejo duas vezes',
+    submit: 'Enviar',
+    sent: 'Recebido, obrigado. A equipa do Capo vai dar uma olhada.',
+    empty: 'Escreve primeiro o que aconteceu.',
+    failed: 'Não foi possível registar o reporte. Tenta outra vez.',
+  },
+
   settings: {
     language: 'Idioma',
     languageHint:
@@ -865,6 +877,10 @@ const dict: Catalog = {
     checkinError: 'Não consegui registar a tua resposta. Fala com o teu encarregado.',
     stillWorking: 'Continuo a tratar disso, chefe — só mais um bocadinho.',
     workerStillWorking: 'Continuo a ver isso — só mais um bocadinho.',
+    reportPrompt:
+      'Diz-me o que está mal na aplicação ou nas minhas mensagens — a tua próxima mensagem fica registada para a equipa do Capo.',
+    reportAck: 'Recebido, obrigado. Ficou registado para a equipa do Capo dar uma olhada.',
+    reportFailed: 'Não consegui registar o teu reporte agora. Tenta outra vez daqui a pouco.',
   },
 
   dia: {
