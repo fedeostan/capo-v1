@@ -46,9 +46,11 @@ import {
   photoRequestLive,
   type ClaimResult,
 } from '../../../lib/checkin-photo';
+import { dayLinkUrl, mintDayLinks } from '../../../lib/day-link';
 import { logEvent } from '../../../lib/log';
-import { consentCommand, languageCommand, menuCommand } from '../../../lib/worker-keywords';
+import { consentCommand, detailCommand, languageCommand, menuCommand } from '../../../lib/worker-keywords';
 import {
+  buildWorkerMenu,
   findWorkerTask,
   loadWorkerMenu,
   renderTaskDetail,
@@ -56,7 +58,11 @@ import {
 import { type WhatsAppEnv } from '../../../lib/whatsapp';
 import { sendTurnFailureReply } from '../../../lib/turn-failure';
 import { acknowledgeInbound, withProgressNote } from '../../../lib/whatsapp-feedback';
-import { renderCheckinAnswerEvent } from '../../notifications/briefing';
+import {
+  loadWorkerBriefing,
+  renderCheckinAnswerEvent,
+  renderWorkerFreeForm,
+} from '../../notifications/briefing';
 import { readThreadLocale, recordThreadEvent } from '../../notifications/thread';
 
 // WhatsApp manager channel — Meta Cloud API webhook (see
@@ -1481,6 +1487,121 @@ async function sendWorkerMenu(
 }
 
 /**
+ * Send the FULL free-form briefing because the worker answered the knock
+ * (issue #108) — "OK", or DETALHE and friends.
+ *
+ * The same seams as the 07:00 in-window send, deliberately: loadWorkerBriefing
+ * fans out the same task_board rows through the same BRIEFABLE filter,
+ * renderWorkerFreeForm lays them out, and buildWorkerMenu wraps them in the
+ * same tappable list where it fits — ONE fan-out, ONE renderer (AGENTS.md). A
+ * second rendering of "your day" would eventually disagree with the morning
+ * one, and a worker holding both messages could not tell which was right.
+ *
+ * ⚠ NO TEMPLATE FALLBACK, unlike the cron's deliverBriefing. This runs in
+ * reply to inbound text, and a paid send triggered by inbound text is a
+ * cost-amplification vector the sender controls — the same rule the agent
+ * path's 131047 catch states. Out-of-window here means Meta and our clock
+ * disagree about a window opened seconds ago: log it, send nothing.
+ *
+ * The /dia link rides along exactly as it does at 07:00. mintDayLinks is
+ * idempotent per worker per Lisbon day, so answering the knock re-reads the
+ * morning's token rather than minting a second live credential; a worker
+ * whose 07:00 template could not carry the link (toTemplateParam flattens it,
+ * AGENTS.md) gets it HERE, on their first reply — which is the follow-up the
+ * /dia section of AGENTS.md left open.
+ */
+async function sendWorkerDayDetail(
+  db: Db,
+  worker: WorkerMatch,
+  locale: Locale,
+  sendConfig: WhatsAppSendConfig,
+): Promise<void> {
+  const t = getCatalog(locale).whatsapp;
+  try {
+    const briefing = await loadWorkerBriefing(db, {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      name: worker.name,
+      recipient: sendConfig.recipient,
+      locale,
+      hasChosenLanguage: !!worker.language,
+    });
+
+    // One clock: the same lisbon_today() the cron and the /dia page read. A
+    // failed clock costs the link line, never the reply — same posture as
+    // mintDayLinks itself, which swallows every failure into a Map of nothing.
+    const { data: today } = await db.rpc('lisbon_today');
+    const links = today
+      ? await mintDayLinks(db, { companyId: worker.company_id, workerIds: [worker.id], today })
+      : new Map<string, string>();
+    const token = links.get(worker.id);
+    const body = renderWorkerFreeForm(briefing, {
+      dayLinkUrl: token ? dayLinkUrl(token) : undefined,
+    });
+
+    // Lead tasks only behind the tappable rows, for the reason the cron gives:
+    // a tap is answered by findWorkerTask, which knows only tasks this person
+    // LEADS — offering a helper's task as a row would hand them a button that
+    // answers "that task is not yours" about a task named two lines up.
+    const menuTasks = briefing.tasks.filter(task => task.role === 'lead');
+    const list = menuTasks.length === 0 ? null : buildWorkerMenu({ tasks: menuTasks, body, locale });
+
+    if (list) {
+      try {
+        await sendWhatsAppList(list, sendConfig);
+        logEvent('whatsapp.day_detail_sent', {
+          companyId: worker.company_id,
+          workerId: worker.id,
+          tasks: briefing.tasks.length,
+          path: 'menu',
+        });
+        return;
+      } catch (err) {
+        // Meta rejected OUR payload — a 4xx that is not the window. Plain text
+        // carries more than the list could have, so fall through to it.
+        // Anything else is rethrown: a socket reset may have delivered the
+        // list already, and falling through would send the day twice. Same
+        // narrowing, for the same reason, as deliverBriefing's.
+        const rejected =
+          err instanceof WhatsAppSendError && err.status >= 400 && err.status < 500 && err.code !== 131047;
+        if (!rejected) throw err;
+        logEvent('whatsapp.day_detail_list_rejected', {
+          companyId: worker.company_id,
+          workerId: worker.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    await sendWhatsAppText(body, sendConfig);
+    logEvent('whatsapp.day_detail_sent', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      tasks: briefing.tasks.length,
+      path: 'free_form',
+    });
+  } catch (err) {
+    // 131047 = outside the free-form window. See the function comment: never
+    // answered with a template, only logged — silence is the safe direction.
+    if (err instanceof WhatsAppSendError && err.code === 131047) {
+      logEvent('whatsapp.day_detail_window_expired', {
+        companyId: worker.company_id,
+        workerId: worker.id,
+      });
+      return;
+    }
+    logEvent('whatsapp.day_detail_failed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    // Silence after a reply the template itself asked for reads as "Capo is
+    // broken" — the same rule every other tap and keyword follows.
+    await sendWhatsAppText(t.workerAgentFailed, sendConfig).catch(() => {});
+  }
+}
+
+/**
  * Take in the photos attached to ONE inbound message.
  *
  * Downloaded synchronously, here and now, exactly as audio is: hop 1's media
@@ -1778,6 +1899,8 @@ async function handleWorkerReply(
   // took. Without that, "the agent answered a message that should have been a
   // menu" is invisible.
   const wantsMenu = message.type === 'text' ? menuCommand(message.text?.body) : false;
+  // The knock's answer (issue #108) — "OK", or asking for the detail in a word.
+  const wantsDetail = message.type === 'text' ? detailCommand(message.text?.body) : false;
 
   logEvent('whatsapp.worker_reply', {
     companyId: worker.company_id,
@@ -1785,10 +1908,11 @@ async function handleWorkerReply(
     messageId: message.id,
     type: message.type,
     // The message body is deliberately NOT logged — it is third-party content.
-    // These two are the recognised keywords, not the text, so they are safe.
+    // These are the recognised keywords, not the text, so they are safe.
     languageCommand: requested ?? undefined,
     consentCommand: consent ?? undefined,
     menuCommand: wantsMenu || undefined,
+    detailCommand: wantsDetail || undefined,
   });
 
   // Send-, not sink-config: a worker ack carries no approval buttons, and
@@ -1927,6 +2051,19 @@ async function handleWorkerReply(
   // a request for a list we can render from a table.
   if (wantsMenu) {
     await sendWorkerMenu(db, worker, current, sendConfig);
+    return true;
+  }
+
+  // THE KNOCK'S ANSWER — OK / DETALHE (issue #108). The paid morning template
+  // can only carry one flat line, so since #108 it knocks ("3 tarefas hoje —
+  // responde OK para veres o detalhe") and THIS is where the promised reply
+  // lands. The worker's own message just opened Meta's free-form window, so
+  // the full briefing — the same one an in-window worker gets at 07:00 — is
+  // now legal and free. Zero model calls, same family as the menu keyword
+  // above; disjoint from all three older tables, so the order between them
+  // cannot change any outcome.
+  if (wantsDetail) {
+    await sendWorkerDayDetail(db, worker, current, sendConfig);
     return true;
   }
 

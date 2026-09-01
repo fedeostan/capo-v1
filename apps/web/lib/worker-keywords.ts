@@ -112,3 +112,44 @@ export function menuCommand(text: string | undefined): boolean {
   if (!text) return false;
   return MENU_KEYWORDS.has(text.trim().toLowerCase());
 }
+
+/**
+ * Reply one of these, alone, and the FULL morning briefing arrives (issue #108).
+ *
+ * The fourth table. The paid template can only carry one flat line, so since
+ * #108 it knocks — "3 tarefas hoje — responde OK para veres o detalhe" — and
+ * the reply that knock asks for lands here. The reply is also what makes the
+ * answer legal: an inbound message opens Meta's 24-hour free-form window.
+ * Zero model calls in either direction — the day is a database read rendered
+ * by the same function the in-window 07:00 send uses.
+ *
+ * "ok." and "ok!" are listed literally because they are what thumbs actually
+ * type; the discipline is still a whole-message EXACT match, never a stripped
+ * or fuzzy one — "ok, e o material?" is a sentence, and it is the agent's.
+ *
+ * WORKER PATH ONLY, by placement rather than by flag: this table is consulted
+ * only in handleWorkerReply. A manager replying "ok" to their own briefing is
+ * talking to the full agent, which handles it conversationally.
+ *
+ * Deliberately ABSENT: bug / problema / erro / problem / error / fallo. Words
+ * that read as reporting something wrong must never be answered with a task
+ * list; `pnpm whatsapp-check` pins the absence.
+ */
+export const DETAIL_KEYWORDS = new Set([
+  'ok',
+  'ok.',
+  'ok!',
+  'okay',
+  'okey',
+  'detalhe',
+  'detalhes',
+  'detalle',
+  'detalles',
+  'detail',
+  'details',
+]);
+
+export function detailCommand(text: string | undefined): boolean {
+  if (!text) return false;
+  return DETAIL_KEYWORDS.has(text.trim().toLowerCase());
+}

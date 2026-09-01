@@ -200,6 +200,20 @@ export interface CompanyBriefing {
 const BRIEFABLE = new Set(['pending', 'in_progress']);
 
 /**
+ * The rows a morning briefing fans out: on today, in a status worth briefing.
+ *
+ * ONE definition, shared by loadCompanyBriefing (the 07:00 cron) and
+ * loadWorkerBriefing (the OK-reply path, issue #108). Two copies of this
+ * filter would eventually disagree, and the symptom would be a knock claiming
+ * three tasks whose "detail" then lists two.
+ */
+function briefableToday<T extends { active_today?: boolean | null; status?: string | null }>(
+  rows: T[],
+): T[] {
+  return rows.filter(r => r.active_today === true && BRIEFABLE.has(r.status ?? ''));
+}
+
+/**
  * One task_board row, narrowed to what the fan-out actually touches. Structural
  * rather than the generated view row for the same reason AddressableCrewRow is:
  * the same function has to serve a `select('*')` whose columns lead or lag the
@@ -326,7 +340,7 @@ export async function loadCompanyBriefing(
   if (crewError) throw new Error(`workers read failed: ${crewError.message}`);
 
   const open = rows ?? [];
-  const todayRows = open.filter(r => r.active_today === true && BRIEFABLE.has(r.status ?? ''));
+  const todayRows = briefableToday(open);
   const byWorker = fanOutTasks(todayRows);
 
   const { messageable: consenting, excludedNoConsent, excludedUnreachable, excludedInactive } =
@@ -356,6 +370,53 @@ export async function loadCompanyBriefing(
       unassigned: todayRows.filter(r => !r.assignee_worker_id).length,
       overdue: open.filter(r => r.overdue === true).length,
     },
+  };
+}
+
+/**
+ * ONE crew member's briefing, loaded outside the 07:00 fan-out (issue #108).
+ *
+ * For the knock's answer: a worker whose paid template said "responde OK para
+ * veres o detalhe" replies, their reply opens Meta's free-form window, and the
+ * webhook sends the full briefing. Same view, same filter, same fan-out as
+ * loadCompanyBriefing — the reply carries the SAME tasks the in-window morning
+ * send would have rendered, helper roles included, or the two messages could
+ * disagree about one person's day.
+ *
+ * Deliberately NOT consent-gated. partitionCrew guards PROACTIVE sends; this
+ * is a REPLY to the worker's own message, the same legal footing as the guided
+ * menu keyword, which has never consulted consent either.
+ */
+export async function loadWorkerBriefing(
+  db: Db,
+  args: {
+    companyId: string;
+    workerId: string;
+    name: string;
+    recipient: WhatsAppRecipient;
+    locale: Locale;
+    hasChosenLanguage: boolean;
+  },
+): Promise<WorkerBriefing> {
+  const { data, error } = await db
+    .from('task_board')
+    .select('*')
+    .eq('company_id', args.companyId)
+    .eq('is_open', true);
+  if (error) throw new Error(`task_board read failed: ${error.message}`);
+
+  return {
+    workerId: args.workerId,
+    name: args.name,
+    recipient: args.recipient,
+    locale: args.locale,
+    hasChosenLanguage: args.hasChosenLanguage,
+    tasks: fanOutTasks(briefableToday(data ?? [])).get(args.workerId) ?? [],
+    // Truthful by construction: this loader only ever runs in reply to an
+    // inbound message, seconds after it arrived. Nothing on the reply path
+    // reads the field — it exists for the template-vs-free-form decision,
+    // which a reply never makes.
+    lastInboundAt: new Date().toISOString(),
   };
 }
 
@@ -516,26 +577,34 @@ export interface WorkerBriefingOptions {
   languageHint?: boolean;
 }
 
+/**
+ * Append the language line to a {{2}} parameter, when the caller asked for it.
+ *
+ * Appended, never prepended: what the person needs is their work, and a
+ * control-surface note that pushed the task list down the message would be
+ * the same defect in a different place.
+ *
+ * The trailing full stop is normalised rather than assumed. `workerNothing`
+ * ends in one and a task list does not, and the hint itself deliberately
+ * carries none — because the approved template continues with a sentence of
+ * its own right after {{2}}. Get this wrong in either direction and the
+ * message reads "…de idioma.. Responde STOP…" or "…hoje Responde PT…", and
+ * only on the live send, to a crew member, on their first ever contact.
+ *
+ * ONE function for both template renderers (the check-in's task list and
+ * #108's knock), because this punctuation rule is exactly the kind of thing
+ * two copies would disagree about — invisibly, until a first contact.
+ */
+function appendLanguageHint(base: string, t: RemindersCopy, wanted: boolean | undefined): string {
+  return wanted ? `${base.replace(/\.\s*$/, '')}. ${t.languageHint}` : base;
+}
+
 export function renderWorkerBriefing(
   briefing: WorkerBriefing,
   options: WorkerBriefingOptions = {},
 ): [name: string, taskList: string] {
   const t = getCatalog(briefing.locale).reminders;
-
-  /**
-   * Appended, never prepended: what the person needs is their work, and a
-   * control-surface note that pushed the task list down the message would be
-   * the same defect in a different place.
-   *
-   * The trailing full stop is normalised rather than assumed. `workerNothing`
-   * ends in one and a task list does not, and the hint itself deliberately
-   * carries none — because the approved template continues with a sentence of
-   * its own right after {{2}}. Get this wrong in either direction and the
-   * message reads "…de idioma.. Responde STOP…" or "…hoje Responde PT…", and
-   * only on the live send, to a crew member, on their first ever contact.
-   */
-  const withHint = (base: string): string =>
-    options.languageHint ? `${base.replace(/\.\s*$/, '')}. ${t.languageHint}` : base;
+  const withHint = (base: string): string => appendLanguageHint(base, t, options.languageHint);
 
   if (briefing.tasks.length === 0) return [briefing.name, withHint(t.workerNothing)];
 
@@ -549,6 +618,42 @@ export function renderWorkerBriefing(
   if (ordered.length > shown.length) parts.push(t.andMore(ordered.length - shown.length));
 
   return [briefing.name, withHint(parts.join(t.taskSeparator))];
+}
+
+/**
+ * The KNOCK — the 07:00 template's {{2}} under issue #108's B-then-A decision.
+ *
+ * A template parameter is one flat line, so the old summary squashed the whole
+ * day into it: five titles glued with ' · ' and a "+N", which nobody read. The
+ * knock states the size of the day and asks for a reply instead — and the
+ * reply is the point: it opens Meta's 24-hour window, and the webhook answers
+ * it with the SAME full free-form briefing an in-window worker gets at 07:00
+ * (DETAIL_KEYWORDS in apps/web/lib/worker-keywords.ts).
+ *
+ * ⚠ THE CHECK-IN STILL RENDERS THE TASK LIST. /api/cron/checkin builds its own
+ * {{2}} ("Hoje tinhas: …. Já terminaste?") from renderWorkerBriefing, where a
+ * knock would read as nonsense — which is why this is a NEW function rather
+ * than a change to that one. renderWorkerBriefing keeps every behaviour it
+ * had, and the check-in path is untouched by #108.
+ *
+ * The zero-task line and the language-hint mechanics are renderWorkerBriefing's
+ * own, through the same helpers: an idle worker's message and a first-contact
+ * worker's language line must not depend on which renderer the route reached
+ * for. The overdue count uses the SAME predicate the old list used to label a
+ * task "atrasada Nd", so the knock never claims a lateness the list would not
+ * have shown.
+ */
+export function renderWorkerKnock(
+  briefing: WorkerBriefing,
+  options: WorkerBriefingOptions = {},
+): [name: string, knock: string] {
+  const t = getCatalog(briefing.locale).reminders;
+  const withHint = (base: string): string => appendLanguageHint(base, t, options.languageHint);
+
+  if (briefing.tasks.length === 0) return [briefing.name, withHint(t.workerNothing)];
+
+  const overdue = briefing.tasks.filter(task => task.overdue && task.days_overdue > 0).length;
+  return [briefing.name, withHint(t.workerKnock({ count: briefing.tasks.length, overdue }))];
 }
 
 // ── the free-form briefing (issue #46) ──────────────────────────────────────

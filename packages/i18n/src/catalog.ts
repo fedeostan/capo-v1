@@ -1407,6 +1407,27 @@ export interface Catalog {
     freeFormWith(names: string): string;
     /** A worker with nothing scheduled today. */
     workerNothing: string;
+    /**
+     * The KNOCK — the {{2}} of the paid morning template (issue #108).
+     *
+     * A worker outside their 24-hour window cannot legally be sent the full
+     * free-form briefing, and a template parameter is one flat line — so the
+     * template no longer squeezes the task list into it. It states the size of
+     * the day and asks for a reply ("responde OK"), and the reply itself opens
+     * the window the full briefing then rides in on, free.
+     *
+     * `overdue` is how many of the day's tasks are already late; 0 means say
+     * nothing about lateness. The zero-task day never reaches this string —
+     * renderWorkerKnock answers `workerNothing` for it, exactly as the old
+     * task-list renderer did.
+     *
+     * ⚠ ONE LINE, NO TRAILING FULL STOP — the same rule as `languageHint`, for
+     * the same reason: until every locale of capo_daily_briefing_v2 is
+     * approved, this rides {{2}} on the OLD template body too, which continues
+     * "…{{2}}. Responde STOP…" straight afterwards, so a full stop here
+     * renders as ".." on a live send.
+     */
+    workerKnock(args: { count: number; overdue: number }): string;
     /** The manager's one-line WhatsApp summary. */
     managerSummary(counts: { today: number; unassigned: number; overdue: number }): string;
     /** The manager's line when the company has nothing on today. */
