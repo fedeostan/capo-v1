@@ -39,11 +39,11 @@ export default async function ObraDetailPage({ params }: { params: Promise<{ id:
             should not have to be inferred from a status word. Quiet styling —
             a paused obra is a decision, not a problem. */}
         {detail.job.status === 'paused' && (
-          <p className="rounded-xl border border-dashed border-zinc-500/40 p-3 text-xs text-zinc-500">
+          <p className="rounded-card border border-dashed border-hairline p-3 text-caption text-fg-muted">
             {t.screens.jobDetail.paused}
           </p>
         )}
-        <p className="text-xs text-zinc-500">
+        <p className="text-caption text-fg-muted">
           {total > 0 ? t.dashboard.tasksDone(done, total) : t.dashboard.noTasksRegistered}
         </p>
         <TimelineList

@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
+import { Button } from '@capo/ui/button';
 import { markAllRead } from './actions';
 
 /**
@@ -19,8 +20,9 @@ export default function MarkAllRead({ locale }: { locale: Locale }) {
 
   return (
     <div className="text-right">
-      <button
-        type="button"
+      <Button
+        variant="secondary"
+        size="sm"
         disabled={pending}
         onClick={() => {
           setError(null);
@@ -32,11 +34,10 @@ export default function MarkAllRead({ locale }: { locale: Locale }) {
             }
           });
         }}
-        className="rounded-lg border border-zinc-500/30 px-2 py-1 text-xs hover:bg-zinc-500/10 disabled:opacity-50"
       >
         {t.markAllRead}
-      </button>
-      {error && <p className="mt-1 text-[11px] text-red-600">{error}</p>}
+      </Button>
+      {error && <p className="mt-1 text-caption text-danger">{error}</p>}
     </div>
   );
 }

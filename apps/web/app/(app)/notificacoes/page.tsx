@@ -47,11 +47,11 @@ function Item({ item, t }: { item: InboxItem; t: Catalog }) {
         {/* The blue dot. aria-hidden with a text label beside it: colour
             alone is not a signal a screen reader can hear. */}
         {unread && (
-          <span aria-hidden className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-600" />
+          <span aria-hidden className="mt-2 h-2 w-2 shrink-0 rounded-full bg-info" />
         )}
-        <div className={`min-w-0 flex-1 ${unread ? '' : 'text-zinc-500'}`}>
-          <p className="text-sm">{headline(item, t)}</p>
-          <p className="mt-0.5 text-[11px] text-zinc-500">
+        <div className={`min-w-0 flex-1 ${unread ? 'text-fg' : 'text-fg-muted'}`}>
+          <p className="text-body">{headline(item, t)}</p>
+          <p className="mt-1 text-caption text-fg-faint">
             {unread && <span className="sr-only">{t.notifications.unread} · </span>}
             {stamp(item.createdAt, t)}
             {/* Whether the claim came with proof (issue #52). The SAME two
@@ -75,9 +75,9 @@ function Item({ item, t }: { item: InboxItem; t: Catalog }) {
           the same text: task_reviews.note, the one place worker-authored
           text reaches the manager. */}
       {item.body && (
-        <div className="mt-2 border-l-2 border-zinc-500/30 pl-2">
-          <p className="text-[11px] font-medium text-zinc-500">{t.notifications.noteLabel}</p>
-          <blockquote className="whitespace-pre-line break-words text-xs italic text-zinc-600 line-clamp-6 dark:text-zinc-400">
+        <div className="mt-2 border-l-2 border-hairline pl-2">
+          <p className="text-caption font-medium text-fg-muted">{t.notifications.noteLabel}</p>
+          <blockquote className="whitespace-pre-line break-words text-callout italic text-fg-muted line-clamp-6">
             “{item.body}”
           </blockquote>
         </div>
@@ -85,16 +85,19 @@ function Item({ item, t }: { item: InboxItem; t: Catalog }) {
     </>
   );
 
-  const className = `block rounded-xl border p-3 ${
-    unread ? 'border-blue-600/30 bg-blue-600/5' : 'border-zinc-500/20'
+  const className = `block rounded-card border p-3 ${
+    unread ? 'border-info/50 bg-info-quiet' : 'border-hairline bg-surface'
   }`;
 
   // No link when the subject no longer resolves — a dead end reads as a bug.
   if (!item.href) return <div className={className}>{body}</div>;
   return (
-    <Link href={item.href} className={`${className} hover:bg-zinc-500/5`}>
+    <Link
+      href={item.href}
+      className={`${className} no-underline transition-colors ease-out outline-none hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus`}
+    >
       {body}
-      <span className="mt-2 inline-block text-xs text-orange-600 underline">{t.notifications.openSubject}</span>
+      <span className="mt-2 inline-block text-caption text-brand underline">{t.notifications.openSubject}</span>
     </Link>
   );
 }
@@ -153,9 +156,9 @@ export default async function NotificacoesPage() {
             push being configured at all: without it /perfil's card does not
             render, so this link would land on nothing. */}
         {pushAvailable && (
-          <p className="mt-6 text-center text-xs text-zinc-500">
+          <p className="mt-6 text-center text-caption text-fg-muted">
             {t.notifications.pushNudge}{' '}
-            <Link href="/perfil" className="text-orange-600 underline">
+            <Link href="/perfil" className="text-brand underline">
               {t.notifications.pushNudgeLink}
             </Link>
           </p>
