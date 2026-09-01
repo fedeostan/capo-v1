@@ -695,6 +695,44 @@ export interface Catalog {
      */
     noConsentWarning: string;
     receivesWhatsApp: string;
+
+    /**
+     * The FOURTH state (issue #153), sitting BETWEEN consent and
+     * `receivesWhatsApp` — a number on file, consent recorded, and this person
+     * has still never written to Capo.
+     *
+     * The copy has to be precisely true, because the obvious sentence ("they
+     * get no messages until they reply") is FALSE and would send the manager
+     * chasing the wrong thing. The 07:00 message is a paid Meta TEMPLATE and
+     * goes out on the manager's recorded consent alone. What a first reply
+     * unlocks is everything free-form: Capo answering at all, the /dia day
+     * link (the template is pinned to two parameters with no button, so the
+     * link can only ride a free-form message), and the tappable list instead
+     * of plain text. So: Capo can talk AT them, not WITH them.
+     *
+     * Read from `workers.last_inbound_at` (0030), which is written by exactly
+     * one thing — a webhook delivery Capo resolved to that worker — so a value
+     * there is proof of a complete round trip, not merely of a send.
+     */
+    awaitingFirstReply: string;
+    /**
+     * The same state, escalated ONCE after several days of silence
+     * (FIRST_REPLY_CHASE_DAYS on the crew page). Deliberately a change of
+     * wording and tone on the SAME line rather than a new banner: a permanent
+     * warning is wallpaper within a week.
+     */
+    awaitingFirstReplyChase(p: { days: number }): string;
+    /** Label on the wa.me link that opens WhatsApp with the message below
+     *  already typed. The manager presses send; Capo sends nothing. */
+    firstReplyAction: string;
+    /**
+     * The prefilled message itself. It must read as the MANAGER's own words to
+     * their crew member — never as Capo talking — because it is sent from the
+     * manager's own phone and is signed by whoever forwards it. Short: managers
+     * ask their crew to do things all day; they need the words, not a workflow.
+     */
+    firstReplyMessage(p: { name: string }): string;
+
     /**
      * The cost of recording consent for the CREW (issue #45). Each person Capo
      * is newly allowed to message gets one welcome, and each welcome is a paid
