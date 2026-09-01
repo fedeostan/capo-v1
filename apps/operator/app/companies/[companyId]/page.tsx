@@ -475,7 +475,15 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold">Tasks</h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-sm font-semibold">Tasks</h2>
+          {/* The shape below is counts. Anything that needs a NAMED task — when
+              it was created, whether it ever moved, what was ever sent about
+              it — lives one click away on the filtered task list (#155). */}
+          <Link href={`/tasks?company=${company.id}`} className="text-xs text-fg-muted underline hover:text-fg">
+            Task by task →
+          </Link>
+        </div>
         {taskShape.total === 0 ? (
           <p className="text-sm text-fg-muted">No tasks yet.</p>
         ) : (
