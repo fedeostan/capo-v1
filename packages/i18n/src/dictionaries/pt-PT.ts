@@ -627,6 +627,13 @@ const dict: Catalog = {
     noWhatsAppWarning: 'Sem telemóvel — não recebe o WhatsApp das 07:00.',
     noConsentWarning: 'Falta autorização — pergunta-lhe se aceita receber mensagens e diz ao Capo.',
     receivesWhatsApp: 'recebe o WhatsApp das 07:00',
+    awaitingFirstReply:
+      'Recebe o WhatsApp das 07:00, mas ainda nunca escreveu ao Capo — até responder uma vez, o Capo não lhe consegue responder nem mandar-lhe o dia.',
+    awaitingFirstReplyChase: p =>
+      `Autorizado há ${p.days} dia${p.days === 1 ? '' : 's'} e ainda nunca escreveu ao Capo. Até responder uma vez, o Capo não lhe consegue responder nem mandar-lhe o dia — vale a pena pedires-lhe em pessoa.`,
+    firstReplyAction: 'Mandar-lhe uma mensagem',
+    firstReplyMessage: p =>
+      `Olá ${p.name}. Adicionei-te ao Capo — é ele que te manda as tarefas do dia por WhatsApp. Responde-lhe uma vez, nem que seja «sim»: sem isso ele consegue enviar-te mensagens, mas não te consegue responder nem mandar-te o teu dia.`,
     welcomeCostHint:
       'Quando dizes ao Capo que alguém aceita receber mensagens, o Capo apresenta-se a essa pessoa uma vez no WhatsApp. É uma mensagem paga por pessoa — uma equipa de 20 são 20 mensagens.',
     teamHint: 'Para adicionar ou alterar alguém,',

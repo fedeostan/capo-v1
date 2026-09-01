@@ -114,7 +114,26 @@ export interface CardStrings {
     endsOn(v: string): string;
   };
 
-  addWorker(p: { name: string; trade?: string; phone?: string }): string;
+  /**
+   * `optIn` is the manager's consent attestation, and it buys exactly one
+   * extra sentence: the ask to tell this person to reply once (issue #153).
+   *
+   * It lives on the CARD rather than in add_worker's return value on purpose.
+   * `confirm_posture` defaults to `always_ask`, so for every manager who has
+   * not changed it every add_worker is an approval card — and on that path
+   * resolveProposal DISCARDS the tool result: the web route and the WhatsApp
+   * handler both show the manager `rendered_text` (echoed again by
+   * events.approved) and nothing else. A sentence returned from the tool would
+   * therefore be invisible to almost everybody, and model-mediated for the
+   * rest. Here it is deterministic and read twice — once when deciding, once
+   * when it is done.
+   *
+   * Only when consent is being recorded AND a number is on file, because those
+   * are the two conditions under which Capo will actually send a first message
+   * for the person to reply to. Without them the manager's next job is the one
+   * the crew card already names, and a second ask would just be noise.
+   */
+  addWorker(p: { name: string; trade?: string; phone?: string; optIn?: boolean }): string;
   updateWorker(p: { name: string; changes: string[] }): string;
   workerChange: {
     name(v: string): string;

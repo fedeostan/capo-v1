@@ -317,13 +317,25 @@ export async function loadObraOptions({ db, companyId }: AuthContext): Promise<O
 }
 
 // The Equipa card on /perfil.
+//
+// select('*'), so `last_inbound_at` (0030) rides along without being named —
+// the crew screen reads it to tell "receives the 07:00 WhatsApp" apart from
+// "receives it but has never once written back" (issue #153). Naming the
+// column would couple this read to that migration for no gain.
+//
+// The failure is LOGGED rather than swallowed silently, and that is the point
+// of the line: every state on this card is derived from these rows, so a read
+// that fails renders an EMPTY crew — and a read that half-fails would have the
+// screen telling the manager "still nothing" about somebody who replied
+// perfectly. Same posture as home-data.ts: swallowed, but greppable.
 export async function loadTeam({ db, companyId }: AuthContext): Promise<Tables<'workers'>[]> {
-  const { data } = await db
+  const { data, error } = await db
     .from('workers')
     .select('*')
     .eq('company_id', companyId)
     .order('active', { ascending: false })
     .order('name', { ascending: true });
+  if (error) console.warn('profile.team_read_failed', error.message);
   return data ?? [];
 }
 

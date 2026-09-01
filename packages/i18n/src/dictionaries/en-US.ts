@@ -621,6 +621,13 @@ const dict: Catalog = {
     noWhatsAppWarning: 'No phone number — gets nothing from the 07:00 WhatsApp.',
     noConsentWarning: "No consent on record — ask if they're happy to receive messages, then tell Capo.",
     receivesWhatsApp: 'gets the 07:00 WhatsApp',
+    awaitingFirstReply:
+      "Gets the 07:00 WhatsApp, but has never written to Capo — until they reply once, Capo can't answer them or send them their day.",
+    awaitingFirstReplyChase: p =>
+      `Consent on record for ${p.days} day${p.days === 1 ? '' : 's'} and still no reply to Capo. Until they write once, Capo can't answer them or send them their day — worth asking them in person.`,
+    firstReplyAction: 'Send them a message',
+    firstReplyMessage: p =>
+      `Hi ${p.name}. I've added you to Capo — it's what sends you the day's work on WhatsApp. Reply to it once, even just "yes": without that it can send you messages, but it can't answer you or send you your day.`,
     welcomeCostHint:
       'When you tell Capo that someone agrees to receive messages, Capo introduces itself to them once on WhatsApp. That is one paid message per person — a crew of 20 is 20 messages.',
     teamHint: 'To add or change someone,',
