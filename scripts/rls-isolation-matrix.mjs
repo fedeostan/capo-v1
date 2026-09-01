@@ -48,10 +48,14 @@
 // note when the late-afternoon check-in goes out, and one note per crew member
 // who taps an answer to it. Those notes may carry counts, crew NAMES (typed by
 // the manager) and which of two buttons was tapped; they may never carry
-// worker-authored prose. So the tracer is now seeded in TWO places: the worker
-// agent's own thread, and `task_reviews.note` — the one column where a crew
-// member's words legitimately reach the manager, and therefore the one a
-// well-meaning "let's also quote what they said" change would draw from.
+// worker-authored prose. So the tracer is seeded in every place a crew
+// member's words legitimately live — the worker agent's own thread,
+// `task_reviews.note`, `problem_reports.text` (#120) and, since #152,
+// `worker_requests.text` — because those are exactly the columns a
+// well-meaning "let's also quote what they said" change would draw from. The
+// last one is the sharpest: a request is DESIGNED to be shown to the manager on
+// three surfaces, and it already has a chat-thread note beside it that is
+// allowed to carry a crew NAME and a date and nothing else.
 //
 // 0023 is the first surface here that is not only Postgres. task_photos is an
 // ordinary RLS table and rides in the visibility matrix like any other, but
@@ -410,6 +414,31 @@ async function seedTenant(label) {
     `problem_report(${label})`,
   );
 
+  // A CREW REQUEST (0043, issue #152), carrying the SAME tracer. Written as the
+  // service role, which is the only writer in production too — the WhatsApp
+  // webhook, through the fifth worker tool. A request is worker-authored prose
+  // that the MANAGER is meant to read, which makes it the FOURTH seeded source
+  // of worker text: checkWorkerTextIsolation asserts it landed here (positive
+  // control) and then sweeps the four manager-context tables for the tracer, so
+  // the day some change starts quoting a request into the thread, a summary, a
+  // memory or a card, that sweep fails. That is the whole reason it is seeded
+  // rather than merely attacked: a request is deliberately shown to the manager
+  // on three surfaces, and "shown to the manager" is one careless step away
+  // from "written into the manager's agent context".
+  //
+  // `needed_by` is set so the row also exercises the urgency column; nothing in
+  // this file asserts on it (the arithmetic is pinned by pnpm whatsapp-check,
+  // credential-free).
+  const workerRequest = await must(
+    admin.from('worker_requests').insert({
+      company_id: companyId, worker_id: worker.id, task_id: task1.id,
+      text: `request ${label} ${run} ${workerSecret}`,
+      category: 'material',
+      needed_by: new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
+    }).select().single(),
+    `worker_request(${label})`,
+  );
+
   // An OPEN report staging row (0042) for the adversarial repoint/erase
   // attacks below — the same job photoRequest does for 0034.
   const reportRequest = await must(
@@ -602,6 +631,7 @@ async function seedTenant(label) {
     conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
     photoPath, checkinAskId: checkinAsk.id, photoRequestId: photoRequest.id,
     problemReportId: problemReport.id, reportRequestId: reportRequest.id,
+    workerRequestId: workerRequest.id,
     colleagueId, ownNotificationId, colleagueNotificationId,
     companyMemoryId: companyMemory.id, ownMemoryId: ownMemory.id, colleagueMemoryId: colleagueMemory.id,
     pushEndpoint, colleaguePushEndpoint,
@@ -697,6 +727,10 @@ async function cleanupTenant(t) {
   // a task delete, but worker_id deliberately does not — so leaving these until
   // the workers sweep would fail the FK and strand a company.
   await companyEq(admin.from('task_assignees').delete());
+  // Before tasks and before workers: worker_requests holds a FK to each (0043).
+  // task_id is `on delete set null`, so the row would survive a task delete —
+  // but worker_id is a plain FK and would strand the company.
+  await companyEq(admin.from('worker_requests').delete());
   await admin.from('task_dependencies').delete().in('task_id', t.taskIds);
   await companyEq(admin.from('tasks').delete());
   await companyEq(admin.from('memories').delete());
@@ -715,6 +749,9 @@ async function cleanupTenant(t) {
   // Before workers: worker_day_links.worker_id is a FK (0039).
   await companyEq(admin.from('worker_day_links').delete());
   await companyEq(admin.from('workers').delete());
+  // Before jobs and before profiles: material_checks holds a FK to each (0044).
+  // Neither cascades, so a tick left behind strands the whole company.
+  await companyEq(admin.from('material_checks').delete());
   await companyEq(admin.from('jobs').delete());
   await companyEq(admin.from('profiles').delete());
   await admin.from('companies').delete().eq('id', t.companyId);
@@ -749,7 +786,13 @@ async function runMatrix(self, other) {
   // asserted by checkMemoryScope, which is where a dropped
   // `profile_id = auth.uid()` clause would fail. This loop cannot see that
   // regression — a colleague's memory carries the caller's own company_id.
-  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'task_assignees', 'worker_checkins', 'task_photos', 'worker_conversations', 'worker_messages', 'company_schedules', 'cron_runs', 'memory_consolidations']) {
+  //
+  // `worker_requests` (0043) IS in this list, unlike problem_reports: a crew
+  // request is meant to be READ by the manager, so the tenant holds SELECT and
+  // the interesting question is the ordinary one — own rows visible, zero
+  // foreign rows. Its write-side refusals are attacked separately below,
+  // because SELECT is the ONLY grant it has.
+  for (const table of ['companies', 'workers', 'jobs', 'tasks', 'memories', 'conversations', 'proposals', 'transcription_vocab', 'task_board', 'translation_batches', 'translation_items', 'task_reviews', 'task_assignees', 'worker_checkins', 'task_photos', 'worker_conversations', 'worker_messages', 'company_schedules', 'cron_runs', 'memory_consolidations', 'worker_requests']) {
     const { data, error } = await db.from(table).select('*');
     const rows = data ?? [];
     const ownKey = table === 'companies' ? 'id' : 'company_id';
@@ -769,19 +812,34 @@ async function runMatrix(self, other) {
   }
 
   // notifications (0024): company AND profile, checked separately rather than
-  // in the loop above. The seeded review fanned out TWO rows in this company —
+  // in the loop above. Each seeded producer fans out TWO rows in this company —
   // one for this user, one for their colleague — so `foreignProfile` is the
   // assertion the generic loop structurally cannot make: a policy missing its
   // `profile_id = auth.uid()` clause returns both rows, every one of them with
   // the right company_id.
+  //
+  // TWO rows are expected here, one per seeded PRODUCER, and the count is
+  // exact on purpose: a count that drifted upward with the seed would be a
+  // count that could also drift upward with a leak. The producers are the
+  // review fan-out (0024) and, since #152, the crew-request fan-out (0043) —
+  // the tracer seeded for checkWorkerTextIsolation inserts a worker_requests
+  // row, and worker_requests_notify_manager correctly gives this manager an
+  // inbox entry for it. Asserting the KINDS as well as the number means the
+  // next producer added to `notifications` fails here loudly, and the failure
+  // says which kind is new rather than only that a number moved.
+  const EXPECTED_NOTIFICATION_KINDS = ['review_pending', 'worker_request'];
   {
     const { data, error } = await db.from('notifications').select('*');
     const rows = data ?? [];
     const foreignCompany = rows.filter(r => r.company_id !== self.companyId);
     const foreignProfile = rows.filter(r => r.profile_id !== self.userId);
+    const kinds = [...new Set(rows.map(r => r.kind))].sort();
+    const kindsMatch = kinds.join(',') === [...EXPECTED_NOTIFICATION_KINDS].sort().join(',');
     check(`${L}: notifications`,
-      !error && rows.length === 1 && foreignCompany.length === 0 && foreignProfile.length === 0,
-      error ? error.message : `${rows.length} rows, ${foreignCompany.length} foreign company, ${foreignProfile.length} foreign profile`);
+      !error && rows.length === EXPECTED_NOTIFICATION_KINDS.length && kindsMatch
+        && foreignCompany.length === 0 && foreignProfile.length === 0,
+      error ? error.message
+        : `${rows.length} rows [${kinds.join(', ')}], ${foreignCompany.length} foreign company, ${foreignProfile.length} foreign profile`);
   }
 
   // push_subscriptions (0026): company AND profile, same shape as
@@ -1442,6 +1500,249 @@ async function runAdversarial(attacker, victim) {
       .eq('id', attacker.reportRequestId);
     check(
       'adversarial: tenant DELETE of a report capture blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
+
+  // ── 0043 worker_requests (issue #152) ────────────────────────────────────
+  // READ-ONLY for tenants: a SELECT policy scoped to their own company, and NO
+  // insert, update or delete policy or grant at all. Every write is the service
+  // role (the WhatsApp webhook), so there is nothing a tenant needs a write for
+  // — and each of the three writes below would be a specific lie:
+  //
+  //   INSERT — manufacture "a crew member asked for this". Attacker-chosen text
+  //            attributed to a real, named person, rendered as a QUOTE on Home,
+  //            in the inbox and on a colleague's WhatsApp. The forgery is not
+  //            of a row, it is of somebody's words.
+  //   UPDATE — rewrite what a crew member actually said, or move `needed_by` so
+  //            an urgent request sinks to the bottom of the ranking.
+  //   DELETE — erase the request entirely. The schema's only DELETE policy is
+  //            still push_subscriptions (0026) and this must not become the
+  //            second.
+  //
+  // The read half is covered by the per-company visibility loop above, which is
+  // why there is no positive control here: `worker_requests` appears in that
+  // list, so a policy that hid every request from its own company already fails
+  // there. That is the pairing problem_reports could not have (it has no read
+  // surface at all) and is why its block needs a positive control and this one
+  // does not.
+  {
+    const { error } = await db.from('worker_requests').insert({
+      company_id: attacker.companyId,
+      worker_id: attacker.helperWorkerId,
+      text: 'forged crew request',
+    });
+    check(
+      'adversarial: tenant cannot forge a crew request',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : "ACCEPTED — a manager can put words in a crew member's mouth!",
+    );
+    if (!error) {
+      await admin.from('worker_requests').delete()
+        .eq('company_id', attacker.companyId).eq('text', 'forged crew request');
+    }
+  }
+  {
+    const { error } = await db.from('worker_requests').insert({
+      company_id: victim.companyId,
+      worker_id: victim.workerId,
+      text: 'forged cross-tenant request',
+    });
+    check(
+      'adversarial: tenant cannot file a crew request into another company',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — cross-tenant request forgery',
+    );
+    if (!error) {
+      await admin.from('worker_requests').delete()
+        .eq('company_id', victim.companyId).eq('text', 'forged cross-tenant request');
+    }
+  }
+  {
+    const { error } = await db
+      .from('worker_requests')
+      .update({ text: 'rewritten by the manager', needed_by: null })
+      .eq('id', attacker.workerRequestId);
+    check(
+      "adversarial: tenant rewriting a crew member's own words blocked",
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — update grant leaked',
+    );
+    // Belt and braces: a policy-less UPDATE matches zero rows and reports
+    // SUCCESS in PostgREST, so the refusal above must be checked against what
+    // the row actually says. Read back on the service role — the tenant's own
+    // read would be indistinguishable if the write had landed.
+    {
+      const { data } = await admin
+        .from('worker_requests')
+        .select('text')
+        .eq('id', attacker.workerRequestId)
+        .maybeSingle();
+      check(
+        "adversarial: the crew member's words are unchanged after that attempt",
+        (data?.text ?? '') !== 'rewritten by the manager',
+        JSON.stringify((data?.text ?? '').slice(0, 40)),
+      );
+    }
+  }
+  {
+    const { error } = await db.from('worker_requests').delete().eq('id', attacker.workerRequestId);
+    check(
+      'adversarial: tenant DELETE of a crew request blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+    {
+      const { data } = await admin
+        .from('worker_requests')
+        .select('id')
+        .eq('id', attacker.workerRequestId)
+        .maybeSingle();
+      check(
+        'adversarial: the crew request still exists after that attempt',
+        data?.id === attacker.workerRequestId,
+        data ? 'still there' : 'GONE — a request was deleted by a tenant',
+      );
+    }
+  }
+
+  // ── 0044 material_checks (issue #154) ────────────────────────────────────
+  // The daily "is it on site?" walk-around tick. UNLIKE almost everything added
+  // lately this table is tenant-WRITABLE — the manager ticks it from their own
+  // browser on their own RLS-scoped client — so a deny-all sweep would prove
+  // nothing here and a POSITIVE CONTROL is mandatory. A policy that refused
+  // every tick would pass every refusal below while making the feature dead.
+  //
+  // What the three column-grant attacks each buy, and why the grant rather than
+  // a policy is what refuses them:
+  //   check_date — the day is PART OF THE UNIQUE KEY and is what makes the tick
+  //                reset overnight by construction. A tenant that could name it
+  //                could tick tomorrow, or backdate today's walk-around onto a
+  //                site nobody visited.
+  //   checked_by — attribution. Stamped from auth.uid() by a trigger, so "who
+  //                said the cement was here" is unforgeable at the grant layer
+  //                rather than in app code.
+  //   material   — rewriting an existing row's identity relabels yesterday's
+  //                answer as today's, about a different thing.
+  //
+  // Note the asymmetry to expect in the results: a cross-tenant INSERT is
+  // refused by the policy (an error), while a cross-tenant UPDATE matches zero
+  // rows through the policy's USING clause and reports SUCCESS. That is why the
+  // update attack is verified by reading the row back on the SERVICE ROLE — the
+  // tenant's own read cannot tell "refused" from "invisible".
+  {
+    const { error } = await db.from('material_checks').insert({
+      company_id: attacker.companyId, job_id: attacker.jobId,
+      material: 'matrix positive control', status: 'on_site',
+    });
+    check(
+      'control: the owner can tick their own material (positive control)',
+      error == null,
+      error ? `REFUSED (${error.code ?? 'err'}) — the feature is dead` : 'accepted',
+    );
+  }
+  {
+    const { data, error } = await db.from('material_checks').select('*');
+    const rows = data ?? [];
+    const foreign = rows.filter(r => r.company_id !== attacker.companyId);
+    check(
+      'control: the owner reads their own ticks, and only their own (positive control)',
+      !error && rows.length > 0 && foreign.length === 0,
+      error ? error.message : `${rows.length} rows, ${foreign.length} foreign`,
+    );
+  }
+  {
+    // The day must come from lisbon_today(), never from the client.
+    const { error } = await db.from('material_checks').insert({
+      company_id: attacker.companyId, job_id: attacker.jobId,
+      material: 'backdated tick', status: 'on_site', check_date: '2000-01-01',
+    });
+    check(
+      'adversarial: tenant naming check_date blocked (the nightly reset)',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a tenant can tick any day it likes',
+    );
+    if (!error) {
+      await admin.from('material_checks').delete()
+        .eq('company_id', attacker.companyId).eq('material', 'backdated tick');
+    }
+  }
+  {
+    const { error } = await db.from('material_checks').insert({
+      company_id: attacker.companyId, job_id: attacker.jobId,
+      material: 'forged attribution', status: 'on_site', checked_by: victim.userId,
+    });
+    check(
+      'adversarial: tenant forging checked_by blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — who walked the site is forgeable',
+    );
+    if (!error) {
+      await admin.from('material_checks').delete()
+        .eq('company_id', attacker.companyId).eq('material', 'forged attribution');
+    }
+  }
+  {
+    const { error } = await db.from('material_checks').insert({
+      company_id: victim.companyId, job_id: victim.jobId,
+      material: 'cross-tenant tick', status: 'missing',
+    });
+    check(
+      "adversarial: tenant ticking another company's obra blocked",
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — cross-tenant tick',
+    );
+    if (!error) {
+      await admin.from('material_checks').delete()
+        .eq('company_id', victim.companyId).eq('material', 'cross-tenant tick');
+    }
+  }
+  {
+    // company_id honest, job_id a stranger's — RLS passes and only the 0044 FK
+    // trigger can refuse. Same seam as attack 1 on `tasks`.
+    const { error } = await db.from('material_checks').insert({
+      company_id: attacker.companyId, job_id: victim.jobId,
+      material: 'foreign obra tick', status: 'on_site',
+    });
+    check(
+      'adversarial: tick → foreign obra blocked by the FK trigger',
+      error?.code === '23514',
+      error ? `code=${error.code}` : 'ACCEPTED — a tick naming another tenant\'s site',
+    );
+    if (!error) {
+      await admin.from('material_checks').delete()
+        .eq('company_id', attacker.companyId).eq('material', 'foreign obra tick');
+    }
+  }
+  {
+    // Rewriting the identity of an existing own-company row. `status` is the
+    // ONLY column the UPDATE grant reaches.
+    const { data: mine } = await admin.from('material_checks')
+      .select('id').eq('company_id', attacker.companyId)
+      .eq('material', 'matrix positive control').maybeSingle();
+    if (mine?.id) {
+      const { error } = await db.from('material_checks')
+        .update({ material: 'relabelled', check_date: '2000-01-01' })
+        .eq('id', mine.id);
+      check(
+        "adversarial: tenant rewriting a tick's material/day blocked",
+        error != null,
+        error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — update grant is too wide',
+      );
+      const { data: after } = await admin.from('material_checks')
+        .select('material').eq('id', mine.id).maybeSingle();
+      check(
+        'adversarial: the tick still names what it named',
+        (after?.material ?? '') === 'matrix positive control',
+        JSON.stringify((after?.material ?? '').slice(0, 40)),
+      );
+    }
+  }
+  {
+    const { error } = await db.from('material_checks').delete().eq('company_id', attacker.companyId);
+    check(
+      'adversarial: tenant DELETE of a tick blocked',
       error != null,
       error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
     );
@@ -2441,6 +2742,27 @@ async function checkWorkerTextIsolation(tenant) {
       .maybeSingle();
     check(
       `${L}: the problem report IS worker-authored text (positive control)`,
+      (data?.text ?? '').includes(secret),
+      JSON.stringify(data?.text ?? null),
+    );
+  }
+
+  // Fourth positive control (issue #152): the tracer really is in the crew
+  // member's REQUEST too. This one is the most load-bearing of the four,
+  // because a request is deliberately SHOWN to the manager — quoted on Home, in
+  // the inbox and on WhatsApp — and "shown to the manager" is one careless step
+  // away from "written into the manager's agent context". The obvious such step
+  // is the chat-thread note the webhook writes for every request: it is allowed
+  // to carry a crew NAME and a date, and the day somebody adds "…and this is
+  // what they said" to it, the `messages` sweep below fails.
+  {
+    const { data } = await admin
+      .from('worker_requests')
+      .select('text')
+      .eq('id', tenant.workerRequestId)
+      .maybeSingle();
+    check(
+      `${L}: the crew request IS worker-authored text (positive control)`,
       (data?.text ?? '').includes(secret),
       JSON.stringify(data?.text ?? null),
     );

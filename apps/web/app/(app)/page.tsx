@@ -2,9 +2,11 @@ import type { Metadata } from 'next';
 import { Badge } from '@capo/ui/badge';
 import { Card } from '@capo/ui/card';
 import type { Catalog } from '@capo/i18n/catalog';
+import type { Locale } from '@capo/i18n/locale';
 import { ButtonLink, ListRow } from '@/app/_ui/nav';
 import { loadHome, type CrewCheckin, type HomeData } from './home-data';
 import { activitySentence, activityTime } from '@/app/activity/render';
+import { whenLabel, isPressing } from '@/lib/worker-request';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import { TabScreen } from '@/app/_ui/tab-screen';
 import PullToRefresh from '@/app/pull-to-refresh';
@@ -141,6 +143,66 @@ function DecisionCard({ home, t }: { home: HomeData; t: Catalog }) {
   );
 }
 
+// What the crew asked for (issue #152), next to the decision card because it is
+// the same kind of thing: something a person is waiting on the manager for.
+//
+// THE QUOTE IS THE CARD. Everything else — the name, the urgency, the task — is
+// company-owned text wrapped around one crew member's own words, and those
+// words are set apart and attributed rather than folded into Capo's voice. Same
+// rule the review note above follows, because it is the same class of text
+// (AGENTS.md, migration 0043).
+//
+// The urgency word comes from `needed_by` minus today, computed in the loader.
+// "Sem data" is a first-class answer and is shown as one: Capo asks the crew
+// member once and never guesses, because guessing high cries wolf until the
+// manager stops looking and guessing low buries the one that mattered.
+//
+// Like the decision card, this one has NO action on it. There is nothing to
+// approve — a request is information — and no "handled" control exists yet in
+// any case. It points at the inbox, where the full record lives.
+function RequestsCard({ home, t, locale }: { home: HomeData; t: Catalog; locale: Locale }) {
+  if (home.requests.length === 0) return null;
+  const more = home.requestCount - home.requests.length;
+  return (
+    <Section title={t.requests.title} link={{ href: '/notificacoes', label: t.requests.seeAll }}>
+      <Card>
+        <div className="flex flex-col gap-3">
+          {home.requests.map((request, i) => (
+            <div key={request.id} className={i > 0 ? 'border-t border-hairline pt-3' : undefined}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-callout font-semibold text-fg">
+                  {request.workerName || t.dashboard.noAssignee}
+                  {request.category && ` · ${t.requests.category[request.category]}`}
+                </span>
+                {/* Amber, never red. A crew member needing paint tomorrow is
+                    normal work to plan, not a fault to fix — danger owns
+                    "wrong". A request with no date reads as neutral, because
+                    nobody did anything wrong by not knowing. */}
+                <Badge tone={isPressing(request.urgency) ? 'warn' : 'neutral'} reading="sentence">
+                  {whenLabel(request.urgency, request.neededBy, locale)}
+                </Badge>
+              </div>
+              <p className="mt-1 text-caption text-fg-faint">{t.requests.quoteLabel(request.workerName)}</p>
+              <blockquote className="mt-1 border-l-2 border-hairline pl-3 text-callout italic text-fg-muted line-clamp-4">
+                “{request.text}”
+              </blockquote>
+              {request.taskTitle && request.taskId && (
+                <Link
+                  href={`/tarefas/${request.taskId}`}
+                  className="mt-2 inline-block text-caption text-brand no-underline"
+                >
+                  {request.taskTitle}
+                </Link>
+              )}
+            </div>
+          ))}
+        </div>
+        {more > 0 && <p className="mt-3 text-caption text-fg-faint">{t.requests.more(more)}</p>}
+      </Card>
+    </Section>
+  );
+}
+
 // Home. A launchpad rather than a list: every widget is a summary that hands
 // off to the screen that owns it, and NONE of them re-derives anything — see
 // home-data.ts for why that is the whole design.
@@ -180,6 +242,8 @@ export default async function HomePage() {
 
           <DecisionCard home={home} t={t} />
 
+          <RequestsCard home={home} t={t} locale={locale} />
+
           {home.recent.length > 0 && (
             <Section title={t.home.whatHappened} link={{ href: '/atividade', label: t.home.seeActivity }}>
               <Card>
@@ -205,6 +269,30 @@ export default async function HomePage() {
           {home.crew.length > 0 && (
             <Section title={t.home.crew}>
               <CrewStrip crew={home.crew} t={t} />
+            </Section>
+          )}
+
+          {/* Today's materials, ABOVE tomorrow's buy list (issue #154). If the
+              answer to "what does today need on site" is three taps deep it
+              will not be the thing checked at 06:40. Home re-derives nothing:
+              this is loadMaterials on its third horizon, the same read the
+              materials screen makes. It POINTS — the ticks live on that
+              screen, where the whole list is visible. */}
+          {home.materialsToday.length > 0 && (
+            <Section
+              title={t.screens.materials.today}
+              link={{ href: '/obras?vista=materiais', label: t.home.allMaterials }}
+            >
+              <Card padding="none">
+                {home.materialsToday.map(group => (
+                  <ListRow
+                    key={group.obraName}
+                    href="/obras?vista=materiais"
+                    title={group.items.map(i => i.material).join(', ')}
+                    meta={group.obraName}
+                  />
+                ))}
+              </Card>
             </Section>
           )}
 

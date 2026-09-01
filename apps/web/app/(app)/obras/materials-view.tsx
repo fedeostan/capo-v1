@@ -1,29 +1,39 @@
 import type { AuthContext } from '@capo/db/session';
 import { getCatalog } from '@capo/i18n/catalog';
-import { loadDayLabel, loadMaterials, loadToday } from '@/app/dashboard-data';
+import { loadDayLabel, loadMaterialChecks, loadMaterials, loadToday, materialCheckKey } from '@/app/dashboard-data';
 import { MaterialsList, type MaterialsGroup } from '@capo/ui/dashboard-ui';
 import MaterialsEditor from '@/app/(app)/_tasks/materials-editor';
+import MaterialCheck from './material-check';
 
 // The anticipation screen, lifted whole out of /materiais when Materiais left
 // the tab bar. From 00_VISION/02-solution-mvp.md: "Anticipation is the killer
 // feature. 'Check tomorrow's materials today' directly kills the
 // manager-as-runner pattern."
 //
-// Two horizons, deliberately: tomorrow is what you BUY tonight; the week is
-// what you ORDER tonight, because anything with a lead time is already late by
-// the time it shows up on the tomorrow list.
+// Two horizons of ANTICIPATION, deliberately: tomorrow is what you BUY
+// tonight; the week is what you ORDER tonight, because anything with a lead
+// time is already late by the time it shows up on the tomorrow list. Both are
+// kept, in that order, beneath the third.
+//
+// The third horizon (issue #154) sits ABOVE them and asks a different question
+// entirely. At 06:40 the manager is not asking what to buy — they are asking
+// whether it is there. That is why TODAY is the only section with ticks, and
+// why it is first: the buy list is consulted the night before, the walk-around
+// is done as the day starts.
 //
 // It is a component rather than a page now because it renders BESIDE the sites
-// list under one route, behind the switch on /obras. The body below is
-// unchanged from the page it came from — only the shell around it moved.
+// list under one route, behind the switch on /obras.
 export async function MaterialsView({ ctx }: { ctx: AuthContext }) {
   const t = getCatalog(ctx.locale);
 
   const today = await loadToday(ctx);
-  const [tomorrow, week, label] = await Promise.all([
+  const [todayGroups, tomorrow, week, todayLabel, label, checks] = await Promise.all([
+    loadMaterials(ctx, 'hoje', today),
     loadMaterials(ctx, 'amanha', today),
     loadMaterials(ctx, 'semana', today),
+    loadDayLabel(ctx, 0),
     loadDayLabel(ctx, 1),
+    loadMaterialChecks(ctx, today),
   ]);
 
   // Anything already on the tomorrow list would only be noise in the week
@@ -60,9 +70,57 @@ export async function MaterialsView({ ctx }: { ctx: AuthContext }) {
     />
   );
 
+  // The tick, on the today section only. It is keyed on the obra and the exact
+  // material string — the same key loadMaterialChecks builds — so the control
+  // and the row it sits on cannot come apart.
+  const checkAction = (item: MaterialsGroup['items'][number], group: MaterialsGroup) => (
+    <MaterialCheck
+      obraId={group.obraId}
+      material={item.material}
+      state={checks[materialCheckKey(group.obraId, item.material)] ?? null}
+      locale={ctx.locale}
+    />
+  );
+
+  // A tally rather than a progress bar: this is a list of facts a person
+  // gathered, not a task with a completion percentage. "Missing" counts as
+  // answered and deliberately does not count as on site.
+  const todayTotal = todayGroups.reduce((n, group) => n + group.items.length, 0);
+  const todayOnSite = todayGroups.reduce(
+    (n, group) =>
+      n + group.items.filter(item => checks[materialCheckKey(group.obraId, item.material)] === 'on_site').length,
+    0,
+  );
+
   return (
     <>
       <section className="space-y-3">
+        <div>
+          <h2 className="text-callout font-semibold">{t.screens.materials.today}</h2>
+          <p className="text-caption text-fg-muted">
+            {todayLabel ?? ''}
+            {todayTotal > 0 && ` · ${t.screens.materials.checkedCount(todayOnSite, todayTotal)}`}
+          </p>
+          <p className="mt-1 text-caption text-fg-faint">{t.screens.materials.todayHint}</p>
+        </div>
+        <MaterialsList
+          groups={todayGroups}
+          empty={t.screens.materials.emptyToday}
+          noJobLabel={t.dashboard.noJob}
+          forLabel={t.screens.materials.forTasks}
+          countLabel={te.groupCount}
+          emptyGroupLabel={te.groupEmpty}
+          seeJobLabel={te.seeJob}
+          renderGroupAction={groupAction}
+          // The name stays tappable here too: correcting a typo in a material
+          // is something a manager does exactly when they are standing in front
+          // of the thing, which is now.
+          renderItem={itemAction}
+          renderItemAction={checkAction}
+        />
+      </section>
+
+      <section className="space-y-3 border-t border-hairline pt-6">
         <div>
           <h2 className="text-callout font-semibold">{t.screens.materials.tomorrow}</h2>
           <p className="text-caption text-fg-muted">{label ?? ''}</p>

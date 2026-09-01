@@ -204,12 +204,42 @@ const dict: Catalog = {
     profileLink: 'Notificaciones',
     kind: {
       review_pending: subject => `“${subject}” está pendiente de tu control.`,
+      worker_request: subject => `${subject} ha pedido algo para la obra.`,
     },
     noSubject: 'Una tarea',
     noteLabel: 'Lo que han escrito:',
     openSubject: 'Ver en tareas',
     pushNudge: '¿Quieres recibir estos avisos en el móvil?',
     pushNudgeLink: 'Activar alertas',
+  },
+
+  requests: {
+    title: 'Peticiones del equipo',
+    seeAll: 'Ver todas',
+    more: n => `+${n} ${n === 1 ? 'petición' : 'peticiones'}`,
+    category: {
+      material: 'Material',
+      tool: 'Herramienta',
+      machine: 'Máquina',
+      delivery: 'Entrega',
+      other: 'Otro',
+    },
+    when: ({ kind, dateLabel }) => {
+      if (kind === 'today') return 'para hoy';
+      if (kind === 'tomorrow') return 'para mañana';
+      if (kind === 'overdue') return dateLabel ? `era para el ${dateLabel}` : 'ya se ha pasado el día';
+      if (kind === 'later') return dateLabel ? `para el ${dateLabel}` : 'para más adelante';
+      return 'sin fecha';
+    },
+    quoteLabel: name => `${name} ha escrito:`,
+    whatsapp: ({ name, when, quote, task }) => {
+      const where = task ? ` · ${task}` : '';
+      return `Petición de ${name}${where} — ${when}.\n\n“${quote}”\n\nQueda registrada en tus notificaciones. No he pedido nada.`;
+    },
+    event: ({ name, when, task }) => {
+      const where = task ? `, en la tarea “${task}”` : '';
+      return `${name} ha hecho una petición por WhatsApp${where} — ${when}. La tienes en tus notificaciones, tal cual la escribió.`;
+    },
   },
 
   automations: {
@@ -489,6 +519,14 @@ const dict: Catalog = {
     materials: {
       title: 'Materiales',
       subtitle: 'Lo que tiene que estar en obra',
+      // ── issue #154 ─────────────────────────────────────────────────────
+      today: 'Para hoy',
+      todayHint: 'Marca lo que ya está en obra y lo que falta. Vuelve a empezar de cero cada mañana.',
+      emptyToday: 'No hay materiales registrados para el trabajo de hoy.',
+      onSite: 'En obra',
+      missing: 'Falta',
+      checkedCount: (onSite, total) => `${onSite} de ${total} en obra`,
+      checkFailed: 'No se pudo guardar. Inténtalo otra vez.',
       tomorrow: 'Para mañana',
       week: 'Resto de la semana',
       weekHint: 'Para pedir ya — lo que tiene plazo de entrega no espera.',
@@ -621,6 +659,13 @@ const dict: Catalog = {
     noWhatsAppWarning: 'Sin móvil — no recibe el WhatsApp de las 07:00.',
     noConsentWarning: 'Falta permiso — pregúntale si acepta recibir mensajes y díselo a Capo.',
     receivesWhatsApp: 'recibe el WhatsApp de las 07:00',
+    awaitingFirstReply:
+      'Recibe el WhatsApp de las 07:00, pero todavía no le ha escrito nunca a Capo — hasta que conteste una vez, Capo no puede responderle ni mandarle su día.',
+    awaitingFirstReplyChase: p =>
+      `Autorizado hace ${p.days} día${p.days === 1 ? '' : 's'} y todavía no le ha escrito a Capo. Hasta que conteste una vez, Capo no puede responderle ni mandarle su día — merece la pena que se lo pidas en persona.`,
+    firstReplyAction: 'Mandarle un mensaje',
+    firstReplyMessage: p =>
+      `Hola ${p.name}. Te he dado de alta en Capo — es él quien te manda las tareas del día por WhatsApp. Contéstale una vez, aunque sea «sí»: sin eso puede enviarte mensajes, pero no puede responderte ni mandarte tu día.`,
     welcomeCostHint:
       'Cuando le dices a Capo que alguien acepta recibir mensajes, Capo se presenta a esa persona una vez por WhatsApp. Es un mensaje de pago por persona — un equipo de 20 son 20 mensajes.',
     teamHint: 'Para añadir o cambiar a alguien,',

@@ -160,7 +160,16 @@ export async function renderProposal(
     }
 
     case 'add_worker':
-      return t.addWorker({ name: args.name, trade: args.trade, phone: args.phone });
+      // `optIn` adds one sentence and nothing else — see CardStrings.addWorker
+      // for why the ask lives on the card rather than in the tool's result.
+      // `=== true` rather than truthiness: the field is optional and "the
+      // manager did not mention consent" must not read as consent.
+      return t.addWorker({
+        name: args.name,
+        trade: args.trade,
+        phone: args.phone,
+        optIn: args.whatsapp_opt_in === true,
+      });
 
     case 'update_worker': {
       const name = await workerName(db, companyId, args.worker_id, t);

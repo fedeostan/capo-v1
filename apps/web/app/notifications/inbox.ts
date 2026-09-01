@@ -10,6 +10,7 @@
 // dashboard-data.ts takes.
 import type { AuthContext } from '@capo/db/session';
 import { countTaskPhotos } from '../dashboard-data';
+import { describeUrgency, type RequestUrgency } from '@/lib/worker-request';
 
 /** One row of the inbox, already resolved to something renderable. */
 export interface InboxItem {
@@ -50,6 +51,17 @@ export interface InboxItem {
    * thing teaches the manager to ignore it.
    */
   photoCount: number | null;
+  /**
+   * When a crew request is needed FOR (issue #152), or null for every other
+   * kind. `kind` is the result of subtracting lisbon_today() from
+   * `worker_requests.needed_by`, and `date` is the raw ISO day for the reader
+   * to format in their own locale.
+   *
+   * Read at query time rather than stamped into the row for the same reason
+   * photoCount is: 'para amanhã' is only true today, and a sentence frozen into
+   * the notification would go on saying it for ever.
+   */
+  requestWhen: { kind: RequestUrgency; date: string | null } | null;
 }
 
 /**
@@ -122,8 +134,47 @@ export async function loadInbox(ctx: AuthContext, limit = 50): Promise<InboxItem
   // one claim — the same reason push and inbox share one headline entry.
   const photos = await countTaskPhotos(ctx, [...taskByReview.values()]);
 
+  // Crew requests (issue #152). Same shape as the review lookup above and for
+  // the same reasons: a second query rather than an embed, and the row's own
+  // subject_id resolved to what the manager actually wants — the day it is
+  // needed for, and the task it was about if one was named.
+  //
+  // `lisbon_today()` is read ONLY when there is a request on the page. One
+  // clock: "para amanhã" here has to mean what "amanhã" means on the board.
+  const requestIds = [
+    ...new Set(
+      rows
+        .filter(r => r.subject_type === 'worker_request')
+        .map(r => r.subject_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const requestById = new Map<string, { neededBy: string | null; taskId: string | null }>();
+  let today: string | null = null;
+  if (requestIds.length > 0) {
+    const { data: todayValue } = await db.rpc('lisbon_today');
+    today = typeof todayValue === 'string' ? todayValue : null;
+    const { data: requests } = await db
+      .from('worker_requests')
+      .select('id, needed_by, task_id')
+      .eq('company_id', companyId)
+      .in('id', requestIds);
+    for (const r of requests ?? []) requestById.set(r.id, { neededBy: r.needed_by, taskId: r.task_id });
+  }
+
   return rows.map(row => {
-    const taskId = row.subject_type === 'task_review' && row.subject_id ? taskByReview.get(row.subject_id) : undefined;
+    const reviewTaskId =
+      row.subject_type === 'task_review' && row.subject_id ? taskByReview.get(row.subject_id) : undefined;
+    const request = row.subject_type === 'worker_request' && row.subject_id ? requestById.get(row.subject_id) : undefined;
+    // A request links to the task only when the crew member named one; there is
+    // no screen a request of its own lives on, and a link to nowhere reads as a
+    // bug — so the row renders without one, as it already does for a review
+    // whose subject has vanished.
+    const href = reviewTaskId
+      ? `/tarefas/${reviewTaskId}`
+      : request?.taskId
+        ? `/tarefas/${request.taskId}`
+        : null;
     return {
       id: row.id,
       kind: row.kind,
@@ -131,8 +182,9 @@ export async function loadInbox(ctx: AuthContext, limit = 50): Promise<InboxItem
       body: row.body,
       readAt: row.read_at,
       createdAt: row.created_at,
-      href: taskId ? `/tarefas/${taskId}` : null,
-      photoCount: taskId ? (photos.get(taskId) ?? 0) : null,
+      href,
+      photoCount: reviewTaskId ? (photos.get(reviewTaskId) ?? 0) : null,
+      requestWhen: request ? { kind: describeUrgency(request.neededBy, today), date: request.neededBy } : null,
     };
   });
 }

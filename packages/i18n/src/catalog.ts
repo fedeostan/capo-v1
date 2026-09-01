@@ -244,7 +244,7 @@ export interface Catalog {
      *  translated. Keyed by the `kind` check constraint in
      *  0023_notifications.sql, so widening that constraint without adding
      *  copy in all three dictionaries is a tsc error. */
-    kind: Record<'review_pending', (subject: string) => string>;
+    kind: Record<'review_pending' | 'worker_request', (subject: string) => string>;
     /** Stand-in when the row carries no title — an unnamed task. */
     noSubject: string;
     /** Label above the worker's quoted note. Sits ABOVE it and is never
@@ -259,6 +259,76 @@ export interface Catalog {
      *  a deliberate press. */
     pushNudge: string;
     pushNudgeLink: string;
+  };
+
+  /**
+   * ── FEDERICO: what the crew ASKED FOR (issue #152). ──
+   *
+   * A crew member on site tells Capo they need something — paint, a grinder, a
+   * skip, anything — and it reaches you: in the inbox, on your lock screen, on
+   * Home, and on WhatsApp when you are already mid-conversation with Capo.
+   * Before this, Capo told them to phone you themselves.
+   *
+   * Two rules govern every string below.
+   *
+   * FIRST: their words are QUOTED AND ATTRIBUTED, never rewritten into Capo's
+   * voice. `quote` and `text` here always carry what one person typed on a
+   * building site, and the copy around them exists to make that obvious — the
+   * same rule the review note follows, for the same reason (AGENTS.md, on
+   * worker-authored text).
+   *
+   * SECOND: urgency is a DATE, never a tone. `when` renders the result of plain
+   * subtraction against today, and `undated` is a real answer that must read as
+   * a fact rather than an apology — Capo asks once and does not guess.
+   */
+  requests: {
+    /** Home's section heading. */
+    title: string;
+    /** Link out of the Home card, to the inbox where the full record lives. */
+    seeAll: string;
+    /** "+2 pedidos" beneath the rows Home shows. */
+    more(n: number): string;
+    /**
+     * The coarse filing hint, keyed by the `category` CHECK in
+     * 0043_worker_requests.sql — the same tsc-error device notifications.kind
+     * uses. Deliberately coarse: an enum here is a list of things a person on
+     * site is allowed to need, so 'other' is a first-class answer and the real
+     * content is always the quote.
+     */
+    category: Record<'material' | 'tool' | 'machine' | 'delivery' | 'other', string>;
+    /**
+     * When it is needed FOR, as a sentence fragment ("para amanhã").
+     *
+     * `kind` comes from subtracting today from `needed_by`; `dateLabel` is
+     * already formatted in the reader's own locale and is null for every branch
+     * except 'later' and 'overdue'. 'undated' must not read as a complaint
+     * about the crew member — nobody did anything wrong, we simply do not know.
+     */
+    when(args: {
+      kind: 'overdue' | 'today' | 'tomorrow' | 'later' | 'undated';
+      dateLabel: string | null;
+    }): string;
+    /** Label above the quoted words, naming who wrote them. Sits ABOVE the
+     *  quote and is never merged into it. */
+    quoteLabel(name: string): string;
+    /**
+     * The free-form WhatsApp line to the manager, sent only inside their own
+     * 24-hour window. Carries the quote, attributed. `task` is the title of the
+     * task they named, or null — company-owned text either way.
+     */
+    whatsapp(args: { name: string; when: string; quote: string; task: string | null }): string;
+    /**
+     * The manager's CHAT-THREAD note.
+     *
+     * ⚠ It takes NO quote and must never be given one. A `role='event'` row is
+     * permanent, model-visible input read by thread.recentUserTexts — the
+     * evidence pool the write guard matches a manager's quote against. Our own
+     * copy, a crew name the MANAGER typed, a date and a task title: that is the
+     * complete list of what may be in this sentence. See
+     * apps/web/app/notifications/thread.ts for why that is a safety boundary
+     * and not a style rule.
+     */
+    event(args: { name: string; when: string; task: string | null }): string;
   };
 
   /**
@@ -621,6 +691,24 @@ export interface Catalog {
     materials: {
       title: string;
       subtitle: string;
+      // ── issue #154: the today horizon, which asks a different question ──
+      // Tomorrow and the week are ANTICIPATION — what to buy, what to order.
+      // Today is not: it is "is it there?", answered by walking the site. It
+      // is the only horizon with ticks, and the copy has to say so or the
+      // three sections read as one list with an extra control on top.
+      /** Heading for what today's work needs on site. */
+      today: string;
+      /** Says what the ticks are for, and that they reset overnight. */
+      todayHint: string;
+      emptyToday: string;
+      /** The tick: this material is on site. */
+      onSite: string;
+      /** The tick: this material is NOT on site. */
+      missing: string;
+      /** Running tally on the today heading, e.g. "3 de 7 em obra". */
+      checkedCount(onSite: number, total: number): string;
+      /** The tick did not save. Shown beside the chip, never swallowed. */
+      checkFailed: string;
       /** Heading for what must be on site tomorrow — the buy-tonight list. */
       tomorrow: string;
       /** Heading for the rest of the week — the order-tonight list. */
@@ -695,6 +783,44 @@ export interface Catalog {
      */
     noConsentWarning: string;
     receivesWhatsApp: string;
+
+    /**
+     * The FOURTH state (issue #153), sitting BETWEEN consent and
+     * `receivesWhatsApp` — a number on file, consent recorded, and this person
+     * has still never written to Capo.
+     *
+     * The copy has to be precisely true, because the obvious sentence ("they
+     * get no messages until they reply") is FALSE and would send the manager
+     * chasing the wrong thing. The 07:00 message is a paid Meta TEMPLATE and
+     * goes out on the manager's recorded consent alone. What a first reply
+     * unlocks is everything free-form: Capo answering at all, the /dia day
+     * link (the template is pinned to two parameters with no button, so the
+     * link can only ride a free-form message), and the tappable list instead
+     * of plain text. So: Capo can talk AT them, not WITH them.
+     *
+     * Read from `workers.last_inbound_at` (0030), which is written by exactly
+     * one thing — a webhook delivery Capo resolved to that worker — so a value
+     * there is proof of a complete round trip, not merely of a send.
+     */
+    awaitingFirstReply: string;
+    /**
+     * The same state, escalated ONCE after several days of silence
+     * (FIRST_REPLY_CHASE_DAYS on the crew page). Deliberately a change of
+     * wording and tone on the SAME line rather than a new banner: a permanent
+     * warning is wallpaper within a week.
+     */
+    awaitingFirstReplyChase(p: { days: number }): string;
+    /** Label on the wa.me link that opens WhatsApp with the message below
+     *  already typed. The manager presses send; Capo sends nothing. */
+    firstReplyAction: string;
+    /**
+     * The prefilled message itself. It must read as the MANAGER's own words to
+     * their crew member — never as Capo talking — because it is sent from the
+     * manager's own phone and is signed by whoever forwards it. Short: managers
+     * ask their crew to do things all day; they need the words, not a workflow.
+     */
+    firstReplyMessage(p: { name: string }): string;
+
     /**
      * The cost of recording consent for the CREW (issue #45). Each person Capo
      * is newly allowed to message gets one welcome, and each welcome is a paid
