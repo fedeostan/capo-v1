@@ -90,7 +90,24 @@ export type ThreadEventSource =
    * receives, and a manager must never find a conversation on a crew phone
    * that Capo has no record of starting.
    */
-  | 'welcome';
+  | 'welcome'
+  /**
+   * A crew member asked for something (issue #152) — material, a tool, a
+   * delivery. The FIFTH source, and the first that is about something the
+   * manager RECEIVES rather than something the crew was sent.
+   *
+   * It belongs here for the same reason the other four do: the request lands in
+   * the manager's inbox and on their lock screen through paths Capo does not
+   * author, so without a note the manager can be holding a request Capo has
+   * never heard of — and "did anyone ask for anything today?" gets answered
+   * from a board read instead of from what happened.
+   *
+   * ⚠ The renderer takes a name, a date and a task title, and CANNOT be given
+   * the crew member's own words. Those live in `worker_requests.text`, where
+   * they are attributed, and on the WhatsApp line, which is a message to a
+   * phone rather than a row in `messages`. See the boundary above.
+   */
+  | 'worker_request';
 
 /**
  * Append one system-authored line to a company's perpetual chat thread.

@@ -205,12 +205,42 @@ const dict: Catalog = {
     profileLink: 'Notificações',
     kind: {
       review_pending: subject => `“${subject}” está a aguardar o teu controlo.`,
+      worker_request: subject => `${subject} pediu uma coisa para a obra.`,
     },
     noSubject: 'Uma tarefa',
     noteLabel: 'O que escreveram:',
     openSubject: 'Ver nas tarefas',
     pushNudge: 'Queres receber estes avisos no telemóvel?',
     pushNudgeLink: 'Ligar alertas',
+  },
+
+  requests: {
+    title: 'Pedidos da equipa',
+    seeAll: 'Ver todos',
+    more: n => `+${n} ${n === 1 ? 'pedido' : 'pedidos'}`,
+    category: {
+      material: 'Material',
+      tool: 'Ferramenta',
+      machine: 'Máquina',
+      delivery: 'Entrega',
+      other: 'Outro',
+    },
+    when: ({ kind, dateLabel }) => {
+      if (kind === 'today') return 'para hoje';
+      if (kind === 'tomorrow') return 'para amanhã';
+      if (kind === 'overdue') return dateLabel ? `era para ${dateLabel}` : 'já passou do dia';
+      if (kind === 'later') return dateLabel ? `para ${dateLabel}` : 'para mais tarde';
+      return 'sem data';
+    },
+    quoteLabel: name => `${name} escreveu:`,
+    whatsapp: ({ name, when, quote, task }) => {
+      const where = task ? ` · ${task}` : '';
+      return `Pedido de ${name}${where} — ${when}.\n\n“${quote}”\n\nFica registado nas tuas notificações. Não encomendei nada.`;
+    },
+    event: ({ name, when, task }) => {
+      const where = task ? `, na tarefa “${task}”` : '';
+      return `${name} fez um pedido pelo WhatsApp${where} — ${when}. Está nas tuas notificações, tal como foi escrito.`;
+    },
   },
 
   automations: {
