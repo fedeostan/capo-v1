@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Button } from '@capo/ui/button';
+import { Field, Input } from '@capo/ui/field';
 import { metadataTitle, publicCatalog } from '@/lib/i18n';
 import PasswordField from '../password-field';
 import { signIn, signInWithGoogle } from './actions';
@@ -25,48 +27,43 @@ export default async function LoginPage({
     <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 px-6 pb-16">
       <div className="space-y-2 text-center">
         <p className="text-4xl">👷</p>
-        <h1 className="text-2xl font-semibold">{t.auth.login.title}</h1>
-        <p className="text-sm text-zinc-500">{t.meta.appDescription}</p>
+        <h1 className="text-title font-semibold">{t.auth.login.title}</h1>
+        <p className="text-callout text-fg-muted">{t.meta.appDescription}</p>
       </div>
 
       <form action={signIn} className="space-y-3">
-        <label className="block space-y-1">
-          <span className="text-sm font-medium">{t.auth.login.email}</span>
-          <input
-            type="email"
-            name="email"
-            required
-            autoComplete="email"
-            inputMode="email"
-            placeholder={t.auth.login.emailPlaceholder}
-            className="w-full rounded-lg border border-zinc-500/30 bg-background px-3 py-2.5 text-base outline-none focus:border-orange-600"
-          />
-        </label>
+        <Field id="login-email" label={t.auth.login.email}>
+          {a11y => (
+            <Input
+              {...a11y}
+              type="email"
+              name="email"
+              required
+              autoComplete="email"
+              inputMode="email"
+              placeholder={t.auth.login.emailPlaceholder}
+            />
+          )}
+        </Field>
         <PasswordField
           locale={locale}
           label={t.auth.login.password}
           autoComplete="current-password"
         />
-        <button
-          type="submit"
-          className="w-full rounded-lg bg-orange-600 py-2.5 font-semibold text-white active:bg-orange-700"
-        >
+        <Button type="submit" fullWidth>
           {t.auth.login.submit}
-        </button>
+        </Button>
       </form>
 
       {googleEnabled && (
         <form action={signInWithGoogle}>
-          <button
-            type="submit"
-            className="w-full rounded-lg border border-zinc-500/30 py-2.5 text-sm font-semibold hover:bg-zinc-500/10"
-          >
+          <Button type="submit" variant="secondary" fullWidth>
             {t.auth.login.google}
-          </button>
+          </Button>
         </form>
       )}
 
-      <div className="flex justify-between text-sm text-zinc-500">
+      <div className="flex justify-between text-callout text-fg-muted">
         <Link href="/recuperar" className="underline">
           {t.auth.login.forgot}
         </Link>
@@ -76,7 +73,7 @@ export default async function LoginPage({
       </div>
 
       {noticeText && (
-        <p className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-400">
+        <p className="rounded-lg bg-danger-quiet px-3 py-2 text-center text-callout text-danger">
           {noticeText}
         </p>
       )}

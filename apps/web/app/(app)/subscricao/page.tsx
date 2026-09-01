@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { Button } from '@capo/ui/button';
+import { Card } from '@capo/ui/card';
 import { getBillingState } from '@/lib/billing';
 import { metadataTitle, requireAuthT } from '@/lib/i18n';
 import PullToRefresh from '@/app/pull-to-refresh';
@@ -29,49 +31,43 @@ export default async function SubscricaoPage({
       <div className="mx-auto flex min-h-full w-full max-w-sm flex-col justify-center gap-6 px-6 pb-16">
         <div className="space-y-2 text-center">
           <p className="text-4xl">💳</p>
-          <h1 className="text-2xl font-semibold">{t.billing.title}</h1>
+          <h1 className="text-title font-semibold">{t.billing.title}</h1>
         </div>
 
         {sucesso && (
-          <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-center text-sm text-emerald-700 dark:text-emerald-400">
+          <p className="rounded-lg bg-success-quiet px-3 py-2 text-center text-callout text-success">
             {t.billing.activated}
           </p>
         )}
 
         {!state.enabled ? (
-          <p className="rounded-lg bg-zinc-500/10 px-3 py-2 text-center text-sm text-zinc-500">
+          <p className="rounded-lg bg-surface-sunken px-3 py-2 text-center text-callout text-fg-muted">
             {t.billing.unavailable}
           </p>
         ) : (
           <>
-            <div className="rounded-xl border border-zinc-500/20 p-4 text-center">
-              <p className="text-sm font-medium">
+            <Card>
+              <p className="text-center text-callout font-medium">
                 {state.status === 'trialing'
                   ? state.daysLeft >= 0
                     ? t.billing.trialDaysLeft(state.daysLeft)
                     : t.billing.trialEnded
                   : (t.billing.statusLabel[state.status as keyof typeof t.billing.statusLabel] ?? state.status)}
               </p>
-              <p className="mt-1 text-xs text-zinc-500">{t.billing.price}</p>
-            </div>
+              <p className="mt-1 text-center text-caption text-fg-muted">{t.billing.price}</p>
+            </Card>
 
             {state.status === 'active' ? (
               <form action={openPortal}>
-                <button
-                  type="submit"
-                  className="w-full rounded-lg border border-zinc-500/30 py-2.5 text-sm font-semibold hover:bg-zinc-500/10"
-                >
+                <Button type="submit" variant="secondary" fullWidth>
                   {t.billing.manage}
-                </button>
+                </Button>
               </form>
             ) : (
               <form action={startCheckout}>
-                <button
-                  type="submit"
-                  className="w-full rounded-lg bg-orange-600 py-2.5 font-semibold text-white active:bg-orange-700"
-                >
+                <Button type="submit" fullWidth>
                   {t.billing.subscribe}
-                </button>
+                </Button>
               </form>
             )}
           </>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useId, useState } from 'react';
+import { Field } from '@capo/ui/field';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 
@@ -19,6 +20,18 @@ import type { Locale } from '@capo/i18n/locale';
 //
 // One field per component instance: `name` is always "password" because all
 // three screens post exactly that, and none of them asks for it twice.
+
+// The input mirrors the shared Input's classes (field.tsx's CONTROL) by hand:
+// the eye needs pr-12 so typed text never runs underneath it, and Input takes
+// no className on purpose. If CONTROL changes shape, change this too.
+const INPUT = [
+  'w-full min-h-12 rounded-control py-2 pl-3 pr-12 text-body',
+  'bg-surface-sunken text-fg',
+  'border border-control',
+  'transition-[border-color,box-shadow] ease-out',
+  'outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+  'disabled:opacity-50',
+].join(' ');
 
 function EyeIcon({ off }: { off: boolean }) {
   return (
@@ -56,42 +69,40 @@ export default function PasswordField({
   const inputId = useId();
 
   return (
-    <div className="space-y-1">
-      {/* Explicit htmlFor rather than a wrapping <label>: the toggle lives
-          inside the field, and a click on it would otherwise also be a click
-          on the label. */}
-      <label htmlFor={inputId} className="block text-sm font-medium">
-        {label}
-      </label>
-      <div className="relative">
-        <input
-          id={inputId}
-          type={visible ? 'text' : 'password'}
-          name="password"
-          required
-          minLength={minLength}
-          autoComplete={autoComplete}
-          // A revealed password is still a password. Left alone, iOS would
-          // capitalise its first letter and autocorrect the rest — silently
-          // changing what gets submitted, which is the opposite of the point.
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          // pr-12 keeps the typed text from running underneath the eye.
-          className="w-full rounded-lg border border-zinc-500/30 bg-background py-2.5 pl-3 pr-12 text-base outline-none focus:border-orange-600"
-        />
-        <button
-          // WITHOUT type="button" this submits the form it sits in — the
-          // default for a <button> inside a <form>. Do not remove it.
-          type="button"
-          onClick={() => setVisible(v => !v)}
-          aria-label={visible ? t.hidePassword : t.showPassword}
-          aria-pressed={visible}
-          className="absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-r-lg text-zinc-500 hover:text-foreground focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-600"
-        >
-          <EyeIcon off={visible} />
-        </button>
-      </div>
-    </div>
+    // Field wires label to input with htmlFor rather than a wrapping <label>:
+    // the toggle lives inside the field, and a click on it would otherwise
+    // also be a click on the label.
+    <Field id={inputId} label={label}>
+      {a11y => (
+        <div className="relative">
+          <input
+            {...a11y}
+            type={visible ? 'text' : 'password'}
+            name="password"
+            required
+            minLength={minLength}
+            autoComplete={autoComplete}
+            // A revealed password is still a password. Left alone, iOS would
+            // capitalise its first letter and autocorrect the rest — silently
+            // changing what gets submitted, which is the opposite of the point.
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            className={INPUT}
+          />
+          <button
+            // WITHOUT type="button" this submits the form it sits in — the
+            // default for a <button> inside a <form>. Do not remove it.
+            type="button"
+            onClick={() => setVisible(v => !v)}
+            aria-label={visible ? t.hidePassword : t.showPassword}
+            aria-pressed={visible}
+            className="absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-r-control text-fg-muted hover:text-fg focus-visible:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          >
+            <EyeIcon off={visible} />
+          </button>
+        </div>
+      )}
+    </Field>
   );
 }
