@@ -519,6 +519,14 @@ const dict: Catalog = {
     materials: {
       title: 'Materials',
       subtitle: 'What has to be on site',
+      // ── issue #154 ─────────────────────────────────────────────────────
+      today: 'For today',
+      todayHint: 'Mark what is already on site and what is missing. It starts again from scratch every morning.',
+      emptyToday: 'No materials recorded for today’s work.',
+      onSite: 'On site',
+      missing: 'Missing',
+      checkedCount: (onSite, total) => `${onSite} of ${total} on site`,
+      checkFailed: 'That did not save. Try again.',
       tomorrow: 'For tomorrow',
       week: 'Rest of the week',
       weekHint: 'Order these now — anything with a lead time will not wait.',

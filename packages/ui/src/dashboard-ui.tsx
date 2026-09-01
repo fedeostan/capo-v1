@@ -159,6 +159,7 @@ export function MaterialsList({
   seeJobLabel,
   renderGroupAction,
   renderItem,
+  renderItemAction,
 }: {
   groups: MaterialsGroup[];
   empty: string;
@@ -175,6 +176,16 @@ export function MaterialsList({
   renderGroupAction?: (group: MaterialsGroup) => React.ReactNode;
   /** Replaces the plain material name with something tappable. */
   renderItem?: (item: MaterialsGroup['items'][number], group: MaterialsGroup) => React.ReactNode;
+  /** A control at the END of each row — the on-site / missing tick on the
+   *  TODAY horizon (issue #154), and nothing on the other two.
+   *
+   *  Injected rather than built here for the reason in the file header: this
+   *  package is presentational by contract and owns no mutation. One list
+   *  component rather than a second renderer for today, because two renderers
+   *  drift and a manager reading both would have no way to tell which was
+   *  right. When it is given, the ▢ placeholder bullet goes away — a real tick
+   *  and a drawing of one on the same row is two answers to one question. */
+  renderItemAction?: (item: MaterialsGroup['items'][number], group: MaterialsGroup) => React.ReactNode;
 }) {
   if (groups.length === 0) return <EmptyState text={empty} />;
   const openByDefault = groups.length <= COLLAPSE_ABOVE;
@@ -206,9 +217,11 @@ export function MaterialsList({
               <ul className="divide-y divide-zinc-500/15">
                 {group.items.map(item => (
                   <li key={item.material} className="flex items-start gap-3 p-3">
-                    <span aria-hidden className="mt-0.5 text-zinc-500">
-                      ▢
-                    </span>
+                    {!renderItemAction && (
+                      <span aria-hidden className="mt-0.5 text-zinc-500">
+                        ▢
+                      </span>
+                    )}
                     <div className="min-w-0">
                       {renderItem ? (
                         renderItem(item, group)
@@ -217,6 +230,10 @@ export function MaterialsList({
                       )}
                       <p className="text-xs text-zinc-500">{forLabel(item.forTasks.map(task => task.title))}</p>
                     </div>
+                    {/* `ml-auto` rather than `justify-between` on the <li>:
+                        with no action rendered, justify-between would push the
+                        text block to the right edge of every existing row. */}
+                    {renderItemAction && <div className="ml-auto shrink-0">{renderItemAction(item, group)}</div>}
                   </li>
                 ))}
               </ul>

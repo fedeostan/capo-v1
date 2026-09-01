@@ -520,6 +520,14 @@ const dict: Catalog = {
     materials: {
       title: 'Materiais',
       subtitle: 'O que tem de estar em obra',
+      // ── issue #154 ─────────────────────────────────────────────────────
+      today: 'Para hoje',
+      todayHint: 'Marca o que já está em obra e o que falta. Recomeça do zero todas as manhãs.',
+      emptyToday: 'Não há materiais registados para o trabalho de hoje.',
+      onSite: 'Em obra',
+      missing: 'Falta',
+      checkedCount: (onSite, total) => `${onSite} de ${total} em obra`,
+      checkFailed: 'Não deu para guardar. Tenta outra vez.',
       tomorrow: 'Para amanhã',
       week: 'Resto da semana',
       weekHint: 'Para encomendar já — o que tem prazo de entrega não espera.',

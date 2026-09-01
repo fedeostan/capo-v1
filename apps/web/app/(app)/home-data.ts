@@ -57,6 +57,9 @@ export interface HomeData {
   requests: WorkerRequestItem[];
   /** Every fresh request, for the "+2 pedidos" line. */
   requestCount: number;
+  /** What TODAY's work needs on site (issue #154) — a different question from
+   *  `materials`, which is tomorrow's buy list. Same loader, third horizon. */
+  materialsToday: MaterialsGroup[];
 }
 
 /** How many rows each widget shows before it defers to its own screen. Three
@@ -83,7 +86,8 @@ async function soft<T>(promise: Promise<T>, fallback: T, label: string): Promise
 export async function loadHome(ctx: AuthContext): Promise<HomeData> {
   const today = await soft(loadToday(ctx), null, 'today');
 
-  const [todayTasks, openTasks, obras, activity, crew, materials, requests] = await Promise.all([
+  const [todayTasks, openTasks, obras, activity, crew, materials, requests, materialsToday] =
+    await Promise.all([
     soft(
       // 'date' grouping: Home sorts by when, and the grouping argument only
       // decides the ORDER the rows come back in — Home renders a flat list and
@@ -105,6 +109,7 @@ export async function loadHome(ctx: AuthContext): Promise<HomeData> {
     // rather than read again: the urgency words on this card have to mean what
     // "hoje" means everywhere else in the app.
     soft(loadWorkerRequests(ctx, today), [] as WorkerRequestItem[], 'requests'),
+    soft(loadMaterials(ctx, 'hoje', today), [] as MaterialsGroup[], 'materials_today'),
   ]);
 
   // Reviews are keyed by task id, so they need the open board to look up
@@ -138,6 +143,12 @@ export async function loadHome(ctx: AuthContext): Promise<HomeData> {
     materials: materials.slice(0, MATERIAL_ROWS),
     requests: requests.slice(0, REQUEST_ROWS),
     requestCount: requests.length,
+    // Groups with no materials recorded are kept by the loader on purpose —
+    // they are the ones a manager wants to ADD to, and the materials screen
+    // renders them as an empty group with the "add" control inside. On Home
+    // there is no such control and the row would be a blank line, so the card
+    // shows only the obras that actually have something to check.
+    materialsToday: materialsToday.filter(g => g.items.length > 0).slice(0, MATERIAL_ROWS),
   };
 }
 
