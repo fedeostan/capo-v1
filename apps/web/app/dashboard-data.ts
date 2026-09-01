@@ -364,19 +364,26 @@ export async function loadTeamLoad({ db, companyId }: AuthContext): Promise<Team
 // is how a builder shops — one trip per site — and each material carries the
 // tasks that need it so the list stays challengeable rather than magic.
 //
-// Two horizons: `amanha` is what you buy tonight; `semana` is what you ORDER
-// tonight, because anything with a lead time is already late by the time it
-// shows up on the tomorrow list.
+// Three horizons, and the third asks a DIFFERENT question (issue #154).
+// `amanha` is what you buy tonight; `semana` is what you ORDER tonight,
+// because anything with a lead time is already late by the time it shows up on
+// the tomorrow list. Both are anticipation. `hoje` is not: at 06:40 the
+// manager is not asking what to buy, they are asking whether it is there.
+//
+// `hoje` reads `active_today` exactly as `amanha` reads `active_tomorrow` —
+// the view and lisbon_today() decide what today means, never this file.
 export async function loadMaterials(
   { db, companyId }: AuthContext,
-  horizon: 'amanha' | 'semana',
+  horizon: 'hoje' | 'amanha' | 'semana',
   today: string | null,
 ): Promise<MaterialsGroup[]> {
   // `id` joined the select for issue #60: a material can now be edited from
   // this screen, and every write has to name the task row it belongs to.
   let query = db.from('task_board').select('id, job_id, job_name, title, materials').eq('company_id', companyId);
 
-  if (horizon === 'amanha') {
+  if (horizon === 'hoje') {
+    query = query.eq('active_today', true);
+  } else if (horizon === 'amanha') {
     query = query.eq('active_tomorrow', true);
   } else {
     // Window intersection with [today, today+6], the same shape the board's
@@ -432,6 +439,64 @@ export async function loadMaterials(
       .sort((a, b) => a.material.localeCompare(b.material)),
     tasks: [...tasks.values()].sort((a, b) => a.title.localeCompare(b.title)),
   }));
+}
+
+/** What a manager answered about one material today: it is on site, or it is
+ *  missing. Absent from the map = not answered yet, which is also what an
+ *  explicitly withdrawn answer ('unknown' in the table) reads as. */
+export type MaterialCheckState = 'on_site' | 'missing';
+
+/** Today's ticks, keyed by {@link materialCheckKey}. */
+export type MaterialChecks = Record<string, MaterialCheckState>;
+
+/**
+ * The one key both the reader and the screen use.
+ *
+ * Obra + the material string VERBATIM, which is exactly how the materials list
+ * groups and de-duplicates rows — so a tick can never be rendered against a
+ * row it does not belong to. A null obra is the "Sem obra" group and is a real
+ * case: `tasks.job_id` is nullable, and migration 0044's unique index is
+ * `nulls not distinct` for that reason.
+ */
+export function materialCheckKey(obraId: string | null, material: string): string {
+  return `${obraId ?? ''} ${material}`;
+}
+
+/**
+ * Today's walk-around answers (issue #154, migration 0044).
+ *
+ * `today` comes from lisbon_today() — the same clock task_board reads — and is
+ * part of the key in the table, which is what makes the tick reset overnight
+ * BY CONSTRUCTION: yesterday's rows simply are not today's. Nothing sweeps.
+ *
+ * Degrades to "nothing ticked" on any failure, including the 42P01 a deploy
+ * landing before its migration answers. That is byte-identical to the product
+ * before this feature, which is the right cost for a read; the WRITE path
+ * deliberately does not swallow, because a tick that silently did not land is
+ * the one thing a check list must never produce.
+ */
+export async function loadMaterialChecks(
+  { db, companyId }: AuthContext,
+  today: string | null,
+): Promise<MaterialChecks> {
+  if (!today) return {};
+  const { data, error } = await db
+    .from('material_checks')
+    .select('job_id, material, status')
+    .eq('company_id', companyId)
+    .eq('check_date', today);
+  if (error) {
+    // Swallowed but greppable, the same posture as loadCompanySnapshot. Grep
+    // this before concluding that a screen with no ticks means nobody ticks.
+    console.warn('materials.checks_read_failed', error.message);
+    return {};
+  }
+  const checks: MaterialChecks = {};
+  for (const row of data ?? []) {
+    if (row.status !== 'on_site' && row.status !== 'missing') continue;
+    checks[materialCheckKey(row.job_id, row.material)] = row.status;
+  }
+  return checks;
 }
 
 /** Today in Europe/Lisbon, straight from the SQL clock. */

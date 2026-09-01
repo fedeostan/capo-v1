@@ -621,6 +621,24 @@ export interface Catalog {
     materials: {
       title: string;
       subtitle: string;
+      // ── issue #154: the today horizon, which asks a different question ──
+      // Tomorrow and the week are ANTICIPATION — what to buy, what to order.
+      // Today is not: it is "is it there?", answered by walking the site. It
+      // is the only horizon with ticks, and the copy has to say so or the
+      // three sections read as one list with an extra control on top.
+      /** Heading for what today's work needs on site. */
+      today: string;
+      /** Says what the ticks are for, and that they reset overnight. */
+      todayHint: string;
+      emptyToday: string;
+      /** The tick: this material is on site. */
+      onSite: string;
+      /** The tick: this material is NOT on site. */
+      missing: string;
+      /** Running tally on the today heading, e.g. "3 de 7 em obra". */
+      checkedCount(onSite: number, total: number): string;
+      /** The tick did not save. Shown beside the chip, never swallowed. */
+      checkFailed: string;
       /** Heading for what must be on site tomorrow — the buy-tonight list. */
       tomorrow: string;
       /** Heading for the rest of the week — the order-tonight list. */

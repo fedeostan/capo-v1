@@ -208,6 +208,30 @@ export default async function HomePage() {
             </Section>
           )}
 
+          {/* Today's materials, ABOVE tomorrow's buy list (issue #154). If the
+              answer to "what does today need on site" is three taps deep it
+              will not be the thing checked at 06:40. Home re-derives nothing:
+              this is loadMaterials on its third horizon, the same read the
+              materials screen makes. It POINTS — the ticks live on that
+              screen, where the whole list is visible. */}
+          {home.materialsToday.length > 0 && (
+            <Section
+              title={t.screens.materials.today}
+              link={{ href: '/obras?vista=materiais', label: t.home.allMaterials }}
+            >
+              <Card padding="none">
+                {home.materialsToday.map(group => (
+                  <ListRow
+                    key={group.obraName}
+                    href="/obras?vista=materiais"
+                    title={group.items.map(i => i.material).join(', ')}
+                    meta={group.obraName}
+                  />
+                ))}
+              </Card>
+            </Section>
+          )}
+
           {home.materials.length > 0 && (
             <Section
               title={t.home.materialsLow}
