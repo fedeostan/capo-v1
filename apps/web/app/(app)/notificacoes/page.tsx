@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { Catalog } from '@capo/i18n/catalog';
+import type { Locale } from '@capo/i18n/locale';
+import { whenLabel } from '@/lib/worker-request';
 import { EmptyState } from '@capo/ui/dashboard-ui';
 import { AppBar } from '@/app/_ui/nav';
 import { loadInbox, type InboxItem } from '@/app/notifications/inbox';
@@ -39,7 +41,7 @@ function headline(item: InboxItem, t: Catalog): string {
   return line ? line(subject) : subject;
 }
 
-function Item({ item, t }: { item: InboxItem; t: Catalog }) {
+function Item({ item, t, locale }: { item: InboxItem; t: Catalog; locale: Locale }) {
   const unread = item.readAt === null;
   const body = (
     <>
@@ -67,16 +69,34 @@ function Item({ item, t }: { item: InboxItem; t: Catalog }) {
                   : t.screens.taskReview.proofNone}
               </>
             )}
+            {/* When a crew request is needed FOR (issue #152) — the whole
+                ranking signal, and the one fact the headline cannot carry.
+                Derived from the date and never from tone; "sem data" is shown
+                as a fact rather than hidden, because Capo asked once and did
+                not guess. */}
+            {item.requestWhen && (
+              <>
+                {' · '}
+                {whenLabel(item.requestWhen.kind, item.requestWhen.date, locale)}
+              </>
+            )}
           </p>
         </div>
       </div>
       {/* The worker's own words, quoted and attributed — never merged into
           the sentence above. Same rule as the review control, because it is
-          the same text: task_reviews.note, the one place worker-authored
-          text reaches the manager. */}
+          the same class of text: task_reviews.note and, since issue #152,
+          worker_requests.text — the two places worker-authored prose reaches
+          the manager. A request names the person in its label as well as in
+          the headline, because on that kind the quote IS the content and it
+          has to be unmistakably theirs. */}
       {item.body && (
         <div className="mt-2 border-l-2 border-hairline pl-2">
-          <p className="text-caption font-medium text-fg-muted">{t.notifications.noteLabel}</p>
+          <p className="text-caption font-medium text-fg-muted">
+            {item.kind === 'worker_request' && item.title
+              ? t.requests.quoteLabel(item.title)
+              : t.notifications.noteLabel}
+          </p>
           <blockquote className="whitespace-pre-line break-words text-callout italic text-fg-muted line-clamp-6">
             “{item.body}”
           </blockquote>
@@ -143,7 +163,7 @@ export default async function NotificacoesPage() {
             {unread > 0 && <MarkAllRead locale={locale} />}
             <div className="space-y-2">
               {items.map(item => (
-                <Item key={item.id} item={item} t={t} />
+                <Item key={item.id} item={item} t={t} locale={locale} />
               ))}
             </div>
           </>

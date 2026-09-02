@@ -81,7 +81,10 @@ export const cards: CardStrings = {
     const bits = [`Add worker: ${p.name}`];
     if (p.trade) bits.push(`(${p.trade})`);
     if (p.phone) bits.push(`ph. ${p.phone}`);
-    return `${bits.join(' ')}.`;
+    const line = `${bits.join(' ')}.`;
+    // ONE line, and only when Capo will actually have somebody to write to.
+    if (!p.optIn || !p.phone) return line;
+    return `${line} Tell them to reply to Capo's first message, even just "yes". Without that Capo can send them messages, but can't answer them or send them their day.`;
   },
   updateWorker: p => `Update worker ${p.name}: ${p.changes.join('; ')}.`,
   workerChange: {

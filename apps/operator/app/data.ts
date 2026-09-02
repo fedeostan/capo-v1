@@ -7,6 +7,12 @@
 import { getDb } from '@capo/db/client';
 import type { Tables } from '@capo/db/types';
 import { hasWhatsAppConsent, type WhatsAppRecipient } from '@capo/core/channels/whatsapp';
+// The ONE sanctioned reader of task_board's two appended collaborator arrays.
+// Imported from @capo/core — a shared package, not apps/web — for the reason
+// the function's own header gives: a second copy of those six lines is how one
+// surface ends up saying a helper is free while another says they are on site.
+import { everyoneOnTask, readCollaborators } from '@capo/core/capabilities/collaborators';
+import { TASK_PHOTO_BUCKET } from '@capo/core/media/photos';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import {
   OPERATOR_RESEND_WELCOME_KIND,
@@ -110,21 +116,139 @@ export interface TaskRow extends Task {
   workers: { name: string } | null;
 }
 
-export async function loadTasksByCompany(): Promise<{ company: Company; tasks: TaskRow[] }[]> {
+/**
+ * The task statuses the schema allows, in the order the board thinks about
+ * them. Mirrors the CHECK constraint on `tasks.status` — 0001's five, widened
+ * by 0018 with `pending_review`. Hard-coded rather than derived from the rows
+ * on screen, so the filter offers a status that currently has NO tasks: "show
+ * me the blocked ones" answering "none" is information, and a filter built
+ * from the data can never say it.
+ */
+export const TASK_STATUSES = [
+  'pending',
+  'in_progress',
+  'pending_review',
+  'blocked',
+  'done',
+  'cancelled',
+] as const;
+
+/**
+ * How many tasks ONE company contributes to the list.
+ *
+ * PER COMPANY, and that is the whole fix (issue #155). This used to be a
+ * single 500-row estate-wide read ordered newest-first, grouped in JavaScript
+ * afterwards — so past 500 tasks in total the oldest-created companies fell off
+ * the bottom of the read and rendered as "No tasks." An operator looking at a
+ * quiet tenant was shown the same screen a genuinely empty tenant produces,
+ * with nothing anywhere saying a cap had been hit. A per-company cap cannot do
+ * that: one busy tenant can no longer consume another tenant's rows, and when
+ * this cap DOES bite, `matching` is the true total and the screen says so.
+ */
+export const TASKS_PER_COMPANY = 200;
+
+/**
+ * Has anything ever moved this task since it was created?
+ *
+ * `tasks.updated_at` has no trigger behind it — every writer stamps it by
+ * hand — and at insert time both columns take the same statement's `now()`, so
+ * equality means untouched. The one-second slack is for a writer that stamps a
+ * client-side ISO string a hair off the row's own default (`update_task` and
+ * the completion sheet both do), not for clock skew between servers.
+ *
+ * ONE definition, read by both the list and the detail page. Two copies would
+ * eventually disagree about whether the same task had ever been touched, and
+ * the operator would have no way to tell which screen was right.
+ */
+const TASK_TOUCHED_EPSILON_MS = 1000;
+
+export function taskWasTouched(task: { created_at: string; updated_at: string }): boolean {
+  return new Date(task.updated_at).getTime() - new Date(task.created_at).getTime() > TASK_TOUCHED_EPSILON_MS;
+}
+
+export interface TaskListFilters {
+  /** Only this company. Undefined means every company. */
+  companyId?: string;
+  /** Only this `tasks.status`. Undefined means every status. */
+  status?: string;
+}
+
+export interface CompanyTasks {
+  company: Company;
+  /** Newest first, at most TASKS_PER_COMPANY of them. */
+  tasks: TaskRow[];
+  /**
+   * Every task matching the filter for this company, IGNORING the cap — the
+   * exact count PostgREST computed, not `tasks.length`. This is what makes a
+   * truncated list say "showing 200 of 1,412" instead of quietly lying.
+   */
+  matching: number;
+  truncated: boolean;
+  /** The read failed outright. Rendered as an error, never as "no tasks". */
+  error: string | null;
+}
+
+export interface TaskListing {
+  groups: CompanyTasks[];
+  /** Every company, filtered or not — the company filter control needs them
+   *  all, or filtering to one company empties the control that undoes it. */
+  companies: Company[];
+  /** The companies read itself failed. Rendered as an error rather than as an
+   *  empty estate — the same mistake in a different place. */
+  companiesError: string | null;
+  /** True when any group hit its cap — the page header says so once. */
+  anyTruncated: boolean;
+}
+
+/**
+ * The Tasks screen, one capped read per company.
+ *
+ * N+1 by construction, and deliberately: the same pilot-scale stance as
+ * loadOverview above. A handful of companies means a handful of parallel
+ * selects, and the alternative — one big read plus JavaScript grouping — is
+ * precisely the bug this replaced. Revisit when the company count makes the
+ * fan-out expensive, not before.
+ */
+export async function loadTaskListing(filters: TaskListFilters = {}): Promise<TaskListing> {
   const db = getDb();
-  const [companies, tasks] = await Promise.all([
-    db.from('companies').select('*').order('created_at').then(r => r.data ?? []),
-    db
-      .from('tasks')
-      .select('*, jobs(name), workers:assignee_worker_id(name)')
-      .order('created_at', { ascending: false })
-      .limit(500)
-      .then(r => (r.data ?? []) as unknown as TaskRow[]),
-  ]);
-  return companies.map(company => ({
-    company,
-    tasks: tasks.filter(t => t.company_id === company.id),
-  }));
+  const { data: allCompanies, error: companiesError } = await db
+    .from('companies')
+    .select('*')
+    .order('created_at');
+  const companies = (allCompanies ?? []).filter(c => !filters.companyId || c.id === filters.companyId);
+
+  const groups = await Promise.all(
+    companies.map(async (company): Promise<CompanyTasks> => {
+      let query = db
+        .from('tasks')
+        // count: 'exact' is what makes truncation VISIBLE. PostgREST computes
+        // it over the filter and ignores the limit, so it stays the true total
+        // however small the cap gets.
+        .select('*, jobs(name), workers:assignee_worker_id(name)', { count: 'exact' })
+        .eq('company_id', company.id)
+        .order('created_at', { ascending: false })
+        .limit(TASKS_PER_COMPANY);
+      if (filters.status) query = query.eq('status', filters.status);
+
+      const { data, count, error } = await query;
+      const tasks = (data ?? []) as unknown as TaskRow[];
+      const matching = count ?? tasks.length;
+      return {
+        company,
+        tasks,
+        matching,
+        truncated: matching > tasks.length,
+        error: error?.message ?? null,
+      };
+    }),
+  );
+
+  return {
+    groups,
+    companies: allCompanies ?? [],
+    companiesError: companiesError?.message ?? null,
+    anyTruncated: groups.some(g => g.truncated),
+  };
 }
 
 export interface DispatchRow extends Tables<'dispatch_log'> {
@@ -1386,5 +1510,455 @@ export async function loadProblemReports(): Promise<{ rows: ProblemReportRow[]; 
       audience: row.worker_id ? 'worker' : 'manager',
     })),
     error: null,
+  };
+}
+
+// ── One task, end to end (issue #155) ───────────────────────────────────────
+//
+// "What has happened to this piece of work" is currently a question you can
+// only answer in a SQL client, because the answer is spread over seven
+// relations: the task, its obra, the crew on it, both directions of
+// task_dependencies, every completion claim, every photo, and every WhatsApp
+// send that carried it. This assembles all of them for ONE task.
+//
+// Same scoping rule as loadCompanyDetail: the service role sees every tenant,
+// so every follow-up query carries an explicit company filter derived from the
+// task row itself. A dependency edge or a photo that somehow named another
+// company is dropped rather than rendered.
+//
+// Read-only, like the rest of this file. Nothing here writes.
+
+export type TaskBoardRow = Tables<'task_board'>;
+export type TaskReviewRow = Tables<'task_reviews'>;
+
+/** One end of a `task_dependencies` edge, resolved to something readable. */
+export interface TaskDependencyLink {
+  id: string;
+  title: string;
+  status: string;
+  dueDate: string | null;
+  jobId: string | null;
+  jobName: string | null;
+  /**
+   * The edge crosses obras. Legal — 0007 only requires both ends be in the
+   * same COMPANY, never the same job — and worth saying out loud, because a
+   * dependency that reaches outside the obra is the kind of thing an operator
+   * is on this screen to find.
+   */
+  crossJob: boolean;
+}
+
+/** One completion claim, with both parties resolved to names. */
+export interface TaskReviewView {
+  id: string;
+  status: string;
+  /**
+   * Worker-authored free text. It is DATA: rendered as an attributed quote,
+   * never as portal copy, and never pasted onward into anything that treats
+   * text as instructions.
+   */
+  note: string | null;
+  declaredAt: string;
+  declaredByWorkerId: string | null;
+  /** `workers.name`, typed by the MANAGER. Null when no worker filed it. */
+  declaredByName: string | null;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  /** `profiles.full_name`. Null when a trigger resolved the row (0020). */
+  resolvedByName: string | null;
+}
+
+/**
+ * One photo on the task, with a freshly minted signed URL.
+ *
+ * `url` may be null while the row still renders — deliberately UNLIKE
+ * apps/web's loadTaskPhotos, which drops an unsignable row so the manager is
+ * never shown a broken frame. The operator is here precisely to discover that
+ * a row exists whose object cannot be signed; hiding it would hide the fault.
+ */
+export interface OperatorTaskPhoto {
+  id: string;
+  url: string | null;
+  /** 'worker' (WhatsApp) or 'manager' (the sheet). Un-forgeable by grant. */
+  source: string;
+  storagePath: string;
+  mime: string;
+  byteSize: number;
+  takenAt: string | null;
+  createdAt: string;
+  workerId: string | null;
+  workerName: string | null;
+  uploadedBy: string | null;
+  uploadedByName: string | null;
+}
+
+/** One `notification_log` row that carried this task, recipient resolved. */
+export interface TaskSendView {
+  row: SendLogRow;
+  recipientName: string | null;
+  recipientKind: 'worker' | 'manager' | 'unknown';
+}
+
+/** One risk signal from `task_board`, named exactly as the view names it. */
+export interface RiskSignal {
+  id: string;
+  label: string;
+  fired: boolean;
+  why: string;
+}
+
+export interface TaskDetail {
+  task: Task;
+  company: Company;
+  job: Job | null;
+  /** The row from `task_board`, read with select('*'). Never recomputed. */
+  board: TaskBoardRow | null;
+  /** From `tasks.assignee_worker_id`, which stays the authoritative lead. */
+  lead: Worker | null;
+  /** Read through readCollaborators(), never by zipping the view's arrays. */
+  collaborators: Worker[];
+  /** Collaborator ids the view named but no `workers` row was found for. */
+  unresolvedCollaboratorIds: string[];
+  dependsOn: TaskDependencyLink[];
+  blocks: TaskDependencyLink[];
+  reviews: TaskReviewView[];
+  photos: OperatorTaskPhoto[];
+  /** Storage or table read failed — said on screen, never swallowed. */
+  photoError: string | null;
+  sends: TaskSendView[];
+  sendsError: string | null;
+}
+
+/** How long an operator's signed photo URL lasts. Minutes, not seconds, so a
+ *  long read does not 403 halfway down the page. */
+const OPERATOR_SIGNED_URL_TTL_SECONDS = 300;
+
+/**
+ * id → display name for a set of people in ONE company.
+ *
+ * The company filter is the tenant scope: it is what stops an id belonging to
+ * another tenant from resolving to that tenant's person's name. An id that
+ * does not resolve is simply absent, and callers render the bare id instead.
+ */
+async function namesFor(
+  companyId: string,
+  table: 'workers' | 'profiles',
+  ids: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (ids.length === 0) return out;
+  const db = getDb();
+  if (table === 'workers') {
+    const { data } = await db.from('workers').select('id, name').eq('company_id', companyId).in('id', ids);
+    for (const row of data ?? []) out.set(row.id, row.name);
+  } else {
+    const { data } = await db.from('profiles').select('id, full_name').eq('company_id', companyId).in('id', ids);
+    for (const row of data ?? []) out.set(row.id, row.full_name);
+  }
+  return out;
+}
+
+/**
+ * The photos on one task, each with a signed URL minted RIGHT NOW.
+ *
+ * A signed URL is a bearer token in a query string: whoever holds it can read
+ * the object with no session until it expires. Its only caller is
+ * /tasks/[taskId], which is `export const dynamic = 'force-dynamic'`. Keep it
+ * that way and do not wrap this in a cache — baked into a prerendered page a
+ * signed URL is served to whoever asks and then expires, which leaks briefly
+ * and renders broken frames for ever.
+ *
+ * Written here rather than imported from apps/web, and not only because that
+ * import is forbidden: loadTaskPhotos runs on the RLS-scoped client, where the
+ * storage.objects policy (0023) is the boundary. This runs on the service
+ * role, which has no such boundary — so the company filter below is not
+ * belt-and-braces here, it is the whole of the scoping.
+ */
+async function loadOperatorTaskPhotos(
+  companyId: string,
+  taskId: string,
+): Promise<{ photos: OperatorTaskPhoto[]; error: string | null }> {
+  const db = getDb();
+  const { data: rows, error } = await db
+    .from('task_photos')
+    .select('*')
+    .eq('company_id', companyId)
+    .eq('task_id', taskId)
+    .order('created_at', { ascending: false });
+  if (error) return { photos: [], error: error.message };
+  if (!rows || rows.length === 0) return { photos: [], error: null };
+
+  const { data: signed, error: signError } = await db.storage
+    .from(TASK_PHOTO_BUCKET)
+    .createSignedUrls(
+      rows.map(r => r.storage_path),
+      OPERATOR_SIGNED_URL_TTL_SECONDS,
+    );
+
+  // Matched on PATH, never by position: createSignedUrls reports per-object
+  // failures inline rather than throwing, so one unsignable object would shift
+  // every later row onto the wrong image if the two lists were zipped. Same
+  // rule the translation applier follows, for the same reason (AGENTS.md).
+  const urls = new Map((signed ?? []).map(s => [s.path, s.signedUrl]));
+
+  const workerIds = [...new Set(rows.map(r => r.worker_id).filter((v): v is string => v != null))];
+  const profileIds = [...new Set(rows.map(r => r.uploaded_by).filter((v): v is string => v != null))];
+  const [workerNames, profileNames] = await Promise.all([
+    namesFor(companyId, 'workers', workerIds),
+    namesFor(companyId, 'profiles', profileIds),
+  ]);
+
+  return {
+    photos: rows.map(r => ({
+      id: r.id,
+      url: urls.get(r.storage_path) ?? null,
+      source: r.source,
+      storagePath: r.storage_path,
+      mime: r.mime,
+      byteSize: r.byte_size,
+      takenAt: r.taken_at,
+      createdAt: r.created_at,
+      workerId: r.worker_id,
+      workerName: r.worker_id ? (workerNames.get(r.worker_id) ?? null) : null,
+      uploadedBy: r.uploaded_by,
+      uploadedByName: r.uploaded_by ? (profileNames.get(r.uploaded_by) ?? null) : null,
+    })),
+    error: signError?.message ?? null,
+  };
+}
+
+/**
+ * Every WhatsApp send whose snapshot carried this task.
+ *
+ * This is the column that answers "did the crew ever actually hear about this
+ * task", and until #155 it was unreachable from any screen — `notification_log`
+ * is deny-all to tenants and the operator only ever read it per COMPANY.
+ *
+ * `task_ids` is JSONB, not a Postgres array, so containment has to be
+ * expressed as JSON. Passing an ARRAY to .contains() would emit PostgREST's
+ * array-literal form `cs.{uuid}`, which is not valid JSON and errors on a
+ * jsonb column; the string form below emits `cs.["uuid"]`, i.e.
+ * `task_ids @> '["uuid"]'::jsonb`, which is the containment we want.
+ *
+ * Any error is RETURNED rather than swallowed: an operator reading "never
+ * sent" off a failed query is exactly the wrong conclusion to hand somebody
+ * silently.
+ */
+async function loadTaskSends(
+  companyId: string,
+  taskId: string,
+): Promise<{ sends: TaskSendView[]; error: string | null }> {
+  const db = getDb();
+  const { data, error } = await db
+    .from('notification_log')
+    .select('*')
+    .eq('company_id', companyId)
+    .contains('task_ids', JSON.stringify([taskId]))
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) return { sends: [], error: error.message };
+
+  const rows = data ?? [];
+  const workerIds = [...new Set(rows.map(r => r.worker_id).filter((v): v is string => v != null))];
+  const profileIds = [...new Set(rows.map(r => r.profile_id).filter((v): v is string => v != null))];
+  const [workerNames, profileNames] = await Promise.all([
+    namesFor(companyId, 'workers', workerIds),
+    namesFor(companyId, 'profiles', profileIds),
+  ]);
+
+  return {
+    sends: rows.map(row => ({
+      row,
+      recipientKind: row.worker_id ? 'worker' : row.profile_id ? 'manager' : 'unknown',
+      recipientName: row.worker_id
+        ? (workerNames.get(row.worker_id) ?? null)
+        : row.profile_id
+          ? (profileNames.get(row.profile_id) ?? null)
+          : null,
+    })),
+    error: null,
+  };
+}
+
+/**
+ * The five risk signals `task_board` computes, READ from the view.
+ *
+ * Named and explained rather than reduced to a boolean, because "at risk" on
+ * its own tells an operator nothing: the manager's board shows the same chip
+ * for a blocked task, a late start, an approaching deadline, a late
+ * predecessor and a paused obra, and those are five different problems.
+ *
+ * `at_risk` itself is NOT their OR: the view suppresses it for anything
+ * already overdue (something late is late, not at risk) while leaving the
+ * individual flags set — so a signal can read as fired while `at_risk` is
+ * false, and that is the view being right, not a bug here.
+ */
+export function riskSignals(board: TaskBoardRow | null): RiskSignal[] {
+  return [
+    {
+      id: 'risk_blocked',
+      label: 'Blocked',
+      fired: board?.risk_blocked === true,
+      why: 'open, and its status is `blocked`',
+    },
+    {
+      id: 'risk_late_start',
+      label: 'Late start',
+      fired: board?.risk_late_start === true,
+      why: 'still `pending` and its start_date has passed',
+    },
+    {
+      id: 'risk_due_soon',
+      label: 'Due soon',
+      fired: board?.risk_due_soon === true,
+      why: 'still `pending` and due within the next two WORKING days',
+    },
+    {
+      id: 'risk_late_dependency',
+      label: 'Late dependency',
+      fired: board?.risk_late_dependency === true,
+      why: 'a predecessor is unfinished and past its own deadline',
+    },
+    {
+      id: 'risk_paused_job',
+      label: 'Paused obra',
+      fired: board?.risk_paused_job === true,
+      why: 'the obra this task belongs to is paused',
+    },
+  ];
+}
+
+/**
+ * Everything one task can be asked about. Null when no such task exists.
+ *
+ * `overdue` / `at_risk` and the five signals come from `task_board` and are
+ * NEVER re-derived here: the view is the one clock, and a portal that computed
+ * its own answer would eventually disagree with the manager's own board with
+ * nothing to say which was right (AGENTS.md).
+ */
+export async function loadTaskDetail(taskId: string): Promise<TaskDetail | null> {
+  const db = getDb();
+
+  const { data: task } = await db.from('tasks').select('*').eq('id', taskId).maybeSingle();
+  if (!task) return null;
+  const companyId = task.company_id;
+
+  const { data: company } = await db.from('companies').select('*').eq('id', companyId).maybeSingle();
+  if (!company) return null;
+
+  const [job, board, reviews, dependsOnEdges, blocksEdges, photoResult, sendResult] = await Promise.all([
+    task.job_id
+      ? db.from('jobs').select('*').eq('id', task.job_id).eq('company_id', companyId).maybeSingle().then(r => r.data)
+      : Promise.resolve(null),
+    // select('*') on the view, per the house rule: 0035 appended two columns to
+    // it and a future migration may append more, so a deploy landing ahead of
+    // its migration must degrade rather than 42703.
+    db.from('task_board').select('*').eq('id', taskId).eq('company_id', companyId).maybeSingle().then(r => r.data),
+    db
+      .from('task_reviews')
+      .select('*')
+      .eq('task_id', taskId)
+      .eq('company_id', companyId)
+      .order('declared_at', { ascending: false })
+      .then(r => r.data ?? []),
+    db.from('task_dependencies').select('depends_on_task_id').eq('task_id', taskId).then(r => r.data ?? []),
+    db.from('task_dependencies').select('task_id').eq('depends_on_task_id', taskId).then(r => r.data ?? []),
+    loadOperatorTaskPhotos(companyId, taskId),
+    loadTaskSends(companyId, taskId),
+  ]);
+
+  // ── Who is on it ──────────────────────────────────────────────────────────
+  //
+  // The LEAD is tasks.assignee_worker_id and is never taken from the mirrored
+  // `lead` row in task_assignees — 0035's whole safety design. The
+  // COLLABORATORS come from readCollaborators(), the one sanctioned reader of
+  // the view's two appended arrays: it length-guards them, so on a deploy that
+  // lands before 0035 it answers "nobody" rather than naming the wrong person
+  // to their own crew.
+  const collaboratorRefs = board ? readCollaborators(board) : [];
+  const crewIds = board
+    ? everyoneOnTask(board)
+    : task.assignee_worker_id
+      ? [task.assignee_worker_id]
+      : [];
+  const crew = crewIds.length
+    ? await db.from('workers').select('*').eq('company_id', companyId).in('id', crewIds).then(r => r.data ?? [])
+    : [];
+  const crewById = new Map(crew.map(w => [w.id, w]));
+  const collaborators = collaboratorRefs
+    .map(c => crewById.get(c.id))
+    .filter((w): w is Worker => w != null);
+  const unresolvedCollaboratorIds = collaboratorRefs.filter(c => !crewById.has(c.id)).map(c => c.id);
+
+  // ── Dependencies, both directions ─────────────────────────────────────────
+  const neighbourIds = [
+    ...new Set([...dependsOnEdges.map(e => e.depends_on_task_id), ...blocksEdges.map(e => e.task_id)]),
+  ];
+  const neighbours = neighbourIds.length
+    ? await db
+        .from('tasks')
+        // The company filter is the tenant scope: 0007 constrains both ends of
+        // an edge to one company, and a row that somehow escaped that is
+        // dropped here rather than rendered on this tenant's screen.
+        .select('id, title, status, due_date, job_id, jobs(name)')
+        .eq('company_id', companyId)
+        .in('id', neighbourIds)
+        .then(r => r.data ?? [])
+    : [];
+  const neighbourById = new Map<string, TaskDependencyLink>(
+    neighbours.map(n => [
+      n.id,
+      {
+        id: n.id,
+        title: n.title,
+        status: n.status,
+        dueDate: n.due_date,
+        jobId: n.job_id,
+        jobName: n.jobs?.name ?? null,
+        crossJob: n.job_id !== task.job_id,
+      },
+    ]),
+  );
+  const resolveLinks = (ids: string[]): TaskDependencyLink[] =>
+    ids.flatMap(id => {
+      const link = neighbourById.get(id);
+      return link ? [link] : [];
+    });
+
+  // ── Completion claims ─────────────────────────────────────────────────────
+  const claimWorkerIds = [
+    ...new Set(reviews.map(r => r.declared_by_worker_id).filter((v): v is string => v != null)),
+  ];
+  const claimProfileIds = [...new Set(reviews.map(r => r.resolved_by).filter((v): v is string => v != null))];
+  const [claimWorkerNames, claimProfileNames] = await Promise.all([
+    namesFor(companyId, 'workers', claimWorkerIds),
+    namesFor(companyId, 'profiles', claimProfileIds),
+  ]);
+
+  return {
+    task,
+    company,
+    job: job ?? null,
+    board: board ?? null,
+    lead: task.assignee_worker_id ? (crewById.get(task.assignee_worker_id) ?? null) : null,
+    collaborators,
+    unresolvedCollaboratorIds,
+    dependsOn: resolveLinks(dependsOnEdges.map(e => e.depends_on_task_id)),
+    blocks: resolveLinks(blocksEdges.map(e => e.task_id)),
+    reviews: reviews.map(r => ({
+      id: r.id,
+      status: r.status,
+      note: r.note,
+      declaredAt: r.declared_at,
+      declaredByWorkerId: r.declared_by_worker_id,
+      declaredByName: r.declared_by_worker_id ? (claimWorkerNames.get(r.declared_by_worker_id) ?? null) : null,
+      resolvedAt: r.resolved_at,
+      resolvedBy: r.resolved_by,
+      resolvedByName: r.resolved_by ? (claimProfileNames.get(r.resolved_by) ?? null) : null,
+    })),
+    photos: photoResult.photos,
+    photoError: photoResult.error,
+    sends: sendResult.sends,
+    sendsError: sendResult.error,
   };
 }

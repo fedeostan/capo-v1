@@ -3,9 +3,10 @@ import { myTasks } from './tasks';
 import { workerSearchKnowledge } from './knowledge';
 import { declareTaskDone } from './complete';
 import { setMyLanguage } from './language';
+import { askManager } from './request';
 import type { WorkerContext, WorkerTool } from './types';
 
-// The worker roster: four tools, and everything else is absent rather than
+// The worker roster: five tools, and everything else is absent rather than
 // forbidden.
 //
 // ── WHY THIS IS AN ARRAY AND NOT A FILTER ──────────────────────────────────
@@ -27,11 +28,17 @@ import type { WorkerContext, WorkerTool } from './types';
 // `audience: 'worker'` and an `execute` taking a `WorkerContext`, and
 // `WorkerContext` and `ToolContext` are mutually unassignable. Putting a
 // `CapoTool` in this array is a `tsc --noEmit` failure, not a review comment.
+//
+// `askManager` (issue #152) is the first addition since the roster was written,
+// and it is the case the paragraph above was written for: it arrived because
+// somebody chose to add it here, in a diff about the crew agent, rather than by
+// appearing for free in a commit about a manager capability.
 export const workerRoster: WorkerTool[] = [
   myTasks,
   workerSearchKnowledge,
   declareTaskDone,
   setMyLanguage,
+  askManager,
 ];
 
 // Mechanical mapping to AI SDK tools — and note what is NOT here, against
@@ -62,3 +69,8 @@ export { loadWorkerTasks, toWorkerTaskView } from './tasks';
 // field names are part of a prompt, so a renderer reading it would couple the
 // two and a prompt tweak would silently change what a worker sees on WhatsApp.
 export type { WorkerTaskRow } from './tasks';
+// The crew-request date guard (issue #152), exported for `pnpm whatsapp-check`
+// — pure, `now` injected, and the only automated coverage the fifth tool will
+// ever get. The band it enforces catches the one date mistake with no symptom:
+// "amanhã" computed into the wrong year files as "later" and never surfaces.
+export { neededByIsSane, REQUEST_TEXT_MAX } from './request';

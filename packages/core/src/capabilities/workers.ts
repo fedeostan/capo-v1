@@ -61,6 +61,31 @@ function consentPatch(optIn: boolean | undefined): {
   return optIn ? { whatsapp_opt_in_at: now } : { whatsapp_opt_out_at: now };
 }
 
+/**
+ * "Capo may write to this person, but has never heard back from them."
+ *
+ * The half-right sentence to avoid is "they get no messages until they reply":
+ * the 07:00 message is a paid Meta TEMPLATE and goes out on the manager's
+ * recorded consent alone. What a first inbound message unlocks is everything
+ * FREE-FORM — Capo answering at all, the /dia day link (the template is pinned
+ * to two parameters with no button, so a link can only ride free-form text),
+ * and the tappable list instead of plain text.
+ *
+ * `last_inbound_at` (0030) is written by exactly one thing: a webhook delivery
+ * whose sender Capo resolved to this worker. A value there is proof of a
+ * complete round trip, not merely that something was sent to them.
+ */
+function awaitingFirstReply(row: {
+  phone: string | null;
+  last_inbound_at?: string | null;
+  whatsapp_opt_in_at?: string | null;
+  whatsapp_opt_out_at?: string | null;
+}): { aguarda_primeira_resposta: boolean } {
+  return {
+    aguarda_primeira_resposta: Boolean(row.phone) && hasWhatsAppConsent(row) && !row.last_inbound_at,
+  };
+}
+
 export const addWorker: CapoTool<z.infer<typeof addWorkerInput>> = {
   name: 'add_worker',
   description:
@@ -80,7 +105,13 @@ export const addWorker: CapoTool<z.infer<typeof addWorkerInput>> = {
       .select()
       .single();
     if (error) throw new Error(`add_worker failed: ${error.message}`);
-    return { worker: data };
+    // A FACT, not a sentence (issue #153). The words the manager reads are on
+    // the deterministic card — see CardStrings.addWorker for why — because
+    // with confirm_posture defaulting to always_ask this return value never
+    // reaches them at all. What it does is give the model the same true state
+    // on the trust_quote path, where the card is skipped and the model writes
+    // the confirmation itself.
+    return { worker: data, ...awaitingFirstReply(data) };
   },
 };
 
@@ -124,7 +155,7 @@ export const updateWorker: CapoTool<z.infer<typeof updateWorkerInput>> = {
 export const listWorkers: CapoTool<Record<string, never>> = {
   name: 'list_workers',
   description:
-    "List the team: trade, whether they are reachable by the daily WhatsApp messages (recebe_whatsapp — needs both a phone and recorded consent; falta_consentimento flags the ones who have a number but have not agreed yet), and how loaded they are today/tomorrow. Use it to answer 'quem está livre?' and before assigning work. Read-only.",
+    "List the team: trade, whether they are reachable by the daily WhatsApp messages (recebe_whatsapp — needs both a phone and recorded consent; falta_consentimento flags the ones who have a number but have not agreed yet; aguarda_primeira_resposta flags the ones who DO get the daily message but have never written to Capo, so Capo cannot answer them or send them their day link until they reply once), and how loaded they are today/tomorrow. Use it to answer 'quem está livre?' and before assigning work. Read-only.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     const { data, error } = await ctx.db
@@ -175,6 +206,10 @@ export const listWorkers: CapoTool<Record<string, never>> = {
         // Split out so the manager can be told WHICH of the two is missing:
         // "add a number" and "ask them if they agree" are different jobs.
         falta_consentimento: Boolean(w.phone) && !hasWhatsAppConsent(w),
+        // The third thing that can be missing, and the least obvious: reachable
+        // by the paid template, but never once heard from — so Capo cannot
+        // answer them and cannot send them their day.
+        ...awaitingFirstReply(w),
         tarefas: load.get(w.id) ?? { hoje: 0, amanha: 0, atrasadas: 0, abertas: 0 },
       })),
     };

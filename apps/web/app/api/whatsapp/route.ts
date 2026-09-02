@@ -65,6 +65,7 @@ import {
   renderWorkerFreeForm,
 } from '../../notifications/briefing';
 import { readThreadLocale, recordThreadEvent } from '../../notifications/thread';
+import { pingManagersAboutRequests } from '../../notifications/worker-request-ping';
 
 // WhatsApp manager channel — Meta Cloud API webhook (see
 // docs/whatsapp-cloud-api-runbook.md for the one-time Meta setup).
@@ -1788,6 +1789,27 @@ async function runWorkerTurn(
     // Silence after a question reads as "Capo is broken", the same failure the
     // voice-note path already guards against.
     await sendWhatsAppText(t.workerAgentFailed, sendConfig).catch(() => {});
+  } finally {
+    // ── the crew's requests reach the manager (issue #152) ──────────────────
+    // AFTER the turn and OUTSIDE the try/catch, because a request already
+    // written by `ask_manager` must be announced even if the turn then failed
+    // on its way to answering the crew member — the row exists, the manager's
+    // inbox entry exists, and only the announcement would be missing.
+    //
+    // A sweep over `manager_notified_at is null` rather than something the turn
+    // hands back, for the reason /api/cron/welcome is a sweep: the tool result
+    // does not reach this function, and a hook that has to remember an event is
+    // a hook somebody eventually forgets. The partial index makes the query
+    // proportional to what is unannounced, which on almost every turn is
+    // nothing.
+    //
+    // Swallowed twice over (inside, and here): telling the manager must never
+    // cost the crew member their reply.
+    await pingManagersAboutRequests(
+      db,
+      worker.company_id,
+      { accessToken: sendConfig.accessToken, phoneNumberId: sendConfig.phoneNumberId },
+    ).catch(() => {});
   }
 }
 

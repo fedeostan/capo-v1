@@ -257,6 +257,50 @@
 // channel are refused at the grant layer) and no SELECT at all; a tenant
 // insert must never chain .select(), whose RETURNING needs the SELECT nobody
 // holds. problem_report_requests is deny-all with every grant revoked.
+//
+// ── 0043 (issue #152), WRITTEN BY HAND, NOT YET APPLIED ────────────────────
+// worker_requests — "diz ao chefe que preciso de mais tinta", filed by the
+// fifth crew tool. Added by hand for the standing reason: regenerating against
+// a project that lacks the table would silently DELETE this block rather than
+// add it. Verify it column-for-column against a real
+// generate_typescript_types run once 0043 is applied.
+//
+// Consequences while the migration is unapplied:
+//   - the table answers 42P01. The tool catches it and answers the crew member
+//     that it could not record the request, rather than a false "sent to the
+//     manager"; the manager-side loader and the WhatsApp ping both fail soft
+//     (home.requests_failed / request.ping_failed) and cost one card and one
+//     line, never a page or a reply.
+//   - notifications.kind still refuses 'worker_request', so even a row that
+//     somehow landed would produce no inbox entry. Both halves arrive together.
+//
+// Invisible here as usual: worker_requests grants tenants SELECT and NOTHING
+// else (no INSERT, no UPDATE, no DELETE — a manager must not be able to forge
+// "a worker asked for this", nor rewrite what one wrote). Every write is the
+// service role, which bypasses grants. tsc will happily let you build an
+// Insert/Update object for it; the database answers 42501.
+
+// ── 0044 (issue #154), WRITTEN BY HAND, NOT YET APPLIED ────────────────────
+// material_checks — one daily "is it on site / is it missing" tick per
+// material per obra, for the today horizon of the materials screen. Added by
+// hand for the standing reason: regenerating against a project that lacks the
+// table would silently DELETE this block rather than add it.
+//
+// One consequence while the migration is unapplied, and the code is written to
+// survive it: every query answers 42P01 ("relation does not exist"). The read
+// (loadMaterialChecks in apps/web/app/dashboard-data.ts) logs
+// `materials.checks_read_failed` and answers an empty map, so today's list
+// renders with nothing ticked — which is byte-identical to the product before
+// this feature. The write (apps/web/app/(app)/obras/material-check-actions.ts)
+// surfaces the failure to the manager rather than swallowing it, because a
+// tick that silently did not land is the one outcome a check list must never
+// produce.
+//
+// Invisible here as usual: the tenant's INSERT grant is COLUMN-SCOPED and
+// excludes `check_date` (the day comes from the lisbon_today() default — a
+// client that could name it could tick tomorrow), `checked_by` and
+// `checked_at` (both stamped by triggers). The UPDATE grant reaches `status`
+// ALONE. tsc will happily let you set any of them; the database answers 42501.
 export type Json =
   | string
   | number
@@ -802,6 +846,64 @@ export type Database = {
           title?: string
         }
         Relationships: []
+      }
+      material_checks: {
+        Row: {
+          check_date: string
+          checked_at: string
+          checked_by: string | null
+          company_id: string
+          created_at: string
+          id: string
+          job_id: string | null
+          material: string
+          status: string
+        }
+        Insert: {
+          check_date?: string
+          checked_at?: string
+          checked_by?: string | null
+          company_id: string
+          created_at?: string
+          id?: string
+          job_id?: string | null
+          material: string
+          status: string
+        }
+        Update: {
+          check_date?: string
+          checked_at?: string
+          checked_by?: string | null
+          company_id?: string
+          created_at?: string
+          id?: string
+          job_id?: string | null
+          material?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "material_checks_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "material_checks_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "material_checks_checked_by_fkey"
+            columns: ["checked_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       memories: {
         Row: {
@@ -2183,6 +2285,64 @@ export type Database = {
           },
           {
             foreignKeyName: "worker_day_links_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      worker_requests: {
+        Row: {
+          category: string | null
+          company_id: string
+          created_at: string
+          id: string
+          manager_notified_at: string | null
+          needed_by: string | null
+          task_id: string | null
+          text: string
+          worker_id: string
+        }
+        Insert: {
+          category?: string | null
+          company_id: string
+          created_at?: string
+          id?: string
+          manager_notified_at?: string | null
+          needed_by?: string | null
+          task_id?: string | null
+          text: string
+          worker_id: string
+        }
+        Update: {
+          category?: string | null
+          company_id?: string
+          created_at?: string
+          id?: string
+          manager_notified_at?: string | null
+          needed_by?: string | null
+          task_id?: string | null
+          text?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_requests_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_requests_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_requests_worker_id_fkey"
             columns: ["worker_id"]
             isOneToOne: false
             referencedRelation: "workers"

@@ -698,14 +698,19 @@ Structural invariants (do not regress):
   check-in route wrote nothing — a habit rather than a rule, so the crew could
   be mid-conversation with Capo about a question Capo had no record of asking,
   and the manager had no way to tell which of the two was right. Five things:
-  - **Four notes exist and that list is exhaustive**: the morning briefing
+  - **Five notes exist and that list is exhaustive**: the morning briefing
     (what today holds + who was actually messaged, by name), the check-in ask
-    (who was asked), one note per crew member ANSWERING that check-in, and
+    (who was asked), one note per crew member ANSWERING that check-in,
     since #45 the welcome (who Capo has just introduced itself to, crew only —
-    a manager reads their own welcome on their own phone).
+    a manager reads their own welcome on their own phone), and since #152 one
+    note per crew REQUEST (who asked, when for, which task — never what they
+    said).
     Renderers live beside the briefing renderers in `notifications/briefing.ts`
     because they need the user copy catalog, which must never enter the agent
-    bundle.
+    bundle — with one exception, `apps/web/lib/worker-request.ts`, which is
+    there for the same reason (it needs the catalog and must stay out of the
+    agent bundle) and additionally so `pnpm whatsapp-check` can pin the urgency
+    arithmetic beside the two envelopes it feeds.
   - **What may be in a note is a SAFETY boundary, not a style question.** Our
     own copy, counts, crew names (typed by the MANAGER on `/perfil`) and which
     of two quick-reply buttons was tapped — an enum our own cron minted. Never
@@ -965,7 +970,11 @@ Structural invariants (do not regress):
   `scripts/rls-isolation-matrix.mjs`'s `checkWorkerTextIsolation` sweeps
   `messages`, `conversation_summaries`, `memories` and `proposals` for a seeded
   tracer on the service role — the only way to ask whether the text was ever
-  WRITTEN there, rather than merely whether RLS hides it.
+  WRITTEN there, rather than merely whether RLS hides it. The tracer is seeded
+  in every column where crew prose legitimately lives, because those are the
+  ones a well-meaning "let's also quote what they said" change would draw from:
+  `worker_messages`, `task_reviews.note`, `problem_reports.text` (#120) and
+  `worker_requests.text` (#152).
 
   `handleInbound` and the manager `roster` are **not modified** by this feature.
   If a change needs to touch either, the isolation design has gone wrong.
@@ -1001,10 +1010,61 @@ Structural invariants (do not regress):
     to `'app'`). Write-only, so the insert must never chain `.select()` (the
     ai_usage trap). Deliberately no status/triage columns — that is a later
     decision (#120), taken once reports actually arrive.
+- **The crew can ASK FOR SOMETHING, and Capo gets it to the manager ranked by
+  when it is needed** (`worker_requests`, migration `0043`, issue #152). This
+  REVERSES a deliberate design: until it landed, "diz ao chefe que preciso de
+  mais tinta" was answered with a refusal, written down in the crew persona's
+  worked example and in the worker policy, and TRUE — the roster had four tools
+  and none reached the manager. Six things:
+  - **A request is its OWN record, never a `tasks` row.** `tasks` is crew work:
+    it has an assignee and flows into `task_board`, the 07:00 briefing, the
+    check-in and — through `materials` — the buy list. A manager to-do dropped
+    in there appears in reads never meant to see it, and a request for paint
+    arrives as a material on a task nobody is doing. Turning a request into a
+    real task is a later tap and an ordinary `create_task`; nothing does it
+    automatically.
+  - **Urgency is a DATE and plain subtraction, never the model judging tone.**
+    `ask_manager` captures `needed_by`; `describeUrgency` in
+    `apps/web/lib/worker-request.ts` subtracts `lisbon_today()` from it. The
+    null is UNDATED and is SHOWN as undated — Capo asks once, in one line, and
+    never guesses. Guessing high cries wolf until the manager stops looking;
+    guessing low buries the one that mattered. `pnpm whatsapp-check` pins every
+    branch, both DST transitions included.
+  - **`worker_requests.text` is the THIRD legitimate home for worker-authored
+    prose**, after `worker_messages` (0027) and `task_reviews.note` (0018), and
+    it inherits their rule: rendered to the manager as an ATTRIBUTED QUOTE on
+    all three surfaces, and never copied into `messages`,
+    `conversation_summaries`, `memories` or `proposals`. The manager's
+    chat-thread note may SUMMARISE and never quote — `renderRequestEvent` takes
+    a name, a date and a task title and has no parameter the words could go in,
+    the same shape `renderCheckinAnswerEvent` keeps and for the same reason.
+    `checkWorkerTextIsolation` seeds its tracer here too.
+  - **The WhatsApp half is built for the FREE case only, deliberately.** Inside
+    the manager's own 24-hour window (`withinFreeFormWindow`, plus
+    `hasWhatsAppConsent`, both fail-closed) an ordinary free-form line goes out.
+    OUTSIDE it, NOTHING is sent: free-form is refused 131047 and the only legal
+    contact is a pre-approved template that does not exist —
+    `capo_message_waiting` is NOT it (submitted for #123 B, aimed at a worker,
+    and its code half does not exist). The manager still gets the request
+    immediately and for free through the inbox and Web Push, which is why that
+    path carries the weight.
+  - **`manager_notified_at` is the queue, notifications.pushed_at's shape.** No
+    outbound ledger, and deliberately NOT `notification_log` — that table is the
+    PAID TEMPLATE ledger and its unique key is what prevents a double-billed
+    send. The sweep runs after every crew agent turn off a partial index, so
+    the cost on a turn with no request is one indexed miss.
+  - **No resolution marker, and that is problem_reports' decision (0042).** A
+    status column added before anything writes it is a promise the product does
+    not make. Home therefore shows requests by FRESHNESS (seven days) and the
+    inbox keeps them for ever with its own read state. The honest cost: a
+    request for next month drops off Home while still unfulfilled. Closing the
+    loop back DOWN to the crew member ("handled") is the flagged follow-up —
+    it needs a manager action that produces a proactive send, which outside the
+    window is a paid template that does not exist.
 - **The worker roster is an ALLOWLIST in its own type system, never a filter
-  over `roster`.** `packages/core/src/capabilities/worker/` holds four tools
-  (`my_tasks`, `search_knowledge`, `declare_task_done`, `set_my_language`) in a
-  separate array in a separate file. `roster.filter(...)` would be a denylist by
+  over `roster`.** `packages/core/src/capabilities/worker/` holds five tools
+  (`my_tasks`, `search_knowledge`, `declare_task_done`, `set_my_language`,
+  `ask_manager`) in a separate array in a separate file. `roster.filter(...)` would be a denylist by
   accident: `capabilities/index.ts` is an array that grows, and the next tool
   appended there would land in a worker's hands silently, in a commit about
   something else.
