@@ -235,11 +235,11 @@ const dict: Catalog = {
     quoteLabel: name => `${name} escreveu:`,
     whatsapp: ({ name, when, quote, task }) => {
       const where = task ? ` · ${task}` : '';
-      return `Pedido de ${name}${where} — ${when}.\n\n“${quote}”\n\nFica registado nas tuas notificações. Não encomendei nada.`;
+      return `Pedido de ${name}${where}, ${when}.\n\n“${quote}”\n\nFica registado nas tuas notificações. Não encomendei nada.`;
     },
     event: ({ name, when, task }) => {
       const where = task ? `, na tarefa “${task}”` : '';
-      return `${name} fez um pedido pelo WhatsApp${where} — ${when}. Está nas tuas notificações, tal como foi escrito.`;
+      return `${name} fez um pedido pelo WhatsApp${where}, ${when}. Está nas tuas notificações, tal como foi escrito.`;
     },
   },
 
@@ -666,12 +666,12 @@ const dict: Catalog = {
     noConsentWarning: 'Falta autorização — pergunta-lhe se aceita receber mensagens e diz ao Capo.',
     receivesWhatsApp: 'recebe o WhatsApp das 07:00',
     awaitingFirstReply:
-      'Recebe o WhatsApp das 07:00, mas ainda nunca escreveu ao Capo — até responder uma vez, o Capo não lhe consegue responder nem mandar-lhe o dia.',
+      'Recebe o WhatsApp das 07:00, mas ainda nunca escreveu ao Capo. Até responder uma vez, o Capo não lhe consegue responder nem mandar-lhe o dia.',
     awaitingFirstReplyChase: p =>
-      `Autorizado há ${p.days} dia${p.days === 1 ? '' : 's'} e ainda nunca escreveu ao Capo. Até responder uma vez, o Capo não lhe consegue responder nem mandar-lhe o dia — vale a pena pedires-lhe em pessoa.`,
+      `Autorizado há ${p.days} dia${p.days === 1 ? '' : 's'} e ainda nunca escreveu ao Capo. Até responder uma vez, o Capo não lhe consegue responder nem mandar-lhe o dia. Vale a pena pedires-lhe em pessoa.`,
     firstReplyAction: 'Mandar-lhe uma mensagem',
     firstReplyMessage: p =>
-      `Olá ${p.name}. Adicionei-te ao Capo — é ele que te manda as tarefas do dia por WhatsApp. Responde-lhe uma vez, nem que seja «sim»: sem isso ele consegue enviar-te mensagens, mas não te consegue responder nem mandar-te o teu dia.`,
+      `Olá ${p.name}. Adicionei-te ao Capo. É ele que te manda as tarefas do dia por WhatsApp. Responde-lhe uma vez, nem que seja «sim»: sem isso ele consegue enviar-te mensagens, mas não te consegue responder nem mandar-te o teu dia.`,
     welcomeCostHint:
       'Quando dizes ao Capo que alguém aceita receber mensagens, o Capo apresenta-se a essa pessoa uma vez no WhatsApp. É uma mensagem paga por pessoa — uma equipa de 20 são 20 mensagens.',
     teamHint: 'Para adicionar ou alterar alguém,',

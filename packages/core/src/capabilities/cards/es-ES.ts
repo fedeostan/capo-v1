@@ -83,7 +83,7 @@ export const cards: CardStrings = {
     const line = `${bits.join(' ')}.`;
     // ONE line, and only when Capo will actually have somebody to write to.
     if (!p.optIn || !p.phone) return line;
-    return `${line} Dile que conteste al primer mensaje de Capo, aunque sea «sí» — sin eso Capo puede enviarle mensajes, pero no puede responderle ni mandarle su día.`;
+    return `${line} Dile que conteste al primer mensaje de Capo, aunque sea «sí». Sin eso Capo puede enviarle mensajes, pero no puede responderle ni mandarle su día.`;
   },
   updateWorker: p => `Modificar trabajador ${p.name}: ${p.changes.join('; ')}.`,
   workerChange: {
@@ -157,9 +157,9 @@ export const cards: CardStrings = {
   },
 
   plan: {
-    header: p => `Plan para la obra «${p.jobName}» — ${p.count} tarea${p.count === 1 ? '' : 's'}, del ${p.from} al ${p.to}`,
+    header: p => `Plan para la obra «${p.jobName}»: ${p.count} tarea${p.count === 1 ? '' : 's'}, del ${p.from} al ${p.to}`,
     row: p => {
-      const head = `${p.index}. ${p.title} — ${p.from} → ${p.to} (${p.days} día${p.days === 1 ? '' : 's'})`;
+      const head = `${p.index}. ${p.title}: ${p.from} → ${p.to} (${p.days} día${p.days === 1 ? '' : 's'})`;
       return p.workerName ? `${head} · ${p.workerName}` : head;
     },
     dependsOn: indices => `   ⤷ después de: ${indices.join(', ')}`,
@@ -167,9 +167,9 @@ export const cards: CardStrings = {
     warnings: {
       header: 'Antes de aprobar, confirma:',
       nameVariants: names =>
-        `• ${names.map(n => `«${n}»`).join(', ')} — ¿es el mismo material escrito de formas distintas, o son materiales diferentes?`,
+        `• ${names.map(n => `«${n}»`).join(', ')}: ¿es el mismo material escrito de formas distintas, o son materiales diferentes?`,
       tradeGap: p =>
-        `• Hay más de una tarea de ${p.trade}, pero «${p.title}» no lleva ${p.missing.map(m => `«${m}»`).join(', ')} — ¿está bien?`,
+        `• Hay más de una tarea de ${p.trade}, pero «${p.title}» no lleva ${p.missing.map(m => `«${m}»`).join(', ')}. ¿Está bien?`,
     },
   },
 };

@@ -202,6 +202,26 @@ and say what the alternative would be — he is the one who decides.
   Credential-free, in CI (`pnpm activity-check`). It covers the render half
   only; the three database reads in `loadActivity` need credentials and are
   outside the gate by construction.
+- `scripts/voice-check.mts` — the static half of Capo's tone. Keeps every
+  MODEL-FACING file (personas, policies, prompt blocks) at ZERO long dashes in
+  its string literals, and ratchets the user-facing copy catalogs downward from
+  a per-file budget. It exists because of a finding, not a preference: Capo was
+  not disobeying its instructions about tone, it was IMITATING them — the
+  orchestration policy alone carried forty em dashes — so the loudest machine
+  tell in the product was coming from the document meant to prevent it. Whole-
+  line comments are stripped before counting, exactly as `design-check` does
+  and for the same reason: an explanation of why a dash was wrong necessarily
+  contains one. Credential-free, in CI (`pnpm voice-check`).
+  The budget is a NUMBER per file rather than `design-check`'s list of exempt
+  FILES, and the difference is forced: those files are being converted wholesale
+  and will leave the list entire, whereas the copy catalogs go on receiving new
+  copy forever, so a file-level exemption would leave every sentence added for
+  the next two years ungated. A new violation exceeds the budget and fails; a
+  budget nobody lowered after a cleanup fails as STALE.
+  Deliberately NOT scanned: tool descriptions in `capabilities/*.ts`. They are
+  model-facing too, across some thirty files, and folding them in now would make
+  the table stop reading as a to-do list. Widening it is a decision, not a
+  cleanup.
 - `scripts/agent-smoke.mts` — drives `handleInbound()` against a throwaway
   seeded tenant. Needs real API keys, so it is a manual gate
   (`pnpm agent-smoke`).
@@ -1669,6 +1689,75 @@ Structural invariants (do not regress):
   own chip names so the two cannot drift.
   (`dashboard_tasks` is the superseded predecessor, kept only so an old bundle
   served mid-deploy keeps working; do not write new readers against it.)
+- **Capo's TONE has a prompt half and a code half, and the prompt half was the
+  bug.** The product read as machine-written, and the first place to look was
+  not the model: the instruction files were written like engineering memos and
+  the model was copying their prose. Forty em dashes in the orchestration
+  policy, fourteen in the worker policy, seventeen in the planner. Every
+  model-facing string is now dash-free and `pnpm voice-check` keeps it that
+  way. **A rule the prompt states and the prompt breaks is worse than no rule**,
+  because it reads as compliance while producing the opposite, and nothing in a
+  build will ever notice.
+  `agent/prompts/voice.ts` is the style block, ONE copy appended to BOTH agents'
+  cached half. Two copies of a style rule is the one duplication that cannot be
+  tolerated here: the manager and the crew are different documents everywhere
+  else, but a person reading both surfaces would have no way to tell which was
+  right. It sits in the CACHED half legitimately (it is a constant of the code,
+  never of the clock or the tenant) and adding it rewrote every tenant's cached
+  prefix once, which is the documented price of a policy edit.
+  `channels/voice.ts` is the code half: `applyWhatsAppVoice(text)`, pure, run
+  between `toWhatsAppMarkdown` and `splitForWhatsApp` in **both**
+  `planAssistantMessages` and `planWorkerMessages`. Six things:
+  - **It REPAIRS and counts; it does not refuse.** The email product this is
+    modelled on rejects a draft and never substitutes, for two reasons. The
+    first (a silent substitution changes a human author's words) does not hold
+    here: nothing on this path is human-authored, and the two things on it that
+    ARE — an approval card's `renderedText` and the daily briefing — never reach
+    the function. The second (a silent fix hides prompt drift) is answered
+    rather than dismissed: every repair is RETURNED and the sink logs
+    `voice.repaired` with the rules that fired. The fix is silent to the reader,
+    never to the log. Grep that event before concluding the model needs no
+    correcting. A refusal would also have cost a paid model call and, on a live
+    conversation, a person waiting — which is the incident shape #126 exists
+    for.
+  - **AFTER the converter, BEFORE the splitter, and both halves of that matter.**
+    After, because `toWhatsAppMarkdown` has already collapsed every dialect the
+    model might emit into one canonical form, so flattening is three regexes
+    instead of a second converter. Before, for the converter's own reason:
+    splitting first can cut a marker pair across a chunk boundary.
+  - **A card is NOT voiced, and that is geography rather than a rule.** In
+    `planAssistantMessages` the card text travels a different branch from the
+    prose, so the pass is simply not on its road. `renderedText` stays
+    byte-identical to the persisted approval artifact the web card, the operator
+    app and the audit trail all read, on the interactive branch AND on the
+    over-1024 text branch. Both are asserted.
+  - **Emphasis stripping is word-boundary scoped, and the guards are
+    load-bearing.** Without `(?<!\w)`/`(?!\w)`, `_` eats the inside of anything
+    holding two underscores — which is URLs and identifiers. `/dia`'s crew link
+    (#114) is a bearer token in a URL, and a mangled one does not fail loudly:
+    it 404s for the one person who needed it. This also leaves
+    `whatsapp-markdown.ts`'s documented `snake_case` non-goal exactly where it
+    was; rendering it italic is cosmetic, deleting characters out of it is not.
+  - **`onRepair` is OPTIONAL, unlike `ToolContext.confirmPosture`.** Omitted,
+    both planners stay pure, which is what lets `pnpm whatsapp-check` assert all
+    of this with no credentials. Here the omission is a metrics gap; there it
+    would be a safety regression. Same shape as the agent loop's `onStepEnd`.
+  - **`applyVoice` (the channel-agnostic rules) is exported separately from the
+    WhatsApp-only flattening**, so the in-app chat can adopt the first group
+    without splitting the file. It is deliberately NOT wired there: the web sink
+    streams the model's words into the browser as they are generated, so there
+    is nothing to correct before the manager has read it. The prompt half
+    improves that surface anyway; the code half does not reach it, and that gap
+    is a decision.
+  Scope taken and NOT taken: punctuation and formatting only. No length cap, no
+  splitting one answer into several bubbles, no dropping the sentence-final full
+  stop, no mirroring the manager's own casing or emoji use (Poke's idea, and the
+  natural next step). No randomised reply delay either: Capo already sends a
+  read receipt and a typing indicator (#50), the functions have a hard ceiling,
+  and a deliberate pause would fight both.
+  Consequence to know about: **a task list now arrives as plain lines, not
+  bullets.** That is the point on a phone, and it is also the thing most likely
+  to want reverting. It is one function in one file.
 - **The design system is TOKENS plus a fixed set of COMPONENT MODULES, and
   `pnpm design-check` is what keeps it true.** `packages/ui/src/tokens.css` is
   the single source of every colour, size, spacing, radius, shadow and timing,

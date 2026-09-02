@@ -1,6 +1,7 @@
 import { isToolUIPart, readUIMessageStream, type UIMessage, type UIMessageChunk } from 'ai';
 import type { OutboundSink } from './types';
 import { toWhatsAppMarkdown } from './whatsapp-markdown';
+import { applyWhatsAppVoice, type VoiceRepair } from './voice';
 
 // WhatsApp channel sink: consumes the assistant's UIMessageChunk stream and
 // posts it via the Meta Graph API `messages` endpoint.
@@ -799,6 +800,41 @@ export function readMetaErrorCode(message: string | null | undefined): number | 
 
 // ── outbound planning ───────────────────────────────────────────────────────
 
+/**
+ * Told what the voice pass had to fix, if anything. Optional, and that is the
+ * point: left out, planAssistantMessages and planWorkerMessages stay PURE,
+ * which is what lets scripts/whatsapp-check.mts assert all of this with no
+ * credentials and no network. The live sinks pass a logger. Same shape as the
+ * agent loop's onStepEnd, and for the same reason.
+ */
+export type VoiceReporter = (repairs: VoiceRepair[]) => void;
+
+// One counted line per message that needed correcting.
+//
+// This is the entire answer to the strongest objection against repairing
+// instead of refusing: that a silent fix hides a prompt which has started
+// drifting. The fix is silent to the READER, never to the log. If a prompt edit
+// makes the model start emitting em dashes on a third of turns, that is a
+// `voice.repaired` count rising rather than nothing at all.
+//
+// Rules only, deliberately: rule → detail is a static one-to-one map in
+// ./voice.ts, so logging both would put a paragraph in every line. `detail`
+// exists for a retry prompt, if one is ever added, and for an operator view.
+//
+// Same swallow-and-log posture as loadCompanySnapshot: a logging failure must
+// never cost somebody their reply. Grep this event before concluding the model
+// needs no correcting.
+function logVoiceRepairs(repairs: VoiceRepair[]): void {
+  if (repairs.length === 0) return;
+  try {
+    console.log(
+      JSON.stringify({ evt: 'voice.repaired', ts: new Date().toISOString(), rules: repairs.map(r => r.rule) }),
+    );
+  } catch {
+    // ignore
+  }
+}
+
 // Recognises the shape returned identically by propose.ts, guard.ts and
 // plan.ts. Mirrors the web client's check in apps/web/app/chat.tsx on purpose:
 // the two channels must agree on what a card is. Reads `unknown` and narrows
@@ -840,6 +876,7 @@ function asProposalOutput(value: unknown): { proposalId: string; renderedText: s
 export function planAssistantMessages(
   parts: UIMessage['parts'],
   labels: ApprovalLabels,
+  onRepair?: VoiceReporter,
 ): WhatsAppOutbound[] {
   const out: WhatsAppOutbound[] = [];
   let prose: string[] = [];
@@ -851,13 +888,26 @@ export function planAssistantMessages(
     part => isToolUIPart(part) && part.state === 'output-available' && asProposalOutput(part.output) !== null,
   );
 
-  // Convert THEN split: splitting first could cut a `**` pair across a chunk
-  // boundary, leaving a stray asterisk the converter can no longer pair up.
+  // Convert THEN voice THEN split.
+  //
+  // Splitting first could cut a `**` pair across a chunk boundary, leaving a
+  // stray asterisk the converter can no longer pair up. The voice pass sits
+  // between the two: after the converter, because that has already normalised
+  // every markdown dialect the model might emit down to one canonical form
+  // (bullets are already `- `, bold is already a single `*`), so flattening it
+  // is a handful of regexes rather than a second copy of the converter.
+  //
+  // ⚠ This is the PROSE branch, and the card branch below never reaches it.
+  // That is what keeps `renderedText` byte-identical to the persisted approval
+  // artifact: not a rule somebody has to remember, but a fact about which road
+  // the two kinds of text travel down.
   const flush = () => {
     const joined = prose.join('\n\n').trim();
     prose = [];
     if (!joined) return;
-    for (const chunk of splitForWhatsApp(toWhatsAppMarkdown(joined))) {
+    const voiced = applyWhatsAppVoice(toWhatsAppMarkdown(joined));
+    onRepair?.(voiced.repairs);
+    for (const chunk of splitForWhatsApp(voiced.text)) {
       out.push({ kind: 'text', body: chunk });
     }
   };
@@ -1321,7 +1371,7 @@ async function deliver(stream: ReadableStream<UIMessageChunk>, config: WhatsAppS
     final = message;
   }
 
-  for (const message of planAssistantMessages(final?.parts ?? [], config.approval)) {
+  for (const message of planAssistantMessages(final?.parts ?? [], config.approval, logVoiceRepairs)) {
     if (message.kind === 'text') {
       await sendText(message.body, config);
       continue;
@@ -1402,7 +1452,7 @@ export function whatsappSink(config: WhatsAppSinkConfig): { sink: OutboundSink; 
  * @throws if the turn contains a proposal part. See above; this is not
  *         defensive coding, it is the alarm.
  */
-export function planWorkerMessages(parts: UIMessage['parts']): WhatsAppOutbound[] {
+export function planWorkerMessages(parts: UIMessage['parts'], onRepair?: VoiceReporter): WhatsAppOutbound[] {
   const prose: string[] = [];
   for (const part of parts) {
     if (part.type === 'text') {
@@ -1421,7 +1471,13 @@ export function planWorkerMessages(parts: UIMessage['parts']): WhatsAppOutbound[
 
   const joined = prose.join('\n\n').trim();
   if (!joined) return [];
-  return splitForWhatsApp(toWhatsAppMarkdown(joined)).map(body => ({ kind: 'text' as const, body }));
+  // Same order and same reasoning as the manager path above. A crew member gets
+  // the identical treatment: there is no reading of this channel on which a
+  // bulleted list is right for the manager and wrong for a worker, or vice
+  // versa, which is why both call one function from one file.
+  const voiced = applyWhatsAppVoice(toWhatsAppMarkdown(joined));
+  onRepair?.(voiced.repairs);
+  return splitForWhatsApp(voiced.text).map(body => ({ kind: 'text' as const, body }));
 }
 
 async function deliverWorker(stream: ReadableStream<UIMessageChunk>, config: WhatsAppSendConfig): Promise<void> {
@@ -1431,7 +1487,7 @@ async function deliverWorker(stream: ReadableStream<UIMessageChunk>, config: Wha
   }
   // Sequential and fail-fast, same as deliver() above: WhatsApp does not
   // guarantee the ordering of concurrent sends.
-  for (const message of planWorkerMessages(final?.parts ?? [])) {
+  for (const message of planWorkerMessages(final?.parts ?? [], logVoiceRepairs)) {
     await sendText(message.body, config);
   }
 }
@@ -1454,3 +1510,4 @@ export function workerSink(config: WhatsAppSendConfig): { sink: OutboundSink; de
 }
 
 export { toWhatsAppMarkdown } from './whatsapp-markdown';
+export { applyVoice, applyWhatsAppVoice, type VoiceRepair, type VoiceResult, type VoiceRule } from './voice';

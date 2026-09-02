@@ -4,6 +4,7 @@ import type { Locale } from '@capo/i18n/locale';
 import { cachedInstructions } from './cache';
 import { workerPersonas } from './persona';
 import workerOrchestration from './prompts/worker-orchestration';
+import voice from './prompts/voice';
 import { localeName } from './prompts/language';
 import { loadKnowledgeIndex } from './context';
 import { toWorkerTaskView, type WorkerTaskRow } from '../capabilities/worker/tasks';
@@ -126,7 +127,7 @@ export interface WorkerPromptInput {
  * have in common is that both are cut in the same place.
  */
 export function workerStableBlocks(locale: Locale): string[] {
-  return [workerPersonas[locale], workerOrchestration, buildWorkerLanguageDirective(locale)];
+  return [workerPersonas[locale], voice, workerOrchestration, buildWorkerLanguageDirective(locale)];
 }
 
 // Returned as two system messages with a cache breakpoint between them (see

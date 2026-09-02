@@ -89,7 +89,7 @@ export const cards: CardStrings = {
     const line = `${bits.join(' ')}.`;
     // ONE line, and only when Capo will actually have somebody to write to.
     if (!p.optIn || !p.phone) return line;
-    return `${line} Diz-lhe para responder à primeira mensagem do Capo, nem que seja «sim» — sem isso o Capo consegue enviar-lhe mensagens, mas não lhe consegue responder nem mandar-lhe o dia.`;
+    return `${line} Diz-lhe para responder à primeira mensagem do Capo, nem que seja «sim». Sem isso o Capo consegue enviar-lhe mensagens, mas não lhe consegue responder nem mandar-lhe o dia.`;
   },
   updateWorker: p => `Alterar trabalhador ${p.name}: ${p.changes.join('; ')}.`,
   workerChange: {
@@ -164,9 +164,9 @@ export const cards: CardStrings = {
 
   plan: {
     header: p =>
-      `Plano para a obra «${p.jobName}» — ${p.count} tarefa${p.count === 1 ? '' : 's'}, ${p.from} a ${p.to}`,
+      `Plano para a obra «${p.jobName}»: ${p.count} tarefa${p.count === 1 ? '' : 's'}, ${p.from} a ${p.to}`,
     row: p => {
-      const head = `${p.index}. ${p.title} — ${p.from} → ${p.to} (${p.days} dia${p.days === 1 ? '' : 's'})`;
+      const head = `${p.index}. ${p.title}: ${p.from} → ${p.to} (${p.days} dia${p.days === 1 ? '' : 's'})`;
       return p.workerName ? `${head} · ${p.workerName}` : head;
     },
     dependsOn: indices => `   ⤷ depois de: ${indices.join(', ')}`,
@@ -174,9 +174,9 @@ export const cards: CardStrings = {
     warnings: {
       header: 'Antes de aprovares, confirma:',
       nameVariants: names =>
-        `• ${names.map(n => `«${n}»`).join(', ')} — é o mesmo material escrito de maneiras diferentes, ou são materiais diferentes?`,
+        `• ${names.map(n => `«${n}»`).join(', ')}: é o mesmo material escrito de maneiras diferentes, ou são materiais diferentes?`,
       tradeGap: p =>
-        `• Há mais do que uma tarefa de ${p.trade}, mas «${p.title}» não tem ${p.missing.map(m => `«${m}»`).join(', ')} — está certo?`,
+        `• Há mais do que uma tarefa de ${p.trade}, mas «${p.title}» não tem ${p.missing.map(m => `«${m}»`).join(', ')}. Está certo?`,
     },
   },
 };
