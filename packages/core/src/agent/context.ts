@@ -10,6 +10,7 @@ import {
 } from './memory/prompt-memories';
 import { personas } from './persona';
 import orchestration from './prompts/orchestration';
+import voice from './prompts/voice';
 import { buildLanguageDirective } from './prompts/language';
 
 // System prompt assembly: persona (voice) ⊕ orchestration (policy) ⊕ language
@@ -189,7 +190,7 @@ function buildOnboardingBlock(snapshot: CompanySnapshot, locale: Locale): string
  * cacheable prefix without a database or a network call.
  */
 export function managerStableBlocks(locales: LocaleContext): string[] {
-  return [personas[locales.user], orchestration, buildLanguageDirective(locales)];
+  return [personas[locales.user], voice, orchestration, buildLanguageDirective(locales)];
 }
 
 /**

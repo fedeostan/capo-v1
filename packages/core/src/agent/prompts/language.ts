@@ -6,8 +6,8 @@ import type { Locale, LocaleContext } from '@capo/i18n/locale';
 // it cannot drift between the three persona files.
 
 const NAMES: Record<Locale, string> = {
-  'pt-PT': 'European Portuguese (pt-PT) — never Brazilian Portuguese',
-  'es-ES': 'Peninsular Spanish (es-ES) — never Latin-American Spanish',
+  'pt-PT': 'European Portuguese (pt-PT), never Brazilian Portuguese',
+  'es-ES': 'Peninsular Spanish (es-ES), never Latin-American Spanish',
   'en-US': 'American English (en-US)',
 };
 
@@ -30,7 +30,7 @@ export function buildLanguageDirective(locales: LocaleContext): string {
   const lines = [
     '# Language policy',
     `- SPEAK to the manager only in ${NAMES[locales.user]}. Every word you write to him is in that language.`,
-    `- STORE domain text — task titles, job names and descriptions, memories, generated plan titles — in ${NAMES[locales.company]}. The dashboard is shared by the whole company and must read as one language.`,
+    `- STORE domain text (task titles, job names and descriptions, memories, generated plan titles) in ${NAMES[locales.company]}. The dashboard is shared by the whole company and must read as one language.`,
   ];
 
   if (locales.user !== locales.company) {
@@ -49,7 +49,7 @@ export function buildLanguageDirective(locales: LocaleContext): string {
       // This is a nudge, not a boundary: the model may over- or under-say it,
       // and the deterministic screen notice is what guarantees the message
       // lands at all.
-      `- He may not KNOW they differ — they are two separate settings and he may only ever have moved one. So the FIRST time in a conversation that you store new text or raise a card that will store it, end that reply with ONE plain sentence: name the text you saved, and say that the company's stored language is ${PLAIN_NAMES[locales.company]} while you are talking to him in ${PLAIN_NAMES[locales.user]}. Say it once and then stop: no repeat on later writes in the same conversation, nothing when you are merely reading rows back to him, and never a lecture about the setting. If he asks about it, tell him he can put both on the same language on the Perfil (profile) screen under Language, and that doing it there also offers to translate what is already stored.`,
+      `- He may not KNOW they differ: they are two separate settings and he may only ever have moved one. So the FIRST time in a conversation that you store new text or raise a card that will store it, end that reply with ONE plain sentence: name the text you saved, and say that the company's stored language is ${PLAIN_NAMES[locales.company]} while you are talking to him in ${PLAIN_NAMES[locales.user]}. Say it once and then stop: no repeat on later writes in the same conversation, nothing when you are merely reading rows back to him, and never a lecture about the setting. If he asks about it, tell him he can put both on the same language on the Perfil (profile) screen under Language, and that doing it there also offers to translate what is already stored.`,
     );
   }
 
@@ -57,7 +57,7 @@ export function buildLanguageDirective(locales: LocaleContext): string {
     // Deliberately placed BEFORE the manager_instruction carve-out so that the
     // carve-out stays the last and most emphatic thing said about translating.
     // Do not reorder these two.
-    '- If the manager wants the STORED data itself in another language ("traduz tudo para inglês", "pon todo en español", "put everything in Spanish"), call `translate_company_data`. It counts what would change and raises an approval card; it writes nothing on its own. `set_language` only changes what YOU speak — it never touches stored rows.',
+    '- If the manager wants the STORED data itself in another language ("traduz tudo para inglês", "pon todo en español", "put everything in Spanish"), call `translate_company_data`. It counts what would change and raises an approval card; it writes nothing on its own. `set_language` only changes what YOU speak. It never touches stored rows.',
     // This is the highest-consequence line in the whole prompt. The guard
     // (capabilities/guard.ts) authorizes a direct write by substring-matching
     // the model's quote against what the manager actually typed. A translated

@@ -59,6 +59,14 @@ jobs:
       - name: WhatsApp channel check
         run: pnpm whatsapp-check
 
+      # Tone, statically. Capo was imitating the prose of its own instruction
+      # files, which carried forty em dashes in the orchestration policy alone,
+      # so the loudest machine tell in the product was coming from the document
+      # meant to prevent it. This keeps every model-facing file at zero and
+      # ratchets the copy catalogs down. Pure file reads, so no credentials.
+      - name: Voice check
+        run: pnpm voice-check
+
       # And for Web Push: status classification and the stamp/retry decision
       # are pure functions, and both failure modes they guard are silent in
       # production — a dead registration retried forever, or a row that hangs

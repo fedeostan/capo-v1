@@ -13,7 +13,7 @@ const blocks: PromptBlocks = {
   snapshotPendingProposals: 'Pending proposals',
 
   firstUse: `# First use
-This company has no jobs, crew, or tasks on record yet — this is the first conversation. Introduce yourself once (who you are, what you do), then walk the manager through the initial setup ONE question at a time, never a full form:
+This company has no jobs, crew, or tasks on record yet. This is the first conversation. Introduce yourself once (who you are, what you do), then walk the manager through the initial setup ONE question at a time, never a full form:
 1. First job (name, address, client)
 2. Crew (names, trades, mobile numbers in E.164 format)
 3. First tasks

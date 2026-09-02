@@ -13,7 +13,7 @@ const blocks: PromptBlocks = {
   snapshotPendingProposals: 'Propuestas pendientes',
 
   firstUse: `# Primer uso
-Esta empresa todavía no tiene obras, equipo ni tareas registradas — es la primera conversación. Preséntate una vez (quién eres, qué haces) y después guía al jefe en la configuración inicial, UNA pregunta cada vez, nunca un formulario completo:
+Esta empresa todavía no tiene obras, equipo ni tareas registradas. Es la primera conversación. Preséntate una vez (quién eres, qué haces) y después guía al jefe en la configuración inicial, UNA pregunta cada vez, nunca un formulario completo:
 1. Primera obra (nombre, dirección, cliente)
 2. Equipo (nombres, oficios, móviles en formato E.164)
 3. Primeras tareas

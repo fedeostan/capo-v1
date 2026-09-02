@@ -155,9 +155,9 @@ export const cards: CardStrings = {
   },
 
   plan: {
-    header: p => `Plan for the "${p.jobName}" job — ${p.count} task${p.count === 1 ? '' : 's'}, ${p.from} to ${p.to}`,
+    header: p => `Plan for the "${p.jobName}" job: ${p.count} task${p.count === 1 ? '' : 's'}, ${p.from} to ${p.to}`,
     row: p => {
-      const head = `${p.index}. ${p.title} — ${p.from} → ${p.to} (${p.days} day${p.days === 1 ? '' : 's'})`;
+      const head = `${p.index}. ${p.title}: ${p.from} → ${p.to} (${p.days} day${p.days === 1 ? '' : 's'})`;
       return p.workerName ? `${head} · ${p.workerName}` : head;
     },
     dependsOn: indices => `   ⤷ after: ${indices.join(', ')}`,
@@ -165,9 +165,9 @@ export const cards: CardStrings = {
     warnings: {
       header: 'Before you approve, double-check:',
       nameVariants: names =>
-        `• ${names.map(n => `"${n}"`).join(', ')} — the same material written different ways, or different materials?`,
+        `• ${names.map(n => `"${n}"`).join(', ')}: the same material written different ways, or different materials?`,
       tradeGap: p =>
-        `• More than one ${p.trade} task, but "${p.title}" doesn't list ${p.missing.map(m => `"${m}"`).join(', ')} — is that right?`,
+        `• More than one ${p.trade} task, but "${p.title}" doesn't list ${p.missing.map(m => `"${m}"`).join(', ')}. Is that right?`,
     },
   },
 };

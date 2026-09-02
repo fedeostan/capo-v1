@@ -50,6 +50,15 @@
 //      keeps it free: a read receipt / typing indicator carries no `type` and
 //      no `template`, so it cannot be billed as one, and no `to`/`recipient`,
 //      so it cannot be addressed at a stale number either.
+//  13. Capo wrote like a machine, and the loudest tell was coming from its own
+//      instructions: the orchestration policy carried forty em dashes, so the
+//      model was imitating the document meant to prevent them. The prompt half
+//      of the fix is gated statically by `pnpm voice-check`; this is the other
+//      half, at the channel edge. What is pinned here is the SCOPE, because
+//      that is where a style rule turns into a correctness bug: the pass runs
+//      on model prose and NEVER on an approval card, whose renderedText is the
+//      persisted record of what the manager approved and is read back
+//      byte-for-byte by the web card, the operator app and the audit trail.
 //
 // Run with `pnpm whatsapp-check`. Exit 0 = green, 1 = at least one failure.
 
@@ -74,6 +83,9 @@ import {
   parseWorkerMenuRowId,
   planAssistantMessages,
   planWorkerMessages,
+  applyVoice,
+  applyWhatsAppVoice,
+  type VoiceRepair,
   proposalButtonId,
   readMetaErrorCode,
   readSender,
@@ -1865,9 +1877,19 @@ eq('and it is the model\'s own line', executed[0]?.body, 'Feito, chefe. Demoliç
 const silent = planAssistantMessages([card('Crear tarea: «x».')], labels);
 eq('a card with no prose is still delivered', silent.length, 1);
 
-// Prose is converted on the way out.
+// Prose is converted AND THEN flattened on the way out.
+//
+// This assertion used to expect `*Casa de Paco*`, and the change is deliberate
+// (header note 13): converting `**` to WhatsApp's single-asterisk bold fixed
+// the literal asterisks a manager used to read, but bold on WhatsApp is itself
+// a tell, because nobody emphasises a word when texting a builder.
+//
+// The conversion step is NOT redundant now that the emphasis is stripped. It is
+// what makes stripping cheap: by the time the voice pass runs, every markdown
+// dialect the model might have emitted has been collapsed into one canonical
+// form, so flattening it is three regexes instead of a second converter.
 const converted = planAssistantMessages([text('Obra creada: **Casa de Paco**.')], labels);
-eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Paco*.');
+eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra creada: Casa de Paco.');
 
 // ── the worker sink (PRD 4 / issue #22) ─────────────────────────────────────
 // The crew channel is prose and nothing else. A worker's roster has no
@@ -1885,8 +1907,11 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
   eq('a worker turn is one plain text message', out.length, 1);
   eq('and it is never interactive', out[0]?.kind, 'text');
 
+  // Same change, same reason, and the two must stay identical: there is no
+  // reading of this channel on which bold is right for the manager and wrong
+  // for a crew member.
   const converted = planWorkerMessages([text('Precisas de **primário** e rolo.')]);
-  eq('worker prose is markdown-converted too', converted[0]?.body, 'Precisas de *primário* e rolo.');
+  eq('worker prose is converted and flattened too', converted[0]?.body, 'Precisas de primário e rolo.');
 
   eq('non-proposal tool outputs are ignored', planWorkerMessages([toolOutput({ status: 'ok', tasks: [] }), text('pronto')]).length, 1);
 
@@ -2882,6 +2907,99 @@ eq('prose is markdown-converted', converted[0]?.body, 'Obra creada: *Casa de Pac
     decideWelcomeRetry([failed('2026-08-27'), failed('2026-08-28'), failed('2026-08-29')], today),
     'exhausted',
   );
+}
+
+// ── the voice pass (human tone) ─────────────────────────────────────────────
+//
+// See header note 13. The em dash is the anchor case because it is the one tell
+// that is unarguable: producing one on a phone keyboard takes a long press, so
+// its presence in a WhatsApp message is close to proof that no human typed it.
+{
+  const DASH = /[\u2012\u2013\u2014\u2015]/;
+
+  // ── the pure function ────────────────────────────────────────────────────
+  const parenthetical = applyWhatsAppVoice('A demolição — que começa segunda — está atrasada.');
+  eq(
+    'a parenthetical pair becomes commas, not full stops',
+    parenthetical.text,
+    'A demolição, que começa segunda, está atrasada.',
+  );
+  eq('and it is reported', parenthetical.repairs[0]?.rule, 'em_dash');
+
+  eq('a numeric range becomes a hyphen', applyWhatsAppVoice('Leva 10—12 dias.').text, 'Leva 10-12 dias.');
+  eq(
+    'a line-leading dash is a bullet marker, not punctuation',
+    applyWhatsAppVoice('Hoje:\n— pintar\n— azulejo').text,
+    'Hoje:\npintar\nazulejo',
+  );
+  eq(
+    'formatting is flattened, not converted',
+    applyWhatsAppVoice('*Casa de Paco*\n\n- demolição\n- pintura').text,
+    'Casa de Paco\n\ndemolição\npintura',
+  );
+  eq('the first emoji survives', applyWhatsAppVoice('Pronto 👍 já está 🎉 tudo 🚀').text, 'Pronto 👍 já está tudo');
+  eq(
+    'an assistant reflex is cut, in Portuguese as well as English',
+    applyWhatsAppVoice('Tarefa criada. Estou aqui para ajudar.').text,
+    'Tarefa criada.',
+  );
+  check('clean prose is returned untouched', applyWhatsAppVoice('Feito, chefe.').repairs.length === 0);
+
+  // Required property, exactly as for toWhatsAppMarkdown: the sink must be safe
+  // to run over already-converted text. It holds by construction here, because
+  // every rule REMOVES a shape rather than adding one, but "by construction" is
+  // what people say right before it stops being true.
+  const twice = ['A obra — Casa de Paco — 10—12 dias.', '*a* — b 👍 🎉', '— um\n— dois'];
+  check(
+    'f(f(x)) === f(x)',
+    twice.every(t => applyWhatsAppVoice(applyWhatsAppVoice(t).text).text === applyWhatsAppVoice(t).text),
+  );
+
+  // The channel-agnostic half keeps formatting, which is what would let the
+  // in-app chat adopt it: there markdown is RENDERED, so flattening it would be
+  // a downgrade rather than a fix.
+  eq('applyVoice leaves markup alone', applyVoice('*Casa* — pronto').text, '*Casa*, pronto');
+
+  // ── the seams ────────────────────────────────────────────────────────────
+  const dashy = 'Feito, chefe — a demolição fica para sexta.';
+
+  const managerOut = planAssistantMessages([text(dashy)], labels);
+  check('no long dash reaches the manager', !DASH.test(managerOut[0]?.body ?? ''));
+  eq('and the prose is repaired, not dropped', managerOut[0]?.body, 'Feito, chefe, a demolição fica para sexta.');
+
+  const workerOut = planWorkerMessages([text(dashy)]);
+  eq('the crew path gets the identical treatment', workerOut[0]?.body, managerOut[0]?.body);
+
+  // THE scope assertion, and the reason this section exists at all. A card's
+  // renderedText is hand-authored by cards/*.ts and may quote a worker's own
+  // note; softening a dash inside it would silently desynchronise WhatsApp from
+  // the row the web card and the operator app read.
+  const cardText = 'Crear tarea: «Pintar» — obra Casa de Paco — 10—12 días.';
+  const carded = planAssistantMessages([card(cardText)], labels);
+  eq('an approval card is NOT voiced', carded[0]?.body, cardText);
+  check('so a card may still carry a long dash', DASH.test(carded[0]?.body ?? ''));
+
+  // ...including on the over-1024 branch, where the card travels as plain text
+  // and would otherwise look exactly like prose to the flush path.
+  const bigCard = 'Q'.repeat(1100) + ' — final.';
+  const bigCarded = planAssistantMessages([card(bigCard)], labels);
+  check('nor on the text branch of an over-limit card', DASH.test(bigCarded[0]?.body ?? ''));
+
+  // ── the reporter ─────────────────────────────────────────────────────────
+  // Optional BY DESIGN: omitted, these two stay pure, which is the whole reason
+  // this file can assert them with no credentials and no network.
+  const seen: VoiceRepair[] = [];
+  planAssistantMessages([text('*Feito* — pronto 👍 🎉')], labels, r => seen.push(...r));
+  eq(
+    'every rule that fired is reported',
+    seen.map(r => r.rule).sort().join(','),
+    'em_dash,emoji_cap,flatten_formatting',
+  );
+  check('and each carries a sentence, not a code', seen.every(r => r.detail.length > 20));
+
+  const silent: VoiceRepair[] = [];
+  planWorkerMessages([text('Tudo certo, chefe.')], r => silent.push(...r));
+  check('a clean turn reports nothing', silent.length === 0);
 }
 
 // ── report ──────────────────────────────────────────────────────────────────
