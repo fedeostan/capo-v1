@@ -1,9 +1,11 @@
+import { after } from 'next/server';
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from 'ai';
 import { handleInbound } from '@capo/core/agent';
 import { webSink } from '@capo/core/channels/web';
 import { getApiAuth } from '@capo/db/session';
 import { assertNotBlocked, BillingBlockedError } from '@/lib/billing';
 import { logEvent } from '../../../lib/log';
+import { welcomeAnyoneNew } from '../../../lib/welcome-trigger';
 
 export const maxDuration = 120;
 
@@ -52,6 +54,18 @@ export async function POST(req: Request) {
         inbound: { channel: 'web', text },
         sink: webSink(writer),
       });
+
+      // A manager turn can have added a crew member and recorded their consent
+      // in the same breath ("põe o Zé, 912 345 678, ele já disse que sim"), and
+      // until this line that person waited for the next */15 sweep — up to
+      // fifteen minutes, or until 09:00 tomorrow if the conversation happened
+      // in the evening.
+      //
+      // It takes only the company id: the sweep re-derives who is owed a
+      // welcome from the database, so this route never has to inspect what the
+      // turn actually did, and a tool added next year needs no hook here. See
+      // lib/welcome-trigger.ts, which cannot throw.
+      after(() => welcomeAnyoneNew(auth.companyId, 'chat'));
     },
   });
 
