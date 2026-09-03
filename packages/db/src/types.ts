@@ -393,6 +393,33 @@ export type Database = {
           },
         ]
       }
+      // PENDING 0045 — hand-written, not generated. The throttle ledger behind
+      // the account emails the app now sends itself through Resend
+      // (apps/web/lib/auth-email.ts). Service-role only: RLS on, zero policies,
+      // every grant revoked, so nothing on the tenant request path can read or
+      // write it, and it has no foreign keys to describe. Regenerate this block
+      // once 0045 is applied to the live project.
+      auth_email_sends: {
+        Row: {
+          email_lower: string
+          id: string
+          kind: string
+          sent_at: string
+        }
+        Insert: {
+          email_lower: string
+          id?: string
+          kind: string
+          sent_at?: string
+        }
+        Update: {
+          email_lower?: string
+          id?: string
+          kind?: string
+          sent_at?: string
+        }
+        Relationships: []
+      }
       checkin_photo_requests: {
         Row: {
           checkin_date: string
