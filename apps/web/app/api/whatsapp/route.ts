@@ -66,6 +66,7 @@ import {
 } from '../../notifications/briefing';
 import { readThreadLocale, recordThreadEvent } from '../../notifications/thread';
 import { pingManagersAboutRequests } from '../../notifications/worker-request-ping';
+import { drainAssignmentNotices } from '../../notifications/task-assigned';
 
 // WhatsApp manager channel — Meta Cloud API webhook (see
 // docs/whatsapp-cloud-api-runbook.md for the one-time Meta setup).
@@ -2659,6 +2660,14 @@ export async function POST(request: NextRequest) {
             error,
           }),
       });
+
+      // ── the crew hears about a new task now, not tomorrow at 07:00 (W7) ──
+      // AFTER the turn, because the manager's "põe o Miguel na pintura de
+      // hoje" only becomes a queued notice once the write has happened. One
+      // line, and it never throws: announcing an assignment must never cost
+      // the manager their answer. The fifteen-minute cron is the safety net
+      // if this line is ever lost.
+      await drainAssignmentNotices({ companyId });
     });
   }
 
