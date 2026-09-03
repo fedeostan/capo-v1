@@ -516,6 +516,31 @@ export function isHiPayload(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.toLowerCase() === HI_PAYLOAD;
 }
 
+/**
+ * Did this inbound message carry the welcome's one button, in EITHER envelope?
+ *
+ * This two-line mapping is the load-bearing half of the feature, and it lives
+ * here rather than in the webhook for the reason parseProposalButtonId and
+ * isBsuid do: it is the only place `scripts/whatsapp-check.mts` can pin it with
+ * no credentials and no network. The claim the whole button rests on is that
+ * the same tap comes back on `button.payload` from the approved template and on
+ * `interactive.button_reply.id` from the free-form twin — and the failure of
+ * the second half is silent, because the template path would go on working.
+ *
+ * Structurally typed, deliberately: the webhook's own message type lives in the
+ * route and importing it here would invert the dependency for nothing. Both
+ * fields are optional on the wire and both can be absent.
+ */
+export function isHiTap(message: {
+  type?: string;
+  button?: { payload?: string };
+  interactive?: { button_reply?: { id?: string } };
+}): boolean {
+  if (message.type === 'button') return isHiPayload(message.button?.payload);
+  if (message.type === 'interactive') return isHiPayload(message.interactive?.button_reply?.id);
+  return false;
+}
+
 // ── business-scoped user ids ────────────────────────────────────────────────
 // Meta's answer to WhatsApp usernames. When a person adopts a username, the
 // inbound message's `from` (their phone) is OMITTED entirely and `from_user_id`
@@ -1221,11 +1246,17 @@ async function sendText(
 
 // No header (plain-text only on Meta's side, and it would just duplicate the
 // card's first line) and no footer.
+//
+// Returns the provider message id for sendWhatsAppList's reason, which became a
+// real one when the welcome's free-form envelope moved onto this shape: Meta's
+// delivery and read callbacks are matched against notification_log by
+// `provider_message_id`, so a proactive send that threw the id away could never
+// be stamped delivered, read or failed. The sink's own sends still ignore it.
 async function sendInteractive(
   message: Extract<WhatsAppOutbound, { kind: 'interactive' }>,
   config: WhatsAppSendConfig,
-): Promise<void> {
-  await post(
+): Promise<{ providerMessageId: string | null }> {
+  return await post(
     {
       type: 'interactive',
       interactive: {
@@ -1379,12 +1410,18 @@ export function buildListPayload(list: WhatsAppList): Record<string, unknown> {
  * Clamps rather than throws, matching what planAssistantMessages already does
  * with the same two constants: a translator lengthening a button label must
  * degrade to a truncated word, never to a failed delivery.
+ *
+ * Returns the provider message id, exactly as sendWhatsAppText and
+ * sendWhatsAppTemplate do and for the same reason: a PROACTIVE send records it
+ * in notification_log, and Meta's delivery/read callbacks are matched back to
+ * that row by `provider_message_id` alone. A send that dropped the id would look
+ * successful and then be permanently un-stampable.
  */
 export async function sendWhatsAppButtons(
   message: { body: string; buttons: { id: string; title: string }[] },
   config: WhatsAppSendConfig,
-): Promise<void> {
-  await sendInteractive(
+): Promise<{ providerMessageId: string | null }> {
+  return await sendInteractive(
     {
       kind: 'interactive',
       body: message.body.slice(0, MAX_INTERACTIVE_BODY),

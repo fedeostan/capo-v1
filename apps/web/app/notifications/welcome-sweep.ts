@@ -168,11 +168,16 @@ async function deliverWelcome(args: {
   if (!args.freeForm) return await template();
 
   try {
-    await sendWhatsAppButtons(
+    // The id is recorded exactly as the text and template paths record theirs.
+    // recordDeliveryStatuses matches Meta's delivered/read/failed callbacks
+    // against notification_log by provider_message_id alone, so dropping it
+    // here would make every free-form welcome permanently un-stampable — a
+    // row that looks sent and can never be shown to have arrived.
+    const { providerMessageId } = await sendWhatsAppButtons(
       { body: args.freeFormBody, buttons: [{ id: hiPayload(), title: args.buttonLabel }] },
       config,
     );
-    return { path: 'free_form', providerMessageId: null, fellBack: false, button: true };
+    return { path: 'free_form', providerMessageId, fellBack: false, button: true };
   } catch (err) {
     // Caught NARROWLY, by Meta's error code. Any other failure means the send
     // is genuinely broken, and re-sending it as a template would spend money to
@@ -236,11 +241,18 @@ export async function runWelcomeSweep(db: Db, opts: WelcomeSweepOptions): Promis
   const windowEnd = sendWindowEnd(sendHour, windowHours);
   if (!dryRun && !withinSendWindow(hour, sendHour, windowHours)) {
     // Logged, not just returned — a rejected invocation leaves no other trace
-    // anywhere, which is how a broken schedule stays invisible. On the
-    // immediate path it is also the only way to see that somebody was added at
-    // 23:00 and is waiting for 09:00, which looks exactly like a bug from the
-    // outside.
-    logEvent('welcome.outside_send_hour', { lisbonHour: hour, sendHour, windowEnd, window: opts.window });
+    // anywhere, which is how a broken schedule stays invisible.
+    //
+    // ⚠ TWO EVENT NAMES, ON PURPOSE. `welcome.outside_send_hour` is a CRON
+    // diagnostic: it is the line that says the sweep's schedule has broken, and
+    // it is rare. The immediate path is refused by this same gate on every
+    // manager turn after 22:00, which would have drowned that line in noise for
+    // the one person who ever greps it. A `window` field alone would not have
+    // helped: the grep an operator actually types is the event name.
+    logEvent(
+      opts.window === 'immediate' ? 'welcome.immediate_outside_hours' : 'welcome.outside_send_hour',
+      { lisbonHour: hour, sendHour, windowEnd, window: opts.window },
+    );
     return { status: 'outside_window', lisbonHour: hour, sendHour, windowEnd };
   }
 
@@ -252,18 +264,19 @@ export async function runWelcomeSweep(db: Db, opts: WelcomeSweepOptions): Promis
   // identical inbound times must not be classified differently.
   const now = Date.now();
 
+  // The id NARROWS billableCompanies' own query rather than filtering its
+  // result: the subscription_status filter still runs first, so an immediate
+  // trigger handed a company id cannot reach past the billing gate — a company
+  // that is not billable simply matches nothing. Reading the whole estate and
+  // filtering in TypeScript would have been equally safe and O(estate) on every
+  // manager turn.
   let companies;
   try {
-    companies = await billableCompanies(db);
+    companies = await billableCompanies(db, opts.companyId);
   } catch (err) {
     console.error('welcome sweep:', describeSendError(err));
     return { status: 'company_read_failed', error: describeSendError(err) };
   }
-  // Filtered here rather than in the query, deliberately: billableCompanies is
-  // the subscription gate every proactive send passes through, and an immediate
-  // trigger handed a company id must not be able to reach past it. An id that
-  // is not billable simply matches nothing.
-  if (opts.companyId) companies = companies.filter(c => c.id === opts.companyId);
 
   const report: unknown[] = [];
   let welcomed = 0;
