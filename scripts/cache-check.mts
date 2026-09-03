@@ -113,7 +113,13 @@ function stubDb(fixtures: Record<string, unknown>): Db {
 }
 
 const db = stubDb({
-  companies: { data: { name: 'Construções Silva' }, error: null },
+  // `onboarded_at` set: an established tenant, so the manager prompt carries the
+  // ordinary blocks. The onboarding CHECKLIST fixture is the separate stub
+  // below, because its whole point is that it appears under the breakpoint.
+  companies: {
+    data: { name: 'Construções Silva', onboarded_at: '2026-01-01T00:00:00Z', about: 'Remodelações' },
+    error: null,
+  },
   // The manager's own name (issue #62). A per-PROFILE fact, so it belongs
   // strictly below the breakpoint: above it, the cached prefix would stop being
   // shared between two managers of the same company and would be rewritten on
@@ -180,6 +186,10 @@ const VOLATILE_MARKERS = [
   'Construções Silva',
   'Aníbal Gatsby',
   'Prefere obras a norte',
+  // The dashboard address (migration 0046). It comes from the DEPLOYMENT, not
+  // from the code: a preview build and production would warm different cached
+  // prefixes if it sat above the line.
+  'https://www.construcapo.com',
   // A per-PROFILE memory (issue #48). Below the line for the same reason the
   // manager's name is: above it, each manager of one company would warm a
   // separate cached prefix, and every memory written at 03:00 would invalidate
@@ -193,6 +203,7 @@ for (const locale of LOCALES) {
     db,
     companyId: 'company-1',
     userId: 'profile-1',
+    appUrl: 'https://www.construcapo.com',
     summary: 'Resumo anterior da conversa.',
     locales,
   });
@@ -238,6 +249,87 @@ for (const locale of LOCALES) {
   );
 }
 
+// The onboarding checklist (migration 0046) is per-TENANT and rebuilt from the
+// tenant's own counts on every turn, so it belongs strictly below the
+// breakpoint — the same argument as the snapshot it is derived from. Above the
+// line it would fragment the cached prefix per company AND rewrite it every
+// time somebody added a worker, which during onboarding is every few messages.
+{
+  const fresh = stubDb({
+    companies: { data: { name: 'Casa Nova Lda', onboarded_at: null, about: null }, error: null },
+    profiles: { data: { full_name: 'Aníbal Gatsby' }, error: null },
+    jobs: { count: 0, error: null, data: [] },
+    workers: { count: 0, error: null, data: [] },
+    tasks: { count: 0, error: null },
+    proposals: { count: 0, error: null },
+  });
+  const msgs = await buildSystemPrompt({
+    db: fresh,
+    companyId: 'company-1',
+    userId: 'profile-1',
+    appUrl: 'https://www.construcapo.com',
+    summary: null,
+    locales: { user: 'pt-PT', company: 'pt-PT' },
+  });
+  const cached = msgs[0]?.content ?? '';
+  const uncached = msgs[1]?.content ?? '';
+  check(
+    'the onboarding checklist appears when onboarded_at is null',
+    uncached.includes('# Configuração inicial em curso'),
+  );
+  check(
+    'and it stays BELOW the cache breakpoint',
+    !cached.includes('# Configuração inicial em curso'),
+  );
+  check(
+    'the cached half is still exactly persona ⊕ policy ⊕ language directive',
+    cached === joinBlocks(managerStableBlocks({ user: 'pt-PT', company: 'pt-PT' })),
+  );
+  // The dashboard link is WITHHELD until finish_onboarding returns it, and this
+  // is where that stops being a promise in the copy and becomes a property of
+  // the prompt: the string is in NEITHER half while the setup is running. Left
+  // in the snapshot from turn one, the model has it in front of it for the whole
+  // conversation with nothing telling it to wait, and the plausible failure is
+  // the original bug in a new shape: "meanwhile you can see everything at
+  // construcapo.com", the manager leaves, the company is never finished.
+  check(
+    'the dashboard URL reaches NEITHER half while onboarded_at is null',
+    !cached.includes('https://www.construcapo.com') && !uncached.includes('https://www.construcapo.com'),
+  );
+}
+
+// Deploy ordering (0046 unapplied): the companies row simply has no
+// `onboarded_at` key. That must degrade to the PRE-migration product, so no
+// checklist, and the dashboard line comes back — an established tenant is
+// exactly who it is for.
+{
+  const preMigration = stubDb({
+    companies: { data: { name: 'Construções Silva' }, error: null },
+    profiles: { data: { full_name: 'Aníbal Gatsby' }, error: null },
+    jobs: { count: 3, error: null, data: [] },
+    workers: { count: 7, error: null, data: [] },
+    tasks: { count: 12, error: null },
+    proposals: { count: 1, error: null },
+  });
+  const msgs = await buildSystemPrompt({
+    db: preMigration,
+    companyId: 'company-1',
+    userId: 'profile-1',
+    appUrl: 'https://www.construcapo.com',
+    summary: null,
+    locales: { user: 'pt-PT', company: 'pt-PT' },
+  });
+  const whole = `${msgs[0]?.content ?? ''}\n${msgs[1]?.content ?? ''}`;
+  check(
+    'an ABSENT onboarded_at column renders no checklist at all',
+    !whole.includes('# Configuração inicial em curso'),
+  );
+  check(
+    'and the tenant is treated as onboarded, so the dashboard line is present',
+    whole.includes('https://www.construcapo.com'),
+  );
+}
+
 // The two live-fact reads fail INDEPENDENTLY (issue #62). If a transient
 // failure on the company counts also silenced the manager's name, the model
 // would fall straight back to reading a name out of the frozen summary — the
@@ -251,6 +343,7 @@ for (const locale of LOCALES) {
     db: degraded,
     companyId: 'company-1',
     userId: 'profile-1',
+    appUrl: 'https://www.construcapo.com',
     summary: null,
     locales: { user: 'pt-PT', company: 'pt-PT' },
   });
@@ -486,6 +579,7 @@ for (const locale of LOCALES) {
         db,
         companyId: 'company-1',
         userId: 'profile-1',
+        appUrl: 'https://www.construcapo.com',
         summary: null,
         locales,
       }),

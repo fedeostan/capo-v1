@@ -243,6 +243,7 @@ export default function Chat({
   initialInput = '',
   autoVoice = false,
   autoFocus = false,
+  onboarding = false,
 }: {
   initialMessages: UIMessage[];
   locale: Locale;
@@ -257,6 +258,10 @@ export default function Chat({
    *  a job IS how a task gets made here (create_task), so this is the product
    *  rather than a workaround for a missing screen. */
   autoFocus?: boolean;
+  /** companies.onboarded_at is still null (migration 0046): this manager has
+   *  not finished setting the company up, so the empty screen asks him to start
+   *  rather than describing what Capo does in general. */
+  onboarding?: boolean;
 }) {
   const t = getCatalog(locale);
   // Prefill FILLS the composer, it never auto-sends — same rule as the mic
@@ -395,7 +400,9 @@ export default function Chat({
             </Card>
           )}
           {messages.length === 0 && (
-            <p className="pt-12 text-center text-callout text-fg-muted">{t.chat.emptyThread}</p>
+            <p className="pt-12 text-center text-callout text-fg-muted">
+              {onboarding ? t.chat.emptyThreadOnboarding : t.chat.emptyThread}
+            </p>
           )}
           {messages.map(message =>
             message.role === 'system' ? (

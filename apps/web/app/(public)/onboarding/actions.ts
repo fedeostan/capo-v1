@@ -53,5 +53,12 @@ export async function completeOnboarding(formData: FormData): Promise<void> {
   // that ordering is load-bearing: Capo recognises an inbound WhatsApp message
   // by matching the sender against profiles.phone, which complete_onboarding
   // has only just written.
-  redirect('/whatsapp');
+  //
+  // `?novo=1` rides the rest of the chain so its last step lands the manager in
+  // the CONVERSATION rather than on Home: the company has a name and a phone
+  // number and nothing else, and the setup is finished by talking to Capo. It is
+  // carried as a flag rather than baked into /instalar's button because that
+  // screen is also reachable from Profile, where an established manager tapping
+  // "open Capo" means Home.
+  redirect('/whatsapp?novo=1');
 }

@@ -1508,6 +1508,75 @@ Structural invariants (do not regress):
   headline, and the dispatcher renders it from the recipient's own
   `profiles.language` using the SAME catalog entry the inbox uses, so the two
   surfaces cannot say different things.
+- **Being onboarded is a COLUMN, never a count** (`companies.onboarded_at`,
+  migration `0046`). Capo used to work out whether a manager was still being set
+  up by counting rows, and the count switched the whole onboarding block off the
+  moment one obra and one worker existed: a manager who had answered two
+  questions was told "done" and left with an empty company. Seven things:
+  - **THREE STATES, and the third is a deploy-ordering rule.** A string is the
+    moment the setup was declared finished; an explicit SQL NULL means it is
+    still running, and is the ONLY state that turns the checklist on; an ABSENT
+    column (`select('*')` on a database where 0046 has not been applied) reads
+    as ALREADY ONBOARDED. `CompanySnapshot.onboardedAt` is therefore
+    `string | null | undefined` and the loader uses `'onboarded_at' in row`,
+    never `??`. Collapsing absent into null is the obvious way to write it and
+    is the bug: with the code live and the migration pending it drops EVERY
+    established customer into a setup conversation whose two tools cannot run,
+    which is exactly the harm the backfill exists to prevent, arriving through
+    another door (0038 sat merged and unapplied for three weeks on this repo).
+    Both tools answer a 42703 with a plain "not available yet" sentence rather
+    than a driver error the model would retry, and `pnpm onboarding-check` pins
+    absent and null side by side.
+  - **The dashboard URL is WITHHELD from the prompt while `onboarded_at` is
+    null.** `finish_onboarding` RETURNS it, which is what makes "share it only
+    once the setup succeeded" a property of the mechanism rather than of the
+    model's goodwill. The `snapshotApp` line renders only for a company that is
+    not mid-setup (and not at all when the snapshot read failed: not knowing is
+    a reason to say nothing). Left in from turn one, the plausible failure is
+    the original bug in a new shape: Capo offers the link, the manager leaves
+    for the dashboard, and the company is never finished being set up.
+    `pnpm cache-check` asserts the string reaches neither half.
+  - **The backfill was mandatory**, exactly as `0026`'s `pushed_at` and `0033`'s
+    welcome ledger were: every company with at least one job AND one worker is
+    stamped `now()` by the migration itself. Without it the first deploy tells
+    every existing customer, in their next message, that Capo is about to set
+    their company up from scratch.
+  - **The checklist is REBUILT from the counts every turn and lives in the
+    UNCACHED half.** It is per-tenant and changes several times during a single
+    setup conversation, so above the breakpoint it would fragment the cached
+    prefix per company and rewrite it on every answer. `pnpm cache-check`
+    asserts it stays below the line.
+  - **`missingOnboardingItems` is the ONE definition of "set up"**, and both the
+    prompt block and `finish_onboarding` read it. Two copies would be a
+    conversation that says the setup is finished and a tool that refuses to
+    agree. `finish_onboarding` RE-READS the snapshot rather than trusting the
+    block rendered at the top of the turn, because the turn itself may have
+    created the last task.
+  - **Both tools are UNGUARDED and that is deliberate.** `set_company_about`
+    stores one sentence the manager just said about his own business;
+    `finish_onboarding` stamps a timestamp on his own company row and stops a
+    checklist appearing. Neither creates anything, schedules anything or
+    messages anybody. Under the product default posture (`always_ask`, 0031)
+    guarding them would meet a brand new manager with an approval card asking
+    him to confirm the sentence he had just typed, before he has any idea what
+    an approval card is.
+  - **`appUrl` is REQUIRED on `ToolContext`, `HandleInboundOptions`,
+    `buildSystemPrompt` and `resolveProposal`**, for the same reason
+    `confirmPosture` is. `packages/core` reads no environment by contract, so an
+    optional field with a fallback resolves to a link to localhost or to an
+    empty string: a dead link handed to a manager on the last step of signup,
+    which nothing in a build could notice. `WorkerContext` must never gain it —
+    a crew member has no dashboard.
+  - **The tenant's UPDATE grant on `companies` grew to `(name, about,
+    onboarded_at)` and to nothing else.** 0011 revoked the table-wide grant
+    precisely so `subscription_status` has exactly one writer, the Stripe
+    webhook; that stays true. What a tenant can now do is declare their own
+    company set up early, which costs them a checklist and nobody else anything.
+  `firstUse` is left in the prompt catalogs unreferenced on purpose, so
+  reverting this feature is a code change rather than a translation job.
+  Known and NOT done: nothing ever un-stamps a company, and no screen shows the
+  manager where he is in the checklist. The conversation is the only surface.
+
 - **The live facts outrank the frozen prose, and the prompt says so** (issue
   #62). Capo's context holds two kinds of thing: blocks rebuilt from the
   database on every turn (the date, the company snapshot, the knowledge index,

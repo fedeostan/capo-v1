@@ -3,6 +3,7 @@ import { handleInbound } from '@capo/core/agent';
 import { webSink } from '@capo/core/channels/web';
 import { getApiAuth } from '@capo/db/session';
 import { assertNotBlocked, BillingBlockedError } from '@/lib/billing';
+import { siteUrl } from '@/lib/site-url';
 import { logEvent } from '../../../lib/log';
 
 export const maxDuration = 120;
@@ -48,6 +49,10 @@ export async function POST(req: Request) {
         // getApiAuth, so the posture costs no extra query and cannot disagree
         // with what /perfil shows.
         confirmPosture: auth.confirmPosture,
+        // The address of this deployment, so Capo can hand the manager his own
+        // dashboard at the end of the setup conversation. Read here rather than
+        // in @capo/core, which touches no environment by contract.
+        appUrl: siteUrl(),
         locales: { user: auth.locale, company: auth.companyLocale },
         inbound: { channel: 'web', text },
         sink: webSink(writer),

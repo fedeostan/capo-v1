@@ -469,30 +469,42 @@ export type Database = {
       }
       companies: {
         Row: {
+          // PENDING 0046
+          about: string | null
           created_at: string
           id: string
           language: string
           name: string
+          // PENDING 0046
+          onboarded_at: string | null
           stripe_customer_id: string | null
           stripe_subscription_id: string | null
           subscription_status: string
           trial_ends_at: string
         }
         Insert: {
+          // PENDING 0046
+          about?: string | null
           created_at?: string
           id?: string
           language?: string
           name: string
+          // PENDING 0046
+          onboarded_at?: string | null
           stripe_customer_id?: string | null
           stripe_subscription_id?: string | null
           subscription_status?: string
           trial_ends_at?: string
         }
         Update: {
+          // PENDING 0046
+          about?: string | null
           created_at?: string
           id?: string
           language?: string
           name?: string
+          // PENDING 0046
+          onboarded_at?: string | null
           stripe_customer_id?: string | null
           stripe_subscription_id?: string | null
           subscription_status?: string

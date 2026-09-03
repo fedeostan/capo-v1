@@ -159,6 +159,11 @@ export interface Catalog {
     retry: string;
     dismiss: string;
     emptyThread: string;
+    /** Shown instead of `emptyThread` while the company is still being set up
+     *  (companies.onboarded_at is null). An empty screen is the worst moment to
+     *  describe what Capo can do in general: what this manager needs is one
+     *  instruction, which is to say hello so the setup can start. */
+    emptyThreadOnboarding: string;
     proposalTitle: string;
     pendingProposals: string;
     approve: string;

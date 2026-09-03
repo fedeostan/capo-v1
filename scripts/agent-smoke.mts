@@ -175,6 +175,10 @@ function messageText(message: UIMessage | undefined): string {
 
 // Takes the whole Tenant rather than a bare companyId: handleInbound now needs
 // the user identity and both language dials, and every caller already has one.
+/** What the app layer would pass. Any absolute URL does: nothing in this
+ *  harness follows it, and `finish_onboarding` only ever echoes it back. */
+const SMOKE_APP_URL = 'https://www.construcapo.com';
+
 async function sendTurn(tenant: Tenant, text: string): Promise<string> {
   const { sink, result } = collectingSink();
   await handleInbound({
@@ -189,6 +193,7 @@ async function sendTurn(tenant: Tenant, text: string): Promise<string> {
     // "proposed" and the smoke test would stop covering the direct-write path
     // at all. The card path is covered by the proposal assertions below.
     confirmPosture: 'trust_quote',
+    appUrl: SMOKE_APP_URL,
     inbound: { channel: 'web', text },
     sink,
   });
@@ -275,7 +280,7 @@ try {
   );
 
   if (planProposal) {
-    const resolution = await resolveProposal(db, planProposal.id, 'approve', { user: base.locale, company: base.locale });
+    const resolution = await resolveProposal(db, planProposal.id, 'approve', { user: base.locale, company: base.locale }, SMOKE_APP_URL);
     const jobId = (planProposal.action_args as { job_id: string }).job_id;
     const { data: planTasks } = await db.from('tasks').select('id, start_date, due_date').eq('company_id', base.companyId).eq('job_id', jobId);
     let depCount = 0;
@@ -415,7 +420,7 @@ try {
       `card="${card.rendered_text}"`,
     );
 
-    const resolution = await resolveProposal(db, card.id, 'approve', { user: 'en-US', company: 'pt-PT' });
+    const resolution = await resolveProposal(db, card.id, 'approve', { user: 'en-US', company: 'pt-PT' }, SMOKE_APP_URL);
     const batchId =
       resolution.outcome === 'approved' ? (resolution.result as { batchId?: string })?.batchId : undefined;
     const { data: afterApprove } = await db

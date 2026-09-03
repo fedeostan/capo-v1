@@ -48,6 +48,7 @@ import {
 } from '../../../lib/checkin-photo';
 import { dayLinkUrl, mintDayLinks } from '../../../lib/day-link';
 import { logEvent } from '../../../lib/log';
+import { siteUrl } from '../../../lib/site-url';
 import { handleProblemReportMessage } from '../../../lib/problem-report-flow';
 import { consentCommand, detailCommand, keywordText, languageCommand, menuCommand } from '../../../lib/worker-keywords';
 import { isWorkerAudioMessage, transcribeWorkerAudio, type WorkerAudioFailure } from '../../../lib/worker-audio';
@@ -2499,7 +2500,7 @@ export async function POST(request: NextRequest) {
         // manager their confirmation.
         await acknowledgeInbound(message.id, sendConfig, { typing: false, companyId });
         try {
-          const resolution = await resolveProposal(db, button.proposalId, button.decision, locales);
+          const resolution = await resolveProposal(db, button.proposalId, button.decision, locales, siteUrl());
           const confirmation =
             resolution.outcome === 'approved'
               ? t.whatsapp.proposalApproved
@@ -2687,6 +2688,7 @@ export async function POST(request: NextRequest) {
             userId,
             locales,
             confirmPosture,
+            appUrl: siteUrl(),
             inbound: { channel: 'whatsapp', text, transcribed },
             sink,
           });

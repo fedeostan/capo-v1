@@ -3,6 +3,7 @@ import { getApiAuth } from '@capo/db/session';
 import { resolveProposal } from '@capo/core/capabilities/propose';
 import { runTranslationBatch } from '@capo/core/translation';
 import { assertNotBlocked, BillingBlockedError } from '@/lib/billing';
+import { siteUrl } from '@/lib/site-url';
 
 // Raised for one proposal only: apply_company_translation queues a batch, and
 // the after() hook below works it once the response has already gone out. Every
@@ -35,10 +36,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   try {
-    const resolution = await resolveProposal(auth.db, id, decision, {
-      user: auth.locale,
-      company: auth.companyLocale,
-    });
+    const resolution = await resolveProposal(
+      auth.db,
+      id,
+      decision,
+      { user: auth.locale, company: auth.companyLocale },
+      siteUrl(),
+    );
 
     // apply_company_translation only snapshots and queues — it does no model
     // work, because resolveProposal must stay fast for every other action.
