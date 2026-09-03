@@ -1,8 +1,17 @@
+import {
+  coerceCategory,
+  describeUrgency,
+  isPressing,
+  urgencyRank,
+  type RequestCategory,
+  type RequestUrgency,
+} from '@capo/core/capabilities/request-urgency';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
 
-// The pure half of a crew request (issue #152) — the urgency arithmetic, and
-// the two rendered sentences the manager reads outside the app.
+// The pure half of a crew request (issue #152) — the two rendered sentences the
+// manager reads outside the app, over the shared urgency arithmetic re-exported
+// below.
 //
 // Everything here is PURE: no Db, no clock, no network, `today` injected. That
 // is what lets `pnpm whatsapp-check` assert it with no credentials, which is
@@ -14,83 +23,20 @@ import type { Locale } from '@capo/i18n/locale';
 // notifications/briefing.ts does: it needs the USER copy catalog, and pulling
 // @capo/i18n/catalog into the agent package would drag every UI string into the
 // agent bundle.
+//
+// The ARITHMETIC no longer lives here, and the reason is worth reading before
+// moving it back. It has no catalog, so the paragraph above never applied to
+// it, and the manager's own agent now ranks the same rows through the
+// `crew_requests` tool — which sits in @capo/core and cannot import from
+// apps/web (i18n <- db <- core <- {web, operator}). Copying the ranking rule
+// into the agent would let Capo call a request urgent in chat while Home files
+// it under "later", with the manager unable to tell which is right. So it moved
+// DOWN, into @capo/core/capabilities/request-urgency, and is re-exported here
+// unchanged: every existing importer, `pnpm whatsapp-check` included, keeps
+// pointing at the one implementation there is.
 
-/** The coarse filing hint, keyed by worker_requests.category's CHECK in 0043. */
-export type RequestCategory = 'material' | 'tool' | 'machine' | 'delivery' | 'other';
-
-const CATEGORIES: readonly string[] = ['material', 'tool', 'machine', 'delivery', 'other'];
-
-/** An unknown value reads as absent — a row written by a newer deploy must not
- *  render `undefined` on an older bundle. Same posture as the inbox's unknown
- *  `kind`. */
-export function coerceCategory(value: string | null | undefined): RequestCategory | null {
-  return value && CATEGORIES.includes(value) ? (value as RequestCategory) : null;
-}
-
-/**
- * How urgent a request is — derived from the DATE and from nothing else.
- *
- * Facu's ranking, in his words: out of material FOR TODAY is critical, out of
- * material FOR TOMORROW is critical, needed NEXT WEEK can be chill. So the
- * buckets are the ones a person on a building site actually uses, and the
- * ordering below is exactly that sentence.
- *
- * `undated` is a FIRST-CLASS answer and never a guess. Capo asks once; if the
- * crew member still does not say, the request is filed with no date and shown
- * with no date. Guessing high cries wolf until the manager stops looking;
- * guessing low buries the one that mattered.
- */
-export type RequestUrgency = 'overdue' | 'today' | 'tomorrow' | 'later' | 'undated';
-
-/**
- * Plain subtraction, on ISO dates, in the Lisbon day the whole product agrees
- * on — `today` comes from `lisbon_today()`, never from a runtime clock. One
- * clock, so a request that says "hoje" here says "hoje" on the board too.
- *
- * Both dates are parsed as UTC midnight so the difference is whole days with no
- * DST edge: 2026-03-29 minus 2026-03-28 is one day even though that Lisbon day
- * is 23 hours long.
- *
- * Anything unparseable reads as `undated`, which is the honest failure: it says
- * "we do not know when this is for" rather than inventing a rank for it.
- */
-export function describeUrgency(neededBy: string | null | undefined, today: string | null): RequestUrgency {
-  if (!neededBy || !today) return 'undated';
-  const at = Date.parse(`${neededBy}T00:00:00Z`);
-  const now = Date.parse(`${today}T00:00:00Z`);
-  if (Number.isNaN(at) || Number.isNaN(now)) return 'undated';
-  const days = Math.round((at - now) / 86_400_000);
-  if (days < 0) return 'overdue';
-  if (days === 0) return 'today';
-  if (days === 1) return 'tomorrow';
-  return 'later';
-}
-
-/**
- * Sort key: the most urgent first, undated last.
- *
- * Undated goes LAST rather than first on purpose. A request with no date is not
- * a request with no importance — but it is the one the manager can least act on
- * from a summary, and putting it above a blocker for this morning would be the
- * "guessing high" failure by another route.
- */
-const URGENCY_RANK: Record<RequestUrgency, number> = {
-  overdue: 0,
-  today: 1,
-  tomorrow: 2,
-  later: 3,
-  undated: 4,
-};
-
-export function urgencyRank(urgency: RequestUrgency): number {
-  return URGENCY_RANK[urgency];
-}
-
-/** True for the requests worth a card on Home, as opposed to a row in the
- *  inbox. Everything that is not comfortably in the future. */
-export function isPressing(urgency: RequestUrgency): boolean {
-  return urgency === 'overdue' || urgency === 'today' || urgency === 'tomorrow';
-}
+export { coerceCategory, describeUrgency, isPressing, urgencyRank };
+export type { RequestCategory, RequestUrgency };
 
 /** The reader's own rendering of a needed-by date. UTC, because the stored
  *  value is a bare calendar day and re-interpreting it in a timezone would slide

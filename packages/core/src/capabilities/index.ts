@@ -4,6 +4,7 @@ import { taskTools } from './tasks';
 import { agendaTools } from './agenda';
 import { jobTools } from './jobs';
 import { workerTools } from './workers';
+import { crewRequestTools } from './crew-requests';
 import { memoryTools } from './memory';
 import { knowledgeTools } from './knowledge';
 import { languageTools } from './language';
@@ -28,11 +29,19 @@ import type { CapoTool, ToolContext } from './types';
 // absent here. pause_job (issue #95) is the fourth: apply_job_pause erases
 // dates, which nothing in its payload could put back, so it lives only in
 // propose.ts.
+//
+// crew_requests (issue #152's follow-up) is the one entry here that reads
+// WORKER-AUTHORED text. It is a read, so it is unguarded like every other read,
+// and the isolation rule it lives under is 0027's and 0043's: worker prose may
+// be SHOWN to the manager as an attributed quote, and may never be WRITTEN into
+// `messages`, which is the evidence pool runGuarded matches a manager's quote
+// against. Nothing in that tool writes anywhere.
 export const roster: CapoTool[] = [
   ...taskTools,
   ...agendaTools,
   ...jobTools,
   ...workerTools,
+  ...crewRequestTools,
   ...memoryTools,
   ...knowledgeTools,
   ...languageTools,
