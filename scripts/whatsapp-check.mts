@@ -79,8 +79,10 @@ import {
   FREE_FORM_WINDOW_MS,
   OUTSIDE_WINDOW_ERROR_CODE,
   parseCheckinPayload,
+  parsePhotoBatchPayload,
   parseProposalButtonId,
   parseWorkerMenuRowId,
+  photoBatchPayload,
   planAssistantMessages,
   planWorkerMessages,
   applyVoice,
@@ -101,6 +103,16 @@ import {
 } from '@capo/core/channels/whatsapp';
 import { getCatalog } from '@capo/i18n/catalog';
 import { LOCALES } from '@capo/i18n/locale';
+// 0047 — the photo inbox's pure half. Credential-free by construction: the
+// reader and the writer take `now` as an argument for exactly this reason.
+import {
+  MAX_INBOX_PHOTOS,
+  PHOTO_INBOX_TTL_MS,
+  photoInboxExpiry,
+  photoInboxLive,
+} from '@capo/core/media/photo-inbox';
+import { taskPhotoInboxPath, taskPhotoPath } from '@capo/core/media/photos';
+import { PHOTO_REQUEST_TTL_MS } from '../apps/web/lib/checkin-photo.ts';
 import { allTemplates, MANAGED_TEMPLATE_NAMES, TEMPLATE_LANGUAGES } from './whatsapp-templates.ts';
 // The free-form renderer lives in the web app rather than @capo/core, for the
 // same reason renderWorkerBriefing does: it needs the USER copy catalog, which
@@ -3119,6 +3131,140 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   check('30 February is refused rather than rolled into March', !neededByIsSane('2026-02-30', now));
   check('a non-date is refused', !neededByIsSane('amanhã', now));
   check('a timestamp is refused — the column is a DAY', !neededByIsSane('2026-09-01T08:00:00Z', now));
+}
+
+// ── the photo inbox (0047) ──────────────────────────────────────────────────
+// The bug: a crew member sent a photo, Capo asked which task it was of, and by
+// the time they answered the bytes were gone — they lived for exactly one turn,
+// because a task photo's object key contains the task id. On 3 September that
+// produced "I tried 3 times now. Is not working" and five days with no
+// task_photos row.
+//
+// Three things here are worth a check rather than a comment: the FOURTH tappable
+// codec (nothing about the handler layout keeps four payload shapes apart, only
+// that their prefixes do not overlap), the two path builders (segment 1 is the
+// tenant boundary the storage policies read, and the inbox prefix has to be
+// unmistakable), and the expiry (enforced by the reader, because nothing sweeps
+// the table).
+{
+  const more = photoBatchPayload('more');
+  const done = photoBatchPayload('done');
+
+  eq('a "more photos" tap round-trips', parsePhotoBatchPayload(more), 'more');
+  eq('a "that is everything" tap round-trips', parsePhotoBatchPayload(done), 'done');
+  eq('and it is case-insensitive, as Meta echoes what we sent', parsePhotoBatchPayload('CAPO:PHOTOS:DONE'), 'done');
+  eq('an unknown answer is rejected', parsePhotoBatchPayload('capo:photos:maybe'), null);
+  eq('a foreign prefix is rejected', parsePhotoBatchPayload(`evil:photos:done`), null);
+  eq('an empty payload is rejected', parsePhotoBatchPayload(''), null);
+  // It carries NO id, the same decision capo:wm:manager makes: which photos it
+  // settles comes from the tapper's phone-derived worker id, never the payload.
+  check('a photo batch payload contains no uuid', !done.includes(uuid), done);
+
+  // SIX MORE DIRECTIONS. Three of the four shapes now arrive under
+  // `type: 'interactive'`, and two of those three read the SAME member of the
+  // envelope (`button_reply.id`) — the approval card and this one. Nothing but
+  // the prefixes keeps a manager's approval from being read as a crew member's
+  // photo tap, so every direction is asserted.
+  const menuTask4 = workerMenuRowId({ kind: 'task', taskId: uuid });
+  const menuManager4 = workerMenuRowId({ kind: 'manager' });
+  const checkin4 = checkinPayload('done', uuid);
+  const approve4 = proposalButtonId('approve', uuid);
+
+  eq('an approval id is not a photo tap', parsePhotoBatchPayload(approve4), null);
+  eq('a check-in payload is not a photo tap', parsePhotoBatchPayload(checkin4), null);
+  eq('a menu task row is not a photo tap', parsePhotoBatchPayload(menuTask4), null);
+  eq('the manager row is not a photo tap', parsePhotoBatchPayload(menuManager4), null);
+  eq('a photo tap is not an approval id', parseProposalButtonId(done), null);
+  eq('a photo tap is not a check-in payload', parseCheckinPayload(done), null);
+  eq('a photo tap is not a menu row', parseWorkerMenuRowId(done), null);
+}
+
+// ── the two object keys ─────────────────────────────────────────────────────
+// Segment 1 is the company on BOTH, which is the whole reason 0047 needed no
+// new storage policy: 0023's policies compare (storage.foldername(name))[1]
+// against private.current_company_id() and read nothing else. Segment 2 of the
+// inbox key is the literal word `inbox`, which is not a uuid, so a staged
+// object can never land inside a task's folder.
+{
+  const company = '11111111-1111-1111-1111-111111111111';
+  const worker = '22222222-2222-2222-2222-222222222222';
+  const task = '33333333-3333-3333-3333-333333333333';
+  const inbox = taskPhotoInboxPath(company, worker, 'abc', 'image/jpeg');
+  const attached = taskPhotoPath(company, task, 'abc', 'image/jpeg');
+
+  eq('a staged photo lives under the company then inbox then the worker', inbox, `${company}/inbox/${worker}/abc.jpg`);
+  eq('an attached photo lives under the company then the task', attached, `${company}/${task}/abc.jpg`);
+  eq('both keys start with the company, which IS the storage boundary', inbox.split('/')[0], attached.split('/')[0]);
+  // The CHECK constraints in 0047 re-derive both of these in SQL. A staged key
+  // that satisfied task_photos_path_scoped would mean a photo could be written
+  // as evidence without ever being attached to anything.
+  check('a staged key never satisfies the task_photos path shape', !inbox.startsWith(`${company}/${task}/`), inbox);
+  eq('the inbox segment is a literal word, never a uuid', inbox.split('/')[1], 'inbox');
+}
+
+// ── the expiry, enforced by the reader ──────────────────────────────────────
+// Nothing sweeps worker_photo_inbox, so `expires_at` is only ever true because
+// the reader asks. Fail CLOSED on anything unreadable: the cost in this
+// direction is that a photo has to be sent again, and in the other it is a
+// photo of yesterday's work filed as proof of today's.
+{
+  const now = Date.parse('2026-09-03T12:00:00Z');
+  eq('the window is a full day', PHOTO_INBOX_TTL_MS, 24 * 60 * 60 * 1000);
+  // Deliberately LONGER than the check-in request's TTL, and the two are not
+  // the same kind of thing: that one bounds what an unlabelled photo may be
+  // BELIEVED to be about, this one bounds only how long we keep offering
+  // somebody their own photo back.
+  check(
+    'and it is longer than the check-in request it outlives',
+    PHOTO_INBOX_TTL_MS > PHOTO_REQUEST_TTL_MS,
+    `${PHOTO_INBOX_TTL_MS} vs ${PHOTO_REQUEST_TTL_MS}`,
+  );
+  check('a photo staged now is live now', photoInboxLive(photoInboxExpiry(now), now));
+  check(
+    'a photo staged at 08:00 is still live when they explain it at 17:00',
+    photoInboxLive(photoInboxExpiry(Date.parse('2026-09-03T08:00:00Z')), Date.parse('2026-09-03T17:00:00Z')),
+  );
+  check(
+    'and dead by the next working morning',
+    !photoInboxLive(photoInboxExpiry(Date.parse('2026-09-03T08:00:00Z')), Date.parse('2026-09-04T09:00:00Z')),
+  );
+  // The honest edge, pinned rather than glossed: a photo taken at 08:00 IS
+  // still waiting at the next day's 07:00 briefing, because 24 hours from 08:00
+  // is 08:00. That is safe here in a way it would not be for a check-in photo
+  // request: nothing guesses what this photo is of. The crew member names the
+  // task themselves, and the model is shown the time each photo arrived.
+  check(
+    'a photo from yesterday morning survives to this morning, and that is deliberate',
+    photoInboxLive(photoInboxExpiry(Date.parse('2026-09-03T08:00:00Z')), Date.parse('2026-09-04T07:00:00Z')),
+  );
+  check('one minute short of a day is live', photoInboxLive(photoInboxExpiry(now), now + PHOTO_INBOX_TTL_MS - 60_000));
+  check('one minute past it is not', !photoInboxLive(photoInboxExpiry(now), now + PHOTO_INBOX_TTL_MS + 60_000));
+  check('an expired photo is dead', !photoInboxLive('2026-09-03T11:59:59Z', now));
+  check('a missing expiry reads as expired', !photoInboxLive(null, now));
+  check('and so does an unparseable one', !photoInboxLive('soon', now));
+  check('the prompt block is capped', MAX_INBOX_PHOTOS > 0 && MAX_INBOX_PHOTOS <= 40, String(MAX_INBOX_PHOTOS));
+}
+
+// ── the copy that answers a bare photo ──────────────────────────────────────
+// Meta clamps nothing: a button title over 20 characters is a 400, and the
+// sender clamps rather than throws precisely because a translator lengthening a
+// label must degrade to a truncated word. Asserting the untruncated length here
+// is what keeps the clamp from ever being reached.
+for (const locale of LOCALES) {
+  const t = getCatalog(locale).whatsapp;
+  check(`${locale}: the "more photos" button fits`, t.photoBatchMoreButton.length <= 20, t.photoBatchMoreButton);
+  check(`${locale}: the "that is everything" button fits`, t.photoBatchDoneButton.length <= 20, t.photoBatchDoneButton);
+  // The count is the running total of what is WAITING, not what arrived in this
+  // message, so somebody sending four in a row watches it climb. A receipt that
+  // said "1" four times is the message that produced "I tried 3 times now".
+  check(`${locale}: the receipt names the count when there is more than one`, t.photoBatchAsk(3).includes('3'), t.photoBatchAsk(3));
+  check(`${locale}: and reads naturally for the first one`, t.photoBatchAsk(1).length > 0, t.photoBatchAsk(1));
+  // It must NOT claim anything was recorded: nothing has been filed at this
+  // point, and a photo waiting is a photo waiting.
+  for (const key of ['photoBatchAsk', 'photoBatchMoreAck', 'photoBatchNone'] as const) {
+    const body = key === 'photoBatchAsk' ? t.photoBatchAsk(2) : t[key];
+    check(`${locale}: ${key} is one short line`, body.length > 0 && body.length <= 160, body);
+  }
 }
 
 // ── report ──────────────────────────────────────────────────────────────────
