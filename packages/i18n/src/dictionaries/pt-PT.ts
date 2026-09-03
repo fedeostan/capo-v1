@@ -1014,6 +1014,8 @@ const dict: Catalog = {
       const who = names ? `: ${names}` : '';
       return `Apresentei-me a ${notified} ${notified === 1 ? 'pessoa nova' : 'pessoas novas'} da equipa no WhatsApp${who}.`;
     },
+    assignmentGreeting: name => `Olá ${name}. O teu chefe acabou de te dar uma tarefa nova para hoje.`,
+    taskNewlyAssigned: title => `Nova: ${title}`,
   },
 };
 

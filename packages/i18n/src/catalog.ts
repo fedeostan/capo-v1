@@ -1824,5 +1824,33 @@ export interface Catalog {
      * welcome on their own phone and does not need Capo telling them about it.
      */
     welcomeEvent(args: { notified: number; names: string }): string;
+
+    // ── "you were just given a task" (issue W7) ──────────────────────────────
+    // A task assigned at 09:00 used to reach the person doing it at 07:00 the
+    // NEXT morning. These two keys are the message that closes that gap.
+
+    /**
+     * The free-form opener, REPLACING `freeFormGreeting` on this path only.
+     *
+     * It has to say the thing that is new, and `freeFormGreeting` cannot: it
+     * says "Bom dia", which is a lie at 15:00 and says nothing about why a
+     * message just arrived. Everything after this line is the ordinary
+     * free-form briefing, so the crew member reads the reason and then their
+     * whole day in one message rather than a task with no context.
+     *
+     * Newlines are fine — this is free-form text, never a template parameter.
+     */
+    assignmentGreeting(name: string): string;
+    /**
+     * The marker on the task that was JUST assigned, inside a day that also
+     * contains work the person already knew about.
+     *
+     * ⚠ A PREFIX, not a suffix, and that is forced rather than chosen. The
+     * headline is built as `taskWithJob(title, job)` — "Pintar tecto (Casa de
+     * Paco)" — so a marker appended to the title renders as
+     * "Pintar tecto (nova) (Casa de Paco)", two parentheses in a row about two
+     * unrelated things. In front, it reads as a label on the line.
+     */
+    taskNewlyAssigned(title: string): string;
   };
 }

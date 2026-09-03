@@ -202,12 +202,17 @@ const BRIEFABLE = new Set(['pending', 'in_progress']);
 /**
  * The rows a morning briefing fans out: on today, in a status worth briefing.
  *
- * ONE definition, shared by loadCompanyBriefing (the 07:00 cron) and
- * loadWorkerBriefing (the OK-reply path, issue #108). Two copies of this
- * filter would eventually disagree, and the symptom would be a knock claiming
- * three tasks whose "detail" then lists two.
+ * ONE definition, shared by loadCompanyBriefing (the 07:00 cron),
+ * loadWorkerBriefing (the OK-reply path, issue #108) and the assignment drain
+ * (issue W7). Two copies of this filter would eventually disagree, and the
+ * symptom would be a knock claiming three tasks whose "detail" then lists two.
+ *
+ * Exported for the drain, which needs the same allowlist plus one extra
+ * question the other two never ask ("does this task START today?"). It asks
+ * that against `task_board.window_start`, the view's own column — never by
+ * re-deriving it from dates here.
  */
-function briefableToday<T extends { active_today?: boolean | null; status?: string | null }>(
+export function briefableToday<T extends { active_today?: boolean | null; status?: string | null }>(
   rows: T[],
 ): T[] {
   return rows.filter(r => r.active_today === true && BRIEFABLE.has(r.status ?? ''));
@@ -854,6 +859,21 @@ export interface WorkerFreeFormOptions {
    * missing table or a revoked grant costs the line and never the briefing.
    */
   dayLinkUrl?: string;
+  /**
+   * An opener to use INSTEAD of `freeFormGreeting` (issue W7).
+   *
+   * The 07:00 briefing's greeting is "Bom dia" and everything below it is
+   * "here is your day", which is right at 07:00 and wrong at 15:00. The
+   * assignment note (apps/web/app/notifications/task-assigned.ts) sends the
+   * SAME day, in the same shape, at an arbitrary hour and for a different
+   * reason — so it replaces the one line that would be untrue and shares
+   * everything else. Rendering its own body instead would have given the crew
+   * a second, drifting description of what a task is, which is the failure
+   * `taskHeadline` and `taskDetailLines` already exist to prevent.
+   *
+   * Absent means exactly what this function rendered before the option existed.
+   */
+  greeting?: string;
 }
 
 export function renderWorkerFreeForm(
@@ -861,7 +881,7 @@ export function renderWorkerFreeForm(
   options: WorkerFreeFormOptions = {},
 ): string {
   const t = getCatalog(briefing.locale).reminders;
-  const greeting = t.freeFormGreeting(briefing.name);
+  const greeting = options.greeting ?? t.freeFormGreeting(briefing.name);
   /**
    * Two lines, because that is how a link reads on a phone: a sentence saying
    * what is behind it, then the bare URL on its own line so WhatsApp renders it
