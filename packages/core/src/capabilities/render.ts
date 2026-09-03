@@ -364,6 +364,67 @@ export async function renderProposal(
       return `${header}\n${rows.join('\n')}`;
     }
 
+    case 'apply_request_materials': {
+      const add: string[] = args.add;
+      if (add.length === 0) throw new RenderError(t.errors.emptyChange);
+
+      // ⚠ `text` IS NOT SELECTED HERE, AND MUST NEVER BE.
+      //
+      // This card names who asked and when for, and both come off the request
+      // row. The crew member's own WORDS stay in worker_requests, where 0043
+      // put them. rendered_text is quoted verbatim into an `event` row in
+      // `messages` when the manager approves or rejects (finalize_proposal),
+      // and `messages` is the table thread.recentUserTexts reads, which is the
+      // evidence pool runGuarded matches a model's quote against before
+      // executing a manager-level write directly. A quote on this card is
+      // therefore worker-authored prose in the manager's own thread.
+      //
+      // The manager reads the words in his notifications instead, where 0043's
+      // surfaces already render them as an attributed quote. The card's footer
+      // says so.
+      const { data: request } = await db
+        .from('worker_requests')
+        .select('worker_id, needed_by')
+        .eq('id', args.request_id)
+        .eq('company_id', companyId)
+        .maybeSingle();
+      if (!request) throw new RenderError(t.errors.requestNotFound(args.request_id));
+
+      // Read here rather than carried in action_args, for the same reason
+      // apply_job_pause reads the job's status: the card must describe the
+      // world as it is at the moment the manager is looking at it. A crew
+      // member can be renamed, and a task moved to another obra, between the
+      // card being written and being tapped.
+      const asker = await workerName(db, companyId, request.worker_id, t);
+      const { data: task } = await db
+        .from('tasks')
+        .select('title, job_id')
+        .eq('id', args.task_id)
+        .eq('company_id', companyId)
+        .maybeSingle();
+      if (!task) throw new RenderError(t.errors.taskNotFound(args.task_id));
+
+      const lines = [
+        t.requestMaterials.header({
+          workerName: asker,
+          taskTitle: task.title,
+          jobName: task.job_id ? await jobName(db, companyId, task.job_id, t) : undefined,
+          neededBy: request.needed_by ? fmt(request.needed_by) : undefined,
+        }),
+        ...add.map(material => t.requestMaterials.row(material)),
+      ];
+      // What the task already carries, so the manager can see at a glance that
+      // he is not being asked to buy the same thing twice. Read from the
+      // PAYLOAD rather than from the row: this is the list the card was written
+      // against, and it is the same snapshot the applier's compare-and-set
+      // checks, so the two can never describe different lists. If the row has
+      // moved since, approving fails cleanly and says so.
+      const existing: string[] = args.from_materials ?? [];
+      if (existing.length > 0) lines.push(t.requestMaterials.existing(existing));
+      lines.push(t.requestMaterials.footer);
+      return lines.join('\n');
+    }
+
     case 'apply_company_translation': {
       const { data: company } = await db.from('companies').select('language').eq('id', companyId).maybeSingle();
       if (!company) throw new RenderError(t.errors.companyNotFound);

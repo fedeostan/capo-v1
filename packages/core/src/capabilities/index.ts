@@ -12,6 +12,7 @@ import { propose } from './propose';
 import { generatePlan } from './plan';
 import { rescheduleTools } from './reschedule-propose';
 import { jobPauseTools } from './job-pause';
+import { requestMaterialsTools } from './request-materials';
 import { managerInstructionField, runGuarded } from './guard';
 import type { CapoTool, ToolContext } from './types';
 
@@ -26,7 +27,10 @@ import type { CapoTool, ToolContext } from './types';
 // reschedule_job is the third of that family — apply_reschedule is likewise
 // absent here. pause_job (issue #95) is the fourth: apply_job_pause erases
 // dates, which nothing in its payload could put back, so it lives only in
-// propose.ts.
+// propose.ts. add_requested_materials (issue #152 follow-up) is the fifth:
+// apply_request_materials puts a crew member's request on the buy list, which
+// has no delete path in chat, and "sim, adiciona isso aos materiais" is a
+// sentence the model can always quote, so it too lives only in propose.ts.
 export const roster: CapoTool[] = [
   ...taskTools,
   ...agendaTools,
@@ -38,6 +42,7 @@ export const roster: CapoTool[] = [
   ...translationTools,
   ...rescheduleTools,
   ...jobPauseTools,
+  ...requestMaterialsTools,
   propose,
   generatePlan,
 ];

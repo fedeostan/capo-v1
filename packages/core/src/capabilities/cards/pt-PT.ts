@@ -35,6 +35,7 @@ export const cards: CardStrings = {
     sameLanguage: 'Os dados já estão nessa língua',
     languageMoved: 'A língua dos dados da empresa entretanto mudou',
     nothingToTranslate: 'Não há nada para traduzir',
+    requestNotFound: id => `Pedido da equipa não encontrado (${id})`,
   },
 
   createTask: p => {
@@ -160,6 +161,18 @@ export const cards: CardStrings = {
     more: n => `… e mais ${n} tarefa${n === 1 ? '' : 's'}.`,
     footer:
       'As tarefas continuam na obra e no painel. Deixam de ter dia marcado, deixam de contar como atrasadas e a equipa deixa de as receber de manhã. Quando souberes as novas datas, voltas a pô-las.',
+  },
+
+  requestMaterials: {
+    header: p => {
+      const where = p.jobName ? `«${p.taskTitle}» (obra ${p.jobName})` : `«${p.taskTitle}»`;
+      const when = p.neededBy ? `para ${p.neededBy}` : 'sem data dada';
+      return `${p.workerName} pediu material, ${when}. Juntar à tarefa ${where}:`;
+    },
+    row: material => `• ${material}`,
+    existing: list => `Já na lista: ${list.join(', ')}.`,
+    footer:
+      'Aprovas e ficam na lista de compras desta tarefa. Para tirar alguma coisa depois, tens de abrir a tarefa e tirá-la à mão. As palavras do pedido estão nas notificações.',
   },
 
   plan: {

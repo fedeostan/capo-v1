@@ -29,6 +29,7 @@ export const cards: CardStrings = {
     sameLanguage: 'Los datos ya están en ese idioma',
     languageMoved: 'El idioma de los datos de la empresa ha cambiado mientras tanto',
     nothingToTranslate: 'No hay nada que traducir',
+    requestNotFound: id => `Petición del equipo no encontrada (${id})`,
   },
 
   createTask: p => {
@@ -154,6 +155,18 @@ export const cards: CardStrings = {
     more: n => `… y ${n} tarea${n === 1 ? '' : 's'} más.`,
     footer:
       'Las tareas siguen en la obra y en el panel. Se quedan sin día previsto, dejan de contar como atrasadas y el equipo deja de recibirlas por la mañana. Cuando sepas las fechas nuevas, se las vuelves a poner.',
+  },
+
+  requestMaterials: {
+    header: p => {
+      const where = p.jobName ? `«${p.taskTitle}» (obra ${p.jobName})` : `«${p.taskTitle}»`;
+      const when = p.neededBy ? `para el ${p.neededBy}` : 'sin fecha indicada';
+      return `${p.workerName} pidió material, ${when}. Añadir a la tarea ${where}:`;
+    },
+    row: material => `• ${material}`,
+    existing: list => `Ya en la lista: ${list.join(', ')}.`,
+    footer:
+      'Si lo apruebas, queda en la lista de compra de esta tarea. Para quitar algo después hay que abrir la tarea y quitarlo a mano. Las palabras de la petición están en tus notificaciones.',
   },
 
   plan: {
