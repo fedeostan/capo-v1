@@ -135,6 +135,15 @@ import {
   TASK_ASSIGNED_APPROVED_LANGUAGES,
   taskAssignedTemplateApproved,
 } from '../apps/web/lib/task-assigned-template.ts';
+// The DECISION half: what to do about one crew member's queued notices, and the
+// claim-then-send ORDER, which is the only defence the free-form path has
+// against two overlapping drains.
+import {
+  claimThenSend,
+  decideDelivery,
+  ENGAGED_OUTCOMES,
+  noticeIsStale,
+} from '../apps/web/lib/task-assigned-plan.ts';
 import { withinAssignmentHours } from '../apps/web/lib/task-assigned-window.ts';
 // The GUIDED MENU (issue #49). Pure renderers over the same rows the briefing
 // reads, reached the same way — no Db, no clock, no network.
@@ -3190,7 +3199,7 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
 
     check(
       `${locale}: the note opens by saying a task was just assigned`,
-      body.startsWith(t.assignmentGreeting('Miguel')),
+      body.startsWith(t.assignmentGreeting({ name: 'Miguel', count: 1 })),
       body.slice(0, 80),
     );
     // NOT the morning greeting. This message goes out at any hour of the
@@ -3246,21 +3255,218 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   check('nothing is announced at 23:00', !withinAssignmentHours(23));
   check('an assignment at midday is announced', withinAssignmentHours(12));
 
-  // The approval switch, which is what stands between an unapproved template
-  // and a 132001 for every out-of-window crew member. It starts EMPTY on
-  // purpose: until Meta approves capo_task_assigned, an out-of-window person
-  // gets nothing extra and still gets the task in tomorrow's 07:00 briefing.
+  // ── the approval switch ───────────────────────────────────────────────────
+  // What stands between an unapproved template and a 132001 for every
+  // out-of-window crew member. Asserted as a MEMBERSHIP RULE rather than
+  // against the set it wraps — comparing the function to its own source cannot
+  // fail, which is the trap BRIEFING_V2_APPROVED_LANGUAGES' own block avoids.
+  //
+  // Every entry must be a REAL Meta locale code we ship, or a typo would read
+  // as "approved for nobody" and be invisible.
+  for (const language of TASK_ASSIGNED_APPROVED_LANGUAGES) {
+    check(
+      `${language} is a locale this product actually has`,
+      TEMPLATE_LANGUAGES.includes(language),
+      language,
+    );
+    check(`and ${language} is therefore sendable`, taskAssignedTemplateApproved(language));
+  }
+  // Anything NOT in the set falls to "do not send", including the three shipped
+  // locales while they are still awaiting review, and any code this file has
+  // never heard of.
   for (const language of TEMPLATE_LANGUAGES) {
-    eq(
-      `capo_task_assigned in ${language} is only sent when approved`,
-      taskAssignedTemplateApproved(language),
-      TASK_ASSIGNED_APPROVED_LANGUAGES.has(language),
+    if (TASK_ASSIGNED_APPROVED_LANGUAGES.has(language)) continue;
+    check(
+      `capo_task_assigned in ${language} is NOT sent while unapproved`,
+      !taskAssignedTemplateApproved(language),
     );
   }
   check(
     'an unknown locale code is never treated as approved',
     !taskAssignedTemplateApproved('fr_FR'),
   );
+  // The hyphenated app locale is NOT the Meta code. Putting 'pt-PT' in the set
+  // would silently approve nobody — the switch is keyed on templateLanguage.
+  check(
+    'the app locale form is never mistaken for the Meta code',
+    !taskAssignedTemplateApproved('pt-PT'),
+  );
+
+  // ── the plural opener (the coalescing window's own copy defect) ───────────
+  // The deferral folds several assignments into ONE message, so "uma tarefa
+  // nova" is wrong in exactly the case that mechanism creates. The count comes
+  // from what was MARKED, never from the size of the queued id set.
+  {
+    const both = renderAssignmentMessage(
+      assignmentBriefing('pt-PT'),
+      new Set([NEW_TASK, OLD_TASK]),
+    );
+    const t = getCatalog('pt-PT').reminders;
+    check(
+      'two tasks in one message open in the plural',
+      both.startsWith(t.assignmentGreeting({ name: 'Miguel', count: 2 })),
+      both.slice(0, 80),
+    );
+    // A queued task that has left this person's board is not marked, so it must
+    // not be counted either — otherwise the opener says "2 tarefas novas" above
+    // a day that shows one.
+    const ghost = renderAssignmentMessage(
+      assignmentBriefing('pt-PT'),
+      new Set([NEW_TASK, 'ffffffff-ffff-4fff-8fff-ffffffffffff']),
+    );
+    check(
+      'a task no longer on the board is not counted in the opener',
+      ghost.startsWith(t.assignmentGreeting({ name: 'Miguel', count: 1 })),
+      ghost.slice(0, 80),
+    );
+  }
+}
+
+// ── the assignment drain's decisions, and its send ORDER (issue W7) ─────────
+//
+// The defects these pin all send a real crew member something untrue or
+// duplicated, and none of them is visible to a type checker:
+//   * Two drains overlapping by seconds both sending a whole-day message. The
+//     free-form path writes nothing to notification_log — that is the PAID
+//     ledger — so the queue row itself is the only lock there is.
+//   * A crew member reassigned away between the queue and the drain reading
+//     "your boss just gave you a new task", followed by the empty-day line.
+//   * An evening assignment of tomorrow's work going out the next morning, an
+//     hour after the 07:00 briefing already said it.
+{
+  // ── the per-person decision, and the ORDER of its reasons ─────────────────
+  eq(
+    'a crew member who may not be messaged is a final answer',
+    decideDelivery({ messageable: false, newTaskCount: 1, recentlyEngaged: false }).kind,
+    'skip',
+  );
+  // ⚠ ORDER. A permanent skip must outrank a deferral, or somebody who can
+  // never be messaged sits in the queue being reconsidered every fifteen
+  // minutes for ever.
+  eq(
+    'and it outranks the coalescing deferral',
+    decideDelivery({ messageable: false, newTaskCount: 1, recentlyEngaged: true }).kind,
+    'skip',
+  );
+  {
+    const d = decideDelivery({ messageable: true, newTaskCount: 0, recentlyEngaged: false });
+    eq('a task no longer theirs sends nothing', d.kind, 'skip');
+    eq(
+      '…and says so on the row',
+      d.kind === 'skip' ? d.outcome : null,
+      'reassigned',
+    );
+  }
+  eq(
+    'a reassignment also outranks the deferral',
+    decideDelivery({ messageable: true, newTaskCount: 0, recentlyEngaged: true }).kind,
+    'skip',
+  );
+  eq(
+    'somebody messaged moments ago is deferred, not skipped',
+    decideDelivery({ messageable: true, newTaskCount: 1, recentlyEngaged: true }).kind,
+    'defer',
+  );
+  eq(
+    'and the ordinary case sends',
+    decideDelivery({ messageable: true, newTaskCount: 2, recentlyEngaged: false }).kind,
+    'send',
+  );
+
+  // ── what counts as "already messaged" ─────────────────────────────────────
+  // `sending` is the whole point: a drain that has CLAIMED but not yet heard
+  // back from Meta has already committed. Reading only the finished outcomes
+  // left the guard blind in exactly the two-seconds-apart case it exists for.
+  check('a claim in flight counts as already messaged', ENGAGED_OUTCOMES.has('sending'));
+  check('so does a finished free-form send', ENGAGED_OUTCOMES.has('sent_free_form'));
+  check('and a paid template', ENGAGED_OUTCOMES.has('sent_template'));
+  // Everything that reached nobody must NOT suppress the next attempt.
+  for (const quiet of ['not_today', 'stale', 'not_messageable', 'reassigned', 'template_unapproved', 'send_failed', 'not_billable', 'outside_hours'] as const) {
+    check(`"${quiet}" does not suppress a later message`, !ENGAGED_OUTCOMES.has(quiet));
+  }
+
+  // ── yesterday's leftovers ─────────────────────────────────────────────────
+  // An out-of-hours notice is deliberately left queued. Without this test the
+  // commonest manager habit there is — planning tomorrow at nine in the evening
+  // — produces a "new task" message the next morning, an hour after the 07:00
+  // briefing already carried it.
+  check('a notice queued today is live', !noticeIsStale('2026-09-03', '2026-09-03'));
+  check('one queued last night is stale', noticeIsStale('2026-09-02', '2026-09-03'));
+  check('one queued for tomorrow is stale too', noticeIsStale('2026-09-04', '2026-09-03'));
+  // Fails toward silence: an absent or unreadable column sends nothing, and the
+  // task is still on the board for the morning.
+  check('a missing queued_date reads as stale', noticeIsStale(null, '2026-09-03'));
+  check('an unreadable one reads as stale', noticeIsStale(undefined, '2026-09-03'));
+
+  // ── CLAIM, THEN SEND ──────────────────────────────────────────────────────
+  {
+    const order: string[] = [];
+    const result = await claimThenSend({
+      ids: ['a', 'b'],
+      claim: async ids => {
+        order.push(`claim:${ids.join(',')}`);
+        return ['a', 'b'];
+      },
+      send: async won => {
+        order.push(`send:${won.join(',')}`);
+        return 'ok';
+      },
+    });
+    eq('the claim happens FIRST', order[0], 'claim:a,b');
+    eq('and the send SECOND', order[1], 'send:a,b');
+    eq('nothing else happens', order.length, 2);
+    check('and the send is reported', result.sent);
+    eq('with the won ids', result.won.join(','), 'a,b');
+  }
+  {
+    // The losing drain. Another drain claimed the rows two seconds ago; this
+    // one must not message anybody, and must not stamp rows it does not own.
+    const order: string[] = [];
+    const result = await claimThenSend({
+      ids: ['a'],
+      claim: async () => {
+        order.push('claim');
+        return [];
+      },
+      send: async () => {
+        order.push('send');
+        return 'ok';
+      },
+    });
+    check('a drain that wins nothing does not send', !order.includes('send'), order.join('|'));
+    check('and reports that it sent nothing', !result.sent);
+    eq('and claims nothing', result.won.length, 0);
+  }
+  {
+    // A PARTIAL win: the other drain took one row. Only what was won may be
+    // sent about, or two drains both announce the same task as new.
+    const seen: string[][] = [];
+    await claimThenSend({
+      ids: ['a', 'b'],
+      claim: async () => ['b'],
+      send: async won => {
+        seen.push([...won]);
+        return 'ok';
+      },
+    });
+    eq('a partial win sends only what it won', JSON.stringify(seen), '[["b"]]');
+  }
+  {
+    const order: string[] = [];
+    const result = await claimThenSend({
+      ids: [],
+      claim: async () => {
+        order.push('claim');
+        return [];
+      },
+      send: async () => {
+        order.push('send');
+        return 'ok';
+      },
+    });
+    check('an empty batch touches nothing at all', order.length === 0, order.join('|'));
+    check('and sends nothing', !result.sent);
+  }
 }
 
 // ── report ──────────────────────────────────────────────────────────────────
