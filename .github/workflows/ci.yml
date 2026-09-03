@@ -131,3 +131,11 @@ jobs:
       # invisible. Credential-free, so it runs on every PR.
       - name: Activity feed check
         run: pnpm activity-check
+
+      # The two account emails Capo now sends itself through Resend (W1). Both
+      # failures they guard are silent: a mangled link means the one email a new
+      # manager MUST open leads nowhere, and a dropped language means the only
+      # person who notices is the one who cannot read the message. Rendering is
+      # pure, so no credentials.
+      - name: Account email check
+        run: pnpm email-check
