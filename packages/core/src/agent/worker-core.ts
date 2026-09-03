@@ -10,7 +10,8 @@ import type { Db } from '@capo/db/client';
 import type { Locale } from '@capo/i18n/locale';
 import type { OutboundSink } from '../channels/types';
 import { toWorkerAiTools } from '../capabilities/worker';
-import type { PendingPhoto, WorkerContext } from '../capabilities/worker/types';
+import type { WorkerContext } from '../capabilities/worker/types';
+import { loadInboxPhotos } from '../media/photo-inbox';
 import { loadWorkerTasks } from '../capabilities/worker/tasks';
 import { withToolCacheBreakpoint } from './cache';
 import { buildWorkerSystemPrompt } from './worker-context';
@@ -74,6 +75,23 @@ const MAX_INBOUND_CHARS = 1500;
  */
 const PHOTO_ONLY_TEXT = '(photo, no message)';
 
+/**
+ * What the "that is everything" tap says.
+ *
+ * A crew member who sends photos one at a time is asked, after each one,
+ * whether more are coming (the deterministic branch in the WhatsApp route). The
+ * tap that ends the batch carries no words at all, so the turn needs a sentence
+ * to be about. Written by us, in English, exactly like PHOTO_ONLY_TEXT above,
+ * and stored verbatim so a manager scrolling the thread later reads something
+ * true: photos arrived, nothing was said.
+ *
+ * It is deliberately a plain statement of fact rather than an instruction. The
+ * model still has to work out which task they mean, and ask if it cannot.
+ */
+export function allPhotosSentText(count: number): string {
+  return `(${count} photo(s) sent, that is all of them)`;
+}
+
 export interface HandleWorkerInboundOptions {
   /** ALWAYS the service role. There is no session on this path. */
   db: Db;
@@ -83,8 +101,17 @@ export interface HandleWorkerInboundOptions {
   /** workers.language ?? companies.language, resolved by the caller. */
   locale: Locale;
   inbound: { channel: string; text: string; transcribed?: boolean };
-  /** Downloaded in the webhook and held in memory for this turn only. */
-  photos: readonly PendingPhoto[];
+  /**
+   * How many photos arrived with THIS message, already staged into the inbox by
+   * the caller. A count, not the photos: what the turn works with is every
+   * unattached photo in `worker_photo_inbox`, loaded below, which is a superset
+   * of this one and is the whole point of 0047.
+   *
+   * It is still needed for two things this number alone answers: whether an
+   * empty message was a bare photo (PHOTO_ONLY_TEXT), and what the persisted
+   * `worker_messages` row records about the message itself.
+   */
+  inboundPhotos: number;
   sink: OutboundSink;
 }
 
@@ -94,7 +121,7 @@ export type WorkerTurnOutcome =
   | { outcome: 'budget_exhausted'; limit: 'worker' | 'company' };
 
 export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Promise<WorkerTurnOutcome> {
-  const { db, companyId, workerId, locale, inbound, photos, sink } = opts;
+  const { db, companyId, workerId, locale, inbound, inboundPhotos, sink } = opts;
 
   // One clock — the same lisbon_today() task_board reads and the same one the
   // database stamps onto worker_messages.usage_date. Reading it here rather
@@ -144,10 +171,17 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
   const tasks = await loadWorkerTasks(db, companyId, workerId);
   const scope = { taskIds: tasks.map(t => t.id) as readonly string[] };
 
-  const text = (inbound.text.trim() || (photos.length > 0 ? PHOTO_ONLY_TEXT : '')).slice(0, MAX_INBOUND_CHARS);
+  // Every photo this person has sent that no task has claimed yet, read fresh
+  // from the inbox (0047). NOT this message's photos: that was the old shape,
+  // and it is why a photo sent on its own and explained a minute later was
+  // already gone. Ids and times only; the bytes are never loaded and never
+  // shown to a model.
+  const pendingPhotos = await loadInboxPhotos(db, companyId, workerId, Date.now());
+
+  const text = (inbound.text.trim() || (inboundPhotos > 0 ? PHOTO_ONLY_TEXT : '')).slice(0, MAX_INBOUND_CHARS);
   const target: WorkerMessageTarget = { conversationId, companyId, checkinId, channel: inbound.channel };
 
-  await persistWorkerUserMessage(db, target, text, photos.length);
+  await persistWorkerUserMessage(db, target, text, inboundPhotos);
   const uiMessages = await loadWorkerWindow(db, conversationId, checkinId);
 
   const ctx: WorkerContext = {
@@ -158,7 +192,7 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
     locale,
     scope,
     checkinId,
-    pendingPhotos: photos,
+    pendingPhotos,
     budget: budget.remaining,
   };
 
@@ -180,7 +214,7 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
       surface: 'worker_chat',
       actor: { kind: 'worker', workerId },
     }),
-    instructions: await buildWorkerSystemPrompt({ db, locale, today, tasks, pendingPhotos: photos }),
+    instructions: await buildWorkerSystemPrompt({ db, locale, today, tasks, pendingPhotos }),
     tools: withToolCacheBreakpoint(toWorkerAiTools(ctx)),
     stopWhen: stepCountIs(WORKER_STEPS),
   });
