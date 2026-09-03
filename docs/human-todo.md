@@ -157,8 +157,11 @@ no `stripe_customer_id` — which is both of Federico's own companies — shows
 that button on `stripe_customer_id` rather than on `subscription_status`.
 
 ⚠ **Supabase auth still names the old host.** Site URL and Additional Redirect
-URLs point at `capo-v1.vercel.app`, so confirmation and password-reset emails
-send people to the old address. Dashboard change, not code. See §2.
+URLs point at `capo-v1.vercel.app`. Since W1 this no longer decides what the
+emails SAY (Capo builds its own links from `siteUrl()`), but it is still the
+redirect allow-list `generateLink` is checked against, so it must name the
+production host or link generation itself starts failing. Dashboard change,
+not code. See §2.
 
 ## 2. Supabase auth (self-serve signup, password reset, Google OAuth)
 
@@ -166,10 +169,23 @@ send people to the old address. Dashboard change, not code. See §2.
    new users to sign up". Until this is on, `/registar` shows "Os registos
    abrem em breve" for every signup attempt (env-gated failure mode, by
    design).
-2. Supabase dashboard → Authentication → Emails: configure production SMTP
-   (the default Supabase sender is rate-limited, not meant for production
-   volume) and set EU-PT copy for the "Confirm signup" and "Reset password"
-   templates.
+2. ~~Supabase dashboard → Authentication → Emails: configure production SMTP
+   and set EU-PT copy for the "Confirm signup" and "Reset password"
+   templates.~~ **DONE DIFFERENTLY, and this step is now obsolete (W1).**
+   Sending moved out of Supabase entirely: the app renders both emails itself
+   (`apps/web/lib/emails/`) and posts them to Resend's HTTP API, minting the
+   token with `auth.admin.generateLink()`. Nothing reads the dashboard's
+   template fields or its SMTP settings any more, so there is nothing to paste
+   and no SMTP to configure. See `docs/emails/README.md`.
+
+   ⚠ **One thing DOES still need doing, and until it is done the old generic
+   emails keep going out:** add `RESEND_API_KEY` to the Vercel project (the
+   same Resend key that sits in `apps/web/.env.local` under the older name
+   `RESEND_SMTP_KEY`). With neither name set, `sendAuthEmail` falls back to
+   Supabase's built-in mailer on purpose, so that a deploy landing before the
+   key does not leave the product with no account emails at all. You can tell
+   which path is live by grepping the logs for `auth_email.legacy_mailer`
+   (fallback) versus `auth_email.sent` (Resend).
 3. Supabase dashboard → Authentication → URL Configuration: set Site URL to
    the production domain once known (see item 5), and add
    `https://<prod>/auth/confirm` and `https://<prod>/auth/callback` to
