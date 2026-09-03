@@ -34,7 +34,12 @@
 //
 // To update: `pnpm whatsapp-template status` prints the live approval state;
 // when a locale shows capo_welcome_v2 as APPROVED there, add its code below.
-// State as of 2026-09-03: submitted, all three locales PENDING.
+// State as of 2026-09-03: submitted and APPROVED in all three locales, checked
+// against the live WABA the same afternoon (pt_PT 2214647296153003, es_ES
+// 1539898150720126, en_US 2143674543236870). This set is therefore full, and
+// the fallback below is a safety net rather than a live path — do not delete
+// it: an unknown locale code, or a fourth language added to @capo/i18n before
+// its template is approved, both land on it.
 //
 // Pure and dependency-free so `pnpm whatsapp-check` can assert the whole
 // matrix, including that an unknown code falls back to the old name.
@@ -42,7 +47,7 @@
 export type WelcomeTemplateName = 'capo_welcome' | 'capo_welcome_v2';
 
 /** Meta locale codes (`reminders.templateLanguage`) whose v2 is APPROVED. */
-export const WELCOME_V2_APPROVED_LANGUAGES: ReadonlySet<string> = new Set<string>();
+export const WELCOME_V2_APPROVED_LANGUAGES: ReadonlySet<string> = new Set(['pt_PT', 'es_ES', 'en_US']);
 
 /**
  * The template name for one recipient, and whether that name carries a button.

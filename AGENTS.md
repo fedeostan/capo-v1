@@ -933,8 +933,10 @@ Structural invariants (do not regress):
     against a template that declares none is a 132000 on every send; NO button
     component against one that does makes Meta accept the send and echo the
     button's own LABEL back as the payload, so the tap parses as nothing.
-    `WELCOME_V2_APPROVED_LANGUAGES` is EMPTY until Meta approves each locale by
-    hand, and an unapproved locale keeps sending the button-less `capo_welcome`.
+    `WELCOME_V2_APPROVED_LANGUAGES` holds every locale Meta has approved by hand
+    (all three since 2026-09-03); an unapproved one keeps sending the
+    button-less `capo_welcome`, and that fallback must stay for the language
+    added to `@capo/i18n` ahead of its template.
   - **A quick-reply LABEL may hold no emoji**, no variable, no newline and no
     formatted character. Meta refuses the submission with `error_subcode`
     2388060, which is how this button lost the waving hand it was written with.

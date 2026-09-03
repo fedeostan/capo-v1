@@ -223,7 +223,7 @@ unwelcomed for 17 days (issue #121).
 | `capo_welcome` | welcome sweep (`api/cron/welcome`) | §6c; approved in all three locales 31 Aug 2026 |
 | `capo_daily_briefing_v2` | nothing yet | submitted 31 Aug 2026 (issue #108); {{2}} on its own paragraph |
 | `capo_message_waiting` | nothing yet | submitted 31 Aug 2026 (issue #123 B); the window-reopener |
-| `capo_welcome_v2` | welcome sweep, once approved | §6d; `capo_welcome` plus ONE "Say hi" quick reply; submitted 3 Sep 2026, PENDING |
+| `capo_welcome_v2` | welcome sweep + the immediate trigger | §6d; `capo_welcome` plus ONE "Say hi" quick reply; approved in all three locales 3 Sep 2026 |
 
 All six are in `MANAGED_TEMPLATE_NAMES`, so `pnpm whatsapp-template status`
 checks every name × locale pair and is the way to verify approval actually
@@ -509,17 +509,17 @@ rather than a mass mailing.
 ### 6d. `capo_welcome_v2` — the welcome with a way in
 
 The same welcome, ending in one quick-reply button instead of in silence.
-Submitted **3 September 2026**; all three locales **PENDING** at the time of
-writing. Definition: `capoWelcomeV2()` in `scripts/whatsapp-templates.ts`.
+Submitted **3 September 2026** and APPROVED in all three locales the same
+afternoon. Definition: `capoWelcomeV2()` in `scripts/whatsapp-templates.ts`.
 
-> ⚠ **MANUAL GO-LIVE STEP.** Nothing uses it until it is APPROVED per locale.
-> The gate is `WELCOME_V2_APPROVED_LANGUAGES` in
-> `apps/web/lib/welcome-template.ts` — a hand-maintained mirror of the
-> dashboard, empty today, exactly the shape and for exactly the reasons of
-> `BRIEFING_V2_APPROVED_LANGUAGES` (§6a). Run `pnpm whatsapp-template status`;
-> when a locale shows `capo_welcome_v2` as APPROVED, add its code to that set
-> and ship. A locale not in the set keeps sending `capo_welcome`, button and
-> all absent, which is exactly what it sent before.
+> ⚠ **THE GO-LIVE STEP IS DONE, AND THE GATE STAYS.**
+> `WELCOME_V2_APPROVED_LANGUAGES` in `apps/web/lib/welcome-template.ts` is a
+> hand-maintained mirror of the dashboard — the same shape, and for the same
+> reasons, as `BRIEFING_V2_APPROVED_LANGUAGES` (§6a). It now holds all three
+> codes, so verify with `pnpm whatsapp-template status` before trusting this
+> sentence. Do not delete the fallback: an unrecognised locale code, or a
+> fourth language added to `@capo/i18n` ahead of its template, both land on
+> `capo_welcome`, button and all absent, which is exactly what it sent before.
 
 - **The body is `capo_welcome`'s, byte for byte.** The copy was already right
   and a re-review of new wording would have delayed the button for no product
