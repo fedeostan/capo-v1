@@ -100,6 +100,34 @@ export function taskPhotoPath(companyId: string, taskId: string, id: string, mim
 }
 
 /**
+ * `{company_id}/inbox/{worker_id}/{uuid}.{ext}` — where a crew member's photo
+ * waits while nobody yet knows which task it is of (0047).
+ *
+ * SEGMENT 1 IS STILL THE COMPANY, which is the entire reason this needed no new
+ * storage policy: 0023's two policies on storage.objects compare
+ * `(storage.foldername(name))[1]` against private.current_company_id() and read
+ * nothing else, so a key under this prefix is already scoped to its tenant and
+ * to nobody else.
+ *
+ * Segment 2 is the literal word `inbox`, which is not a uuid — so an inbox key
+ * can never collide with `taskPhotoPath`'s `{company_id}/{task_id}/…` however
+ * many tasks a company has. That is what lets the two share one bucket.
+ *
+ * A staged object is NOT evidence: nothing writes a `task_photos` row for it.
+ * When a completion claim finally names a task the object is MOVED to
+ * `taskPhotoPath(...)` and the row is written there, so
+ * `task_photos_path_scoped` binds exactly as it always has.
+ */
+export function taskPhotoInboxPath(
+  companyId: string,
+  workerId: string,
+  id: string,
+  mime: TaskPhotoMime,
+): string {
+  return `${companyId}/inbox/${workerId}/${id}.${taskPhotoExtension(mime)}`;
+}
+
+/**
  * Server-side gate. Returns null when the file is acceptable, or a short
  * machine-readable reason the caller turns into copy in the manager's own
  * language — this module holds no user-facing strings, because @capo/core is
