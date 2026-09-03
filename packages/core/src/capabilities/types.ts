@@ -33,6 +33,20 @@ export interface ToolContext {
   // something else. As a required field it is a tsc error instead. Structural
   // safety over convention (AGENTS.md).
   confirmPosture: ConfirmPosture;
+  // Where this manager's dashboard lives, e.g. https://www.construcapo.com.
+  // `finish_onboarding` hands it to the manager at the end of the setup
+  // conversation, which is the first time the product ever tells him the
+  // dashboard exists.
+  //
+  // REQUIRED for the same reason confirmPosture is. `packages/core` reads no
+  // environment by contract, so an optional field with a fallback would resolve
+  // to a link to localhost or to an empty string — a dead link is worse than no
+  // link, and nothing in a build could notice. Required makes a forgotten call
+  // site a tsc error.
+  //
+  // WorkerContext must never gain this: a crew member has no dashboard, and
+  // handing one a manager URL is an invitation to a screen they cannot open.
+  appUrl: string;
   // MUTABLE BY DESIGN. set_language rewrites `locales.user` in place so that a
   // renderProposal later in the SAME tool loop produces its card in the new
   // language. runGuarded's `{ ...ctx, actor: 'manager' }` is a shallow copy, so

@@ -58,6 +58,10 @@ export interface HandleInboundOptions {
   // this comes from, and a defaulted optional would let a new channel ship with
   // the riskier posture by omission. See ToolContext.confirmPosture.
   confirmPosture: ConfirmPosture;
+  // Where this manager's dashboard lives. Supplied by the app layer, because
+  // this package reads no environment. Required for the same reason
+  // confirmPosture is: see ToolContext.appUrl.
+  appUrl: string;
   inbound: InboundMessage;
   sink: OutboundSink;
 }
@@ -211,7 +215,7 @@ async function runTurnIteration(
   conversationId: string,
   lock: TurnRef | null,
 ): Promise<string | null> {
-  const { db, companyId, userId, locales, confirmPosture, inbound, sink } = opts;
+  const { db, companyId, userId, locales, confirmPosture, appUrl, inbound, sink } = opts;
 
   const window = await loadWindow(db, conversationId);
   const thread = toThread(window);
@@ -224,6 +228,7 @@ async function runTurnIteration(
     recentUserTexts: thread.recentUserTexts,
     userId,
     confirmPosture,
+    appUrl,
     locales,
   };
 
@@ -247,7 +252,7 @@ async function runTurnIteration(
     // live fact (issue #62) instead of leaving the model to read one out of the
     // conversation summary, which freezes whatever name was current when it was
     // written.
-    instructions: await buildSystemPrompt({ db, companyId, userId, summary: thread.summary, locales }),
+    instructions: await buildSystemPrompt({ db, companyId, userId, appUrl, summary: thread.summary, locales }),
     tools: withToolCacheBreakpoint(toAiTools(ctx)),
     stopWhen: stepCountIs(12),
   });
