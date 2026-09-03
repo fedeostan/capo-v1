@@ -1,3 +1,4 @@
+import { after } from 'next/server';
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from 'ai';
 import { handleInbound } from '@capo/core/agent';
 import { webSink } from '@capo/core/channels/web';
@@ -5,6 +6,7 @@ import { getApiAuth } from '@capo/db/session';
 import { assertNotBlocked, BillingBlockedError } from '@/lib/billing';
 import { siteUrl } from '@/lib/site-url';
 import { logEvent } from '../../../lib/log';
+import { drainAssignmentNotices } from '../../notifications/task-assigned';
 
 export const maxDuration = 120;
 
@@ -59,6 +61,14 @@ export async function POST(req: Request) {
       });
     },
   });
+
+  // ── the crew hears about a new task now, not tomorrow at 07:00 (W7) ───────
+  // after() runs once the stream has finished, so the turn's writes are on
+  // disk by the time the queue is read. One line, and it never throws:
+  // announcing an assignment must never cost the manager their answer. The
+  // fifteen-minute cron (/api/cron/task-assigned) is what makes this line an
+  // optimisation rather than the mechanism.
+  after(() => drainAssignmentNotices({ companyId: auth.companyId }));
 
   return createUIMessageStreamResponse({ stream });
 }

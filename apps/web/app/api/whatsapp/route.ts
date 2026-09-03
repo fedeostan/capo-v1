@@ -75,6 +75,7 @@ import {
 } from '../../notifications/briefing';
 import { readThreadLocale, recordThreadEvent } from '../../notifications/thread';
 import { pingManagersAboutRequests } from '../../notifications/worker-request-ping';
+import { drainAssignmentNotices } from '../../notifications/task-assigned';
 
 // WhatsApp manager channel — Meta Cloud API webhook (see
 // docs/whatsapp-cloud-api-runbook.md for the one-time Meta setup).
@@ -2689,6 +2690,14 @@ export async function POST(request: NextRequest) {
           });
           await sendWhatsAppText(t.whatsapp.proposalError, sendConfig).catch(() => {});
         }
+
+        // ── the crew hears about a new task now, not tomorrow at 07:00 (W7) ─
+        // The card path is a door too: `apply_plan` can assign a whole obra in
+        // one tap. Symmetric with the web proposals route — without this line
+        // a manager approving over WhatsApp waits for the fifteen-minute cron.
+        // Outside the try/catch, because the write has already happened even
+        // if the confirmation failed to send. It never throws.
+        await drainAssignmentNotices({ companyId });
       });
       continue;
     }
@@ -2900,6 +2909,14 @@ export async function POST(request: NextRequest) {
             error,
           }),
       });
+
+      // ── the crew hears about a new task now, not tomorrow at 07:00 (W7) ──
+      // AFTER the turn, because the manager's "põe o Miguel na pintura de
+      // hoje" only becomes a queued notice once the write has happened. One
+      // line, and it never throws: announcing an assignment must never cost
+      // the manager their answer. The fifteen-minute cron is the safety net
+      // if this line is ever lost.
+      await drainAssignmentNotices({ companyId });
     });
   }
 

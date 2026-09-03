@@ -223,8 +223,9 @@ unwelcomed for 17 days (issue #121).
 | `capo_welcome` | welcome sweep (`api/cron/welcome`) | §6c; approved in all three locales 31 Aug 2026 |
 | `capo_daily_briefing_v2` | nothing yet | submitted 31 Aug 2026 (issue #108); {{2}} on its own paragraph |
 | `capo_message_waiting` | nothing yet | submitted 31 Aug 2026 (issue #123 B); the window-reopener |
+| `capo_task_assigned` | the assignment drain (`app/notifications/task-assigned.ts`) | §6d; submitted 3 Sep 2026 (issue W7), all three locales PENDING |
 
-All five are in `MANAGED_TEMPLATE_NAMES`, so `pnpm whatsapp-template status`
+All six are in `MANAGED_TEMPLATE_NAMES`, so `pnpm whatsapp-template status`
 checks every name × locale pair and is the way to verify approval actually
 happened — Meta approves each pair separately and tells nobody.
 
@@ -491,6 +492,68 @@ deploy does not introduce Capo to people who have been using it for a month, and
 creates `welcome_ledger_ready()` — a marker function the sweep asks for before
 it sends anything, so shipping the code without the migration produces silence
 rather than a mass mailing.
+
+### 6d. `capo_task_assigned` — ⚠ SUBMISSION IS A MANUAL STEP, STILL OPEN
+
+The out-of-window half of the immediate assignment note (issue W7): when a
+manager puts somebody on a task that starts today, Capo tells them within
+seconds instead of at 07:00 tomorrow. Inside the crew member's own 24-hour
+window that is ordinary free text and costs nothing; outside it, free-form is
+refused with 131047 and this template is the only legal contact.
+
+Body, `{{1}}` the crew member's name and `{{2}}` the task that was just
+assigned:
+
+> Olá {{1}}, o teu chefe deu-te uma tarefa nova para hoje: {{2}}. Responde OK
+> para veres o teu dia. Responde STOP para deixar de receber.
+
+No buttons, and no URL button in particular. A link to `/dia` would need a
+different component, a different approval path, and a per-person per-day token
+as a dynamic suffix. "Responde OK" reaches the same content through #108's
+existing keyword, which already answers with the full formatted day.
+
+**Submitted 3 September 2026, all three locales PENDING review.**
+
+```
+capo_task_assigned pt_PT → id=1859688468524905 status=PENDING
+capo_task_assigned es_ES → id=1603821794728431 status=PENDING
+capo_task_assigned en_US → id=28806849452245917 status=PENDING
+```
+
+`status` confirms the live body and the (empty) button list match this repo for
+all three, so what Meta is reviewing is exactly what
+`scripts/whatsapp-templates.ts` says.
+
+### ⚠ `WHATSAPP_WABA_ID` is REQUIRED with the token in `.env.local`
+
+`pnpm whatsapp-template create` on its own answers *"This token carries no
+whatsapp_business_management target"* and does nothing. That is the discovery
+step failing, not the token: the script derives the WABA id from
+`GET /debug_token`, and this token's granted-asset list does not include one.
+Passing the id explicitly works:
+
+```
+WHATSAPP_WABA_ID=715247827972608 ./node_modules/.bin/tsx scripts/whatsapp-template.mts create
+WHATSAPP_WABA_ID=715247827972608 ./node_modules/.bin/tsx scripts/whatsapp-template.mts status
+```
+
+Use the same env var for BOTH commands, or `status` reports on a different WABA
+and every line comes back missing. Two other refusals are normal noise on a
+`create` run over the whole registry and do not mean anything failed: **2388024**
+("content already exists in this language") is the idempotent case for a template
+already submitted, and **2388026** ("UTILITY does not match the category already
+associated: MARKETING") is Meta having re-categorised an older template — neither
+touches a new name. Also worth knowing when adding a buttoned template:
+**2388060** rejects a quick-reply label containing an emoji, and a body that
+STARTS with a variable is rejected outright.
+
+**Nothing is sent until a locale is switched on in code.**
+`TASK_ASSIGNED_APPROVED_LANGUAGES` in `apps/web/lib/task-assigned-template.ts`
+starts EMPTY, so today an out-of-window crew member gets nothing extra and the
+notice is stamped `template_unapproved`; they still get the task in tomorrow's
+07:00 briefing. When `status` shows a locale APPROVED, add its code to that set.
+Flipping it on early costs a 132001 per recipient; leaving it off costs one late
+message, and that is the cheaper failure.
 
 ## Opt-in and opt-out (migration `0025`)
 

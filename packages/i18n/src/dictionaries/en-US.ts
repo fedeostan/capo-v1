@@ -1045,6 +1045,9 @@ const dict: Catalog = {
       const who = names ? `: ${names}` : '';
       return `I introduced myself on WhatsApp to ${notified} new ${notified === 1 ? 'person' : 'people'} on the team${who}.`;
     },
+    assignmentGreeting: ({ name, count }) =>
+      `Hi ${name}. Your boss just gave you ${count === 1 ? 'a new task' : `${count} new tasks`} for today.`,
+    taskNewlyAssigned: title => `New: ${title}`,
   },
 
   phone: {

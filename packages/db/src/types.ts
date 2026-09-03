@@ -1694,6 +1694,65 @@ export type Database = {
           },
         ]
       }
+      // PENDING 0048 — hand-written, not regenerated. task_assignment_notices
+      // is the queue behind "the crew member hears about a new task now"
+      // (0048_task_assignment_notices.sql). Deny-all for tenants: only the
+      // service-role drain ever touches it.
+      task_assignment_notices: {
+        Row: {
+          company_id: string
+          id: string
+          notified_at: string | null
+          outcome: string | null
+          queued_at: string
+          queued_date: string
+          task_id: string
+          worker_id: string
+        }
+        Insert: {
+          company_id: string
+          id?: string
+          notified_at?: string | null
+          outcome?: string | null
+          queued_at?: string
+          queued_date?: string
+          task_id: string
+          worker_id: string
+        }
+        Update: {
+          company_id?: string
+          id?: string
+          notified_at?: string | null
+          outcome?: string | null
+          queued_at?: string
+          queued_date?: string
+          task_id?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_assignment_notices_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_assignment_notices_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_assignment_notices_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       task_photos: {
         Row: {
           byte_size: number

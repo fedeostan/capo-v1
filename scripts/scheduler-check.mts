@@ -71,6 +71,15 @@ import {
   MIN_SEND_HOUR,
   SEND_HOUR_CHOICES,
 } from '../apps/web/lib/schedule';
+// The working-day window for the immediate assignment note (issue W7).
+// IMPORTED rather than restated, for the same reason the send hours are: it is
+// the one number that decides whether somebody's phone buzzes while they are
+// asleep, and a copy here would be a second statement of it.
+import {
+  TASK_ASSIGNED_END_HOUR,
+  TASK_ASSIGNED_START_HOUR,
+  withinAssignmentHours,
+} from '../apps/web/lib/task-assigned-window';
 
 let failures = 0;
 const lines: string[] = [];
@@ -660,6 +669,49 @@ check(
   WELCOME_WINDOW_HOURS >= 4,
   `${WELCOME_WINDOW_HOURS} hours`,
 );
+
+// ── the immediate assignment note (issue W7) ────────────────────────────────
+// The FIFTH shape, and the first that is triggered by a MANAGER's action rather
+// than by a clock. It has no target hour at all: it fires whenever somebody is
+// put on a task. What it has instead is a WORKING DAY, and the whole point of
+// the gate is the two ends of it — nobody's phone buzzes about tiling at 23:40,
+// and nothing is announced as "today's work" once today is over.
+
+eq('the assignment note may not go out before 08', withinAssignmentHours(7), false);
+check('an assignment at 08 is announced', withinAssignmentHours(TASK_ASSIGNED_START_HOUR));
+check('and so is one at 18', withinAssignmentHours(TASK_ASSIGNED_END_HOUR));
+check('but not one at 19', !withinAssignmentHours(19));
+check('and certainly not one at 03', !withinAssignmentHours(3));
+check('nor at 23', !withinAssignmentHours(23));
+
+// It opens only after the 07:00 briefing's own target hour, so an assignment
+// made first thing cannot land in the same hour as the morning message and read
+// as two Capos talking over each other.
+check(
+  'the assignment window opens after the briefing hour',
+  TASK_ASSIGNED_START_HOUR > BRIEFING_HOUR,
+  `assignment starts at ${TASK_ASSIGNED_START_HOUR}, briefing targets ${BRIEFING_HOUR}`,
+);
+// And it closes before the latest hour a manager may aim a scheduled send at,
+// so the two never contend for the same 300-second function ceiling at the far
+// end of the day.
+check(
+  'the assignment window closes before the latest legal send hour',
+  TASK_ASSIGNED_END_HOUR < MAX_SEND_HOUR,
+  `assignment ends at ${TASK_ASSIGNED_END_HOUR}, MAX_SEND_HOUR is ${MAX_SEND_HOUR}`,
+);
+// Wide enough that Vercel's measured 33-49 minutes of cron dispatch drift can
+// cost lateness but never silence — the same >= 4 shape the welcome sweep uses,
+// and the same reason AGENTS.md's ":00, never :30" rule does not bind here.
+check(
+  'the assignment window is wide enough that cron drift cannot close it',
+  TASK_ASSIGNED_END_HOUR - TASK_ASSIGNED_START_HOUR + 1 >= 4,
+  `${TASK_ASSIGNED_END_HOUR - TASK_ASSIGNED_START_HOUR + 1} hours`,
+);
+
+const assignedEntries = crons.filter(c => c.path === '/api/cron/task-assigned');
+eq('/api/cron/task-assigned is scheduled exactly once', assignedEntries.length, 1);
+eq('/api/cron/task-assigned sweeps every 15 minutes', assignedEntries[0]?.schedule, '*/15 * * * *');
 
 // ── the nightly memory review (issue #48) ───────────────────────────────────
 // The FOURTH shape, and the first that sends nothing to anybody. It still has

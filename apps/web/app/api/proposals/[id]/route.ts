@@ -4,6 +4,7 @@ import { resolveProposal } from '@capo/core/capabilities/propose';
 import { runTranslationBatch } from '@capo/core/translation';
 import { assertNotBlocked, BillingBlockedError } from '@/lib/billing';
 import { siteUrl } from '@/lib/site-url';
+import { drainAssignmentNotices } from '@/app/notifications/task-assigned';
 
 // Raised for one proposal only: apply_company_translation queues a batch, and
 // the after() hook below works it once the response has already gone out. Every
@@ -64,6 +65,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         }
       });
     }
+
+    // ── the crew hears about a new task now, not tomorrow at 07:00 (W7) ────
+    // An approved card is one of the seven doors a task gains an assignee
+    // through — apply_plan can assign a whole obra in one tap. The queue row
+    // is already written by the trigger; this only drains it. One line, and it
+    // never throws.
+    after(() => drainAssignmentNotices({ companyId: auth.companyId }));
 
     return Response.json(resolution);
   } catch (e) {
