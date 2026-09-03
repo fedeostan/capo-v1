@@ -30,6 +30,15 @@ Esta empresa ya tiene algo registrado, pero ${gaps.join(' y ')}. Si aún no lo h
 
   speakers: { user: 'Jefe', assistant: 'Capo', event: 'Evento' },
   emptyMessage: '(mensaje sin texto)',
+
+  workerIdentityHeading: '# Con quién estás hablando',
+  workerIdentityName: 'Nombre',
+  workerIdentityTrade: 'Oficio',
+  workerIdentityCompany: 'Empresa',
+  workerIdentityManagers: 'Quién manda en la empresa',
+  workerIdentityLanguage: 'Idioma en el que le escribes',
+  workerIdentityNote:
+    'Estos datos son sobre la persona con la que estás hablando. Si pregunta cómo se llama, en qué empresa trabaja, cuál es su oficio, quién es el jefe o en qué idioma estáis hablando, contesta en una línea con lo de aquí. No la mandes hablar con el encargado por esto.',
 };
 
 export default blocks;

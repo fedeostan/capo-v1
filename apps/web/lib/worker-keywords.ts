@@ -211,3 +211,34 @@ export function reportCommand(text: string | undefined): ReportCommand | null {
   const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace + 1).trim();
   return rest ? { kind: 'inline', text: rest } : { kind: 'arm' };
 }
+
+/**
+ * THE ONE GATE every table above is reached through: what did this person
+ * actually TYPE?
+ *
+ * Every keyword branch in the WhatsApp route used to write `message.type ===
+ * 'text' ? cmd(message.text?.body) : null` for itself, five times over. It is
+ * one rule, so it is one function now, and having it in one place is what makes
+ * the following property assertable rather than merely believed:
+ *
+ * ── ⚠ A TRANSCRIPT IS NOT TYPED TEXT ───────────────────────────────────────
+ * Since W4 a crew member's voice note is transcribed and answered by the agent.
+ * A transcript is MODEL OUTPUT, and these five tables exist precisely so a
+ * model can never get in front of a tap: STOP must unsubscribe, MENU must
+ * render a list, "ES" must switch language, all with zero model calls. Feeding
+ * them something a model produced would hand a model the one set of levers it
+ * is deliberately kept away from.
+ *
+ * So an audio message returns null here and reaches none of them. The cost is
+ * real and is stated in AGENTS.md rather than hidden: somebody who SAYS "stop"
+ * out loud gets an agent reply instead of being unsubscribed. The written STOP
+ * is unchanged, and it is the one Meta requires and the one every message
+ * names.
+ *
+ * `pnpm whatsapp-check` asserts both directions. If a future change ever wants
+ * a transcript to reach a keyword table, it has to come through here, and that
+ * check is what makes it a decision instead of an accident.
+ */
+export function keywordText(message: { type: string; text?: { body: string } }): string | undefined {
+  return message.type === 'text' ? message.text?.body : undefined;
+}

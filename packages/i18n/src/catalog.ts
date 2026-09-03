@@ -1464,6 +1464,20 @@ export interface Catalog {
     /** Filing failed (the likeliest cause: migration 0042 not yet applied).
      *  Honest, asks to try again — never pretends it was registered. */
     reportFailed: string;
+
+    /**
+     * A crew member's VOICE NOTE could not be turned into text (W4) - the
+     * download failed, the transcription failed, or it came back empty or too
+     * short to be anything but noise.
+     *
+     * One line for all three causes, deliberately: the crew member can do
+     * exactly one thing about any of them, and an error surface that varies
+     * with the cause tells whoever is probing it which half broke. It must
+     * offer the way out (write it instead) rather than only report the
+     * failure, because the person is standing there holding the phone that
+     * recorded it.
+     */
+    workerAudioFailed: string;
   };
 
   /**

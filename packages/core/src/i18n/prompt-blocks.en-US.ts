@@ -30,6 +30,15 @@ This company has some data on record, but ${gaps.join(' and ')}. If you have not
 
   speakers: { user: 'Manager', assistant: 'Capo', event: 'Event' },
   emptyMessage: '(message with no text)',
+
+  workerIdentityHeading: '# Who you are talking to',
+  workerIdentityName: 'Name',
+  workerIdentityTrade: 'Trade',
+  workerIdentityCompany: 'Company',
+  workerIdentityManagers: 'Who runs the company',
+  workerIdentityLanguage: 'Language you write to them in',
+  workerIdentityNote:
+    'These facts are about the person you are talking to. If they ask their own name, which company they work for, what their trade is, who the boss is, or which language you are speaking, answer in one line from here. Do not send them to their supervisor for this.',
 };
 
 export default blocks;

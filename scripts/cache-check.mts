@@ -48,6 +48,7 @@ import {
 } from '@capo/core/agent/cache';
 import { buildSystemPrompt, managerStableBlocks } from '@capo/core/agent/context';
 import { buildWorkerSystemPrompt, workerStableBlocks } from '@capo/core/agent/worker-context';
+import type { WorkerIdentity } from '@capo/core/agent/worker-context';
 import { CACHED_ROLES, MIN_CACHEABLE_PREFIX_TOKENS, MODEL_IDS, getModel } from '@capo/core/models';
 import {
   MEMORY_PROMPT_MAX_CHARS,
@@ -258,6 +259,25 @@ for (const locale of LOCALES) {
   check('manager: and the counts are absent rather than reported as zero', !uncached.includes('Obras ativas'));
 }
 
+// The crew member's own identity (W4). Every field of it is per-WORKER, which
+// is why the assertions below are about WHERE it lands rather than about how it
+// reads: above the breakpoint it would write one cache entry per crew member
+// and read none, which is exactly the trap loadManagerName had to avoid on the
+// manager side (issue #62).
+const IDENTITY: WorkerIdentity = {
+  workerName: 'Miguel Sousa',
+  trade: 'pintor',
+  companyName: 'Construções Silva',
+  managerNames: ['Aníbal Gatsby'],
+};
+
+const OTHER_IDENTITY: WorkerIdentity = {
+  workerName: 'Zé Ferreira',
+  trade: null,
+  companyName: 'Construções Silva',
+  managerNames: [],
+};
+
 for (const locale of LOCALES) {
   const msgs = await buildWorkerSystemPrompt({
     db,
@@ -265,6 +285,7 @@ for (const locale of LOCALES) {
     today: '2026-08-14',
     tasks: [],
     pendingPhotos: [],
+    identity: IDENTITY,
   });
 
   eq(`worker/${locale}: two system messages`, msgs.length, 2);
@@ -287,6 +308,56 @@ for (const locale of LOCALES) {
     `worker/${locale}: cached prefix clears Sonnet 5's 1024-token floor (~${tokens} tok, ${cached.length} chars)`,
     tokens >= MIN_CACHEABLE_PREFIX_TOKENS['claude-sonnet-5'],
     `~${tokens} tokens`,
+  );
+
+  // ── the identity block (W4) ───────────────────────────────────────────────
+  check(
+    `worker/${locale}: the crew member's own name and company sit BELOW the breakpoint`,
+    uncached.includes('Miguel Sousa') && uncached.includes('Construções Silva'),
+  );
+  check(
+    `worker/${locale}: and their manager's name is below it too`,
+    uncached.includes('Aníbal Gatsby'),
+  );
+  check(
+    `worker/${locale}: nothing about this crew member reached the cached half`,
+    !cached.includes('Miguel Sousa') &&
+      !cached.includes('Construções Silva') &&
+      !cached.includes('Aníbal Gatsby') &&
+      !cached.includes('pintor'),
+  );
+
+  // THE ONE THAT MATTERS. Two crew members of the same company must share one
+  // cache entry. If the identity ever migrates above the line, this fails and
+  // the entry starts being rewritten once per person per message.
+  const other = await buildWorkerSystemPrompt({
+    db,
+    locale,
+    today: '2026-08-14',
+    tasks: [],
+    pendingPhotos: [],
+    identity: OTHER_IDENTITY,
+  });
+  eq(`worker/${locale}: the cached half is IDENTICAL for a different crew member`, other[0]?.content, cached);
+  check(
+    `worker/${locale}: while the uncached half follows the person`,
+    (other[1]?.content ?? '').includes('Zé Ferreira'),
+  );
+
+  // A failed identity read drops the block and nothing else. Same posture as a
+  // failed company-snapshot read on the manager side: the turn survives.
+  const anonymous = await buildWorkerSystemPrompt({
+    db,
+    locale,
+    today: '2026-08-14',
+    tasks: [],
+    pendingPhotos: [],
+    identity: null,
+  });
+  eq(`worker/${locale}: a failed identity read leaves the cached half untouched`, anonymous[0]?.content, cached);
+  check(
+    `worker/${locale}: and drops the block rather than the turn`,
+    !(anonymous[1]?.content ?? '').includes('Miguel Sousa') && (anonymous[1]?.content ?? '').includes('2026-08-14'),
   );
 }
 
