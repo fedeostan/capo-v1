@@ -13,6 +13,13 @@ import {
   renderAssignmentMessage,
   renderAssignmentTemplateParam,
 } from '@/lib/task-assigned-message';
+import {
+  claimThenSend,
+  decideDelivery,
+  ENGAGED_OUTCOMES,
+  noticeIsStale,
+  type NoticeOutcome,
+} from '@/lib/task-assigned-plan';
 import { taskAssignedTemplateApproved } from '@/lib/task-assigned-template';
 import { withinAssignmentHours } from '@/lib/task-assigned-window';
 import { sendConfigFor, whatsappSendEnv, type WhatsAppEnv } from '@/lib/whatsapp';
@@ -63,6 +70,15 @@ import { briefableToday, loadCompanyBriefing } from './briefing';
 // still gets the task in tomorrow's 07:00 briefing, which is the product this
 // feature improves on rather than replaces.
 //
+// ── THE QUEUE ROW IS THE LOCK ──────────────────────────────────────────────
+// The free-form path writes nothing to `notification_log` (that table is the
+// PAID ledger and nothing free belongs in it), so its only protection against
+// two overlapping drains is the queue row itself. Rows are CLAIMED before the
+// Graph call — one atomic `update … where notified_at is null returning id` —
+// and only what came back is sent about. See claimThenSend in
+// lib/task-assigned-plan.ts for the race this closes and why the coalescing
+// window reads `sending` as "already messaged".
+//
 // ── FAILURE POSTURE ────────────────────────────────────────────────────────
 // Nothing here throws, at any level. This runs inside `after()` on a manager's
 // own request on three of its five call sites, so a failure to ANNOUNCE an
@@ -92,8 +108,8 @@ const MAX_NOTICES_PER_DRAIN = 200;
 const MAX_WORKERS_PER_COMPANY_PER_DRAIN = 20;
 
 /**
- * How recently this person must have been sent an assignment note before a new
- * one is DEFERRED rather than sent.
+ * How recently this person must have been engaged before a new notice is
+ * DEFERRED rather than sent.
  *
  * ── WHY THIS EXISTS ────────────────────────────────────────────────────────
  * A manager assigning five tasks to Miguel one at a time on /tarefas fires five
@@ -102,45 +118,24 @@ const MAX_WORKERS_PER_COMPANY_PER_DRAIN = 20;
  * what turns that into one: the later notices stay queued, and the next
  * fifteen-minute cron sends ONE message with all of them marked.
  *
+ * It works on sub-second gaps only because the claim stamps `outcome:
+ * 'sending'` BEFORE the Graph call and ENGAGED_OUTCOMES counts that as
+ * "already messaged". Reading only the finished outcomes — which the first
+ * version did — left the guard blind in exactly the fast case it exists for.
+ *
  * The deferral is not a silence. A deferred notice is still queued, still
  * inside its own Lisbon day, and the cron is the safety net the whole design
- * already leans on — the same relationship /api/cron/push has with its
- * immediate producers. The first assignment is still announced within seconds,
+ * already leans on. The first assignment is still announced within seconds,
  * which is the promise the feature makes.
  */
 const COALESCE_WINDOW_MS = 5 * 60_000;
-
-/**
- * What the drain decided about one notice. Recorded on the row, and the only
- * place these strings are defined — 0048 deliberately puts no CHECK on the
- * column so that a new outcome can never fail a write at the moment somebody
- * is waiting for their message.
- */
-type NoticeOutcome =
-  /** Sent as free text, inside the crew member's own 24-hour window. */
-  | 'sent_free_form'
-  /** Sent as the paid template, outside it. */
-  | 'sent_template'
-  /** The task does not start today, or is no longer in a briefable status. */
-  | 'not_today'
-  /** No consent, not reachable, or not an active crew row. */
-  | 'not_messageable'
-  /** Outside the window, and `capo_task_assigned` is not approved for their locale. */
-  | 'template_unapproved'
-  /** Outside the window, and this person already had their one template today. */
-  | 'already_claimed_today'
-  /** Meta refused the send. */
-  | 'send_failed'
-  /** The company is no longer paying, so no proactive send may cost money on it. */
-  | 'not_billable'
-  /** Queued outside working hours. NOT decided: `notified_at` stays null. */
-  | 'outside_hours';
 
 interface NoticeRow {
   id: string;
   company_id: string;
   task_id: string;
   worker_id: string;
+  queued_date: string | null;
 }
 
 /**
@@ -156,7 +151,7 @@ interface NoticeRow {
  */
 async function stampNotices(
   db: Db,
-  ids: string[],
+  ids: readonly string[],
   outcome: NoticeOutcome,
   { decided = true }: { decided?: boolean } = {},
 ): Promise<void> {
@@ -164,6 +159,33 @@ async function stampNotices(
   const patch = decided ? { notified_at: new Date().toISOString(), outcome } : { outcome };
   const { error } = await db.from('task_assignment_notices').update(patch).in('id', ids);
   if (error) logEvent('task_assigned.stamp_failed', { outcome, notices: ids.length, error: error.message });
+}
+
+/**
+ * THE LOCK. Take these notices, or discover that another drain already has.
+ *
+ * `.is('notified_at', null)` inside the UPDATE is what makes this atomic:
+ * Postgres applies the predicate at write time, so of two drains racing over
+ * the same row exactly one matches it. `.select('id')` is not decoration — a
+ * zero-row update is a fully successful statement in Postgres, so asking for
+ * the rows back is the only way to learn which ones were actually taken. Same
+ * device the Stripe webhook uses for its own zero-row case.
+ *
+ * Returns [] on ANY failure, which means "send nothing". A drain that cannot
+ * prove it holds the row must not message anybody.
+ */
+async function claimNotices(db: Db, ids: readonly string[]): Promise<string[]> {
+  const { data, error } = await db
+    .from('task_assignment_notices')
+    .update({ notified_at: new Date().toISOString(), outcome: 'sending' })
+    .in('id', ids as string[])
+    .is('notified_at', null)
+    .select('id');
+  if (error) {
+    logEvent('task_assigned.claim_failed', { notices: ids.length, error: error.message });
+    return [];
+  }
+  return (data ?? []).map(row => row.id);
 }
 
 /** Group rows by a key, preserving insertion (i.e. queue) order. */
@@ -220,9 +242,7 @@ async function drainCompany(args: {
   // late-afternoon check-in use. `window_start === today` is the extra one this
   // feature needs and the daily sends never ask: `active_today` is true on
   // EVERY day of a multi-day task, so without it a task that started last
-  // Monday and merely got reassigned would announce itself as new work today
-  // — which it is, to the new person, but the trigger already covers that case
-  // by only queueing on a genuine change.
+  // Monday would announce itself as new work today.
   const startingToday = new Set(
     briefableToday(boardRows ?? [])
       .filter(row => (row as { window_start?: unknown }).window_start === today)
@@ -230,7 +250,10 @@ async function drainCompany(args: {
   );
 
   const stale = notices.filter(n => !startingToday.has(n.task_id));
-  await stampNotices(db, stale.map(n => n.id), 'not_today');
+  if (stale.length > 0) {
+    await stampNotices(db, stale.map(n => n.id), 'not_today');
+    logEvent('task_assigned.not_today', { companyId: company.id, notices: stale.length });
+  }
   const live = notices.filter(n => startingToday.has(n.task_id));
   if (live.length === 0) return;
 
@@ -247,19 +270,19 @@ async function drainCompany(args: {
   const workerIds = [...byWorker.keys()];
 
   // ── the coalescing guard ─────────────────────────────────────────────────
-  // Who did we already message about an assignment in the last few minutes?
-  // Read rather than remembered, because the five drains that produce this
-  // situation are five separate requests with nothing in common but the
-  // database.
+  // Who has a drain already committed to messaging in the last few minutes?
+  // Read rather than remembered, because the drains that produce this situation
+  // are separate requests with nothing in common but the database. `sending`
+  // counts — see ENGAGED_OUTCOMES.
   const cutoff = new Date(now - COALESCE_WINDOW_MS).toISOString();
   const { data: recent } = await db
     .from('task_assignment_notices')
-    .select('worker_id')
+    .select('worker_id, outcome')
     .eq('company_id', company.id)
-    .eq('outcome', 'sent_free_form')
     .in('worker_id', workerIds)
+    .in('outcome', [...ENGAGED_OUTCOMES])
     .gt('notified_at', cutoff);
-  const recentlyMessaged = new Set((recent ?? []).map(r => r.worker_id));
+  const recentlyEngaged = new Set((recent ?? []).map(r => r.worker_id));
 
   let handled = 0;
   for (const workerId of workerIds) {
@@ -267,112 +290,157 @@ async function drainCompany(args: {
     const batch = byWorker.get(workerId) ?? [];
     const ids = batch.map(n => n.id);
 
-    const worker = messageable.get(workerId);
-    if (!worker) {
-      // No consent, no phone and no BSUID, or an inactive crew row. Decided,
-      // not deferred: none of those change in the next fifteen minutes, and a
-      // notice that retries for ever is a queue that grows for ever.
-      await stampNotices(db, ids, 'not_messageable');
-      continue;
-    }
-
-    if (recentlyMessaged.has(workerId)) {
-      // LEFT QUEUED on purpose — the only branch besides out-of-hours that
-      // does not stamp. The cron picks it up and folds it into one message.
-      logEvent('task_assigned.deferred', { companyId: company.id, notices: ids.length });
-      continue;
-    }
-
-    handled += 1;
-    const newTaskIds = new Set(batch.map(n => n.task_id));
-    const newTasks = worker.tasks.filter(task => newTaskIds.has(task.id));
-    const config = sendConfigFor(env, worker.recipient);
-
-    // The money question, and it fails CLOSED: withinFreeFormWindow returns
-    // true only on POSITIVE PROOF of an inbound message in the last 23 hours.
-    // A null, a future timestamp or an absent column all read as "outside".
-    if (withinFreeFormWindow(worker.lastInboundAt, now)) {
-      // The crew day page's link, on the same terms the 07:00 briefing gets it:
-      // idempotent per day, and it never throws — a failed mint costs the line,
-      // never the message.
-      const links = await mintDayLinks(db, { companyId: company.id, workerIds: [workerId], today });
-      const token = links.get(workerId);
-      try {
-        await sendWhatsAppText(
-          renderAssignmentMessage(worker, newTaskIds, {
-            dayLinkUrl: token ? dayLinkUrl(token) : undefined,
-          }),
-          config,
-        );
-        await stampNotices(db, ids, 'sent_free_form');
-        logEvent('task_assigned.sent', {
-          companyId: company.id,
-          path: 'free_form',
-          tasks: newTasks.length,
-        });
-      } catch (err) {
-        // Decided rather than retried. A send Meta refused will be refused
-        // again in fifteen minutes, and tomorrow's 07:00 briefing carries the
-        // task anyway — retrying would spend the day writing the same log line.
-        await stampNotices(db, ids, 'send_failed');
-        logEvent('task_assigned.send_failed', {
-          companyId: company.id,
-          path: 'free_form',
-          error: describeSendError(err),
-        });
-      }
-      continue;
-    }
-
-    // ── the PAID branch ──────────────────────────────────────────────────────
-    const templateLanguage = getCatalog(worker.locale).reminders.templateLanguage;
-    if (!taskAssignedTemplateApproved(templateLanguage)) {
-      await stampNotices(db, ids, 'template_unapproved');
-      logEvent('task_assigned.template_unapproved', { companyId: company.id, templateLanguage });
-      continue;
-    }
-
-    // THE LOCK, and the cost control. notification_log's unique key is
-    // (kind, audience, worker_id, profile_id, notification_date), so this
-    // claims one `task_assigned` template per crew member per day. A second
-    // assignment the same afternoon therefore sends NOTHING by construction —
-    // deliberate, not a bug: the first template already asked them to reply,
-    // and a reply opens the free window every later assignment rides for free.
-    const claimed = await claimNotification(db, {
-      kind: TASK_ASSIGNED_KIND,
-      company_id: company.id,
-      audience: 'worker',
-      worker_id: workerId,
-      notification_date: today,
-      task_ids: [...newTaskIds],
-    });
-    if (!claimed) {
-      await stampNotices(db, ids, 'already_claimed_today');
-      logEvent('task_assigned.already_claimed', { companyId: company.id });
-      continue;
-    }
-
     try {
-      const { providerMessageId } = await sendWhatsAppTemplate(
-        {
-          name: 'capo_task_assigned',
-          languageCode: templateLanguage,
-          bodyParams: [
-            worker.name,
-            toTemplateParam(renderAssignmentTemplateParam(newTasks, worker.locale)),
-          ],
+      const worker = messageable.get(workerId);
+      const newTaskIds = new Set(batch.map(n => n.task_id));
+      // The tasks that are still THIS person's, on the live board, right now.
+      // A task reassigned away between the queue and the drain is gone from
+      // here — which is the whole reason decideDelivery counts them.
+      const newTasks = (worker?.tasks ?? []).filter(task => newTaskIds.has(task.id));
+
+      const decision = decideDelivery({
+        messageable: Boolean(worker),
+        newTaskCount: newTasks.length,
+        recentlyEngaged: recentlyEngaged.has(workerId),
+      });
+
+      if (decision.kind === 'defer') {
+        // LEFT QUEUED on purpose — one of only two branches that does not
+        // stamp. The cron picks it up and folds it into one message.
+        logEvent('task_assigned.deferred', { companyId: company.id, notices: ids.length });
+        continue;
+      }
+      if (decision.kind === 'skip') {
+        await stampNotices(db, ids, decision.outcome);
+        logEvent(`task_assigned.${decision.outcome}`, { companyId: company.id, notices: ids.length });
+        continue;
+      }
+
+      handled += 1;
+      // `worker` is non-null here: decideDelivery answers 'skip' otherwise.
+      const target = worker!;
+      const config = sendConfigFor(env, target.recipient);
+
+      // The money question, and it fails CLOSED: withinFreeFormWindow returns
+      // true only on POSITIVE PROOF of an inbound message in the last 23 hours.
+      // A null, a future timestamp or an absent column all read as "outside".
+      if (withinFreeFormWindow(target.lastInboundAt, now)) {
+        const { sent, won } = await claimThenSend({
+          ids,
+          claim: claimed => claimNotices(db, claimed),
+          send: async wonIds => {
+            // Only the tasks this drain actually WON are marked, so two drains
+            // that split a batch never both claim the same task is new.
+            const wonTaskIds = new Set(
+              batch.filter(n => wonIds.includes(n.id)).map(n => n.task_id),
+            );
+            // The crew day page's link, on the same terms the 07:00 briefing
+            // gets it: idempotent per day, and it never throws — a failed mint
+            // costs the line, never the message.
+            const links = await mintDayLinks(db, {
+              companyId: company.id,
+              workerIds: [workerId],
+              today,
+            });
+            const token = links.get(workerId);
+            await sendWhatsAppText(
+              renderAssignmentMessage(target, wonTaskIds, {
+                dayLinkUrl: token ? dayLinkUrl(token) : undefined,
+              }),
+              config,
+            );
+          },
+        });
+        if (!sent) {
+          // Another drain holds these rows and is messaging this person right
+          // now. Nothing to stamp — they own the rows.
+          logEvent('task_assigned.claim_lost', { companyId: company.id, notices: ids.length });
+          continue;
+        }
+        await stampNotices(db, won, 'sent_free_form');
+        logEvent('task_assigned.sent', { companyId: company.id, path: 'free_form', tasks: won.length });
+        continue;
+      }
+
+      // ── the PAID branch ────────────────────────────────────────────────────
+      const templateLanguage = getCatalog(target.locale).reminders.templateLanguage;
+      if (!taskAssignedTemplateApproved(templateLanguage)) {
+        await stampNotices(db, ids, 'template_unapproved');
+        logEvent('task_assigned.template_unapproved', { companyId: company.id, templateLanguage });
+        continue;
+      }
+
+      // Claimed FIRST, exactly as the free branch is, so two drains cannot both
+      // reach the notification_log claim and have one of them burn this
+      // person's single daily template on a duplicate.
+      const claimResult = await claimThenSend({
+        ids,
+        claim: claimed => claimNotices(db, claimed),
+        send: async wonIds => {
+          const wonTasks = newTasks.filter(task =>
+            batch.some(n => wonIds.includes(n.id) && n.task_id === task.id),
+          );
+          // THE COST CONTROL. notification_log's unique key is
+          // (kind, audience, worker_id, profile_id, notification_date), so this
+          // claims one `task_assigned` template per crew member per day. A
+          // second assignment the same afternoon therefore sends NOTHING by
+          // construction — deliberate: the first template already asked them to
+          // reply, and a reply opens the free window every later assignment
+          // rides for free.
+          const claimed = await claimNotification(db, {
+            kind: TASK_ASSIGNED_KIND,
+            company_id: company.id,
+            audience: 'worker',
+            worker_id: workerId,
+            notification_date: today,
+            task_ids: wonTasks.map(t => t.id),
+          });
+          if (!claimed) return 'already_claimed_today' as const;
+
+          try {
+            const { providerMessageId } = await sendWhatsAppTemplate(
+              {
+                name: 'capo_task_assigned',
+                languageCode: templateLanguage,
+                bodyParams: [
+                  target.name,
+                  toTemplateParam(renderAssignmentTemplateParam(wonTasks, target.locale)),
+                ],
+              },
+              config,
+            );
+            await resolveNotification(db, claimed.id, 'sent', {
+              provider_message_id: providerMessageId,
+            });
+            return 'sent_template' as const;
+          } catch (err) {
+            await resolveNotification(db, claimed.id, 'failed', { error: describeSendError(err) });
+            logEvent('task_assigned.send_failed', {
+              companyId: company.id,
+              path: 'template',
+              error: describeSendError(err),
+            });
+            return 'send_failed' as const;
+          }
         },
-        config,
-      );
-      await resolveNotification(db, claimed.id, 'sent', { provider_message_id: providerMessageId });
-      await stampNotices(db, ids, 'sent_template');
-      logEvent('task_assigned.sent', { companyId: company.id, path: 'template', tasks: newTasks.length });
+      });
+      if (!claimResult.sent) {
+        logEvent('task_assigned.claim_lost', { companyId: company.id, notices: ids.length });
+        continue;
+      }
+      await stampNotices(db, claimResult.won, claimResult.result!);
+      if (claimResult.result === 'sent_template') {
+        logEvent('task_assigned.sent', { companyId: company.id, path: 'template', tasks: claimResult.won.length });
+      } else {
+        logEvent(`task_assigned.${claimResult.result}`, { companyId: company.id });
+      }
     } catch (err) {
-      await resolveNotification(db, claimed.id, 'failed', { error: describeSendError(err) });
-      await stampNotices(db, ids, 'send_failed');
-      logEvent('task_assigned.send_failed', {
+      // ONE crew member's failure must never cost the rest of this company
+      // theirs. The rows stay claimed (`sending`) rather than being released:
+      // a person who might already have been messaged must not be messaged
+      // again by the next tick, and the outcome on the row says what happened.
+      logEvent('task_assigned.worker_failed', {
         companyId: company.id,
-        path: 'template',
         error: describeSendError(err),
       });
     }
@@ -382,11 +450,12 @@ async function drainCompany(args: {
 /**
  * Drain the assignment queue: everything, or one company's share of it.
  *
- * Called from five places — the chat route, the WhatsApp manager turn, an
- * approved proposal, the two /tarefas actions — always inside `after()` and
- * always as one line, plus the fifteen-minute cron that is the safety net for
- * all of them. Opens its own SERVICE-ROLE client, exactly as `dispatchPushes`
- * does, so a call site never has to know that the queue is deny-all.
+ * Called from six places — the chat route, the WhatsApp manager turn, both card
+ * approvals (web and WhatsApp), and the two /tarefas actions — always inside
+ * `after()` and always as one line, plus the fifteen-minute cron that is the
+ * safety net for all of them. Opens its own SERVICE-ROLE client, exactly as
+ * `dispatchPushes` does, so a call site never has to know that the queue is
+ * deny-all.
  *
  * NEVER THROWS.
  */
@@ -398,10 +467,14 @@ export async function drainAssignmentNotices(
 
     let query = db
       .from('task_assignment_notices')
-      .select('id, company_id, task_id, worker_id')
+      // `queued_date` is read because a notice that survived the night must
+      // never be sent — see noticeIsStale.
+      .select('id, company_id, task_id, worker_id, queued_date')
       .is('notified_at', null)
       // Oldest first: after an outage the backlog drains in the order things
-      // actually happened.
+      // actually happened. Consequence, bounded and self-healing: one company
+      // queueing more than MAX_NOTICES_PER_DRAIN in a tick delays everybody
+      // else's by fifteen minutes.
       .order('queued_at', { ascending: true })
       .limit(opts.limit ?? MAX_NOTICES_PER_DRAIN);
     if (opts.companyId) query = query.eq('company_id', opts.companyId);
@@ -424,13 +497,27 @@ export async function drainAssignmentNotices(
       logEvent('task_assigned.clock_failed', {});
       return;
     }
+
+    // ── yesterday's leftovers, before anything else ──────────────────────────
+    // A notice queued last night survived because the out-of-hours branch
+    // deliberately does not consume rows. It must not be SENT today: the 07:00
+    // briefing has already carried the task, and "your boss just gave you a new
+    // task" an hour later is both untrue and a duplicate. Stamped as a final
+    // answer so it leaves the queue.
+    const stale = notices.filter(n => noticeIsStale(n.queued_date, clock.today));
+    if (stale.length > 0) {
+      await stampNotices(db, stale.map(n => n.id), 'stale');
+      logEvent('task_assigned.stale', { notices: stale.length, today: clock.today });
+    }
+    const fresh = notices.filter(n => !noticeIsStale(n.queued_date, clock.today));
+    if (fresh.length === 0) return;
+
     if (!withinAssignmentHours(clock.hour)) {
       // NOT decided: notified_at stays null so the next in-hours drain looks
-      // again. By then the task will usually no longer start today, and it is
-      // dropped as `not_today` — which is the right answer, because tomorrow's
-      // 07:00 briefing carries it.
-      await stampNotices(db, notices.map(n => n.id), 'outside_hours', { decided: false });
-      logEvent('task_assigned.outside_hours', { lisbonHour: clock.hour, notices: notices.length });
+      // again. If that drain is on the following day, the stale test above
+      // consumes the row and sends nothing.
+      await stampNotices(db, fresh.map(n => n.id), 'outside_hours', { decided: false });
+      logEvent('task_assigned.outside_hours', { lisbonHour: clock.hour, notices: fresh.length });
       return;
     }
 
@@ -438,7 +525,7 @@ export async function drainAssignmentNotices(
     if (!env) {
       // An unconfigured deploy is "WhatsApp is off", never an error — every
       // preview deployment is in this state. Left queued, like out-of-hours.
-      logEvent('task_assigned.not_configured', { notices: notices.length });
+      logEvent('task_assigned.not_configured', { notices: fresh.length });
       return;
     }
 
@@ -456,13 +543,14 @@ export async function drainAssignmentNotices(
     // classified differently by a clock that moved between them.
     const now = Date.now();
 
-    for (const [companyId, rows] of groupBy(notices, n => n.company_id)) {
+    for (const [companyId, rows] of groupBy(fresh, n => n.company_id)) {
       const company = billable.get(companyId);
       if (!company) {
         // Not a paying tenant, so no proactive send may cost money on them.
         // Decided: their subscription will not come back inside this queue's
         // useful lifetime, and the task is still on their own board.
         await stampNotices(db, rows.map(r => r.id), 'not_billable');
+        logEvent('task_assigned.not_billable', { companyId, notices: rows.length });
         continue;
       }
       try {
