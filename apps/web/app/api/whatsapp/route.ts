@@ -3,6 +3,7 @@ import { after, NextResponse, type NextRequest } from 'next/server';
 import { getDb, type Db } from '@capo/db/client';
 import { handleInbound } from '@capo/core/agent';
 import { allPhotosSentText, handleWorkerInbound } from '@capo/core/agent/worker';
+import type { PendingPhoto } from '@capo/core/capabilities/worker';
 import { MAX_AUDIO_BYTES, transcribeAudio } from '@capo/core/transcription';
 import { coerceConfirmPosture } from '@capo/db/posture';
 import { coerceLocale, type Locale, type LocaleContext } from '@capo/i18n/locale';
@@ -29,8 +30,12 @@ import {
 } from '@capo/core/channels/whatsapp';
 import { resolveProposal } from '@capo/core/capabilities/propose';
 import { downloadMedia } from '@capo/core/channels/whatsapp-media';
-import { loadInboxPhotos } from '@capo/core/media/photo-inbox';
-import { attachInboxPhotos, markTaskProofPhotos } from '@capo/core/media/task-photo-store';
+import { loadInboxPhotos, type InboxPhoto } from '@capo/core/media/photo-inbox';
+import {
+  attachInboxPhotos,
+  markTaskProofPhotos,
+  storeWorkerTaskPhoto,
+} from '@capo/core/media/task-photo-store';
 import { getBillingState } from '../../../lib/billing';
 import {
   checkinDoneAck,
@@ -44,13 +49,14 @@ import {
   nextPhotoTaskId,
   photoRequestExpiry,
   photoRequestLive,
+  photosSinceRequest,
   type ClaimResult,
 } from '../../../lib/checkin-photo';
 import { dayLinkUrl, mintDayLinks } from '../../../lib/day-link';
 import { logEvent } from '../../../lib/log';
 import { handleProblemReportMessage } from '../../../lib/problem-report-flow';
 import { consentCommand, detailCommand, languageCommand, menuCommand } from '../../../lib/worker-keywords';
-import { askAboutMorePhotos, stageInboundPhoto } from '../../../lib/worker-photo-inbox';
+import { askAboutMorePhotos, stageInboundPhoto, type StagedPhoto } from '../../../lib/worker-photo-inbox';
 import {
   buildWorkerMenu,
   findWorkerTask,
@@ -1036,14 +1042,23 @@ async function openPhotoFollowUp(
  * unconditionally, and the failure it guarded against (a photo downloaded and
  * then dropped) is exactly what this migration exists to stop.
  */
+/**
+ * Where the photos this request is about are sitting.
+ *
+ * `inbox` is the normal case since 0047: they are already in Storage and get
+ * MOVED into the task's folder. `bytes` is the FALLBACK, and the pre-0047
+ * behaviour: staging failed (0047 unapplied, or a Storage refusal) and the
+ * caller still has what it downloaded, so the photo is written straight to the
+ * task exactly as it was before this feature existed. A photo the old product
+ * would have kept must never be lost by the change meant to stop losing photos.
+ */
+type CheckinPhotoSource =
+  | { kind: 'inbox'; photos: readonly InboxPhoto[] }
+  | { kind: 'bytes'; photo: PendingPhoto };
+
 async function handleCheckinPhoto(
   db: Db,
-  /**
-   * Already downloaded and staged in the inbox by the caller (0047). One id
-   * when a bare photo just arrived; every waiting id when the crew member has
-   * tapped "that is everything".
-   */
-  photoIds: readonly string[],
+  source: CheckinPhotoSource,
   worker: WorkerMatch,
   locale: Locale,
   sendConfig: WhatsAppSendConfig,
@@ -1056,7 +1071,7 @@ async function handleCheckinPhoto(
   // there is nothing to pick between.
   const { data: request, error } = await db
     .from('checkin_photo_requests')
-    .select('id, task_ids, next_index, photos_received, expires_at')
+    .select('id, task_ids, next_index, photos_received, expires_at, created_at')
     .eq('worker_id', worker.id)
     .eq('company_id', worker.company_id)
     .is('closed_at', null)
@@ -1084,6 +1099,18 @@ async function handleCheckinPhoto(
     return false;
   }
 
+  // ── ONLY PHOTOS THAT ARRIVED AFTER THIS REQUEST OPENED ────────────────────
+  // Since 0047 a crew member can be holding photos from earlier in the day, and
+  // "É tudo" tapped on an old message would otherwise file a 15:00 photo of
+  // another job as proof of the task this 16:00 request happens to be asking
+  // about. That is #52's own worst case: wrong evidence, permanent, with no
+  // DELETE policy anywhere. The older photos stay in the inbox and the agent
+  // path can still put them where the crew member says they go.
+  //
+  // Computed BEFORE seekPhotoTarget so an empty result changes nothing at all.
+  const eligible = source.kind === 'inbox' ? photosSinceRequest(source.photos, request.created_at) : null;
+  if (eligible && eligible.length === 0) return false;
+
   const search = await seekPhotoTarget(db, worker, taskIds, request.next_index);
   // A read failure leaves the request EXACTLY as it was and falls through: the
   // photo goes to the agent this once, and the next one tries again. Only
@@ -1101,12 +1128,26 @@ async function handleCheckinPhoto(
   // one writer that has always written those rows. The company and worker
   // filters inside it are both phone-derived, so a photo id that is not this
   // crew member's own resolves to nothing.
-  const { attached } = await attachInboxPhotos(db, {
-    photoIds,
-    taskId: target.id,
-    companyId: worker.company_id,
-    workerId: worker.id,
-  });
+  // Two writers, one attribution: both end at the same row-insert helper inside
+  // media/task-photo-store, so a `source: 'worker'` row means the same thing
+  // whichever of them wrote it.
+  let attached: number;
+  if (source.kind === 'bytes') {
+    const path = await storeWorkerTaskPhoto(db, {
+      companyId: worker.company_id,
+      taskId: target.id,
+      workerId: worker.id,
+      photo: source.photo,
+    });
+    attached = path ? 1 : 0;
+  } else {
+    ({ attached } = await attachInboxPhotos(db, {
+      photoIds: (eligible ?? []).map(p => p.id),
+      taskId: target.id,
+      companyId: worker.company_id,
+      workerId: worker.id,
+    }));
+  }
   if (attached === 0) {
     // The cursor does NOT move. The photo is still in the inbox and still
     // offered to the agent, so nothing is lost by asking them to try again
@@ -1513,12 +1554,15 @@ async function handlePhotoBatchTap(
     return true;
   }
 
-  const photoIds = waiting.map(p => p.id);
-  if (await handleCheckinPhoto(db, photoIds, worker, locale, sendConfig)) {
+  // The whole waiting set is offered; handleCheckinPhoto narrows it to the
+  // photos that arrived AFTER its request opened, and refuses the request
+  // entirely when none did. An older batch therefore stays in the inbox for the
+  // agent path rather than becoming proof of a task it has nothing to do with.
+  if (await handleCheckinPhoto(db, { kind: 'inbox', photos: waiting }, worker, locale, sendConfig)) {
     logEvent('whatsapp.worker_photo_batch_claimed', {
       companyId: worker.company_id,
       workerId: worker.id,
-      photos: photoIds.length,
+      photos: waiting.length,
     });
     return true;
   }
@@ -1530,11 +1574,11 @@ async function handlePhotoBatchTap(
   logEvent('whatsapp.worker_photo_batch_to_agent', {
     companyId: worker.company_id,
     workerId: worker.id,
-    photos: photoIds.length,
+    photos: waiting.length,
   });
   await runWorkerTurn(db, message, worker, locale, sendConfig, {
     inboundPhotos: 0,
-    overrideText: allPhotosSentText(photoIds.length),
+    overrideText: allPhotosSentText(waiting.length),
   });
   return true;
 }
@@ -1732,7 +1776,13 @@ async function runWorkerTurn(
    * for the "that is all the photos" tap, which is a button and has no text at
    * all; everything else reads the message.
    */
-  opts: { inboundPhotos: number; overrideText?: string },
+  opts: {
+    inboundPhotos: number;
+    overrideText?: string;
+    /** Bytes that could not be staged (0047 unapplied, or Storage refused).
+     *  Normally empty; see StagedPhoto.photo. */
+    fallbackPhotos?: readonly PendingPhoto[];
+  },
 ): Promise<void> {
   const t = getCatalog(locale).whatsapp;
 
@@ -1763,6 +1813,7 @@ async function runWorkerTurn(
       locale,
       inbound: { channel: 'whatsapp', text },
       inboundPhotos: opts.inboundPhotos,
+      fallbackPhotos: opts.fallbackPhotos,
       sink,
     });
 
@@ -2022,15 +2073,27 @@ async function handleWorkerReply(
   // between here and the photo branches can consume an image. This sits above
   // them anyway, because "the photo is kept first" is easier to keep true than
   // "the photo is kept before the branches that could eat it".
-  const staged = hasPhoto
+  const staged: StagedPhoto = hasPhoto
     ? await stageInboundPhoto(db, message, worker, env.accessToken)
-    : { photoId: null, failed: false };
-  if (staged.failed) {
-    // Said immediately, and once. A crew member told nothing assumes the photo
-    // landed and stops trying to send it. A CAPTIONED photo still falls through
-    // to the agent afterwards: they wrote something, and it deserves an answer
-    // even though the image did not survive.
+    : { photoId: null, photo: null, failed: false };
+
+  // ⚠ A STAGING FAILURE MUST NEVER LOSE A PHOTO THE OLD PRODUCT WOULD HAVE
+  // KEPT. Staging fails on EVERY request between deploying 0047 and applying it
+  // (42P01), and on this project a migration has sat merged and unapplied for
+  // three weeks while the app half was live. If that window were also a window
+  // in which nobody could attach a photo to anything, this branch would produce
+  // the exact 3 September symptom it exists to end, on every crew member at
+  // once.
+  //
+  // So the download is what matters, not the staging: when the bytes are here,
+  // every branch below falls back to what it did before 0047 — the check-in
+  // photo path writes them straight to the task, and the agent turn carries
+  // them as this turn's photos. Only a failed DOWNLOAD is worth an apology,
+  // because only then is there nothing to work with.
+  if (staged.failed && !staged.photo) {
     await sendWhatsAppText(getCatalog(current).whatsapp.workerPhotoFailed, sendConfig).catch(() => {});
+    // A CAPTIONED photo still falls through to the agent: they wrote something,
+    // and it deserves an answer even though the image did not survive.
     if (!message.image?.caption?.trim()) return true;
   }
 
@@ -2207,8 +2270,12 @@ async function handleWorkerReply(
   //
   // Returns false when there is no open request, which is every crew member who
   // never tapped — their photos reach the agent exactly as before.
-  if (staged.photoId && !message.image?.caption?.trim()) {
-    if (await handleCheckinPhoto(db, [staged.photoId], worker, current, sendConfig)) {
+  if ((staged.photoId || staged.photo) && !message.image?.caption?.trim()) {
+    // Staged, or the pre-0047 fallback with the bytes still in hand.
+    const source: CheckinPhotoSource = staged.photoId
+      ? { kind: 'inbox', photos: [{ id: staged.photoId, receivedAt: new Date().toISOString() }] }
+      : { kind: 'bytes', photo: staged.photo! };
+    if (await handleCheckinPhoto(db, source, worker, current, sendConfig)) {
       return true;
     }
     // No open request, which is every crew member who never tapped. Before 0047
@@ -2220,8 +2287,13 @@ async function handleWorkerReply(
     // question a bare photo actually raises. Working out which job they are of
     // waits until they say there are no more coming, when it can be asked once
     // instead of after every photo.
-    await askAboutMorePhotos(db, worker, current, sendConfig);
-    return true;
+    if (staged.photoId) {
+      await askAboutMorePhotos(db, worker, current, sendConfig);
+      return true;
+    }
+    // Nothing was staged, so there is no batch to ask about and nothing that
+    // survives this request. Fall through to the agent with the bytes, which is
+    // precisely what a bare photo with no open request did before 0047.
   }
 
   // ── the restricted agent (PRD 4) ──────────────────────────────────────────
@@ -2245,7 +2317,11 @@ async function handleWorkerReply(
     await withProgressNote(
       () =>
         runWorkerTurn(db, message, worker, current, sendConfig, {
-          inboundPhotos: staged.photoId ? 1 : 0,
+          inboundPhotos: staged.photoId || staged.photo ? 1 : 0,
+          // Empty unless staging failed. The turn then behaves exactly as it
+          // did before 0047: the bytes live for this turn, and
+          // declare_task_done writes them with the pre-0047 writer.
+          fallbackPhotos: !staged.photoId && staged.photo ? [staged.photo] : [],
         }),
       {
         inboundAt,

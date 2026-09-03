@@ -3,9 +3,11 @@ import type { Db } from '@capo/db/client';
 import { downloadMedia } from '@capo/core/channels/whatsapp-media';
 import { TASK_PHOTO_MAX_BYTES, isTaskPhotoMime } from '@capo/core/media/photos';
 import { countInboxPhotos, stageInboxPhoto } from '@capo/core/media/photo-inbox';
+import type { PendingPhoto } from '@capo/core/capabilities/worker';
 import {
   photoBatchPayload,
   sendWhatsAppButtons,
+  sendWhatsAppText,
   type WhatsAppSendConfig,
 } from '@capo/core/channels/whatsapp';
 import { getCatalog } from '@capo/i18n/catalog';
@@ -50,12 +52,29 @@ interface PhotoWorker {
 }
 
 export interface StagedPhoto {
-  /** The `worker_photo_inbox` row id, or null when nothing was kept. */
+  /** The `worker_photo_inbox` row id, or null when nothing was staged. */
   photoId: string | null;
   /**
-   * True when a photo was there and we could not keep it. The caller owes the
-   * crew member a sentence: somebody told nothing assumes the photo landed and
-   * stops trying to send it.
+   * The downloaded bytes, whenever the download itself worked — set even when
+   * `photoId` is null, and that is the point.
+   *
+   * ⚠ THIS IS THE PRE-0047 SAFETY NET. Staging fails whenever
+   * `worker_photo_inbox` is unreachable, which is EVERY request between
+   * deploying 0047 and applying it (42P01), and on this project a migration has
+   * sat merged and unapplied for three weeks while the app half was live. In
+   * that window the caller must fall back to what the product did before: write
+   * the bytes straight to the task through `storeWorkerTaskPhoto`, or hand them
+   * to the agent turn as this turn's photos. A photo the old product would have
+   * kept must never be lost by the change that was meant to stop losing photos.
+   *
+   * Held only for the duration of this request, exactly as before 0047.
+   */
+  photo: PendingPhoto | null;
+  /**
+   * True when a photo was there and it did not reach the inbox. Read together
+   * with `photo`: bytes present means "fall back", bytes absent means the
+   * download itself failed and the crew member owes a sentence, because
+   * somebody told nothing assumes the photo landed and stops trying.
    */
   failed: boolean;
 }
@@ -77,7 +96,7 @@ export async function stageInboundPhoto(
   worker: PhotoWorker,
   accessToken: string,
 ): Promise<StagedPhoto> {
-  if (message.type !== 'image' || !message.image?.id) return { photoId: null, failed: false };
+  if (message.type !== 'image' || !message.image?.id) return { photoId: null, photo: null, failed: false };
 
   try {
     const media = await downloadMedia(message.image.id, { accessToken, maxBytes: TASK_PHOTO_MAX_BYTES });
@@ -90,21 +109,23 @@ export async function stageInboundPhoto(
         messageId: message.id,
         mediaType: media.mediaType,
       });
-      return { photoId: null, failed: true };
+      return { photoId: null, photo: null, failed: true };
     }
+
+    const photo: PendingPhoto = {
+      // Ours, never Meta's media id: the object key is derived from it, and a
+      // Graph API media id anywhere downstream is a value that could be
+      // replayed against the Graph API.
+      id: randomUUID(),
+      mime: media.mediaType,
+      bytes: media.bytes,
+      byteSize: media.byteLength,
+    };
 
     const photoId = await stageInboxPhoto(db, {
       companyId: worker.company_id,
       workerId: worker.id,
-      photo: {
-        // Ours, never Meta's media id: the object key is derived from it, and a
-        // Graph API media id anywhere downstream is a value that could be
-        // replayed against the Graph API.
-        id: randomUUID(),
-        mime: media.mediaType,
-        bytes: media.bytes,
-        byteSize: media.byteLength,
-      },
+      photo,
       caption: message.image.caption,
       now: Date.now(),
     });
@@ -112,12 +133,15 @@ export async function stageInboundPhoto(
     if (!photoId) {
       // stageInboxPhoto has already logged task_photo.store_failed with the
       // stage it failed at, which is the detail this event cannot carry.
+      // The bytes travel back with the failure. The caller writes them the
+      // pre-0047 way rather than telling the crew member to send it again.
       logEvent('whatsapp.worker_photo_stage_failed', {
         companyId: worker.company_id,
         workerId: worker.id,
         messageId: message.id,
+        fallback: true,
       });
-      return { photoId: null, failed: true };
+      return { photoId: null, photo, failed: true };
     }
 
     logEvent('whatsapp.worker_photo_staged', {
@@ -126,7 +150,7 @@ export async function stageInboundPhoto(
       messageId: message.id,
       captioned: !!message.image.caption?.trim(),
     });
-    return { photoId, failed: false };
+    return { photoId, photo, failed: false };
   } catch (err) {
     logEvent('whatsapp.worker_photo_failed', {
       companyId: worker.company_id,
@@ -134,7 +158,7 @@ export async function stageInboundPhoto(
       messageId: message.id,
       error: err instanceof Error ? err.message : String(err),
     });
-    return { photoId: null, failed: true };
+    return { photoId: null, photo: null, failed: true };
   }
 }
 
@@ -187,13 +211,30 @@ export async function askAboutMorePhotos(
     });
   } catch (err) {
     // An interactive send can fail for a reason that is OURS (a malformed
-    // payload) or theirs (131047, outside the window). Either way the fallback
-    // is a plain line rather than silence: silence after a photo is exactly the
-    // failure this whole feature exists to end.
+    // payload, a limit we got wrong) or theirs (131047, outside the window).
+    // Either way the fallback is a plain line rather than silence: silence
+    // after a photo is exactly the failure this whole feature exists to end,
+    // and it is the same fallback ladder deliverBriefing walks for the guided
+    // list. THE SAME WORDS, so a crew member who reads it has been asked the
+    // same question and can answer it by typing.
     logEvent('whatsapp.worker_photo_batch_failed', {
       companyId: worker.company_id,
       workerId: worker.id,
       error: err instanceof Error ? err.message : String(err),
     });
+    try {
+      const waiting = await countInboxPhotos(db, worker.company_id, worker.id, Date.now());
+      if (waiting === 0) return;
+      await sendWhatsAppText(t.photoBatchAsk(waiting), sendConfig);
+      logEvent('whatsapp.worker_photo_batch_text_fallback', {
+        companyId: worker.company_id,
+        workerId: worker.id,
+        waiting,
+      });
+    } catch {
+      // 131047 refuses plain text as well, so this is where an out-of-window
+      // photo genuinely ends. Nothing is lost: the photo is already staged and
+      // the next thing they write finds it waiting.
+    }
   }
 }

@@ -11,17 +11,28 @@ import { photoInboxLive } from './photo-inbox';
 
 // The ONE writer of a crew-sourced task photo.
 //
-// Three paths now put a worker's photo into Storage — the restricted agent's
-// `declare_task_done` (issue #22), the check-in photo follow-up (issue #52) and
-// the photo inbox (0047), which since 0047 is how the first two actually get
-// their bytes — and they must not drift, because what they write is an
-// ATTRIBUTION. A
-// `task_photos` row saying `source: 'worker'` is the claim "the crew sent
-// this", and 0023 makes that claim unforgeable at the GRANT layer: `source`,
-// `worker_id` and `uploaded_by` are absent from the tenant's column-scoped
-// INSERT grant, so only a service-role caller can set them. Both callers here
-// are that caller. Having one function say it means there is one place to read
-// to know who is entitled to.
+// TWO functions here put bytes into the bucket, and the difference between them
+// is only WHERE THE BYTES ARE COMING FROM:
+//
+//   attachInboxPhotos    the normal path since 0047. The photo is already in
+//                        Storage, staged under the company's inbox prefix, and
+//                        is MOVED into the task's folder.
+//   storeWorkerTaskPhoto the FALLBACK, and the pre-0047 path. The bytes are in
+//                        memory for this request and are uploaded straight to
+//                        the task's folder. It is what runs when staging failed
+//                        — a deploy that landed before 0047, or a transient
+//                        Storage error — so a photo that the pre-0047 product
+//                        would have kept is still kept.
+//
+// ⚠ NEITHER OF THEM WRITES THE ROW. Both call `insertTaskPhotoRow` below, and
+// that is deliberate: what a `task_photos` row carries is an ATTRIBUTION.
+// `source: 'worker'` is the claim "the crew sent this", and 0023 makes that
+// claim unforgeable at the GRANT layer — `source`, `worker_id` and
+// `uploaded_by` are absent from the tenant's column-scoped INSERT grant, so
+// only a service-role caller can set them. Every caller here is that caller.
+// Two functions asserting an attribution would eventually assert it
+// differently; one function asserting it means there is one place to read to
+// know who is entitled to what.
 //
 // Deliberately separate from ./photos.ts, which is dependency-free because the
 // manager's completion sheet is a CLIENT component and imports it for its
@@ -58,6 +69,37 @@ export interface StoreWorkerPhotoInput {
 }
 
 /**
+ * The ONE place a crew-sourced `task_photos` row is written.
+ *
+ * Both writers above end here. `source: 'worker'` and `worker_id` are the
+ * ATTRIBUTION, and 0023 makes them unforgeable at the grant layer by leaving
+ * them out of the tenant's column-scoped INSERT grant; only the service role
+ * can set them, and every caller of this function is the service role.
+ *
+ * `uploaded_by` is deliberately left to its `auth.uid()` default, which is NULL
+ * for the service role — exactly what a crew-sourced row should carry. Do not
+ * fill it in; there is no profile behind this write.
+ *
+ * Returns the Postgres error message on failure, or null on success. It does
+ * not log: the caller knows which stage it is in and which photo it was for.
+ */
+async function insertTaskPhotoRow(
+  db: Db,
+  row: { companyId: string; taskId: string; workerId: string; path: string; mime: TaskPhotoMime; byteSize: number },
+): Promise<string | null> {
+  const { error } = await db.from('task_photos').insert({
+    company_id: row.companyId,
+    task_id: row.taskId,
+    storage_path: row.path,
+    source: 'worker',
+    worker_id: row.workerId,
+    mime: row.mime,
+    byte_size: row.byteSize,
+  });
+  return error ? error.message : null;
+}
+
+/**
  * Write one photo's bytes into the bucket and record the row that points at it.
  * Returns the object key on success, or null on any refusal or failure.
  *
@@ -68,11 +110,16 @@ export interface StoreWorkerPhotoInput {
  * lists the bucket. A row with no object renders a broken frame on the
  * manager's screen forever, and there is no DELETE policy to clear it with.
  *
- * `uploaded_by` is deliberately left to its `auth.uid()` default, which is NULL
- * for the service role — exactly what a crew-sourced row should carry. Do not
- * fill it in; there is no profile behind this write.
+ * THE FALLBACK PATH, and the reason it was not deleted when 0047 landed. It
+ * runs when staging a photo into the inbox failed — most importantly on a
+ * deploy that lands before 0047 is applied, where every query on
+ * `worker_photo_inbox` answers 42P01. This function touches no table 0047
+ * creates, so a photo that the pre-0047 product would have kept is still kept,
+ * by both crew paths. On this project a migration has sat merged and unapplied
+ * for three weeks while the app half was live; that window must not be one
+ * where nobody can attach a photo to anything.
  *
- * Never throws. Both callers are inside a WhatsApp turn where a failed photo
+ * Never throws. Every caller is inside a WhatsApp turn where a failed photo
  * must cost the photo and nothing else: the agent path still has a claim to
  * file, and the check-in path still owes the worker an answer.
  */
@@ -101,17 +148,16 @@ export async function storeWorkerTaskPhoto(
       return null;
     }
 
-    const { error: rowError } = await db.from('task_photos').insert({
-      company_id: companyId,
-      task_id: taskId,
-      storage_path: path,
-      source: 'worker',
-      worker_id: workerId,
+    const rowError = await insertTaskPhotoRow(db, {
+      companyId,
+      taskId,
+      workerId,
+      path,
       mime: photo.mime,
-      byte_size: photo.byteSize,
+      byteSize: photo.byteSize,
     });
     if (rowError) {
-      logPhotoStoreFailure({ stage: 'row', companyId, workerId, taskId, error: rowError.message });
+      logPhotoStoreFailure({ stage: 'row', companyId, workerId, taskId, error: rowError });
       return null;
     }
   } catch (err) {
@@ -214,17 +260,16 @@ export async function attachInboxPhotos(
         continue;
       }
 
-      const { error: rowError } = await db.from('task_photos').insert({
-        company_id: companyId,
-        task_id: taskId,
-        storage_path: path,
-        source: 'worker',
-        worker_id: workerId,
+      const rowError = await insertTaskPhotoRow(db, {
+        companyId,
+        taskId,
+        workerId,
+        path,
         mime: row.mime,
-        byte_size: row.byte_size,
+        byteSize: row.byte_size,
       });
       if (rowError) {
-        logPhotoStoreFailure({ stage: 'row', companyId, workerId, taskId, photoId: row.id, error: rowError.message });
+        logPhotoStoreFailure({ stage: 'row', companyId, workerId, taskId, photoId: row.id, error: rowError });
         continue;
       }
       attached += 1;

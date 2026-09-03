@@ -112,7 +112,7 @@ import {
   photoInboxLive,
 } from '@capo/core/media/photo-inbox';
 import { taskPhotoInboxPath, taskPhotoPath } from '@capo/core/media/photos';
-import { PHOTO_REQUEST_TTL_MS } from '../apps/web/lib/checkin-photo.ts';
+import { PHOTO_REQUEST_TTL_MS, photosSinceRequest } from '../apps/web/lib/checkin-photo.ts';
 import { allTemplates, MANAGED_TEMPLATE_NAMES, TEMPLATE_LANGUAGES } from './whatsapp-templates.ts';
 // The free-form renderer lives in the web app rather than @capo/core, for the
 // same reason renderWorkerBriefing does: it needs the USER copy catalog, which
@@ -3243,6 +3243,33 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   check('a missing expiry reads as expired', !photoInboxLive(null, now));
   check('and so does an unparseable one', !photoInboxLive('soon', now));
   check('the prompt block is capped', MAX_INBOX_PHOTOS > 0 && MAX_INBOX_PHOTOS <= 40, String(MAX_INBOX_PHOTOS));
+}
+
+// ── only photos that arrived AFTER the request opened (fix round 1) ─────────
+// The sequence that makes this necessary is ordinary, not adversarial: a photo
+// at 15:00 of some other job (buttons go out, no request open), a 16:00
+// check-in tap opening a request for tasks A and B, and the crew member
+// scrolling up to tap the 15:00 message's "É tudo". Without the filter that
+// 15:00 photo becomes proof of task A: evidence, wrong, and undeletable.
+{
+  const opened = '2026-09-03T16:00:00Z';
+  const older = { id: 'a', receivedAt: '2026-09-03T15:00:00Z' };
+  const newer = { id: 'b', receivedAt: '2026-09-03T16:30:00Z' };
+  const exact = { id: 'c', receivedAt: opened };
+
+  eq('a photo from before the request is refused', photosSinceRequest([older], opened).length, 0);
+  eq('a photo from after it is taken', photosSinceRequest([newer], opened).map(p => p.id).join(), 'b');
+  // The bare-photo path stages and attaches in one request, so its photo's
+  // timestamp can equal the request's to the millisecond. Exclusive would drop
+  // the one photo this whole path exists to file.
+  eq('a photo from the same instant is taken', photosSinceRequest([exact], opened).map(p => p.id).join(), 'c');
+  eq('a mixed batch keeps only the newer half', photosSinceRequest([older, newer], opened).map(p => p.id).join(), 'b');
+  // Empty means the caller falls through, so the older photos stay in the inbox
+  // for the agent path rather than being attached to the wrong job OR lost.
+  eq('an entirely older batch yields nothing to attach', photosSinceRequest([older], opened).length, 0);
+  eq('an unparseable request timestamp excludes everything', photosSinceRequest([newer], 'soon').length, 0);
+  eq('a missing one does too', photosSinceRequest([newer], null).length, 0);
+  eq('and so does an unparseable photo timestamp', photosSinceRequest([{ id: 'd', receivedAt: 'x' }], opened).length, 0);
 }
 
 // ── the copy that answers a bare photo ──────────────────────────────────────

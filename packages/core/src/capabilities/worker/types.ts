@@ -116,6 +116,25 @@ export interface WorkerContext {
    * is in it.
    */
   pendingPhotos: readonly InboxPhoto[];
+  /**
+   * THE FALLBACK, and normally empty (0047 + fix round 1).
+   *
+   * Staging a photo into the inbox can fail: a deploy that lands before 0047 is
+   * applied answers 42P01 on every query, and Storage can refuse a write for an
+   * afternoon. When it does, the route hands the bytes it already downloaded
+   * straight through here instead of losing them, and `declare_task_done`
+   * writes them with `storeWorkerTaskPhoto` — the pre-0047 path, which touches
+   * no table 0047 creates.
+   *
+   * Every id in here also appears in `pendingPhotos`, so the model sees ONE
+   * list and cannot tell the two apart. It should not have to: which storage
+   * mechanism kept a photo is not a fact about the crew member's day.
+   *
+   * REQUIRED rather than optional, for `confirmPosture`'s reason: a new call
+   * site that forgot it would silently lose photos in exactly the window this
+   * field exists for, and an empty array has to be written out on purpose.
+   */
+  unstagedPhotos: readonly PendingPhoto[];
   /** Model turns this worker has left today. Informational inside the loop —
    *  the cap is enforced before the loop starts, where refusing costs nothing. */
   budget: number;

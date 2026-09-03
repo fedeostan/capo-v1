@@ -309,13 +309,24 @@
 // that lacks the table would silently DELETE this block rather than add it.
 //
 // One consequence while the migration is unapplied, and the code is written to
-// survive it: every query answers 42P01 ("relation does not exist"). Staging
-// (stageInboxPhoto, packages/core/src/media/photo-inbox.ts) logs
-// `task_photo.store_failed` and answers null, the reader answers an empty list,
-// and the whole feature degrades to the pre-0047 product: a photo lives for one
-// turn, a bare photo with no open check-in request reaches the agent exactly as
-// it did before. Nothing about a check-in claim or a completion claim depends
-// on this table existing.
+// survive it: every query answers 42P01 ("relation does not exist").
+//
+// ⚠ THAT WINDOW IS NOT HYPOTHETICAL AND IT IS NOT SHORT. 0038 sat merged and
+// unapplied for three weeks on this project while the app half was live, and
+// 0026/0027 were once skipped entirely. So the degradation is a designed path
+// rather than a hope, and it is this: `stageInboxPhoto` logs
+// `task_photo.store_failed` and answers null, but it hands the DOWNLOADED BYTES
+// back to the caller, and every branch on the worker path then does what it did
+// before 0047. A bare photo with an open check-in request is written straight
+// to the task by `storeWorkerTaskPhoto`, which touches nothing this migration
+// creates. A bare photo with no request, and a captioned photo, reach the agent
+// carrying the bytes as this turn's photos, and `declare_task_done` writes them
+// the same pre-0047 way.
+//
+// What is LOST in that window, and only this: a photo does not outlive its
+// turn, so "photo now, which job a minute later" fails as it did before, and
+// the "more photos or is that everything?" buttons do not go out. No photo that
+// the pre-0047 product would have kept is lost.
 //
 // Invisible here as usual: this table is deny-all under RLS with ZERO policies
 // and every grant revoked from `authenticated` (checkin_photo_requests'

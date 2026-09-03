@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { attachInboxPhotos, markTaskProofPhotos } from '../../media/task-photo-store';
+import { attachInboxPhotos, markTaskProofPhotos, storeWorkerTaskPhoto } from '../../media/task-photo-store';
 import type { WorkerTool } from './types';
 import { workerToolError } from './types';
 
@@ -120,12 +120,37 @@ export const declareTaskDone: WorkerTool<DeclareTaskDoneInput> = {
     // Attaching MOVES each staged object into this task's folder and writes the
     // `task_photos` row, which is what makes the photo evidence. One photo
     // failing never aborts the others, and every failure logs its stage.
-    const { attached } = await attachInboxPhotos(ctx.db, {
-      photoIds: requested,
-      taskId: input.task_id,
-      companyId: ctx.companyId,
-      workerId: ctx.workerId,
-    });
+    //
+    // TWO WRITERS, and which one runs depends only on where the bytes are.
+    // Almost always the inbox; `unstagedPhotos` is non-empty only when staging
+    // failed, which is chiefly the window between deploying 0047 and applying
+    // it. Both end at the same row-insert helper, so the attribution a
+    // `source: 'worker'` row carries is written in exactly one place either
+    // way. The model cannot tell the two apart and does not need to.
+    const unstaged = new Map(ctx.unstagedPhotos.map(p => [p.id, p]));
+    const fromInbox = requested.filter(id => !unstaged.has(id));
+
+    let attached = 0;
+    if (fromInbox.length > 0) {
+      const result = await attachInboxPhotos(ctx.db, {
+        photoIds: fromInbox,
+        taskId: input.task_id,
+        companyId: ctx.companyId,
+        workerId: ctx.workerId,
+      });
+      attached += result.attached;
+    }
+    for (const id of requested) {
+      const photo = unstaged.get(id);
+      if (!photo) continue;
+      const path = await storeWorkerTaskPhoto(ctx.db, {
+        companyId: ctx.companyId,
+        taskId: input.task_id,
+        workerId: ctx.workerId,
+        photo,
+      });
+      if (path) attached += 1;
+    }
     if (attached === 0) {
       return workerToolError('The photos could not be saved. Ask the worker to send them again.');
     }

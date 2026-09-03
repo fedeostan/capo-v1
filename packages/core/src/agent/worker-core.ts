@@ -10,7 +10,7 @@ import type { Db } from '@capo/db/client';
 import type { Locale } from '@capo/i18n/locale';
 import type { OutboundSink } from '../channels/types';
 import { toWorkerAiTools } from '../capabilities/worker';
-import type { WorkerContext } from '../capabilities/worker/types';
+import type { PendingPhoto, WorkerContext } from '../capabilities/worker/types';
 import { loadInboxPhotos } from '../media/photo-inbox';
 import { loadWorkerTasks } from '../capabilities/worker/tasks';
 import { withToolCacheBreakpoint } from './cache';
@@ -112,6 +112,18 @@ export interface HandleWorkerInboundOptions {
    * `worker_messages` row records about the message itself.
    */
   inboundPhotos: number;
+  /**
+   * Bytes the caller downloaded but could NOT stage (0047 unapplied, or a
+   * Storage refusal). Normally empty.
+   *
+   * They are shown to the model alongside the staged ones and written by the
+   * pre-0047 writer if a task claims them, so the window between deploying 0047
+   * and applying it is not a window in which every crew photo is lost. Left
+   * OPTIONAL here and required on `WorkerContext`: a caller with nothing to
+   * fall back on is the normal case, while a TOOL that forgot the field would
+   * drop photos silently.
+   */
+  fallbackPhotos?: readonly PendingPhoto[];
   sink: OutboundSink;
 }
 
@@ -122,6 +134,7 @@ export type WorkerTurnOutcome =
 
 export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Promise<WorkerTurnOutcome> {
   const { db, companyId, workerId, locale, inbound, inboundPhotos, sink } = opts;
+  const fallbackPhotos = opts.fallbackPhotos ?? [];
 
   // One clock — the same lisbon_today() task_board reads and the same one the
   // database stamps onto worker_messages.usage_date. Reading it here rather
@@ -176,7 +189,15 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
   // and it is why a photo sent on its own and explained a minute later was
   // already gone. Ids and times only; the bytes are never loaded and never
   // shown to a model.
-  const pendingPhotos = await loadInboxPhotos(db, companyId, workerId, Date.now());
+  const staged = await loadInboxPhotos(db, companyId, workerId, Date.now());
+  // Unstaged bytes join the SAME list, at the end, so the model sees one set of
+  // photos and cannot tell which mechanism is holding them. They carry this
+  // turn's clock as their arrival time, which is true: they arrived with this
+  // message and they do not outlive it.
+  const pendingPhotos = [
+    ...staged,
+    ...fallbackPhotos.map(p => ({ id: p.id, receivedAt: new Date().toISOString() })),
+  ];
 
   const text = (inbound.text.trim() || (inboundPhotos > 0 ? PHOTO_ONLY_TEXT : '')).slice(0, MAX_INBOUND_CHARS);
   const target: WorkerMessageTarget = { conversationId, companyId, checkinId, channel: inbound.channel };
@@ -193,6 +214,7 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
     scope,
     checkinId,
     pendingPhotos,
+    unstagedPhotos: fallbackPhotos,
     budget: budget.remaining,
   };
 

@@ -1434,6 +1434,31 @@ Structural invariants (do not regress):
     systemic Storage failure produced zero rows and zero events. Every failure
     on both writers now logs `task_photo.store_failed` with the `stage` it
     failed at. Grep that event before concluding the crew sends no photos.
+  - **A STAGING FAILURE FALLS BACK TO THE PRE-0047 PATH, and that is the whole
+    deploy-order safety story.** While 0047 is unapplied every query on the
+    table answers 42P01, and on this project a migration has sat merged and
+    unapplied for three weeks (0038) while the app half was live. So
+    `stageInboundPhoto` hands the DOWNLOADED BYTES back with its failure, and
+    every branch does what it did before: the check-in photo path writes them
+    straight to the task through `storeWorkerTaskPhoto`, and the agent turn
+    carries them as `WorkerContext.unstagedPhotos` for `declare_task_done`.
+    **No photo the pre-0047 product would have kept is lost**; what is lost in
+    that window is only the photo outliving its turn and the buttons. Both
+    writers end at ONE row-insert helper, so the `source: 'worker'` attribution
+    is asserted in exactly one place whichever of them ran.
+  - **"É tudo" attaches only photos received AFTER the check-in request
+    opened** (`photosSinceRequest`, `apps/web/lib/checkin-photo.ts`). A photo
+    taken at 15:00 of another job, with a 16:00 request open, must never become
+    proof of that request's task: #52's own rule is that wrong evidence is worse
+    than none, and 0023 has no DELETE policy anywhere. An entirely older batch
+    makes the branch fall through, so those photos stay in the inbox for the
+    agent path rather than being attached wrongly OR lost.
+  - **The bytes are deny-all in the TABLE but readable in STORAGE by their own
+    company.** 0023's SELECT policy on `storage.objects` keys on segment 1
+    alone, so a tenant can list `{company_id}/inbox/…`. That is deliberate (they
+    are that company's own crew's photos) and it is why the deny-all above is
+    about the ROW, which is the thing that would let somebody re-point a
+    colleague's next photo.
   Known and NOT done: nothing sweeps expired objects, `caption` is recorded and
   read by nobody, and a crew member who sends photos for two different jobs in
   one batch has to say so in words.
