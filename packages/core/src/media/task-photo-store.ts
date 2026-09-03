@@ -329,3 +329,43 @@ export async function markTaskProofPhotos(
     // Swallowed on purpose — see the note above.
   }
 }
+
+/**
+ * Record that this task's completion has NO photographic proof behind it
+ * (0049, the no-photo waiver).
+ *
+ * NULL, never 'skipped'. Those are different sentences and only one of them is
+ * ours to write: 'skipped' is the MANAGER declining proof through the
+ * completion sheet, and 0034's column comment says so. NULL is UNKNOWN, which
+ * is the honest value for a claim filed by somebody who could not photograph
+ * anything — the manager may still walk over and look, and a photo sent later
+ * still attaches, because a task in `pending_review` is still open
+ * (task_board.is_open is a denylist, 0013) and nothing on the photo path reads
+ * its status.
+ *
+ * Unconditional within the task, and that is deliberate rather than careless.
+ * The column answers "does THIS completion have proof", and this one does not;
+ * a 'photos' left over from an earlier, superseded claim on the same task is a
+ * statement about a different moment. Nothing evidential is lost either way:
+ * the board and the inbox count `task_photos` at read time, which is what
+ * actually tells the manager whether there is anything to look at.
+ *
+ * Best-effort and never throws, for markTaskProofPhotos' reason, and like it
+ * this deliberately does NOT touch `status` — an update of status would fire
+ * tasks_supersede_review (0020) and supersede the claim it is about.
+ */
+export async function markTaskProofUnknown(
+  db: Db,
+  companyId: string,
+  taskId: string,
+): Promise<void> {
+  try {
+    await db
+      .from('tasks')
+      .update({ completion_proof: null })
+      .eq('id', taskId)
+      .eq('company_id', companyId);
+  } catch {
+    // Swallowed on purpose — see the note above.
+  }
+}

@@ -102,6 +102,16 @@ export interface HandleWorkerInboundOptions {
   locale: Locale;
   inbound: { channel: string; text: string; transcribed?: boolean };
   /**
+   * Meta's id (`wamid`) for the message being answered.
+   *
+   * REQUIRED, like `fallbackPhotos` is required on the context: the no-photo
+   * waiver (0049) counts DISTINCT inbound messages, so a caller that stopped
+   * passing this would make every tool call inside one turn look like a
+   * separate ask. That fails closed — decidePhotoWaiver refuses to advance the
+   * count on a blank id — but it fails silently, and a `tsc` error is better.
+   */
+  inboundMessageId: string;
+  /**
    * How many photos arrived with THIS message, already staged into the inbox by
    * the caller. A count, not the photos: what the turn works with is every
    * unattached photo in `worker_photo_inbox`, loaded below, which is a superset
@@ -133,7 +143,7 @@ export type WorkerTurnOutcome =
   | { outcome: 'budget_exhausted'; limit: 'worker' | 'company' };
 
 export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Promise<WorkerTurnOutcome> {
-  const { db, companyId, workerId, locale, inbound, inboundPhotos, sink } = opts;
+  const { db, companyId, workerId, locale, inbound, inboundMessageId, inboundPhotos, sink } = opts;
   const fallbackPhotos = opts.fallbackPhotos ?? [];
 
   // One clock — the same lisbon_today() task_board reads and the same one the
@@ -210,6 +220,7 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
     companyId,
     workerId,
     conversationId,
+    inboundMessageId,
     locale,
     scope,
     checkinId,
