@@ -29,7 +29,10 @@ people whose accounts had just been confirmed perfectly well. Their password
 worked. The app said the link was dead.
 
 That bug was only ever possible because a third party got to rewrite our link
-in between. Capo builds the link itself now, so it cannot come back:
+in between. Capo builds the link itself now, so it cannot come back
+(`/auth/confirm` also now validates its `next` destination against its own
+origin before redirecting there — see `apps/web/lib/safe-next.ts` — which
+closes a separate, unrelated redirect issue in the same route):
 
 ```
 {siteUrl}/auth/confirm?token_hash={hashed_token}&type={signup|magiclink|recovery}&next={/onboarding|/nova-password}

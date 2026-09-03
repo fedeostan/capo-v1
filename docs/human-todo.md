@@ -205,7 +205,10 @@ not code. See §2.
    Supabase's built-in mailer on purpose, so that a deploy landing before the
    key does not leave the product with no account emails at all. You can tell
    which path is live by grepping the logs for `auth_email.legacy_mailer`
-   (fallback) versus `auth_email.sent` (Resend).
+   (fallback) versus `auth_email.sent` (Resend). The mail-bombing throttle
+   (`auth_email_sends`, 0045) runs before that choice is even made, so
+   `/registar` and `/recuperar` are capped on the legacy path too — it is not
+   relying solely on GoTrue's own limits while the key is missing.
 3. Supabase dashboard → Authentication → URL Configuration: set Site URL to
    the production domain once known (see item 5), and add
    `https://<prod>/auth/confirm` and `https://<prod>/auth/callback` to

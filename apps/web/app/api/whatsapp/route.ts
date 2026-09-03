@@ -93,7 +93,7 @@ import { answerManagerHi, answerWorkerHi } from '../../notifications/welcome-hi'
 //   profiles → a MANAGER. The full agent loop (handleInbound), the full roster,
 //              the write guard, approval cards, persisted to `messages`.
 //   workers  → a WORKER. Since PRD 4 (issue #22) their text DOES reach a model
-//              — a second, restricted one (handleWorkerInbound) with four tools
+//              — a second, restricted one (handleWorkerInbound) with five tools
 //              and its own conversation tables. See handleWorkerReply.
 //
 // ── THE INVARIANT THAT CHANGED, AND THE ONE THAT REPLACED IT ────────────────

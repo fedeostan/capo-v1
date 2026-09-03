@@ -35,7 +35,7 @@ import {
 // nothing else.
 //
 // What is different here, and why:
-//   - a roster of four tools in their own type system, so a manager capability
+//   - a roster of five tools in their own type system, so a manager capability
 //     is a compile error rather than a review comment
 //   - its own conversation tables, so worker text can never become the evidence
 //     the manager's write guard reads (0027)

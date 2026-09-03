@@ -159,3 +159,11 @@ jobs:
       # pure, so no credentials.
       - name: Account email check
         run: pnpm email-check
+
+      # The no-photo waiver (0049): the rule that decides when a crew member may
+      # finish a task without a photo. Every way it can be wrong is silent — too
+      # loose and the mandatory-proof requirement quietly stops existing, too
+      # strict and a worker with no way to photograph anything is refused
+      # forever. Pure decision function, so no credentials.
+      - name: No-photo waiver check
+        run: pnpm waiver-check

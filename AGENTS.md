@@ -479,8 +479,18 @@ Structural invariants (do not regress):
     addresses to us but one inbox to Gmail. Deny-all posture
     (`notification_log`'s): RLS on, zero policies, every grant revoked, service
     role only. It carries NO `company_id`, so the RLS matrix's per-tenant sweep
-    does not reach it and correctly should not. The row is inserted AFTER Resend
-    accepts, never before.
+    does not reach it and correctly should not. The row is inserted AFTER
+    delivery accepts, never before.
+  - **The throttle check runs BEFORE `sendAuthEmail` picks Resend or the legacy
+    mailer, and that order is load-bearing.** It used to sit only on the Resend
+    branch, which meant that for as long as `RESEND_API_KEY` is unset (the live
+    production state as of this writing) `/registar` and `/recuperar` had no
+    application-level rate limit at all — the two unauthenticated,
+    arbitrary-address doors this table exists to bound. `sendThroughLegacyMailer`
+    now calls `recordSend` on every one of its three successes too, so the
+    counters this check reads actually grow on that path; without it, moving
+    the check earlier would refuse nothing, because the count would sit at zero
+    forever.
   - **The throttle read FAILS CLOSED, with exactly one exception: a MISSING
     TABLE.** 0045 ships before it is applied, so "table absent" must still send
     or nobody could confirm an email between the deploy and the migration
@@ -2555,13 +2565,17 @@ Structural invariants (do not regress):
     `task_assigned`, so that table's unique key caps it at ONE per crew member
     per day: a second assignment the same afternoon deliberately sends nothing,
     because the first template already asked for a reply and a reply opens the
-    free window. **`TASK_ASSIGNED_APPROVED_LANGUAGES` starts EMPTY** and the
-    template was submitted 3 Sep 2026 with all three locales PENDING review; a
-    locale is switched on by hand only once `whatsapp-template status` shows it
-    APPROVED. Until then an out-of-window crew member gets nothing extra and
-    tomorrow's briefing carries the task. ⚠ `whatsapp-template` needs
-    `WHATSAPP_WABA_ID=715247827972608` with the token in `.env.local`, or its
-    discovery step refuses and nothing is submitted. Runbook §6d.
+    free window. **`TASK_ASSIGNED_APPROVED_LANGUAGES` holds `pt_PT`, `es_ES` and
+    `en_US`, verified against the live WABA on 2026-09-03** (template ids
+    1859688468524905, 1603821794728431, 28806849452245917 respectively): the
+    template was submitted 3 Sep 2026 and all three locales came back APPROVED
+    the same day. A locale is only ever removed from the set by hand, once
+    `whatsapp-template status` shows it is no longer APPROVED, and removing one
+    falls back to silence for that locale — an out-of-window crew member gets
+    nothing extra and tomorrow's briefing still carries the task. ⚠
+    `whatsapp-template` needs `WHATSAPP_WABA_ID=715247827972608` with the token
+    in `.env.local`, or its discovery step refuses and nothing is submitted.
+    Runbook §6d.
   - **The QUEUE ROW is the lock on the free path.** Nothing free may go in
     `notification_log`, so rows are CLAIMED before the Graph call — one atomic
     `update ... set notified_at = now(), outcome = 'sending' where id in (...)
@@ -2594,10 +2608,14 @@ Structural invariants (do not regress):
     `notified_at` stays null, the next in-hours drain finds the task no longer
     starts today, and it is dropped as `not_today`, which is right because the
     07:00 briefing carries it.
-  - **Five in-request `after()` calls plus a `*/15` cron, and the cron is the
-    MECHANISM.** Same relationship `/api/cron/push` has with its producers: the
-    five calls make the message arrive in seconds, the sweep makes a forgotten
-    sixth door cost lateness rather than silence. It has NO hour gate of its own
+  - **Six in-request `after()` calls plus a `*/15` cron, and the cron is the
+    MECHANISM.** `apps/web/app/(app)/tarefas/[id]/assign-actions.ts` (×2 — assign
+    and setCollaborators), `apps/web/app/api/chat/route.ts` (×1),
+    `apps/web/app/api/whatsapp/route.ts` (×2 — card approval and manager turn),
+    `apps/web/app/api/proposals/[id]/route.ts` (×1). Same relationship
+    `/api/cron/push` has with its producers: the six calls make the message
+    arrive in seconds, the sweep makes a forgotten seventh door cost lateness
+    rather than silence. It has NO hour gate of its own
     — the quiet-hours rule belongs to the drain and stating it twice would let
     the two drift. The drain never throws, at any level, and opens its own
     service-role client like `dispatchPushes` so every call site stays one line.
