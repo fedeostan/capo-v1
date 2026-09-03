@@ -156,8 +156,13 @@ import {
   MIN_WORKER_TRANSCRIPT_CHARS,
   usableTranscript,
   WORKER_AUDIO_MAX_BYTES,
+  WORKER_VOCABULARY_SCOPE,
 } from '../apps/web/lib/worker-audio.ts';
-import { MAX_AUDIO_BYTES } from '@capo/core/transcription';
+import {
+  buildTranscriptionInstruction,
+  MAX_AUDIO_BYTES,
+  resolveTranscriptionVocabulary,
+} from '@capo/core/transcription';
 // CREW REQUESTS (issue #152). The urgency arithmetic and the two envelopes the
 // manager reads. Pure — `today` arrives as a string — which is what lets this
 // file pin the rule that replaces "the model decides how urgent this sounds",
@@ -185,6 +190,7 @@ import {
   REPORT_KEYWORDS,
   consentCommand,
   detailCommand,
+  keywordText,
   languageCommand,
   menuCommand,
   reportCommand,
@@ -3179,19 +3185,88 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   eq('a sentence is trimmed, not altered', usableTranscript('  acabei a pintura  '), 'acabei a pintura');
   eq('the floor is two characters', MIN_WORKER_TRANSCRIPT_CHARS, 2);
 
-  // ⚠ THE CONSEQUENCE, WRITTEN DOWN. A transcript never reaches the five
-  // deterministic keyword tables: all of them read `message.type === 'text'`
-  // and an audio message is not text, so a SPOKEN "stop" is answered by the
-  // agent rather than unsubscribing. That is the correct side of the trade -
-  // those tables exist so a model can never intercept a tap, and a transcript
-  // is already model output - but it must stay a decision rather than a
-  // surprise, so the words it applies to are named here.
+  // ── ⚠ THE CONSEQUENCE, PINNED AT THE SEAM THAT CAUSES IT ──────────────────
+  // Every deterministic keyword table is now reached through ONE function,
+  // `keywordText`, and these assertions are over that function rather than over
+  // the tables. That is the difference between testing the decision and merely
+  // restating it: a future change that routed a transcript into the keyword
+  // tables would have to make `keywordText` return something for a non-text
+  // message, and the next three lines fail the moment it does.
+  eq('a voice note yields NO keyword text', keywordText({ type: 'audio' }), undefined);
+  eq('nor does a photo', keywordText({ type: 'image' }), undefined);
+  eq('nor does a template button tap', keywordText({ type: 'button' }), undefined);
+  eq('typed text does', keywordText({ type: 'text', text: { body: 'stop' } }), 'stop');
+
+  // And the tables themselves are unchanged: a TYPED stop/menu/ES still
+  // resolves with zero model calls, which is the half of the trade that must
+  // never regress.
   check('the written STOP is still the unsubscribe', OPT_OUT_KEYWORDS.has('stop'));
   check('the written MENU is still the menu', MENU_KEYWORDS.has('menu'));
   check('the written ES is still the language switch', languageCommand('es') === 'es-ES');
-  // A voice note carries no `text` body at all, which is the mechanism: every
-  // one of those three tables is reached through `message.type === 'text'`.
-  check('a voice note has no text body for a keyword table to read', isWorkerAudioMessage({ type: 'audio', audio: { id: 'm3' } }));
+  // The five commands read `keywordText`'s answer, so a voice note reaching
+  // them is exactly as impossible as the four assertions above make it.
+  eq('a spoken "stop" resolves to no consent command', consentCommand(keywordText({ type: 'audio' })), null);
+  eq('a spoken "menu" resolves to no menu command', menuCommand(keywordText({ type: 'audio' })), false);
+  eq('a spoken "ES" resolves to no language command', languageCommand(keywordText({ type: 'audio' })), null);
+  eq('a spoken "ok" resolves to no detail command', detailCommand(keywordText({ type: 'audio' })), false);
+  eq('a spoken "bug" resolves to no report command', reportCommand(keywordText({ type: 'audio' })), null);
+}
+
+// ── the worker path transcribes with NO company vocabulary ──────────────────
+//
+// The manager paths steer Gemini with up to 50 crew names, 50 obra names and 40
+// learned terms for the tenant. That is their own data and it is the single
+// biggest lever on accuracy. The WORKER path may not have it: the crew prompt
+// is built around naming no other crew member, no other task and nothing about
+// the company's shape, and the audio there is chosen by whoever holds the
+// phone. A company-wide name list in the transcription instruction would put
+// that roster one prompt line away from an attacker-chosen payload.
+//
+// Asserting that `none` RETURNS an empty vocabulary would pass even if the
+// fetch still ran. What is asserted instead is that the database is never
+// asked, which is the property that actually matters.
+{
+  eq('the worker path asks for NO vocabulary', WORKER_VOCABULARY_SCOPE, 'none');
+
+  let touched: string[] = [];
+  const spyDb = {
+    from(table: string) {
+      touched.push(table);
+      const chain: Record<string, unknown> = {};
+      for (const m of ['select', 'eq', 'order', 'limit']) chain[m] = () => chain;
+      (chain as { then: unknown }).then = (resolve: (v: unknown) => void) => resolve({ data: [], error: null });
+      return chain;
+    },
+  } as unknown as Parameters<typeof resolveTranscriptionVocabulary>[0];
+
+  const none = await resolveTranscriptionVocabulary(spyDb, 'company-1', 'none');
+  eq('scope "none" reads NOTHING from the database', touched.length, 0);
+  check(
+    'and yields an empty vocabulary',
+    none.workerNames.length === 0 && none.jobNames.length === 0 && none.learnedTerms.length === 0,
+  );
+
+  // The positive control. Without it, a `resolveTranscriptionVocabulary` that
+  // had been broken into reading nothing at all would pass the check above and
+  // silently cost the MANAGER path its accuracy.
+  touched = [];
+  await resolveTranscriptionVocabulary(spyDb, 'company-1', 'company');
+  check(
+    'scope "company" still reads the three vocabulary sources',
+    touched.includes('workers') && touched.includes('jobs') && touched.includes('transcription_vocab'),
+    touched.join(', '),
+  );
+
+  // And the instruction built from an empty vocabulary carries no name lines at
+  // all - not an empty "Nomes prováveis:" heading with nothing after it.
+  for (const locale of LOCALES) {
+    const instruction = buildTranscriptionInstruction(locale, none);
+    check(
+      `${locale}: an empty vocabulary produces no name hints in the instruction`,
+      !/prov[áa]ve(is|les)|Likely (worker|job) names|Termos|Términos|Terms and names/u.test(instruction),
+    );
+    check(`${locale}: while the language and glossary lines survive`, instruction.length > 100);
+  }
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

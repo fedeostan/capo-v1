@@ -1,6 +1,6 @@
 import type { Db } from '@capo/db/client';
 import type { Locale } from '@capo/i18n/locale';
-import { MAX_AUDIO_BYTES, transcribeAudio } from '@capo/core/transcription';
+import { MAX_AUDIO_BYTES, transcribeAudio, type VocabularyScope } from '@capo/core/transcription';
 import { downloadMedia } from '@capo/core/channels/whatsapp-media';
 
 // A CREW MEMBER's voice note, turned into the text they would have typed.
@@ -14,9 +14,19 @@ import { downloadMedia } from '@capo/core/channels/whatsapp-media';
 // and gloves on, and what they got for a voice note was the generic
 // acknowledgement written for a sticker. Silence dressed as politeness.
 //
-// The cost is real and is bounded by the same two things that already bound a
-// worker turn: the daily budget, read before anything expensive in
-// handleWorkerInbound, and MAX_AUDIO_BYTES below.
+// ── THE COST IS BOUNDED BY THE BUDGET, AND THAT IS STRUCTURAL ──────────────
+// `transcribeWorkerAudio` is NOT called by the route directly. It is handed to
+// `handleWorkerInbound` as a callback and invoked there, BELOW the daily budget
+// read and above everything else, so a crew member whose cap is already spent
+// pays for no download and no Gemini call - the property worker-core.ts has
+// always claimed and which an eager transcription in the route would have
+// quietly broken. See `inbound.transcribe` in packages/core/src/agent/worker-core.ts.
+//
+// A transcription that FAILS still consumes one unit of that budget: the turn
+// persists a short marker line of OUR OWN copy in place of the transcript.
+// Otherwise a failing voice note is free forever, and "free forever" plus
+// "attacker chooses how often it arrives" is the cost amplifier the cap exists
+// to prevent. The other bound is MAX_AUDIO_BYTES below.
 //
 // ── WHAT A TRANSCRIPT IS, AND IS NOT ───────────────────────────────────────
 // It is worker-authored text. It lands in `worker_messages` exactly as a typed
@@ -34,6 +44,22 @@ import { downloadMedia } from '@capo/core/channels/whatsapp-media';
 //
 // Everything above `transcribeWorkerAudio` is pure and takes no clock, no
 // network and no Db, which is what lets `pnpm whatsapp-check` pin it.
+
+/**
+ * NO VOCABULARY, and this is a boundary rather than a tuning choice.
+ *
+ * The manager paths steer Gemini with their own company's crew names, obra
+ * names and learned terms, which is the single biggest lever on accuracy. The
+ * worker path may not: the crew prompt is built around giving a worker nothing
+ * that names another crew member, another task or the company's shape, and the
+ * audio here is chosen by whoever holds the phone. Putting the roster one
+ * prompt line away from an attacker-chosen payload would move that boundary
+ * from the type system into a sentence, which this repository does not do.
+ *
+ * Named as a constant rather than written inline at the call site so
+ * `pnpm whatsapp-check` has something to assert about it.
+ */
+export const WORKER_VOCABULARY_SCOPE: VocabularyScope = 'none';
 
 /**
  * The size cap is the MANAGER path's, deliberately the same constant rather
@@ -69,10 +95,9 @@ const ALPHANUMERIC = /[\p{L}\p{N}]/u;
  * to everything downstream. A message with no media id is one Meta can send and
  * nothing can be downloaded from, so it is not audio for our purposes.
  */
-export function isWorkerAudioMessage(message: {
-  type: string;
-  audio?: { id: string; voice?: boolean };
-}): boolean {
+export function isWorkerAudioMessage<M extends { type: string; audio?: { id: string; voice?: boolean } }>(
+  message: M,
+): message is M & { audio: { id: string; voice?: boolean } } {
   return message.type === 'audio' && !!message.audio?.id;
 }
 
@@ -118,6 +143,12 @@ export interface TranscribeWorkerAudioInput {
  * function exists to end, so it must not be able to reintroduce it by
  * exploding on the way.
  *
+ * ⚠ CALL IT ONLY FROM BELOW THE BUDGET READ. It is passed to
+ * `handleWorkerInbound` as `inbound.transcribe` precisely so the one place that
+ * knows whether this crew member may spend anything today is the one place that
+ * decides whether this runs. Calling it from the route again would restore the
+ * unmetered path this shape exists to close.
+ *
  * ── THE LEDGER LINE ─────────────────────────────────────────────────────────
  * The spend is filed against `{ kind: 'worker', workerId }` on surface
  * `worker_chat`: a crew member's message cost this, and it is part of what
@@ -147,6 +178,7 @@ export async function transcribeWorkerAudio(input: TranscribeWorkerAudioInput): 
       audio: audio.bytes,
       mediaType: audio.mediaType,
       usage: { actor: { kind: 'worker', workerId: input.workerId }, surface: 'worker_chat' },
+      vocabulary: WORKER_VOCABULARY_SCOPE,
     });
   } catch (err) {
     return { ok: false, reason: 'transcribe', error: err instanceof Error ? err.message : String(err) };

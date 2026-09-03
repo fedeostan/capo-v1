@@ -23,7 +23,48 @@ export interface TranscriptionVocabulary {
   learnedTerms: string[];
 }
 
-const EMPTY_VOCABULARY: TranscriptionVocabulary = { workerNames: [], jobNames: [], learnedTerms: [] };
+export const EMPTY_VOCABULARY: TranscriptionVocabulary = { workerNames: [], jobNames: [], learnedTerms: [] };
+
+/**
+ * WHOSE vocabulary a transcription may be steered with. Required on every call
+ * rather than optional, and that is the whole point: the safe default here is
+ * not the convenient one, so nobody gets it by forgetting.
+ *
+ * `company` loads up to 50 crew names, 50 obra names and 40 learned terms for
+ * the tenant and puts them in the instruction. That is right for a MANAGER: it
+ * is their own company's data, already theirs, and it is the single biggest
+ * lever on transcription accuracy.
+ *
+ * `none` loads nothing. It exists for the WORKER path, and the reason is the
+ * boundary the whole crew agent is built around: a worker's prompt is
+ * deliberately given nothing that names another crew member, another task or
+ * the company's shape (agent/worker-context.ts). The audio on that path is
+ * chosen by whoever is holding the phone, so a company-wide name list in the
+ * instruction would put exactly that data one prompt line away from an
+ * attacker-chosen payload, with only "return only the transcribed text"
+ * standing between them. A prompt line is not a boundary in this repository.
+ *
+ * The cost is stated rather than hidden: a crew member's voice note is
+ * transcribed without name hints, so an unusual obra name comes back as a
+ * homophone. That is a worse transcript, never a leak.
+ */
+export type VocabularyScope = 'company' | 'none';
+
+/**
+ * Exported and pure-ish (one optional read) so `pnpm whatsapp-check` can drive
+ * it with a Db that records whether it was touched at all. Asserting that
+ * `none` returns an empty vocabulary would pass even if the fetch still ran;
+ * asserting the database was never asked is the real property.
+ */
+export async function resolveTranscriptionVocabulary(
+  db: Db,
+  companyId: string,
+  scope: VocabularyScope,
+): Promise<TranscriptionVocabulary> {
+  if (scope === 'none') return EMPTY_VOCABULARY;
+  // Best-effort even for a manager: a transcription without name hints beats a 500.
+  return fetchTranscriptionVocabulary(db, companyId).catch(() => EMPTY_VOCABULARY);
+}
 
 interface TranscriptionCopy {
   languageLine: string;
@@ -143,12 +184,18 @@ export interface TranscribeAudioInput {
    * under a manager's line on the dashboard with no error anywhere.
    */
   usage?: { actor: UsageActor; surface: UsageSurface };
+  /**
+   * REQUIRED, and deliberately not defaulted. See `VocabularyScope`: the
+   * convenient value is the unsafe one on the worker path, so every caller has
+   * to say which of the two it is and a new caller cannot inherit the wrong one
+   * by omission.
+   */
+  vocabulary: VocabularyScope;
 }
 
 /** Returns the trimmed transcript, or '' when there was no discernible speech. */
 export async function transcribeAudio(input: TranscribeAudioInput): Promise<string> {
-  // Vocabulary is best-effort: a transcription without name hints beats a 500.
-  const vocab = await fetchTranscriptionVocabulary(input.db, input.companyId).catch(() => EMPTY_VOCABULARY);
+  const vocab = await resolveTranscriptionVocabulary(input.db, input.companyId, input.vocabulary);
 
   const { text } = await generateText({
     model: getModel('transcription', {

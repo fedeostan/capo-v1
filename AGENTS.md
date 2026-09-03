@@ -2079,16 +2079,48 @@ Structural invariants (do not regress):
   - **A transcript is worker-authored text and nothing more.** It lands in
     `worker_messages` exactly as a typed message would, and NOWHERE else —
     never `messages`, a summary, a memory or a proposal (0027).
+  - **THE TRANSCRIPTION HAPPENS BELOW THE DAILY BUDGET, and that is why
+    `inbound.transcribe` is a CALLBACK rather than a string.** The caller cannot
+    know whether this crew member has any allowance left without the two counted
+    queries inside `handleWorkerInbound`, so a route that transcribed first and
+    passed the text would pay for a media download plus a Gemini call on every
+    voice note from an exhausted worker, for ever, while `worker-core.ts` went
+    on claiming "an exhausted worker costs two counted queries and nothing
+    else". Handing in the RECIPE instead of the RESULT is what keeps that
+    sentence true. Never call `transcribeWorkerAudio` from the route.
+  - **A FAILED transcription consumes one unit of budget**, by persisting
+    `UNINTELLIGIBLE_AUDIO_TEXT` — our own copy, PHOTO_ONLY_TEXT's shape — in
+    place of the transcript. `readWorkerBudget` counts `role='user'` rows, so a
+    failure that wrote nothing would be free to repeat for ever on the one path
+    where somebody hostile chooses both the payload and how often it arrives.
+    The Gemini call was made; one unit is the honest price.
   - **⚠ THE KEYWORD TABLES DO NOT RUN ON IT.** All five (STOP/START, the report
-    keyword, PT/ES/EN, MENU, OK) are reached through `message.type === 'text'`,
-    so a SPOKEN "stop" reaches the agent instead of unsubscribing. That is the
-    correct side of the trade — those tables exist so a MODEL can never
-    intercept a tap, and a transcript is already model output — but it is a
-    decision, and the written STOP remains the unsubscribe Meta requires.
-    `pnpm whatsapp-check` pins it.
+    keyword, PT/ES/EN, MENU, OK) are reached through ONE seam, `keywordText` in
+    `apps/web/lib/worker-keywords.ts`, which answers `undefined` for anything
+    that is not typed text — so a SPOKEN "stop" reaches the agent instead of
+    unsubscribing, and an armed problem report (`problem_report_requests`) is
+    not consumed by a voice note either. That is the correct side of the trade
+    — those tables exist so a MODEL can never intercept a tap, and a transcript
+    is already model output — but it is a decision, and the written STOP remains
+    the unsubscribe Meta requires. `pnpm whatsapp-check` asserts it AT THAT
+    SEAM: a change that let a transcript through would have to make
+    `keywordText` return something for a non-text message, and the check fails
+    the moment it does.
   - **ONE size cap, shared with the manager path.** `WORKER_AUDIO_MAX_BYTES` IS
     `MAX_AUDIO_BYTES`; two numbers would drift into a voice note refused at a
     size a manager's is accepted at, with nothing saying why.
+  - **⚠ THE WORKER PATH TRANSCRIBES WITH NO COMPANY VOCABULARY.**
+    `TranscribeAudioInput.vocabulary` is a REQUIRED `'company' | 'none'`, never
+    optional and never defaulted, because the convenient value is the unsafe one
+    here. `'company'` injects up to 50 crew names, 50 obra names and 40 learned
+    terms into the transcription instruction — right for a manager, whose own
+    data it is, and the single biggest lever on accuracy. On the crew path the
+    audio is chosen by whoever holds the phone, and the worker prompt is built
+    around naming no other crew member, no other task and nothing of the
+    company's shape (`worker-context.ts`); a roster one prompt line away from an
+    attacker-chosen payload would move that boundary into a sentence. The cost
+    is a worse transcript, never a leak. `whatsapp-check` asserts scope `none`
+    reads NOTHING from the database, with a positive control on `'company'`.
   - **The spend is filed against `{ kind: 'worker', workerId }` on surface
     `worker_chat`**, through `transcribeAudio`'s optional `usage` override.
     Actor and surface travel together in ONE object on purpose: setting the
