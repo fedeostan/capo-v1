@@ -951,6 +951,14 @@ const dict: Catalog = {
     reportAck: 'Recibido, gracias. Queda registrado para que el equipo de Capo le eche un vistazo.',
     reportFailed: 'No he podido registrar tu aviso ahora. Inténtalo otra vez en un rato.',
     workerAudioFailed: 'No he podido escuchar el audio. Escríbemelo mejor.',
+    photoBatchAsk: count =>
+      count === 1
+        ? 'Recibida la foto. ¿Quieres mandar alguna más o ya está?'
+        : `Ya tengo ${count} fotos tuyas. ¿Alguna más o ya está?`,
+    photoBatchMoreButton: 'Más fotos',
+    photoBatchDoneButton: 'Ya está',
+    photoBatchMoreAck: 'Vale, mándala.',
+    photoBatchNone: 'No tengo fotos tuyas esperando. Manda la foto y dime de qué tarea es.',
   },
 
   dia: {

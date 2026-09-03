@@ -11,6 +11,7 @@ import type { Locale } from '@capo/i18n/locale';
 import type { OutboundSink } from '../channels/types';
 import { toWorkerAiTools } from '../capabilities/worker';
 import type { PendingPhoto, WorkerContext } from '../capabilities/worker/types';
+import { loadInboxPhotos } from '../media/photo-inbox';
 import { loadWorkerTasks } from '../capabilities/worker/tasks';
 import { withToolCacheBreakpoint } from './cache';
 import { buildWorkerSystemPrompt, loadWorkerIdentity } from './worker-context';
@@ -89,6 +90,23 @@ const PHOTO_ONLY_TEXT = '(photo, no message)';
  */
 const UNINTELLIGIBLE_AUDIO_TEXT = '(voice note, could not be heard)';
 
+/**
+ * What the "that is everything" tap says.
+ *
+ * A crew member who sends photos one at a time is asked, after each one,
+ * whether more are coming (the deterministic branch in the WhatsApp route). The
+ * tap that ends the batch carries no words at all, so the turn needs a sentence
+ * to be about. Written by us, in English, exactly like PHOTO_ONLY_TEXT above,
+ * and stored verbatim so a manager scrolling the thread later reads something
+ * true: photos arrived, nothing was said.
+ *
+ * It is deliberately a plain statement of fact rather than an instruction. The
+ * model still has to work out which task they mean, and ask if it cannot.
+ */
+export function allPhotosSentText(count: number): string {
+  return `(${count} photo(s) sent, that is all of them)`;
+}
+
 export interface HandleWorkerInboundOptions {
   /** ALWAYS the service role. There is no session on this path. */
   db: Db;
@@ -123,8 +141,29 @@ export interface HandleWorkerInboundOptions {
      */
     transcribe?: () => Promise<string | null>;
   };
-  /** Downloaded in the webhook and held in memory for this turn only. */
-  photos: readonly PendingPhoto[];
+  /**
+   * How many photos arrived with THIS message, already staged into the inbox by
+   * the caller. A count, not the photos: what the turn works with is every
+   * unattached photo in `worker_photo_inbox`, loaded below, which is a superset
+   * of this one and is the whole point of 0047.
+   *
+   * It is still needed for two things this number alone answers: whether an
+   * empty message was a bare photo (PHOTO_ONLY_TEXT), and what the persisted
+   * `worker_messages` row records about the message itself.
+   */
+  inboundPhotos: number;
+  /**
+   * Bytes the caller downloaded but could NOT stage (0047 unapplied, or a
+   * Storage refusal). Normally empty.
+   *
+   * They are shown to the model alongside the staged ones and written by the
+   * pre-0047 writer if a task claims them, so the window between deploying 0047
+   * and applying it is not a window in which every crew photo is lost. Left
+   * OPTIONAL here and required on `WorkerContext`: a caller with nothing to
+   * fall back on is the normal case, while a TOOL that forgot the field would
+   * drop photos silently.
+   */
+  fallbackPhotos?: readonly PendingPhoto[];
   sink: OutboundSink;
 }
 
@@ -140,7 +179,8 @@ export type WorkerTurnOutcome =
   | { outcome: 'unintelligible' };
 
 export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Promise<WorkerTurnOutcome> {
-  const { db, companyId, workerId, locale, inbound, photos, sink } = opts;
+  const { db, companyId, workerId, locale, inbound, inboundPhotos, sink } = opts;
+  const fallbackPhotos = opts.fallbackPhotos ?? [];
 
   // One clock — the same lisbon_today() task_board reads and the same one the
   // database stamps onto worker_messages.usage_date. Reading it here rather
@@ -227,10 +267,27 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
   ]);
   const scope = { taskIds: tasks.map(t => t.id) as readonly string[] };
 
-  const text = (spoken ?? inbound.text).trim();
-  const body = (text || (photos.length > 0 ? PHOTO_ONLY_TEXT : '')).slice(0, MAX_INBOUND_CHARS);
+  // Every photo this person has sent that no task has claimed yet, read fresh
+  // from the inbox (0047). NOT this message's photos: that was the old shape,
+  // and it is why a photo sent on its own and explained a minute later was
+  // already gone. Ids and times only; the bytes are never loaded and never
+  // shown to a model.
+  const staged = await loadInboxPhotos(db, companyId, workerId, Date.now());
+  // Unstaged bytes join the SAME list, at the end, so the model sees one set of
+  // photos and cannot tell which mechanism is holding them. They carry this
+  // turn's clock as their arrival time, which is true: they arrived with this
+  // message and they do not outlive it.
+  const pendingPhotos = [
+    ...staged,
+    ...fallbackPhotos.map(p => ({ id: p.id, receivedAt: new Date().toISOString() })),
+  ];
 
-  await persistWorkerUserMessage(db, target, body, photos.length);
+  // The spoken transcript when this was a voice note (W4), the typed text
+  // otherwise. Either way it is the message this turn is about.
+  const text = (spoken ?? inbound.text).trim();
+  const body = (text || (inboundPhotos > 0 ? PHOTO_ONLY_TEXT : '')).slice(0, MAX_INBOUND_CHARS);
+
+  await persistWorkerUserMessage(db, target, body, inboundPhotos);
   const uiMessages = await loadWorkerWindow(db, conversationId, checkinId);
 
   const ctx: WorkerContext = {
@@ -241,7 +298,8 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
     locale,
     scope,
     checkinId,
-    pendingPhotos: photos,
+    pendingPhotos,
+    unstagedPhotos: fallbackPhotos,
     budget: budget.remaining,
   };
 
@@ -263,7 +321,7 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
       surface: 'worker_chat',
       actor: { kind: 'worker', workerId },
     }),
-    instructions: await buildWorkerSystemPrompt({ db, locale, today, tasks, pendingPhotos: photos, identity }),
+    instructions: await buildWorkerSystemPrompt({ db, locale, today, tasks, pendingPhotos, identity }),
     tools: withToolCacheBreakpoint(toWorkerAiTools(ctx)),
     stopWhen: stepCountIs(WORKER_STEPS),
   });

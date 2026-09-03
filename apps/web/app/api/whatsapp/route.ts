@@ -1,8 +1,8 @@
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { after, NextResponse, type NextRequest } from 'next/server';
 import { getDb, type Db } from '@capo/db/client';
 import { handleInbound } from '@capo/core/agent';
-import { handleWorkerInbound } from '@capo/core/agent/worker';
+import { allPhotosSentText, handleWorkerInbound } from '@capo/core/agent/worker';
 import type { PendingPhoto } from '@capo/core/capabilities/worker';
 import { MAX_AUDIO_BYTES, transcribeAudio } from '@capo/core/transcription';
 import { coerceConfirmPosture } from '@capo/db/posture';
@@ -11,6 +11,7 @@ import { getCatalog } from '@capo/i18n/catalog';
 import {
   isBsuid,
   parseCheckinPayload,
+  parsePhotoBatchPayload,
   parseProposalButtonId,
   parseWorkerMenuRowId,
   readSender,
@@ -29,8 +30,12 @@ import {
 } from '@capo/core/channels/whatsapp';
 import { resolveProposal } from '@capo/core/capabilities/propose';
 import { downloadMedia } from '@capo/core/channels/whatsapp-media';
-import { TASK_PHOTO_MAX_BYTES, isTaskPhotoMime } from '@capo/core/media/photos';
-import { markTaskProofPhotos, storeWorkerTaskPhoto } from '@capo/core/media/task-photo-store';
+import { loadInboxPhotos, type InboxPhoto } from '@capo/core/media/photo-inbox';
+import {
+  attachInboxPhotos,
+  markTaskProofPhotos,
+  storeWorkerTaskPhoto,
+} from '@capo/core/media/task-photo-store';
 import { getBillingState } from '../../../lib/billing';
 import {
   checkinDoneAck,
@@ -44,6 +49,7 @@ import {
   nextPhotoTaskId,
   photoRequestExpiry,
   photoRequestLive,
+  photosSinceRequest,
   type ClaimResult,
 } from '../../../lib/checkin-photo';
 import { dayLinkUrl, mintDayLinks } from '../../../lib/day-link';
@@ -52,6 +58,7 @@ import { siteUrl } from '../../../lib/site-url';
 import { handleProblemReportMessage } from '../../../lib/problem-report-flow';
 import { consentCommand, detailCommand, keywordText, languageCommand, menuCommand } from '../../../lib/worker-keywords';
 import { isWorkerAudioMessage, transcribeWorkerAudio, type WorkerAudioFailure } from '../../../lib/worker-audio';
+import { askAboutMorePhotos, stageInboundPhoto, type StagedPhoto } from '../../../lib/worker-photo-inbox';
 import {
   buildWorkerMenu,
   findWorkerTask,
@@ -1014,11 +1021,14 @@ async function openPhotoFollowUp(
 }
 
 /**
- * An inbound photo answering that request.
+ * Photos answering that request.
  *
- * Returns true when the photo was taken in AND the worker answered; false to
- * fall through to the restricted agent, which is where a photo with no open
- * request goes — unchanged behaviour for everybody who never tapped.
+ * Returns true when there was an open request AND the crew member has been
+ * answered; false to fall through, which since 0047 means one of two things:
+ * for a bare photo, the "more photos or is that everything?" prompt, and for
+ * the "that is everything" tap, the agent working out which task they mean.
+ * Everybody who never tapped a check-in reaches this and falls straight
+ * through, exactly as they always have.
  *
  * NO MODEL IS INVOLVED, in either direction, and that is the point: which task
  * the photo belongs to was decided by the message Capo itself sent minutes
@@ -1027,17 +1037,33 @@ async function openPhotoFollowUp(
  * pass here would be a prompt-injection surface with nothing in front of it
  * (0023, AGENTS.md).
  *
- * The photo is downloaded only AFTER a target is confirmed. Meta's media URL is
- * short-lived and single-use, so a download with nowhere to put the result is
- * both wasted and unrepeatable.
+ * The photos are ALREADY downloaded and staged by the time this runs (0047),
+ * which reverses the old ordering. That ordering existed because Meta's media
+ * URL is short-lived and effectively single-use, so a download with nowhere to
+ * put the result was wasted and unrepeatable; staging gives it somewhere to go
+ * unconditionally, and the failure it guarded against (a photo downloaded and
+ * then dropped) is exactly what this migration exists to stop.
  */
+/**
+ * Where the photos this request is about are sitting.
+ *
+ * `inbox` is the normal case since 0047: they are already in Storage and get
+ * MOVED into the task's folder. `bytes` is the FALLBACK, and the pre-0047
+ * behaviour: staging failed (0047 unapplied, or a Storage refusal) and the
+ * caller still has what it downloaded, so the photo is written straight to the
+ * task exactly as it was before this feature existed. A photo the old product
+ * would have kept must never be lost by the change meant to stop losing photos.
+ */
+type CheckinPhotoSource =
+  | { kind: 'inbox'; photos: readonly InboxPhoto[] }
+  | { kind: 'bytes'; photo: PendingPhoto };
+
 async function handleCheckinPhoto(
   db: Db,
-  message: WhatsAppMessage,
+  source: CheckinPhotoSource,
   worker: WorkerMatch,
   locale: Locale,
   sendConfig: WhatsAppSendConfig,
-  accessToken: string,
 ): Promise<boolean> {
   const t = getCatalog(locale).whatsapp;
 
@@ -1047,7 +1073,7 @@ async function handleCheckinPhoto(
   // there is nothing to pick between.
   const { data: request, error } = await db
     .from('checkin_photo_requests')
-    .select('id, task_ids, next_index, photos_received, expires_at')
+    .select('id, task_ids, next_index, photos_received, expires_at, created_at')
     .eq('worker_id', worker.id)
     .eq('company_id', worker.company_id)
     .is('closed_at', null)
@@ -1075,6 +1101,18 @@ async function handleCheckinPhoto(
     return false;
   }
 
+  // ── ONLY PHOTOS THAT ARRIVED AFTER THIS REQUEST OPENED ────────────────────
+  // Since 0047 a crew member can be holding photos from earlier in the day, and
+  // "É tudo" tapped on an old message would otherwise file a 15:00 photo of
+  // another job as proof of the task this 16:00 request happens to be asking
+  // about. That is #52's own worst case: wrong evidence, permanent, with no
+  // DELETE policy anywhere. The older photos stay in the inbox and the agent
+  // path can still put them where the crew member says they go.
+  //
+  // Computed BEFORE seekPhotoTarget so an empty result changes nothing at all.
+  const eligible = source.kind === 'inbox' ? photosSinceRequest(source.photos, request.created_at) : null;
+  if (eligible && eligible.length === 0) return false;
+
   const search = await seekPhotoTarget(db, worker, taskIds, request.next_index);
   // A read failure leaves the request EXACTLY as it was and falls through: the
   // photo goes to the agent this once, and the next one tries again. Only
@@ -1087,23 +1125,35 @@ async function handleCheckinPhoto(
   }
   const target = search.target;
 
-  const { photos, failed } = await takeInboundPhotos(message, worker, accessToken);
-  const photo = photos[0];
-  if (failed || !photo) {
-    // The cursor does NOT move. The worker is standing there holding the phone
-    // that took it, and the honest thing is to let them send it again against
-    // the same task.
-    await sendWhatsAppText(t.workerPhotoFailed, sendConfig).catch(() => {});
-    return true;
+  // The photo is already in the inbox. Attaching MOVES it into this task's
+  // folder and writes the `task_photos` row that makes it evidence, through the
+  // one writer that has always written those rows. The company and worker
+  // filters inside it are both phone-derived, so a photo id that is not this
+  // crew member's own resolves to nothing.
+  // Two writers, one attribution: both end at the same row-insert helper inside
+  // media/task-photo-store, so a `source: 'worker'` row means the same thing
+  // whichever of them wrote it.
+  let attached: number;
+  if (source.kind === 'bytes') {
+    const path = await storeWorkerTaskPhoto(db, {
+      companyId: worker.company_id,
+      taskId: target.id,
+      workerId: worker.id,
+      photo: source.photo,
+    });
+    attached = path ? 1 : 0;
+  } else {
+    ({ attached } = await attachInboxPhotos(db, {
+      photoIds: (eligible ?? []).map(p => p.id),
+      taskId: target.id,
+      companyId: worker.company_id,
+      workerId: worker.id,
+    }));
   }
-
-  const stored = await storeWorkerTaskPhoto(db, {
-    companyId: worker.company_id,
-    taskId: target.id,
-    workerId: worker.id,
-    photo,
-  });
-  if (!stored) {
+  if (attached === 0) {
+    // The cursor does NOT move. The photo is still in the inbox and still
+    // offered to the agent, so nothing is lost by asking them to try again
+    // against the same task.
     logEvent('whatsapp.checkin_photo_store_failed', {
       companyId: worker.company_id,
       workerId: worker.id,
@@ -1124,7 +1174,7 @@ async function handleCheckinPhoto(
     taskId: target.id,
   });
 
-  const photosReceived = request.photos_received + 1;
+  const photosReceived = request.photos_received + attached;
   const next = await seekPhotoTarget(db, worker, taskIds, target.index + 1);
   if (next.kind === 'found') {
     const { error: moveError } = await db
@@ -1451,6 +1501,91 @@ async function handleWorkerMenuTap(
 }
 
 /**
+ * "More photos" / "That is everything" — the two buttons Capo sends after a
+ * bare photo (0047).
+ *
+ * Returns true when it was one of ours AND the crew member has been answered;
+ * false to fall through, which is where a malformed or foreign payload goes.
+ *
+ * ── WHY THERE IS A DETERMINISTIC BRANCH HERE AT ALL ────────────────────────
+ * A photo with no words used to reach the model, which had no way to know which
+ * job it showed and so asked. The question was right and the timing was fatal:
+ * the bytes lived for one turn, so the answer arrived after the photo had gone.
+ * Now the photo is kept, and the question Capo asks first is the one it can act
+ * on without a model at all: is another one coming.
+ *
+ * ── "THAT IS EVERYTHING" HAS TWO ENDINGS ───────────────────────────────────
+ * If a check-in request is open, the task is already known (Capo named it
+ * minutes ago) and every waiting photo is attached to it with no model
+ * anywhere, exactly as a bare photo would have been. Otherwise the agent runs,
+ * because working out which of this person's tasks they mean is the one part of
+ * this that genuinely needs judgement, and it is now safe to spend a turn on:
+ * the photos are not going anywhere.
+ *
+ * The payload carries no id. Which photos this settles comes from the crew
+ * member's own phone-derived worker id and never from the tap.
+ */
+async function handlePhotoBatchTap(
+  db: Db,
+  message: WhatsAppMessage,
+  worker: WorkerMatch,
+  locale: Locale,
+  sendConfig: WhatsAppSendConfig,
+): Promise<boolean> {
+  const buttonReply = message.interactive?.button_reply;
+  if (!buttonReply) return false;
+  const answer = parsePhotoBatchPayload(buttonReply.id);
+  if (!answer) return false;
+
+  const t = getCatalog(locale).whatsapp;
+
+  if (answer === 'more') {
+    // One line, nothing else. They are holding a phone in one hand on a
+    // building site, and the next thing that should happen is another photo.
+    logEvent('whatsapp.worker_photo_batch_more', { companyId: worker.company_id, workerId: worker.id });
+    await sendWhatsAppText(t.photoBatchMoreAck, sendConfig).catch(() => {});
+    return true;
+  }
+
+  const waiting = await loadInboxPhotos(db, worker.company_id, worker.id, Date.now());
+  if (waiting.length === 0) {
+    // Already attached, or expired. Says what to do rather than what went
+    // wrong: the likeliest reader tapped an old message.
+    logEvent('whatsapp.worker_photo_batch_empty', { companyId: worker.company_id, workerId: worker.id });
+    await sendWhatsAppText(t.photoBatchNone, sendConfig).catch(() => {});
+    return true;
+  }
+
+  // The whole waiting set is offered; handleCheckinPhoto narrows it to the
+  // photos that arrived AFTER its request opened, and refuses the request
+  // entirely when none did. An older batch therefore stays in the inbox for the
+  // agent path rather than becoming proof of a task it has nothing to do with.
+  if (await handleCheckinPhoto(db, { kind: 'inbox', photos: waiting }, worker, locale, sendConfig)) {
+    logEvent('whatsapp.worker_photo_batch_claimed', {
+      companyId: worker.company_id,
+      workerId: worker.id,
+      photos: waiting.length,
+    });
+    return true;
+  }
+
+  // No open request, so which task these are of is a real question. The turn
+  // runs on a sentence of OUR own words rather than on the worker's, because a
+  // tap carries none, and the model sees the same waiting photos in its
+  // "# Photos received" block.
+  logEvent('whatsapp.worker_photo_batch_to_agent', {
+    companyId: worker.company_id,
+    workerId: worker.id,
+    photos: waiting.length,
+  });
+  await runWorkerTurn(db, message, worker, locale, sendConfig, {
+    inboundPhotos: 0,
+    overrideText: allPhotosSentText(waiting.length),
+  });
+  return true;
+}
+
+/**
  * Send the guided menu because the worker ASKED for it (AJUDA, MENU, ?).
  *
  * Free, and free by SHAPE rather than by policy: an interactive message is a
@@ -1606,68 +1741,6 @@ async function sendWorkerDayDetail(
 }
 
 /**
- * Take in the photos attached to ONE inbound message.
- *
- * Downloaded synchronously, here and now, exactly as audio is: hop 1's media
- * URL lasts ~5 minutes, is effectively single-use, and still requires the
- * Authorization header. There is no retry and nothing is persisted at this
- * point — the bytes are held in memory for the duration of the turn, because a
- * task photo's object key contains the TASK id and the task is not known until
- * `declare_task_done` names one.
- *
- * TASK_PHOTO_MAX_BYTES rather than downloadMedia's 16 MiB default. One constant
- * bounds both intake paths (the manager's browser upload and this one) and it
- * matches Meta's own 5 MiB cap for an inbound image, which is what makes it the
- * right number rather than a convenient one.
- *
- * Returns an empty array on any failure. The caller then runs the turn anyway
- * with no photos, and the agent asks for the photo again — which is far better
- * than dropping the message, because the worker also wrote something.
- */
-async function takeInboundPhotos(
-  message: WhatsAppMessage,
-  worker: { id: string; company_id: string },
-  accessToken: string,
-): Promise<{ photos: PendingPhoto[]; failed: boolean }> {
-  if (message.type !== 'image' || !message.image?.id) return { photos: [], failed: false };
-
-  try {
-    const media = await downloadMedia(message.image.id, { accessToken, maxBytes: TASK_PHOTO_MAX_BYTES });
-    if (!isTaskPhotoMime(media.mediaType)) {
-      logEvent('whatsapp.worker_photo_rejected', {
-        companyId: worker.company_id,
-        workerId: worker.id,
-        messageId: message.id,
-        mediaType: media.mediaType,
-      });
-      return { photos: [], failed: true };
-    }
-    return {
-      photos: [
-        {
-          // Ours, not Meta's media id. The id is handed to the model, and a
-          // Graph API media id in a model's context is a value it could later
-          // emit somewhere it should not be.
-          id: randomUUID(),
-          mime: media.mediaType,
-          bytes: media.bytes,
-          byteSize: media.byteLength,
-        },
-      ],
-      failed: false,
-    };
-  } catch (err) {
-    logEvent('whatsapp.worker_photo_failed', {
-      companyId: worker.company_id,
-      workerId: worker.id,
-      messageId: message.id,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return { photos: [], failed: true };
-  }
-}
-
-/**
  * Run one turn of the RESTRICTED worker agent.
  *
  * Everything the manager branch below does — approval labels, the sink that can
@@ -1677,27 +1750,21 @@ async function takeInboundPhotos(
  * already fixed once, and on this path it would also be the only signal that
  * the two rosters had stopped being isolated.
  *
- * ── A KNOWN LIMIT, STATED RATHER THAN HIDDEN ────────────────────────────────
- * Photos live for exactly one turn. WhatsApp delivers each image as its OWN
- * message, so "photo, then a separate message saying which task" loses the
- * photo: by the time the second message arrives, the bytes are gone and the
- * agent has to ask for it again. The flows that work are the two natural ones —
- * a photo with a caption, and "acabei" → "manda foto" → photo — and the worker
- * policy tells the model to ask for a resend rather than pretend otherwise.
- * Sending three photos as three messages attaches only the last one.
+ * ── THE ONE-TURN PHOTO LIMIT IS GONE (0047) ─────────────────────────────────
+ * This comment used to record a known limit: photos lived for exactly one turn,
+ * so "photo, then a separate message saying which task" lost the photo and
+ * three photos sent as three messages attached only the last. On 3 September a
+ * crew member hit it and wrote "I tried 3 times now. Is not working".
  *
- * The fix is a staging area for inbound photos keyed on the worker, with its
- * own table, RLS and cleanup. That is a design, not a patch, and it is out of
- * this PRD's scope — but this is the first thing to build if the crew trips
- * over it.
+ * Every inbound image is now downloaded and STAGED before any branch decides
+ * what it is (stageInboundPhoto, lib/worker-photo-inbox.ts), so what this turn
+ * works with is every photo of theirs that no task has claimed yet, loaded
+ * inside handleWorkerInbound from `worker_photo_inbox`. The bytes never come
+ * near this function and never near a model.
  *
- * ── WHAT #52 DID AND DID NOT CHANGE ABOUT THAT ──────────────────────────────
- * `checkin_photo_requests` (0034) is a staging area, and it stages the
- * EXPECTATION — "the next bare photo from this person is of task X" — never the
- * BYTES. So the limit above is unchanged on THIS path: a photo reaching the
- * agent still lives for exactly one turn. What #52 added is a second path that
- * does not need the bytes to survive, because the task is known before the
- * photo arrives instead of after.
+ * `checkin_photo_requests` (0034) is unchanged and still stages the
+ * EXPECTATION rather than the bytes: which task the NEXT bare photo is of. The
+ * two answer different questions and both are needed.
  */
 async function runWorkerTurn(
   db: Db,
@@ -1705,17 +1772,25 @@ async function runWorkerTurn(
   worker: { id: string; company_id: string },
   locale: Locale,
   sendConfig: WhatsAppSendConfig,
-  accessToken: string,
+  /**
+   * How many photos arrived with THIS message and were staged, and the words to
+   * run the turn on when the message itself carried none. The override exists
+   * for the "that is all the photos" tap, which is a button and has no text at
+   * all; everything else reads the message.
+   */
+  opts: {
+    inboundPhotos: number;
+    overrideText?: string;
+    /** Bytes that could not be staged (0047 unapplied, or Storage refused).
+     *  Normally empty; see StagedPhoto.photo. */
+    fallbackPhotos?: readonly PendingPhoto[];
+  },
 ): Promise<void> {
   const t = getCatalog(locale).whatsapp;
-  const { photos, failed } = await takeInboundPhotos(message, worker, accessToken);
-  if (failed) {
-    // Say so immediately, before the turn: a worker who is told nothing assumes
-    // the photo landed and stops trying to send it.
-    await sendWhatsAppText(t.workerPhotoFailed, sendConfig).catch(() => {});
-  }
 
-  const text = message.type === 'image' ? (message.image?.caption ?? '') : (message.text?.body ?? '');
+  const text =
+    opts.overrideText ??
+    (message.type === 'image' ? (message.image?.caption ?? '') : (message.text?.body ?? ''));
 
   // ── the voice note (W4) ────────────────────────────────────────────────────
   // Handed to handleWorkerInbound as a RECIPE rather than a result, so the
@@ -1736,7 +1811,10 @@ async function runWorkerTurn(
           workerId: worker.id,
           locale,
           mediaId: audio.id,
-          accessToken,
+          // The same token the caller staged this message's photos with: since
+          // W5 the photo download moved out of this function, so there is no
+          // longer a separate accessToken parameter to carry.
+          accessToken: sendConfig.accessToken,
         });
         if (heard.ok) return heard.text;
         audioFailure = heard.reason;
@@ -1745,13 +1823,13 @@ async function runWorkerTurn(
       }
     : undefined;
 
-  // A photo that failed to download, with no caption to go with it, leaves
-  // nothing for the model to answer. The worker has already been asked to send
-  // it again, so running an agent turn on an empty message would spend a slice
-  // of their daily budget to say nothing.
+  // Nothing said and nothing staged leaves nothing for the model to answer. A
+  // photo that failed to arrive has already been answered by the caller, so
+  // running a turn here would spend a slice of their daily budget to say
+  // nothing.
   //
   // A voice note is exempt: its text does not exist yet, by design.
-  if (!text.trim() && photos.length === 0 && !transcribe) return;
+  if (!text.trim() && opts.inboundPhotos === 0 && !transcribe) return;
 
   // Declared outside the try so the catch below can defuse it. `delivery` only
   // settles once mergeAssistantStream has been called; if the turn throws AFTER
@@ -1769,7 +1847,8 @@ async function runWorkerTurn(
       workerId: worker.id,
       locale,
       inbound: { channel: 'whatsapp', text, transcribed: !!transcribe, transcribe },
-      photos,
+      inboundPhotos: opts.inboundPhotos,
+      fallbackPhotos: opts.fallbackPhotos,
       sink,
     });
 
@@ -1808,7 +1887,7 @@ async function runWorkerTurn(
       companyId: worker.company_id,
       workerId: worker.id,
       messageId: message.id,
-      photos: photos.length,
+      photos: opts.inboundPhotos,
       // Whether this turn started life as a voice note. Never the transcript.
       transcribed: !!transcribe,
     });
@@ -2044,6 +2123,47 @@ async function handleWorkerReply(
     companyId: worker.company_id,
   });
 
+  // ── THE PHOTO IS KEPT BEFORE ANYTHING DECIDES WHAT IT IS (0047) ───────────
+  // Above every branch that could take an image, and that placement is the
+  // whole fix. Before it, a bare photo with no open check-in request fell to
+  // the agent, which asked which task it was for, and the bytes were gone by
+  // the time the crew member answered. Meta's media URL lasts about five
+  // minutes and is effectively single-use, so there is no second chance to
+  // download it later.
+  //
+  // Staged into the company's own inbox prefix in the task-photos bucket, with
+  // no `task_photos` row: a photo waiting is not evidence of anything yet. What
+  // makes it evidence is being attached to a task, and that still happens in
+  // exactly the two places it always did.
+  //
+  // The keyword branches below are all gated on `type: 'text'`, so nothing
+  // between here and the photo branches can consume an image. This sits above
+  // them anyway, because "the photo is kept first" is easier to keep true than
+  // "the photo is kept before the branches that could eat it".
+  const staged: StagedPhoto = hasPhoto
+    ? await stageInboundPhoto(db, message, worker, env.accessToken)
+    : { photoId: null, photo: null, failed: false };
+
+  // ⚠ A STAGING FAILURE MUST NEVER LOSE A PHOTO THE OLD PRODUCT WOULD HAVE
+  // KEPT. Staging fails on EVERY request between deploying 0047 and applying it
+  // (42P01), and on this project a migration has sat merged and unapplied for
+  // three weeks while the app half was live. If that window were also a window
+  // in which nobody could attach a photo to anything, this branch would produce
+  // the exact 3 September symptom it exists to end, on every crew member at
+  // once.
+  //
+  // So the download is what matters, not the staging: when the bytes are here,
+  // every branch below falls back to what it did before 0047 — the check-in
+  // photo path writes them straight to the task, and the agent turn carries
+  // them as this turn's photos. Only a failed DOWNLOAD is worth an apology,
+  // because only then is there nothing to work with.
+  if (staged.failed && !staged.photo) {
+    await sendWhatsAppText(getCatalog(current).whatsapp.workerPhotoFailed, sendConfig).catch(() => {});
+    // A CAPTIONED photo still falls through to the agent: they wrote something,
+    // and it deserves an answer even though the image did not survive.
+    if (!message.image?.caption?.trim()) return true;
+  }
+
   // The check-in answer. Sits here — inside the WORKER path — and not
   // beside the manager's `interactive` branch below, because a check-in tap
   // comes from a workers.phone sender: sender resolution diverts it here and
@@ -2066,6 +2186,20 @@ async function handleWorkerReply(
   // ABOVE the agent branch far below, which is the whole design: "what am I
   // doing on the Casa de Paco?" is a database read, and a tap says which row.
   if (message.type === 'interactive' && (await handleWorkerMenuTap(db, message, worker, current, sendConfig))) {
+    return true;
+  }
+
+  // The PHOTO BATCH tap (0047) — "more photos" / "that is everything". The
+  // fourth tappable shape and the third under `type: 'interactive'`, beside the
+  // menu tap because it is the same kind of thing: a tap on something we sent,
+  // answered from a lookup, with no model in the loop unless the second button
+  // needs one to work out which task the photos are of.
+  //
+  // Below the menu tap and above everything else, which is safe in both
+  // directions: the two read DIFFERENT members of the same envelope
+  // (`list_reply` vs `button_reply`) and the four payload prefixes are pairwise
+  // non-overlapping, asserted by pnpm whatsapp-check.
+  if (message.type === 'interactive' && (await handlePhotoBatchTap(db, message, worker, current, sendConfig))) {
     return true;
   }
 
@@ -2203,13 +2337,30 @@ async function handleWorkerReply(
   //
   // Returns false when there is no open request, which is every crew member who
   // never tapped — their photos reach the agent exactly as before.
-  if (
-    message.type === 'image' &&
-    !!message.image?.id &&
-    !message.image.caption?.trim() &&
-    (await handleCheckinPhoto(db, message, worker, current, sendConfig, env.accessToken))
-  ) {
-    return true;
+  if ((staged.photoId || staged.photo) && !message.image?.caption?.trim()) {
+    // Staged, or the pre-0047 fallback with the bytes still in hand.
+    const source: CheckinPhotoSource = staged.photoId
+      ? { kind: 'inbox', photos: [{ id: staged.photoId, receivedAt: new Date().toISOString() }] }
+      : { kind: 'bytes', photo: staged.photo! };
+    if (await handleCheckinPhoto(db, source, worker, current, sendConfig)) {
+      return true;
+    }
+    // No open request, which is every crew member who never tapped. Before 0047
+    // the photo went to the agent here and the conversation went wrong: the
+    // model asked which task, and the answer arrived after the photo had gone.
+    //
+    // Now the photo is safe, so the cheap deterministic thing happens first.
+    // Capo says how many it is holding and offers two buttons, which is the
+    // question a bare photo actually raises. Working out which job they are of
+    // waits until they say there are no more coming, when it can be asked once
+    // instead of after every photo.
+    if (staged.photoId) {
+      await askAboutMorePhotos(db, worker, current, sendConfig);
+      return true;
+    }
+    // Nothing was staged, so there is no batch to ask about and nothing that
+    // survives this request. Fall through to the agent with the bytes, which is
+    // precisely what a bare photo with no open request did before 0047.
   }
 
   // ── the restricted agent (PRD 4) ──────────────────────────────────────────
@@ -2244,7 +2395,14 @@ async function handleWorkerReply(
     // window seconds ago. A worker turn is usually quick, but a photo download
     // plus a knowledge-base lookup can outlast the 25-second indicator.
     await withProgressNote(
-      () => runWorkerTurn(db, message, worker, current, sendConfig, env.accessToken),
+      () =>
+        runWorkerTurn(db, message, worker, current, sendConfig, {
+          inboundPhotos: staged.photoId || staged.photo ? 1 : 0,
+          // Empty unless staging failed. The turn then behaves exactly as it
+          // did before 0047: the bytes live for this turn, and
+          // declare_task_done writes them with the pre-0047 writer.
+          fallbackPhotos: !staged.photoId && staged.photo ? [staged.photo] : [],
+        }),
       {
         inboundAt,
         send: async () => {

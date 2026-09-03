@@ -439,7 +439,8 @@ export function parseCheckinPayload(
 
 // ── worker menu row ids (issue #49) ─────────────────────────────────────────
 // The THIRD tappable shape in this file, and the one most likely to be confused
-// with the other two. Read the three together once:
+// with the other two. Read them together once (a fourth joined them in 0047,
+// listed below with the photo batch buttons):
 //
 //   approval card   `interactive.button_reply.id`  `capo:approve|reject:<uuid>`  MANAGER
 //   check-in        `button.payload`               `capo:checkin:done|not_done:` WORKER
@@ -479,6 +480,39 @@ export function parseWorkerMenuRowId(id: string): WorkerMenuRow | null {
   if (id.toLowerCase() === WORKER_MENU_MANAGER) return { kind: 'manager' };
   const match = WORKER_MENU_TASK.exec(id);
   return match ? { kind: 'task', taskId: match[1] } : null;
+}
+
+// ── the photo batch buttons (0047) ──────────────────────────────────────────
+// The FOURTH tappable shape, and the THIRD under `type: 'interactive'`. Read
+// all four together once:
+//
+//   approval card   `interactive.button_reply.id`  `capo:approve|reject:<uuid>`  MANAGER
+//   check-in        `button.payload`               `capo:checkin:done|not_done:` WORKER
+//   worker menu     `interactive.list_reply.id`    `capo:wm:…`                   WORKER
+//   photo batch     `interactive.button_reply.id`  `capo:photos:more|done`       WORKER
+//
+// What keeps them apart is not the handler layout: it is that all four prefixes
+// are pairwise non-overlapping, so no parser can accept another's value.
+// scripts/whatsapp-check.mts asserts every direction, and a fifth codec must
+// extend those assertions rather than assume them.
+//
+// This one carries NO id at all, unlike the three above it, and that is the
+// same decision `capo:wm:manager` makes: "these are all the photos" is not
+// about any particular row. The photos it settles are whatever is waiting in
+// that crew member's inbox at the moment they tap, resolved from their
+// phone-derived worker id and never from anything in the payload. An id here
+// would be a handle somebody could tamper with for no benefit at all.
+const PHOTO_BATCH = /^capo:photos:(more|done)$/i;
+
+export type PhotoBatchAnswer = 'more' | 'done';
+
+export function photoBatchPayload(answer: PhotoBatchAnswer): string {
+  return `capo:photos:${answer}`;
+}
+
+export function parsePhotoBatchPayload(id: string): PhotoBatchAnswer | null {
+  const match = PHOTO_BATCH.exec(id);
+  return match ? (match[1].toLowerCase() as PhotoBatchAnswer) : null;
 }
 
 // ── business-scoped user ids ────────────────────────────────────────────────
@@ -1198,6 +1232,44 @@ async function sendInteractive(
         body: { text: message.body },
         action: { buttons: message.buttons.map(button => ({ type: 'reply', reply: button })) },
       },
+    },
+    config,
+  );
+}
+
+/**
+ * Send a reply-buttons message that is NOT an approval card.
+ *
+ * The card path builds its own through `planAssistantMessages`, because a card
+ * is the rendering of a proposal and its text is a persisted artifact. This is
+ * for the deterministic ones: "more photos, or is that everything?" (0047) and
+ * whatever comes after it. Same envelope, no proposal anywhere near it.
+ *
+ * FREE, and free by SHAPE rather than by policy: an interactive message is a
+ * session message, so Meta bills nothing for it. The flip side is the same as
+ * plain text: outside the 24 hours the recipient's own inbound message opened,
+ * it is REFUSED (131047) rather than charged. Every caller must therefore be
+ * answering something the person just sent.
+ *
+ * Both limits are CLAMPED rather than trusted, exactly as the card path clamps
+ * them: a translator lengthening a button label must degrade to a truncated
+ * word, never to a failed delivery. Meta allows at most three buttons; passing
+ * more is a caller bug and throws, because a button silently dropped is a
+ * choice the person can never make.
+ */
+export async function sendWhatsAppButtons(
+  body: string,
+  buttons: { id: string; title: string }[],
+  config: WhatsAppSendConfig,
+): Promise<void> {
+  if (buttons.length < 1 || buttons.length > 3) {
+    throw new Error(`interactive buttons need 1..3 buttons, got ${buttons.length}`);
+  }
+  await sendInteractive(
+    {
+      kind: 'interactive',
+      body: body.slice(0, MAX_INTERACTIVE_BODY),
+      buttons: buttons.map(b => ({ id: b.id, title: b.title.slice(0, MAX_BUTTON_TITLE) })),
     },
     config,
   );

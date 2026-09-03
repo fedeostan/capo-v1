@@ -119,3 +119,38 @@ export function nextPhotoTaskId(taskIds: readonly string[], nextIndex: number): 
  * move past an unusable task would ask about it forever, and every photo the
  * worker sent afterwards would land nowhere.
  */
+
+/**
+ * Which waiting photos this check-in request may legitimately claim.
+ *
+ * ⚠ ONLY PHOTOS THAT ARRIVED AFTER THE REQUEST DID, and this is a correctness
+ * rule rather than tidiness. Since 0047 a crew member can have photos waiting
+ * from earlier in the day, and the ordinary sequence is ugly: a photo at 15:00
+ * of some other job, buttons go out, no request open; the 16:00 check-in tap
+ * opens a request for tasks A and B; the worker scrolls up and taps the 15:00
+ * message's "É tudo". Without this filter the 15:00 photo becomes proof of task
+ * A, which is #52's own worst case word for word: a photo filed as proof of the
+ * wrong job is worse than no photo, because it IS evidence, it is wrong, and
+ * 0023 has no DELETE policy anywhere.
+ *
+ * The older photos are not lost and not attached to anything: they stay in the
+ * inbox, and the agent path can still put them where the crew member says they
+ * belong. Losing them would be the other way of being wrong.
+ *
+ * An unparseable timestamp on either side EXCLUDES the photo. Fail closed, for
+ * `photoRequestLive`'s reason: the cost here is that a photo waits a little
+ * longer for its owner to name a task, and the cost the other way is permanent
+ * wrong evidence.
+ */
+export function photosSinceRequest<T extends { id: string; receivedAt: string }>(
+  photos: readonly T[],
+  requestCreatedAt: string | null | undefined,
+): T[] {
+  if (!requestCreatedAt) return [];
+  const opened = Date.parse(requestCreatedAt);
+  if (!Number.isFinite(opened)) return [];
+  return photos.filter(p => {
+    const at = Date.parse(p.receivedAt);
+    return Number.isFinite(at) && at >= opened;
+  });
+}

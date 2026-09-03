@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { markTaskProofPhotos, storeWorkerTaskPhoto } from '../../media/task-photo-store';
-import type { PendingPhoto, WorkerTool } from './types';
+import { attachInboxPhotos, markTaskProofPhotos, storeWorkerTaskPhoto } from '../../media/task-photo-store';
+import type { WorkerTool } from './types';
 import { workerToolError } from './types';
 
 // "Acabei" — a worker declaring a task finished, with proof.
@@ -31,7 +31,7 @@ export const declareTaskDoneInput = z.object({
       // The description explains the rule; the .min(1) above ENFORCES it. If
       // you ever find yourself relaxing the schema and moving the requirement
       // into this sentence, you have removed the feature.
-      'Ids of photos received in this conversation, from the "# Photos received" block. At least one is required — a completion cannot be recorded without proof, and there is no way to call this tool without it.',
+      'Ids from the "# Photos received" block. Pass ALL of them unless the crew member said some belong to a different job; they may have arrived in earlier messages, not just this one. At least one is required — a completion cannot be recorded without proof, and there is no way to call this tool without it.',
     ),
   note: z
     .string()
@@ -44,8 +44,9 @@ export const declareTaskDoneInput = z.object({
 
 type DeclareTaskDoneInput = z.infer<typeof declareTaskDoneInput>;
 
-// The bytes are written by storeWorkerTaskPhoto (../../media/task-photo-store),
-// which since issue #52 is the ONE writer of a crew-sourced `task_photos` row.
+// The `task_photos` row is written by attachInboxPhotos
+// (../../media/task-photo-store), which lives beside storeWorkerTaskPhoto in
+// the ONE file that writes a crew-sourced row.
 // The check-in photo follow-up writes exactly the same shape from the WhatsApp
 // route, and what that row carries is an ATTRIBUTION — `source: 'worker'` is
 // the claim "the crew sent this", unforgeable by a tenant because 0023 leaves
@@ -95,15 +96,18 @@ export const declareTaskDone: WorkerTool<DeclareTaskDoneInput> = {
       return workerToolError('That task is not one of yours. Call my_tasks and use an id from it.');
     }
 
-    // Only photos that arrived in THIS turn exist. The model has no fetch
-    // capability and no way to name bytes it was not handed, so this is a
-    // consistency check rather than a boundary — but it is what keeps a
-    // hallucinated id from producing a claim with nothing behind it.
-    const byId = new Map(ctx.pendingPhotos.map(p => [p.id, p]));
-    const requested = [...new Set(input.photo_ids)].map(id => byId.get(id)).filter((p): p is PendingPhoto => !!p);
+    // The photos this crew member has waiting, from `worker_photo_inbox` (0047)
+    // rather than from this turn's bytes. The model has no fetch capability and
+    // no way to name a photo it was not told about, so this is a consistency
+    // check rather than a boundary — but it is what keeps a hallucinated id
+    // from producing a claim with nothing behind it. The real boundary is
+    // inside attachInboxPhotos: company_id AND worker_id, both phone-derived,
+    // on the read that resolves every id below.
+    const known = new Set(ctx.pendingPhotos.map(p => p.id));
+    const requested = [...new Set(input.photo_ids)].filter(id => known.has(id));
     if (requested.length === 0) {
       return workerToolError(
-        'None of those photo ids arrived in this conversation. Ask the worker to send the photo again, in the same message as their message.',
+        'None of those photo ids are waiting for this worker. Ask them to send the photo again.',
       );
     }
 
@@ -112,17 +116,42 @@ export const declareTaskDone: WorkerTool<DeclareTaskDoneInput> = {
     // recoverable by the worker saying so again. The reverse order would leave
     // a claim with no proof — precisely the state `.min(1)` exists to make
     // impossible, reached by a crash instead of by an argument.
-    const stored: string[] = [];
-    for (const photo of requested) {
+    //
+    // Attaching MOVES each staged object into this task's folder and writes the
+    // `task_photos` row, which is what makes the photo evidence. One photo
+    // failing never aborts the others, and every failure logs its stage.
+    //
+    // TWO WRITERS, and which one runs depends only on where the bytes are.
+    // Almost always the inbox; `unstagedPhotos` is non-empty only when staging
+    // failed, which is chiefly the window between deploying 0047 and applying
+    // it. Both end at the same row-insert helper, so the attribution a
+    // `source: 'worker'` row carries is written in exactly one place either
+    // way. The model cannot tell the two apart and does not need to.
+    const unstaged = new Map(ctx.unstagedPhotos.map(p => [p.id, p]));
+    const fromInbox = requested.filter(id => !unstaged.has(id));
+
+    let attached = 0;
+    if (fromInbox.length > 0) {
+      const result = await attachInboxPhotos(ctx.db, {
+        photoIds: fromInbox,
+        taskId: input.task_id,
+        companyId: ctx.companyId,
+        workerId: ctx.workerId,
+      });
+      attached += result.attached;
+    }
+    for (const id of requested) {
+      const photo = unstaged.get(id);
+      if (!photo) continue;
       const path = await storeWorkerTaskPhoto(ctx.db, {
         companyId: ctx.companyId,
         taskId: input.task_id,
         workerId: ctx.workerId,
         photo,
       });
-      if (path) stored.push(path);
+      if (path) attached += 1;
     }
-    if (stored.length === 0) {
+    if (attached === 0) {
       return workerToolError('The photos could not be saved. Ask the worker to send them again.');
     }
 
@@ -166,7 +195,7 @@ export const declareTaskDone: WorkerTool<DeclareTaskDoneInput> = {
     return {
       status: 'ok' as const,
       review_id: reviewId,
-      photos_attached: stored.length,
+      photos_attached: attached,
       // Model-facing, and the one thing it MUST get across: the task is not
       // done. A worker told "feito" who then sees it still on tomorrow's 07:00
       // message will conclude Capo is broken.

@@ -107,7 +107,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { readFileSync } from 'node:fs';
-import { randomBytes, randomInt } from 'node:crypto';
+import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -601,6 +601,23 @@ async function seedTenant(label) {
     `checkin_photo_request(${label})`,
   );
 
+  // 0047: a photo this crew member has sent that no task has claimed yet.
+  // Seeded so the deny-all read below cannot pass for want of rows, and so the
+  // UPDATE attack has something real to aim at. A row here is not evidence of
+  // anything, but a tenant able to WRITE one could stage an object as though
+  // the crew had sent it, or re-point a colleague's waiting photo at a task of
+  // their choosing — and a task photo cannot be deleted (0023 has no DELETE
+  // policy anywhere). The path has to satisfy worker_photo_inbox_path_scoped.
+  const inboxPhoto = await must(
+    admin.from('worker_photo_inbox').insert({
+      company_id: companyId, worker_id: worker.id,
+      storage_path: `${companyId}/inbox/${worker.id}/${randomUUID()}.jpg`,
+      mime: 'image/jpeg', byte_size: 1234,
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    }).select().single(),
+    `worker_photo_inbox(${label})`,
+  );
+
   // 0039 (issue #114): the bearer token behind the crew day page. Seeded so the
   // deny-all read below cannot pass for want of rows, and so the UPDATE and
   // DELETE attacks have something real to aim at. `dayLinkToken` is carried out
@@ -630,6 +647,7 @@ async function seedTenant(label) {
     workerBsuid: worker.whatsapp_user_id, jobId: job.id, taskIds: [task1.id, task2.id],
     conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
     photoPath, checkinAskId: checkinAsk.id, photoRequestId: photoRequest.id,
+    inboxPhotoId: inboxPhoto.id, inboxPhotoPath: inboxPhoto.storage_path,
     problemReportId: problemReport.id, reportRequestId: reportRequest.id,
     workerRequestId: workerRequest.id,
     colleagueId, ownNotificationId, colleagueNotificationId,
@@ -731,6 +749,10 @@ async function cleanupTenant(t) {
   // task_id is `on delete set null`, so the row would survive a task delete —
   // but worker_id is a plain FK and would strand the company.
   await companyEq(admin.from('worker_requests').delete());
+  // BEFORE tasks and before workers: worker_photo_inbox holds a FK to each
+  // (0047), and attached_task_id does not cascade — an attached photo left
+  // behind would strand the whole company on the tasks delete below.
+  await companyEq(admin.from('worker_photo_inbox').delete());
   await admin.from('task_dependencies').delete().in('task_id', t.taskIds);
   await companyEq(admin.from('tasks').delete());
   await companyEq(admin.from('memories').delete());
@@ -929,6 +951,19 @@ async function runMatrix(self, other) {
   {
     const { data, error } = await db.from('checkin_photo_requests').select('id');
     check(`${L}: checkin_photo_requests deny-all (bonus)`, ...readIsDenied(data, error));
+  }
+
+  // worker_photo_inbox (0047) — a photo a crew member has sent that no task has
+  // claimed yet. Deny-all with every grant revoked, checkin_photo_requests'
+  // posture, and for a related reason: the row is not evidence of anything, so
+  // there is no tenant question it answers. What a READ would give an attacker
+  // is the object key of a photo staged inside another company's folder, which
+  // is exactly the string 0023's storage policies compare against. Both
+  // tenants' rows exist by the time this runs, so a policy exposing every
+  // company would show TWO here.
+  {
+    const { data, error } = await db.from('worker_photo_inbox').select('id');
+    check(`${L}: worker_photo_inbox deny-all (bonus)`, ...readIsDenied(data, error));
   }
 
   // worker_day_links (0039, issue #114) — the fifth deny-all relation, and the
@@ -1336,6 +1371,98 @@ async function runAdversarial(attacker, victim) {
       'adversarial: tenant DELETE of its own check-in photo request blocked',
       error != null,
       error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
+
+  // ── 0047 worker_photo_inbox ──────────────────────────────────────────────
+  // The row that says "this crew member has a photo waiting, and here is where
+  // its bytes are". Deny-all under RLS with every grant revoked, so these are
+  // grant-layer checks and all three are aimed at the ATTACKER'S OWN company on
+  // purpose: a cross-tenant variant would be refused for the wrong reason.
+  //
+  // What a write here would buy, and why it is worth three checks plus a
+  // control. INSERT: stage an object of the attacker's choosing as though a
+  // crew member had sent it, so it can later be attached as `source: 'worker'`
+  // proof — the same forgery class 0023's column-scoped grant exists to refuse.
+  // UPDATE: re-point a colleague's waiting photo, or mark one attached so it
+  // stops being offered. DELETE: erase somebody's photo before they can use it,
+  // which is the quiet way to make a completion claim impossible.
+  {
+    const { error } = await db.from('worker_photo_inbox').insert({
+      company_id: attacker.companyId,
+      worker_id: attacker.workerId,
+      storage_path: `${attacker.companyId}/inbox/${attacker.workerId}/forged.jpg`,
+      mime: 'image/jpeg',
+      byte_size: 100,
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    check(
+      'adversarial: tenant staging a photo in the worker inbox blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a tenant can forge crew proof!',
+    );
+    if (!error) {
+      await admin.from('worker_photo_inbox').delete()
+        .eq('storage_path', `${attacker.companyId}/inbox/${attacker.workerId}/forged.jpg`);
+    }
+  }
+  {
+    const { error } = await db
+      .from('worker_photo_inbox')
+      .update({ attached_task_id: attacker.taskIds[1] })
+      .eq('id', attacker.inboxPhotoId);
+    check(
+      'adversarial: tenant re-pointing a waiting crew photo blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — update grant leaked',
+    );
+  }
+  {
+    const { error } = await db
+      .from('worker_photo_inbox')
+      .delete()
+      .eq('id', attacker.inboxPhotoId);
+    check(
+      'adversarial: tenant DELETE of a waiting crew photo blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
+  {
+    // THE POSITIVE CONTROL. Every check above asserts a REFUSAL, and a table
+    // nobody could write at all would pass all three while quietly losing every
+    // photo the crew sends. The webhook writes on the SERVICE ROLE, so that is
+    // the actor this control uses, and it is the only one that can read the row
+    // back.
+    const { data, error } = await admin
+      .from('worker_photo_inbox')
+      .select('id, storage_path')
+      .eq('id', attacker.inboxPhotoId)
+      .maybeSingle();
+    check(
+      'positive control: the service role still stages and reads a crew photo',
+      !error && data?.storage_path === attacker.inboxPhotoPath,
+      error ? error.message : (data?.storage_path ?? 'no row'),
+    );
+  }
+  {
+    // The cross-company FK guard (0047's trigger). A row whose company_id is
+    // honest and whose worker_id belongs to somebody else satisfies every
+    // policy on the table, so only the trigger refuses it. Service role, because
+    // that is the actor the trigger exists to bind: RLS does not cover it at
+    // all.
+    const { error } = await admin.from('worker_photo_inbox').insert({
+      company_id: attacker.companyId,
+      worker_id: victim.workerId,
+      storage_path: `${attacker.companyId}/inbox/${victim.workerId}/${randomUUID()}.jpg`,
+      mime: 'image/jpeg',
+      byte_size: 100,
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    check(
+      'adversarial: a crew photo naming another company\'s worker blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — cross-company FK guard missing!',
     );
   }
 

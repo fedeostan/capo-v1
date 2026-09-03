@@ -9,7 +9,7 @@ import { localeName } from './prompts/language';
 import { loadKnowledgeIndex } from './context';
 import { promptBlocks } from '../i18n';
 import { toWorkerTaskView, type WorkerTaskRow } from '../capabilities/worker/tasks';
-import type { PendingPhoto } from '../capabilities/worker/types';
+import type { InboxPhoto } from '../media/photo-inbox';
 
 // The worker agent's system prompt — assembled from a deliberately short list.
 //
@@ -200,21 +200,29 @@ export function buildIdentityBlock(identity: WorkerIdentity | null, locale: Loca
 }
 
 /**
- * How many photos arrived with this message, and their per-turn ids.
+ * The photos this crew member has sent that no task has claimed yet, with the
+ * time each one arrived.
  *
- * The ids are handles for `declare_task_done`, nothing more — they are not
- * database ids and they do not survive the turn. The COUNT is the entire fact
- * the model learns about the photos: no dimensions, no filename, and above all
- * nothing read out of the image. Feeding an inbound photo to a vision model is
- * a text-in-image injection surface with no mitigation, so the images never
- * reach one (0023, and AGENTS.md).
+ * Since 0047 this is NOT "photos that arrived with this message". Every inbound
+ * image is staged the moment it lands, so a photo sent on its own and explained
+ * a minute later is still here on the next turn, and three photos sent as three
+ * messages are all here rather than only the last. That is the whole point: the
+ * old block described bytes that lived for one turn, and a crew member who did
+ * the natural thing lost them.
+ *
+ * The ids are handles for `declare_task_done` and nothing else. The COUNT and
+ * the TIME are the entire fact the model learns about the photos: no
+ * dimensions, no filename, and above all nothing read out of the image. Feeding
+ * an inbound photo to a vision model is a text-in-image injection surface with
+ * no mitigation, so the images never reach one (0023, and AGENTS.md).
  */
-function buildPhotoBlock(photos: readonly PendingPhoto[]): string | null {
+function buildPhotoBlock(photos: readonly InboxPhoto[]): string | null {
   if (photos.length === 0) return null;
   return [
     '# Photos received',
-    `${photos.length} photo(s) arrived with this message. You have NOT seen them and must not describe or judge them.`,
-    `Ids, for declare_task_done: ${photos.map(p => p.id).join(', ')}`,
+    `${photos.length} photo(s) from this person are waiting to be attached to a task. Some may have arrived in EARLIER messages. You have NOT seen any of them and must not describe or judge them.`,
+    'When they tell you which task they finished, pass ALL of these ids to declare_task_done unless they say some belong to a different job.',
+    ...photos.map(p => `- ${p.id} (received ${p.receivedAt})`),
   ].join('\n');
 }
 
@@ -223,7 +231,7 @@ export interface WorkerPromptInput {
   locale: Locale;
   today: string;
   tasks: WorkerTaskRow[];
-  pendingPhotos: readonly PendingPhoto[];
+  pendingPhotos: readonly InboxPhoto[];
   /** Null when the read failed, or on a caller that has not loaded it. The
    *  block is then absent and the prompt is what it was before issue W4. */
   identity: WorkerIdentity | null;

@@ -1527,6 +1527,95 @@ Structural invariants (do not regress):
     and note only the sheet ever writes `'skipped'`.
     It is **not** what the board and inbox read: those count `task_photos` at
     read time, because a photo can arrive after the claim.
+- **EVERY inbound crew photo is STAGED before anything decides what it is of,
+  and the one-turn limit is gone** (`worker_photo_inbox`, migration `0047`).
+  This REPLACES the promise recorded above and in `runWorkerTurn` that photos
+  live for exactly one turn. A crew member sent a photo, Capo asked which task
+  it was for, and the bytes were already gone by the time they answered; three
+  photos sent as three messages kept only the last. On 3 September that
+  produced "I tried 3 times now. Is not working" and five days with no
+  `task_photos` row. Seven things:
+  - **It stages the BYTES, which is the whole difference from
+    `checkin_photo_requests` (0034).** That table stages the EXPECTATION and
+    must never gain a blob column; it only works because a tap knows the task
+    BEFORE the photo arrives. Nothing knows the task when somebody just sends a
+    photo, so the only way to stop losing it is to keep it somewhere that is not
+    a task folder yet. Both tables are needed and they answer different
+    questions.
+  - **`{company_id}/inbox/{worker_id}/…` in the SAME `task-photos` bucket, and
+    that needed NO storage policy change.** 0023's two policies on
+    `storage.objects` compare `(storage.foldername(name))[1]` against
+    `private.current_company_id()` and read nothing else, so segment 1 is still
+    the boundary. Segment 2 is the literal word `inbox`, which is not a uuid and
+    therefore cannot collide with a task folder. Build both keys only through
+    `taskPhotoPath` / `taskPhotoInboxPath` in `packages/core/src/media/photos.ts`.
+  - **A staged photo is NOT evidence.** There is no `task_photos` row until it
+    is ATTACHED, at which point the object is MOVED to the task key and the row
+    is written by `attachInboxPhotos` beside `storeWorkerTaskPhoto` — one file,
+    because `source: 'worker'` is an ATTRIBUTION 0023 makes unforgeable at the
+    grant layer and two writers of that claim would eventually disagree.
+    `task_photos_path_scoped` is untouched and still binds every row it ever
+    bound.
+  - **Deny-all for tenants, `checkin_photo_requests`' posture.** A tenant able
+    to INSERT one could stage an object as though the crew had sent it; able to
+    UPDATE one, they could re-point a colleague's waiting photo. The route runs
+    on the service role, so the `company_id` + `worker_id` filters in
+    `loadInboxPhotos` and `attachInboxPhotos` ARE the boundary, both
+    phone-derived. `scripts/rls-isolation-matrix.mjs` attacks read, insert,
+    update, delete, the cross-company FK trigger, and carries a service-role
+    positive control.
+  - **A bare photo with no open check-in request now gets BUTTONS, not a model
+    turn.** "Recebi a foto (2). Mais fotos ou é tudo?", `capo:photos:more` /
+    `capo:photos:done` — the FOURTH tappable codec and the THIRD under
+    `type: 'interactive'`, two of which now read the same `button_reply.id`.
+    Nothing but the non-overlapping prefixes keeps them apart; `pnpm
+    whatsapp-check` asserts every direction and a fifth codec must extend those
+    assertions rather than assume them. The payload carries NO id: which photos
+    "é tudo" settles comes from the tapper's phone-derived worker id.
+    A CAPTIONED photo is still excluded from the deterministic branch and still
+    falls through to the agent, for #52's own reason.
+  - **The TTL is 24 hours, enforced by the READER, and NOTHING sweeps the
+    table or the objects behind it.** Longer than 0034's three hours on purpose:
+    that one bounds what an unlabelled photo may be BELIEVED to be about, this
+    one bounds only how long Capo keeps offering somebody their own photo back.
+    The consequence is stated rather than hidden: an expired staged OBJECT stays
+    in the bucket for ever until somebody writes a sweep. A photo taken at 08:00
+    is still waiting at the next day's 07:00 briefing, which is safe here only
+    because the crew member NAMES the task themselves and the model is shown
+    each photo's arrival time.
+  - **`storeWorkerTaskPhoto` used to swallow four different failures into one
+    silent `null`**, and one of its two callers logged nothing at all, so a
+    systemic Storage failure produced zero rows and zero events. Every failure
+    on both writers now logs `task_photo.store_failed` with the `stage` it
+    failed at. Grep that event before concluding the crew sends no photos.
+  - **A STAGING FAILURE FALLS BACK TO THE PRE-0047 PATH, and that is the whole
+    deploy-order safety story.** While 0047 is unapplied every query on the
+    table answers 42P01, and on this project a migration has sat merged and
+    unapplied for three weeks (0038) while the app half was live. So
+    `stageInboundPhoto` hands the DOWNLOADED BYTES back with its failure, and
+    every branch does what it did before: the check-in photo path writes them
+    straight to the task through `storeWorkerTaskPhoto`, and the agent turn
+    carries them as `WorkerContext.unstagedPhotos` for `declare_task_done`.
+    **No photo the pre-0047 product would have kept is lost**; what is lost in
+    that window is only the photo outliving its turn and the buttons. Both
+    writers end at ONE row-insert helper, so the `source: 'worker'` attribution
+    is asserted in exactly one place whichever of them ran.
+  - **"É tudo" attaches only photos received AFTER the check-in request
+    opened** (`photosSinceRequest`, `apps/web/lib/checkin-photo.ts`). A photo
+    taken at 15:00 of another job, with a 16:00 request open, must never become
+    proof of that request's task: #52's own rule is that wrong evidence is worse
+    than none, and 0023 has no DELETE policy anywhere. An entirely older batch
+    makes the branch fall through, so those photos stay in the inbox for the
+    agent path rather than being attached wrongly OR lost.
+  - **The bytes are deny-all in the TABLE but readable in STORAGE by their own
+    company.** 0023's SELECT policy on `storage.objects` keys on segment 1
+    alone, so a tenant can list `{company_id}/inbox/…`. That is deliberate (they
+    are that company's own crew's photos) and it is why the deny-all above is
+    about the ROW, which is the thing that would let somebody re-point a
+    colleague's next photo.
+  Known and NOT done: nothing sweeps expired objects, `caption` is recorded and
+  read by nobody, and a crew member who sends photos for two different jobs in
+  one batch has to say so in words.
 - **`notifications` (0024) is the in-app inbox, and is NOT
   `notification_log` (0016).** They share a stem and nothing else.
   `notification_log` is the OUTBOUND ledger — one row per paid WhatsApp

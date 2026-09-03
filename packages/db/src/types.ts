@@ -301,6 +301,38 @@
 // client that could name it could tick tomorrow), `checked_by` and
 // `checked_at` (both stamped by triggers). The UPDATE grant reaches `status`
 // ALONE. tsc will happily let you set any of them; the database answers 42501.
+//
+// ── PENDING 0047 (issue: photos from the crew), WRITTEN BY HAND ────────────
+// worker_photo_inbox — every photo a crew member sends, staged in the
+// task-photos bucket the moment it arrives so it stops living for exactly one
+// turn. Added by hand for the standing reason: regenerating against a project
+// that lacks the table would silently DELETE this block rather than add it.
+//
+// One consequence while the migration is unapplied, and the code is written to
+// survive it: every query answers 42P01 ("relation does not exist").
+//
+// ⚠ THAT WINDOW IS NOT HYPOTHETICAL AND IT IS NOT SHORT. 0038 sat merged and
+// unapplied for three weeks on this project while the app half was live, and
+// 0026/0027 were once skipped entirely. So the degradation is a designed path
+// rather than a hope, and it is this: `stageInboxPhoto` logs
+// `task_photo.store_failed` and answers null, but it hands the DOWNLOADED BYTES
+// back to the caller, and every branch on the worker path then does what it did
+// before 0047. A bare photo with an open check-in request is written straight
+// to the task by `storeWorkerTaskPhoto`, which touches nothing this migration
+// creates. A bare photo with no request, and a captioned photo, reach the agent
+// carrying the bytes as this turn's photos, and `declare_task_done` writes them
+// the same pre-0047 way.
+//
+// What is LOST in that window, and only this: a photo does not outlive its
+// turn, so "photo now, which job a minute later" fails as it did before, and
+// the "more photos or is that everything?" buttons do not go out. No photo that
+// the pre-0047 product would have kept is lost.
+//
+// Invisible here as usual: this table is deny-all under RLS with ZERO policies
+// and every grant revoked from `authenticated` (checkin_photo_requests'
+// posture). tsc will let a tenant-scoped client select from it; the database
+// refuses at the grant layer. The only writer is the WhatsApp webhook on the
+// service role.
 export type Json =
   | string
   | number
@@ -2324,6 +2356,70 @@ export type Database = {
           },
           {
             foreignKeyName: "worker_day_links_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      worker_photo_inbox: {
+        Row: {
+          attached_at: string | null
+          attached_task_id: string | null
+          byte_size: number
+          caption: string | null
+          company_id: string
+          expires_at: string
+          id: string
+          mime: string
+          received_at: string
+          storage_path: string
+          worker_id: string
+        }
+        Insert: {
+          attached_at?: string | null
+          attached_task_id?: string | null
+          byte_size: number
+          caption?: string | null
+          company_id: string
+          expires_at: string
+          id?: string
+          mime: string
+          received_at?: string
+          storage_path: string
+          worker_id: string
+        }
+        Update: {
+          attached_at?: string | null
+          attached_task_id?: string | null
+          byte_size?: number
+          caption?: string | null
+          company_id?: string
+          expires_at?: string
+          id?: string
+          mime?: string
+          received_at?: string
+          storage_path?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_photo_inbox_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_photo_inbox_attached_task_id_fkey"
+            columns: ["attached_task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_photo_inbox_worker_id_fkey"
             columns: ["worker_id"]
             isOneToOne: false
             referencedRelation: "workers"
