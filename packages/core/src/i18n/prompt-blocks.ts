@@ -45,4 +45,22 @@ export interface PromptBlocks {
   /** Transcript speaker labels used by the summarizer. */
   speakers: { user: string; assistant: string; event: string };
   emptyMessage: string;
+
+  // ── the crew member's own identity (worker prompt only) ────────────────────
+  // Read this against the deliberate absences listed in agent/worker-context.ts.
+  // A worker's own name, trade, company and manager are NOT company shape and
+  // NOT another person's business: they are the four facts the person holding
+  // the phone already knows about themselves, and Capo was the only party in
+  // the conversation that did not. Nothing here names another crew member, and
+  // manager names are typed by managers themselves.
+  workerIdentityHeading: string;
+  workerIdentityName: string;
+  workerIdentityTrade: string;
+  workerIdentityCompany: string;
+  /** Label for the manager list. Written to read correctly for one or several. */
+  workerIdentityManagers: string;
+  /** Label for the language THIS crew member is being written to in. */
+  workerIdentityLanguage: string;
+  /** One line telling the model these facts are answerable, not private. */
+  workerIdentityNote: string;
 }

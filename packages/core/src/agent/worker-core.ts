@@ -13,7 +13,7 @@ import { toWorkerAiTools } from '../capabilities/worker';
 import type { PendingPhoto, WorkerContext } from '../capabilities/worker/types';
 import { loadWorkerTasks } from '../capabilities/worker/tasks';
 import { withToolCacheBreakpoint } from './cache';
-import { buildWorkerSystemPrompt } from './worker-context';
+import { buildWorkerSystemPrompt, loadWorkerIdentity } from './worker-context';
 import { getModel } from './models';
 import {
   ensureWorkerConversation,
@@ -144,6 +144,13 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
   const tasks = await loadWorkerTasks(db, companyId, workerId);
   const scope = { taskIds: tasks.map(t => t.id) as readonly string[] };
 
+  // Who this crew member is, for the prompt block of the same name. Loaded
+  // HERE, in one place, rather than in the WhatsApp route: the route already
+  // holds the two ids and every future caller of this function gets the block
+  // without knowing it exists. It resolves to null on any failure, and a null
+  // simply drops the block.
+  const identity = await loadWorkerIdentity(db, { workerId, companyId });
+
   const text = (inbound.text.trim() || (photos.length > 0 ? PHOTO_ONLY_TEXT : '')).slice(0, MAX_INBOUND_CHARS);
   const target: WorkerMessageTarget = { conversationId, companyId, checkinId, channel: inbound.channel };
 
@@ -180,7 +187,7 @@ export async function handleWorkerInbound(opts: HandleWorkerInboundOptions): Pro
       surface: 'worker_chat',
       actor: { kind: 'worker', workerId },
     }),
-    instructions: await buildWorkerSystemPrompt({ db, locale, today, tasks, pendingPhotos: photos }),
+    instructions: await buildWorkerSystemPrompt({ db, locale, today, tasks, pendingPhotos: photos, identity }),
     tools: withToolCacheBreakpoint(toWorkerAiTools(ctx)),
     stopWhen: stepCountIs(WORKER_STEPS),
   });
