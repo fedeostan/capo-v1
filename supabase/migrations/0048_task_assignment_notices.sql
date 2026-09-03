@@ -146,13 +146,30 @@ comment on table task_assignment_notices is
 comment on column task_assignment_notices.queued_date is
   'Lisbon day the notice was queued. Part of the unique key, so one person hears about one task at most once a day however many times it is reassigned.';
 comment on column task_assignment_notices.notified_at is
-  'When the drain DECIDED, sent or not. NULL means still queued; an outside-working-hours drain deliberately leaves it null so a later drain retries while it is still today.';
+  'When the drain DECIDED, sent or not, AND the send lock: the drain claims rows with `update ... set notified_at = now() where id in (...) and notified_at is null returning id` and sends only what it won, so two overlapping drains cannot message one person twice. NULL means still queued; an outside-working-hours drain deliberately leaves it null so a later drain retries while it is still the same Lisbon day.';
 
 -- ── the door: a task gains (or changes) its lead ───────────────────────────
--- AFTER INSERT OR UPDATE OF the three columns that can make a task newly
--- somebody's work today. `status` is in that list for one case only: a task
--- brought back from `done`/`cancelled` into `pending` is new work to the person
--- holding it, even though nobody touched the assignee.
+-- AFTER INSERT, OR AFTER AN UPDATE THAT ACTUALLY CHANGES THE ASSIGNEE. Nothing
+-- else, and the narrowness is the fix for a defect the first version shipped
+-- with.
+--
+-- ── WHY A STATUS CHANGE MUST NEVER QUEUE ───────────────────────────────────
+-- `resolve_task_review(…, 'rejected')` moves a task from `pending_review` back
+-- to `in_progress` (0018). Under a status-sensitive guard that queued a notice,
+-- and the crew member who had just had their completion claim REJECTED would
+-- read "o teu chefe acabou de te dar uma tarefa nova" — the wrong sentence at
+-- the exact moment the relationship is delicate. `blocked` being cleared has
+-- the same shape. Neither is a new assignment, so neither is announced.
+--
+-- ── AND WHY A DATE CHANGE MUST NOT EITHER ──────────────────────────────────
+-- `apply_reschedule` can pull an existing task's `start_date` into today. That
+-- task is RE-DATED, not new, and the copy this queue produces says "new". The
+-- person already knows about it, and the 07:00 briefing carries it the next
+-- morning like any other live task.
+--
+-- So the trigger is scoped `UPDATE OF assignee_worker_id` alone: a status-only
+-- or date-only edit does not even fire it, which is cheaper than firing and
+-- returning, and impossible to get wrong by editing the body later.
 --
 -- SECURITY DEFINER because tenants hold no grant on the queue table at all,
 -- which is the point of it.
@@ -176,14 +193,11 @@ begin
     return null;
   end if;
 
-  if tg_op = 'UPDATE'
-     and new.assignee_worker_id is not distinct from old.assignee_worker_id
-     and new.start_date is not distinct from old.start_date
-     and old.status in ('pending', 'in_progress')
-  then
-    -- Nothing about who does this, when it starts, or whether it is live has
-    -- changed. A plain edit to a title or a description must not message
-    -- anybody.
+  -- The ONLY two events that are an assignment: a brand-new task that already
+  -- names somebody, and an update that genuinely hands the task to a different
+  -- person. `is not distinct from` rather than `=`, because clearing an
+  -- assignee and setting one both involve a null and `null = null` is null.
+  if tg_op = 'UPDATE' and new.assignee_worker_id is not distinct from old.assignee_worker_id then
     return null;
   end if;
 
@@ -195,7 +209,7 @@ end;
 $$;
 
 create trigger tasks_queue_assignment_notice
-  after insert or update of assignee_worker_id, start_date, status on tasks
+  after insert or update of assignee_worker_id on tasks
   for each row execute function private.queue_task_assignment_notice();
 
 -- ── the same door for HELPERS (issue #44) ──────────────────────────────────
