@@ -3465,6 +3465,8 @@ for (const locale of LOCALES) {
   for (const key of ['photoBatchAsk', 'photoBatchMoreAck', 'photoBatchNone'] as const) {
     const body = key === 'photoBatchAsk' ? t.photoBatchAsk(2) : t[key];
     check(`${locale}: ${key} is one short line`, body.length > 0 && body.length <= 160, body);
+  }
+}
 // ── the immediate assignment note (issue W7) ────────────────────────────────
 //
 // "When we assign a new task to a worker we need to send it immediately, only
