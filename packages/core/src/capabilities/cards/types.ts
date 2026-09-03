@@ -141,6 +141,18 @@ export interface CardStrings {
     phone(v: string): string;
     /** The language of this worker's daily briefing (workers.language). */
     language(v: string): string;
+    /**
+     * WhatsApp consent (issue #157). TWO strings, not one taking a boolean:
+     * giving permission and taking it back are different events, and a card
+     * that blurred them would be asking a manager to approve something the
+     * sentence does not say. Consent is the gate on every proactive send, so
+     * the direction has to be unmissable.
+     *
+     * No value is interpolated: the timestamp is minted server-side and the
+     * manager is attesting to a fact, not choosing a date.
+     */
+    whatsappOptIn: string;
+    whatsappOptOut: string;
   };
 
   /** The counts are ROW counts, re-read from the DB at render time rather than
