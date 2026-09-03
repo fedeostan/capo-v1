@@ -4097,6 +4097,8 @@ for (const locale of LOCALES) {
     check('an empty batch touches nothing at all', order.length === 0, order.join('|'));
     check('and sends nothing', !result.sent);
   }
+}
+
 // ── the manager reaching one crew member (issue #123) ───────────────────────
 //
 // Capo could not put a single word in front of a crew member: the manager said
