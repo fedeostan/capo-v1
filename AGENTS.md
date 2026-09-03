@@ -2039,6 +2039,69 @@ Structural invariants (do not regress):
   operator question and this needs no tenant read surface. **Vercel hosting is
   absent and cannot be added** — it is one flat platform bill with no per-tenant
   meter, so any per-company hosting figure would be invented.
+- **A task assigned for TODAY reaches the crew member now, and the door is a
+  DATABASE TRIGGER** (`task_assignment_notices`, migration `0048`, issue W7).
+  Before it, the only moment Capo ever spoke to a crew member first was 07:00,
+  so a task given to somebody at nine in the morning reached them the following
+  morning, and nothing told the manager they had not been told. Seven things:
+  - **The trigger is the door because there are SEVEN of them.** `create_task`,
+    `update_task`, `apply_plan`, `apply_reschedule`, the `assignTask` and
+    `setCollaborators` web actions, and `set_task_collaborators` from the agent.
+    A hook on each is a hook somebody forgets in a commit about something else,
+    and the symptom is one crew member who silently stops being told about their
+    work. Two triggers, on `tasks` and on `task_assignees` — the latter filtered
+    to `role = 'collaborator'`, because 0035 MIRRORS the lead into that table and
+    without the filter every assignment would queue twice.
+  - **The trigger QUEUES; it never DECIDES.** It knows nothing about calendars.
+    "What is on today" has one definition, in `task_board`, and a copy of it
+    inside a trigger would be a second opinion whose symptom is Capo messaging
+    somebody about next week's work. The drain
+    (`apps/web/app/notifications/task-assigned.ts`) reads the view and answers
+    two questions: `briefableToday` (the same allowlist both daily sends use)
+    and `window_start = today`, which is the one question the daily sends never
+    ask — `active_today` is true on EVERY day of a multi-day task.
+  - **`queued_date` is the dedup key, and it is a LISBON DAY.** One person hears
+    about one task at most once a day, however many times it is reassigned. The
+    other candidate — a partial unique where `notified_at is null` — lets a task
+    taken off somebody and given back the same afternoon announce itself twice.
+  - **Deny-all for tenants**, like `notification_log` and `worker_day_links`:
+    RLS on, zero policies, every grant revoked. A row here causes a WhatsApp
+    message in Capo's voice to a real crew member, so a tenant who could write
+    one could message another company's crew, and one who could update one could
+    silence their own.
+  - **Free inside the window, PAID and capped outside it.** Inside the crew
+    member's own 24 hours it is free text carrying the WHOLE day, rendered by
+    `renderWorkerFreeForm` with the new task marked — one renderer, shared with
+    07:00, because two would eventually describe a task differently. Outside, it
+    is `capo_task_assigned`, claimed in `notification_log` under kind
+    `task_assigned`, so that table's unique key caps it at ONE per crew member
+    per day: a second assignment the same afternoon deliberately sends nothing,
+    because the first template already asked for a reply and a reply opens the
+    free window. **`TASK_ASSIGNED_APPROVED_LANGUAGES` starts EMPTY** and the
+    template is NOT yet submitted (the send token has no
+    `whatsapp_business_management` scope) — until a locale is added there, an
+    out-of-window crew member gets nothing extra and tomorrow's briefing carries
+    the task. Runbook §6d.
+  - **Working hours are Lisbon 08..18 inclusive** (`withinAssignmentHours`,
+    `apps/web/lib/task-assigned-window.ts`, pinned by `pnpm scheduler-check`).
+    Deliberately NOT `withinSendWindow`: this models a working DAY, not a send
+    aimed at an hour and absorbing cron drift. An out-of-hours notice is the one
+    branch besides the coalescing deferral that is NOT stamped decided —
+    `notified_at` stays null, the next in-hours drain finds the task no longer
+    starts today, and it is dropped as `not_today`, which is right because the
+    07:00 briefing carries it.
+  - **Five in-request `after()` calls plus a `*/15` cron, and the cron is the
+    MECHANISM.** Same relationship `/api/cron/push` has with its producers: the
+    five calls make the message arrive in seconds, the sweep makes a forgotten
+    sixth door cost lateness rather than silence. It has NO hour gate of its own
+    — the quiet-hours rule belongs to the drain and stating it twice would let
+    the two drift. The drain never throws, at any level, and opens its own
+    service-role client like `dispatchPushes` so every call site stays one line.
+  Known and NOT done: a manager assigning several tasks one at a time gets ONE
+  message for the first and the rest are deferred by `COALESCE_WINDOW_MS` into
+  the next cron tick — so the follow-ups are up to fifteen minutes late by
+  design. Nothing sweeps `task_assignment_notices`; drained rows stay as the
+  record of who was told what.
 - Views may only be extended with `create or replace view` **appending**
   columns (Postgres forbids reorder/retype). Code reading a view that a
   pending migration extends should `select('*')` and treat the new fields as
