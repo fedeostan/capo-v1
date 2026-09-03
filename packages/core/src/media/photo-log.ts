@@ -31,6 +31,16 @@ export type PhotoStoreStage =
   | 'stamp'
   /** Reading the inbox failed. */
   | 'read'
+  /**
+   * The photo IS attached and recorded; only `tasks.completion_proof` failed.
+   *
+   * The least damaging stage in this union and the one that hid the longest.
+   * `markTaskProofPhotos` wrapped its UPDATE in a try/catch and never read the
+   * returned `error`, and supabase-js reports a refused statement as a VALUE
+   * rather than by throwing, so that catch could not fire and the function
+   * reported success on every PostgREST refusal it ever had.
+   */
+  | 'proof'
   /** Something threw. */
   | 'exception';
 
@@ -50,6 +60,39 @@ export interface PhotoStoreFailure {
 export function logPhotoStoreFailure(failure: PhotoStoreFailure): void {
   try {
     console.warn(JSON.stringify({ evt: 'task_photo.store_failed', ...failure }));
+  } catch {
+    // A logger that can break a WhatsApp turn is worse than no logger.
+  }
+}
+
+/**
+ * One photo BECAME EVIDENCE: the bytes are in the task's folder and the
+ * `task_photos` row that points at them exists.
+ *
+ * Success is logged, and that is the point rather than noise. Every line above
+ * this one records a photo being lost, so on their own they cannot tell "the
+ * photo path is broken" from "the crew did not send anything today" — those two
+ * produce the identical empty log, which is exactly how `task_photos` stayed
+ * empty for the life of the product without anybody noticing. A run of intake
+ * events (`whatsapp.worker_photo_staged`) with no `task_photo.stored` behind it
+ * is the shape of the failure, and it is unreadable without this line.
+ *
+ * Emitted by the ONE row writer, so it fires for both writers and every caller:
+ * the check-in tap, the agent's `declare_task_done`, the inbox attach and the
+ * pre-0047 fallback alike.
+ *
+ * Carries the object key, which holds only the company and task ids. Never the
+ * bytes, never a caption, never anything a crew member wrote.
+ */
+export function logPhotoStored(stored: {
+  companyId: string;
+  workerId: string;
+  taskId: string;
+  path: string;
+  photoId?: string;
+}): void {
+  try {
+    console.log(JSON.stringify({ evt: 'task_photo.stored', ...stored }));
   } catch {
     // A logger that can break a WhatsApp turn is worse than no logger.
   }

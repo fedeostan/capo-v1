@@ -6,7 +6,7 @@ import {
   taskPhotoPath,
   type TaskPhotoMime,
 } from './photos';
-import { errorText, logPhotoStoreFailure } from './photo-log';
+import { errorText, logPhotoStored, logPhotoStoreFailure } from './photo-log';
 import { photoInboxLive } from './photo-inbox';
 
 // The ONE writer of a crew-sourced task photo.
@@ -165,6 +165,7 @@ export async function storeWorkerTaskPhoto(
     return null;
   }
 
+  logPhotoStored({ companyId, workerId, taskId, path, photoId: photo.id });
   return path;
 }
 
@@ -273,6 +274,7 @@ export async function attachInboxPhotos(
         continue;
       }
       attached += 1;
+      logPhotoStored({ companyId, workerId, taskId, path, photoId: row.id });
 
       const { error: stampError } = await db
         .from('worker_photo_inbox')
@@ -315,7 +317,13 @@ export async function markTaskProofPhotos(
   taskId: string,
 ): Promise<void> {
   try {
-    await db
+    // The `error` is READ rather than relied on being thrown. supabase-js
+    // reports a refused statement as a VALUE, so the catch below never saw a
+    // PostgREST refusal at all and this function reported success on every one
+    // of them — a revoked grant, an unapplied migration and a healthy write
+    // were indistinguishable from the outside. The catch stays for a genuine
+    // transport failure, which is the only thing that actually throws here.
+    const { error } = await db
       .from('tasks')
       .update({ completion_proof: 'photos' })
       .eq('id', taskId)
@@ -325,8 +333,15 @@ export async function markTaskProofPhotos(
       // an update of status would fire tasks_supersede_review (0020) and
       // supersede the very claim the photo is proof for.
       .eq('company_id', companyId);
-  } catch {
-    // Swallowed on purpose — see the note above.
+    if (error) {
+      logPhotoStoreFailure({ stage: 'proof', companyId, taskId, error: error.message });
+    }
+  } catch (err) {
+    // Still swallowed on purpose — see the note above. Said out loud, though:
+    // this column is a denormalised convenience and losing it costs no
+    // evidence, but a table that quietly stops filling in is exactly the shape
+    // of silence this file exists to end.
+    logPhotoStoreFailure({ stage: 'proof', companyId, taskId, error: errorText(err) });
   }
 }
 
@@ -360,12 +375,21 @@ export async function markTaskProofUnknown(
   taskId: string,
 ): Promise<void> {
   try {
-    await db
+    // Reads `error` for markTaskProofPhotos' reason, and it is the same latent
+    // defect: 0049 copied that function's shape, catch and all, so the bug was
+    // duplicated before it was found. Fixing one and not the other would leave
+    // a copy of it behind in the path taken by the crew members who could not
+    // photograph anything, which is the half nobody watches.
+    const { error } = await db
       .from('tasks')
       .update({ completion_proof: null })
       .eq('id', taskId)
       .eq('company_id', companyId);
-  } catch {
-    // Swallowed on purpose — see the note above.
+    if (error) {
+      logPhotoStoreFailure({ stage: 'proof', companyId, taskId, error: error.message });
+    }
+  } catch (err) {
+    // Still swallowed on purpose — see the note above.
+    logPhotoStoreFailure({ stage: 'proof', companyId, taskId, error: errorText(err) });
   }
 }
