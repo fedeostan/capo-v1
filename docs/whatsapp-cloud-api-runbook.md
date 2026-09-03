@@ -223,7 +223,7 @@ unwelcomed for 17 days (issue #121).
 | `capo_welcome` | welcome sweep (`api/cron/welcome`) | §6c; approved in all three locales 31 Aug 2026 |
 | `capo_daily_briefing_v2` | nothing yet | submitted 31 Aug 2026 (issue #108); {{2}} on its own paragraph |
 | `capo_message_waiting` | nothing yet | submitted 31 Aug 2026 (issue #123 B); the window-reopener |
-| `capo_task_assigned` | the assignment drain (`app/notifications/task-assigned.ts`) | §6d; **NOT SUBMITTED YET** — see below |
+| `capo_task_assigned` | the assignment drain (`app/notifications/task-assigned.ts`) | §6d; submitted 3 Sep 2026 (issue W7), all three locales PENDING |
 
 All six are in `MANAGED_TEMPLATE_NAMES`, so `pnpm whatsapp-template status`
 checks every name × locale pair and is the way to verify approval actually
@@ -512,18 +512,40 @@ different component, a different approval path, and a per-person per-day token
 as a dynamic suffix. "Responde OK" reaches the same content through #108's
 existing keyword, which already answers with the full formatted day.
 
-**It has not been submitted.** `pnpm whatsapp-template create` refuses with
-*"This token carries no whatsapp_business_management target"*: the token in
-`apps/web/.env.local` is the SEND token, and template management needs the
-System User token that lives in Vercel with the WABA granted as an asset
-(§3). Submitting it is therefore a manual step:
+**Submitted 3 September 2026, all three locales PENDING review.**
 
 ```
-vercel env pull /tmp/vercel.env --environment=production
-set -a; . /tmp/vercel.env; set +a
-pnpm whatsapp-template create      # idempotent; 2388023 means "already there"
-pnpm whatsapp-template status      # per name x locale approval
+capo_task_assigned pt_PT → id=1859688468524905 status=PENDING
+capo_task_assigned es_ES → id=1603821794728431 status=PENDING
+capo_task_assigned en_US → id=28806849452245917 status=PENDING
 ```
+
+`status` confirms the live body and the (empty) button list match this repo for
+all three, so what Meta is reviewing is exactly what
+`scripts/whatsapp-templates.ts` says.
+
+### ⚠ `WHATSAPP_WABA_ID` is REQUIRED with the token in `.env.local`
+
+`pnpm whatsapp-template create` on its own answers *"This token carries no
+whatsapp_business_management target"* and does nothing. That is the discovery
+step failing, not the token: the script derives the WABA id from
+`GET /debug_token`, and this token's granted-asset list does not include one.
+Passing the id explicitly works:
+
+```
+WHATSAPP_WABA_ID=715247827972608 ./node_modules/.bin/tsx scripts/whatsapp-template.mts create
+WHATSAPP_WABA_ID=715247827972608 ./node_modules/.bin/tsx scripts/whatsapp-template.mts status
+```
+
+Use the same env var for BOTH commands, or `status` reports on a different WABA
+and every line comes back missing. Two other refusals are normal noise on a
+`create` run over the whole registry and do not mean anything failed: **2388024**
+("content already exists in this language") is the idempotent case for a template
+already submitted, and **2388026** ("UTILITY does not match the category already
+associated: MARKETING") is Meta having re-categorised an older template — neither
+touches a new name. Also worth knowing when adding a buttoned template:
+**2388060** rejects a quick-reply label containing an emoji, and a body that
+STARTS with a variable is rejected outright.
 
 **Nothing is sent until a locale is switched on in code.**
 `TASK_ASSIGNED_APPROVED_LANGUAGES` in `apps/web/lib/task-assigned-template.ts`

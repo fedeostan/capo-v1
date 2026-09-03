@@ -2078,10 +2078,36 @@ Structural invariants (do not regress):
     per day: a second assignment the same afternoon deliberately sends nothing,
     because the first template already asked for a reply and a reply opens the
     free window. **`TASK_ASSIGNED_APPROVED_LANGUAGES` starts EMPTY** and the
-    template is NOT yet submitted (the send token has no
-    `whatsapp_business_management` scope) — until a locale is added there, an
-    out-of-window crew member gets nothing extra and tomorrow's briefing carries
-    the task. Runbook §6d.
+    template was submitted 3 Sep 2026 with all three locales PENDING review; a
+    locale is switched on by hand only once `whatsapp-template status` shows it
+    APPROVED. Until then an out-of-window crew member gets nothing extra and
+    tomorrow's briefing carries the task. ⚠ `whatsapp-template` needs
+    `WHATSAPP_WABA_ID=715247827972608` with the token in `.env.local`, or its
+    discovery step refuses and nothing is submitted. Runbook §6d.
+  - **The QUEUE ROW is the lock on the free path.** Nothing free may go in
+    `notification_log`, so rows are CLAIMED before the Graph call — one atomic
+    `update ... set notified_at = now(), outcome = 'sending' where id in (...)
+    and notified_at is null returning id` — and only what came back is sent
+    about. `ENGAGED_OUTCOMES` counts `'sending'` as "already messaged", which is
+    what makes the coalescing window work in the two-seconds-apart case rather
+    than only across whole drains. `claimThenSend` in
+    `apps/web/lib/task-assigned-plan.ts` takes both sides injected, so `pnpm
+    whatsapp-check` asserts the ORDER — which no type checker can see.
+  - **The trigger fires on an ASSIGNEE CHANGE or an INSERT, and nothing else.**
+    Not on status: `resolve_task_review(..., 'rejected')` moves a task from
+    `pending_review` back to `in_progress` (0018), and queueing there tells the
+    crew member whose completion claim was just rejected that they have a NEW
+    task. Not on `start_date` either: `apply_reschedule` re-dates an existing
+    task, and the copy this queue produces says "new".
+  - **A notice queued on an earlier Lisbon day is `stale` and is NEVER sent**
+    (`noticeIsStale`). Evening admin planning tomorrow's work is the common
+    case: the notice survives the night because the out-of-hours branch does not
+    consume rows, and at 08:00 the task now does start today, so without this it
+    goes out an hour after the 07:00 briefing already said it.
+  - **A task no longer on that person's board is `reassigned`, and sends
+    nothing.** `renderWorkerFreeForm` short-circuits on an empty day, so the
+    message would otherwise read "your boss just gave you a new task", followed
+    by the nothing-today line.
   - **Working hours are Lisbon 08..18 inclusive** (`withinAssignmentHours`,
     `apps/web/lib/task-assigned-window.ts`, pinned by `pnpm scheduler-check`).
     Deliberately NOT `withinSendWindow`: this models a working DAY, not a send
