@@ -223,8 +223,9 @@ unwelcomed for 17 days (issue #121).
 | `capo_welcome` | welcome sweep (`api/cron/welcome`) | §6c; approved in all three locales 31 Aug 2026 |
 | `capo_daily_briefing_v2` | nothing yet | submitted 31 Aug 2026 (issue #108); {{2}} on its own paragraph |
 | `capo_message_waiting` | nothing yet | submitted 31 Aug 2026 (issue #123 B); the window-reopener |
+| `capo_task_assigned` | the assignment drain (`app/notifications/task-assigned.ts`) | §6d; **NOT SUBMITTED YET** — see below |
 
-All five are in `MANAGED_TEMPLATE_NAMES`, so `pnpm whatsapp-template status`
+All six are in `MANAGED_TEMPLATE_NAMES`, so `pnpm whatsapp-template status`
 checks every name × locale pair and is the way to verify approval actually
 happened — Meta approves each pair separately and tells nobody.
 
@@ -491,6 +492,46 @@ deploy does not introduce Capo to people who have been using it for a month, and
 creates `welcome_ledger_ready()` — a marker function the sweep asks for before
 it sends anything, so shipping the code without the migration produces silence
 rather than a mass mailing.
+
+### 6d. `capo_task_assigned` — ⚠ SUBMISSION IS A MANUAL STEP, STILL OPEN
+
+The out-of-window half of the immediate assignment note (issue W7): when a
+manager puts somebody on a task that starts today, Capo tells them within
+seconds instead of at 07:00 tomorrow. Inside the crew member's own 24-hour
+window that is ordinary free text and costs nothing; outside it, free-form is
+refused with 131047 and this template is the only legal contact.
+
+Body, `{{1}}` the crew member's name and `{{2}}` the task that was just
+assigned:
+
+> Olá {{1}}, o teu chefe deu-te uma tarefa nova para hoje: {{2}}. Responde OK
+> para veres o teu dia. Responde STOP para deixar de receber.
+
+No buttons, and no URL button in particular. A link to `/dia` would need a
+different component, a different approval path, and a per-person per-day token
+as a dynamic suffix. "Responde OK" reaches the same content through #108's
+existing keyword, which already answers with the full formatted day.
+
+**It has not been submitted.** `pnpm whatsapp-template create` refuses with
+*"This token carries no whatsapp_business_management target"*: the token in
+`apps/web/.env.local` is the SEND token, and template management needs the
+System User token that lives in Vercel with the WABA granted as an asset
+(§3). Submitting it is therefore a manual step:
+
+```
+vercel env pull /tmp/vercel.env --environment=production
+set -a; . /tmp/vercel.env; set +a
+pnpm whatsapp-template create      # idempotent; 2388023 means "already there"
+pnpm whatsapp-template status      # per name x locale approval
+```
+
+**Nothing is sent until a locale is switched on in code.**
+`TASK_ASSIGNED_APPROVED_LANGUAGES` in `apps/web/lib/task-assigned-template.ts`
+starts EMPTY, so today an out-of-window crew member gets nothing extra and the
+notice is stamped `template_unapproved`; they still get the task in tomorrow's
+07:00 briefing. When `status` shows a locale APPROVED, add its code to that set.
+Flipping it on early costs a 132001 per recipient; leaving it off costs one late
+message, and that is the cheaper failure.
 
 ## Opt-in and opt-out (migration `0025`)
 

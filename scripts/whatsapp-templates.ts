@@ -333,6 +333,63 @@ export function capoMessageWaiting(): TemplateDefinition[] {
   }));
 }
 
+/**
+ * capo_task_assigned — "your boss just gave you a new task for today" (issue W7).
+ *
+ * The out-of-window half of the immediate assignment note. Inside the crew
+ * member's own 24-hour window Capo sends the whole day as free text, free of
+ * charge and with the /dia link; outside it, free-form is refused (131047) and
+ * this is the only legal way to reach them.
+ *
+ * ── {{2}} IS THE TASK, NOT THE DAY ─────────────────────────────────────────
+ * A template parameter is ONE FLAT LINE — toTemplateParam flattens whitespace
+ * and Meta rejects a newline with 132000 — so the day does not fit. The body
+ * therefore names what is NEW and asks for a reply, and the reply is the point:
+ * it opens the free window, and #108's existing "OK" keyword answers it with
+ * the full formatted briefing. One flow, reached two ways.
+ *
+ * ── NO URL BUTTON, DELIBERATELY ────────────────────────────────────────────
+ * A link to /dia would be the obvious thing to put here and it is not
+ * available: a URL button is a different component, a different approval path,
+ * and the /dia token is minted per person per day so it could only ever be a
+ * dynamic URL suffix. "Responde OK" reaches the same page's content through a
+ * flow that already exists and already works.
+ *
+ * No BUTTONS component at all, for the standing reason: a quick reply would be
+ * a FOURTH tappable payload shape to keep disjoint from the other three
+ * (AGENTS.md), and any reply already opens the window.
+ *
+ * The body states STOP, as every non-buttoned template here does: Meta expects
+ * a utility template to say how to stop receiving them.
+ */
+const TASK_ASSIGNED_BODY: Record<Locale, string> = {
+  'pt-PT': 'Olá {{1}}, o teu chefe deu-te uma tarefa nova para hoje: {{2}}. Responde OK para veres o teu dia. Responde STOP para deixar de receber.',
+  'es-ES': 'Hola {{1}}, tu jefe te ha dado una tarea nueva para hoy: {{2}}. Responde OK para ver tu día. Responde STOP para dejar de recibir.',
+  'en-US': 'Hi {{1}}, your boss gave you a new task for today: {{2}}. Reply OK to see your day. Reply STOP to unsubscribe.',
+};
+
+const TASK_ASSIGNED_EXAMPLE: Record<Locale, [name: string, tasks: string]> = {
+  'pt-PT': ['Miguel', 'Pintar paredes (Casa de Paco)'],
+  'es-ES': ['Miguel', 'Pintar paredes (Casa de Paco)'],
+  'en-US': ['Miguel', 'Paint the walls (Casa de Paco)'],
+};
+
+export function capoTaskAssigned(): TemplateDefinition[] {
+  return LOCALES.map(locale => ({
+    name: 'capo_task_assigned',
+    language: getCatalog(locale).reminders.templateLanguage,
+    category: 'UTILITY' as const,
+    parameter_format: 'POSITIONAL' as const,
+    components: [
+      {
+        type: 'BODY',
+        text: TASK_ASSIGNED_BODY[locale],
+        example: { body_text: [TASK_ASSIGNED_EXAMPLE[locale]] },
+      },
+    ],
+  }));
+}
+
 /** Every template this repo knows how to submit. */
 export function allTemplates(): TemplateDefinition[] {
   return [
@@ -341,6 +398,7 @@ export function allTemplates(): TemplateDefinition[] {
     ...capoWelcome(),
     ...capoDailyBriefingV2(),
     ...capoMessageWaiting(),
+    ...capoTaskAssigned(),
   ];
 }
 
@@ -351,6 +409,7 @@ export const MANAGED_TEMPLATE_NAMES = [
   'capo_welcome',
   'capo_daily_briefing_v2',
   'capo_message_waiting',
+  'capo_task_assigned',
 ];
 
 /** The three locale codes every managed template must exist in. */
