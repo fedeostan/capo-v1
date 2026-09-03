@@ -91,6 +91,8 @@ export const cards: CardStrings = {
     trade: v => `oficio → ${v}`,
     phone: v => `móvil → ${v}`,
     language: v => `idioma de los mensajes → ${v}`,
+    whatsappOptIn: 'pasa a recibir los mensajes del Capo en WhatsApp',
+    whatsappOptOut: 'deja de recibir los mensajes del Capo en WhatsApp',
   },
 
   translateCompany: p => {

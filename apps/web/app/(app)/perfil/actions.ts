@@ -6,6 +6,7 @@ import { redirect } from 'next/navigation';
 import { asConfirmPosture } from '@capo/db/posture';
 import { requireAuth } from '@capo/db/session';
 import { ActiveBatchError, createTranslationBatch, revertTranslationBatch } from '@capo/core/translation';
+import { asPhoneCountry, composeE164, defaultCountryFor } from '@capo/core/channels/phone';
 import { getCatalog } from '@capo/i18n/catalog';
 import { asLocale } from '@capo/i18n/locale';
 import { assertNotBlocked } from '@/lib/billing';
@@ -27,15 +28,6 @@ import { logEvent } from '@/lib/log';
 // company_id or the billing columns.
 
 export type FormState = { ok?: true; error?: string } | null;
-
-// Same normalization stance as onboarding/actions.ts: a bare PT mobile
-// ("912345678") becomes +351912345678; anything else must already be E.164.
-// The DB check constraint re-validates — this is UX, not the guard.
-function normalizePhone(raw: string): string | null {
-  const compact = raw.replace(/[\s\-().]/g, '');
-  const phone = /^9\d{8}$/.test(compact) ? `+351${compact}` : compact;
-  return /^\+[1-9]\d{7,14}$/.test(phone) ? phone : null;
-}
 
 function validName(value: string): boolean {
   return value.length >= 1 && value.length <= 120;
@@ -64,7 +56,11 @@ export async function updateProfile(_prev: FormState, formData: FormData): Promi
   const t = getCatalog(locale).profile.errors;
 
   const fullName = String(formData.get('nome') ?? '').trim();
-  const phone = normalizePhone(String(formData.get('telemovel') ?? ''));
+  // One normalizer for the whole product (packages/core/src/channels/phone.ts).
+  // The country arrives from the picker beside the field; a post without one
+  // (older cached HTML) falls back to this manager's language dial.
+  const country = asPhoneCountry(String(formData.get('country') ?? '')) ?? defaultCountryFor(locale);
+  const phone = composeE164(country, String(formData.get('telemovel') ?? ''));
   if (!validName(fullName)) return { error: t.fullName };
   if (!phone) return { error: t.phone };
 

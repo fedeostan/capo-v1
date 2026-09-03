@@ -1,5 +1,6 @@
 import type { Db } from '@capo/db/client';
 import type { Locale } from '@capo/i18n/locale';
+import { canonicalizeE164 } from '../channels/phone';
 import { countTranslatable } from '../translation';
 import { checkPlanQuality, renderPlanWarningLines } from './plan-quality';
 import { shiftDaysBetween } from './reschedule';
@@ -167,7 +168,11 @@ export async function renderProposal(
       return t.addWorker({
         name: args.name,
         trade: args.trade,
-        phone: args.phone,
+        // Display only, but it must be the number that will actually be
+        // STORED: the card is the manager's last chance to spot a wrong
+        // number, so showing them a different string from the one the tool
+        // writes would defeat the point of the card.
+        phone: args.phone ? canonicalizeE164(args.phone) : undefined,
         optIn: args.whatsapp_opt_in === true,
       });
 
@@ -176,8 +181,20 @@ export async function renderProposal(
       const changes: string[] = [];
       if (args.name) changes.push(t.workerChange.name(args.name));
       if (args.trade) changes.push(t.workerChange.trade(args.trade));
-      if (args.phone) changes.push(t.workerChange.phone(args.phone));
+      if (args.phone) changes.push(t.workerChange.phone(canonicalizeE164(args.phone)));
       if (args.language) changes.push(t.workerChange.language(args.language));
+      // `!= null`, not truthiness (issue #157). `false` is the WITHDRAWAL and
+      // is very often the only thing on the card; reading it as absent left a
+      // consent-only update with an empty change list, which threw "empty
+      // change" at the manager. Consent is the gate on every proactive send, so
+      // the one sentence that makes a crew member reachable was the one
+      // sentence that failed.
+      //
+      // Two strings, never one with a value interpolated: granting permission
+      // and taking it back are different events and must not read as one line.
+      if (args.whatsapp_opt_in != null) {
+        changes.push(args.whatsapp_opt_in ? t.workerChange.whatsappOptIn : t.workerChange.whatsappOptOut);
+      }
       if (changes.length === 0) throw new RenderError(t.errors.emptyChange);
       return t.updateWorker({ name, changes });
     }

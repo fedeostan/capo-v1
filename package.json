@@ -23,7 +23,8 @@
     "agent-smoke": "tsx scripts/agent-smoke.mts",
     "knowledge-ingest": "tsx scripts/knowledge-ingest.mts",
     "activity-check": "tsx scripts/activity-check.mts",
-    "migration-check": "tsx scripts/migration-drift.mts"
+    "migration-check": "tsx scripts/migration-drift.mts",
+    "phone-check": "tsx scripts/phone-check.mts"
   },
   "devDependencies": {
     "@ai-sdk/google": "^4.0.8",
