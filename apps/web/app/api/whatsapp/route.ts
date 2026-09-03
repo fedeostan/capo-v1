@@ -1851,6 +1851,10 @@ async function runWorkerTurn(
       workerId: worker.id,
       locale,
       inbound: { channel: 'whatsapp', text, transcribed: !!transcribe, transcribe },
+      // Meta's own id for this message. It is what the no-photo waiver (0049)
+      // counts with, so three tool calls inside one turn share it and count as
+      // one ask.
+      inboundMessageId: message.id,
       inboundPhotos: opts.inboundPhotos,
       fallbackPhotos: opts.fallbackPhotos,
       sink,

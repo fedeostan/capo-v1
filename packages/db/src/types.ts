@@ -333,6 +333,21 @@
 // posture). tsc will let a tenant-scoped client select from it; the database
 // refuses at the grant layer. The only writer is the WhatsApp webhook on the
 // service role.
+//
+// ── PENDING 0049 (no-photo waiver), WRITTEN BY HAND ────────────────────────
+// Three things: `task_reviews.photo_waived`, the new `task_photo_waiver_attempts`
+// table, and a fourth argument on `open_task_review`. Added by hand for the
+// standing reason: regenerating against a project that lacks them would
+// silently DELETE these blocks rather than add them.
+//
+// While the migration is unapplied the feature degrades to today's product,
+// deliberately and in one direction only — MORE strictly, never less. The
+// attempt read answers 42P01 and is treated as "no attempts", so a crew member
+// with no photo is asked for one and never waived; the attempt write fails and
+// is logged; and `open_task_review` still exists with three arguments, so
+// nothing that files an ordinary claim is affected. The one visible symptom is
+// that "there is no light" keeps getting the old refusal, which is exactly
+// where the product stands today.
 export type Json =
   | string
   | number
@@ -1852,6 +1867,43 @@ export type Database = {
           },
         ]
       }
+      // PENDING 0049: task_photo_waiver_attempts. Every column is written by
+      // the worker agent on the SERVICE ROLE; the table is deny-all for tenants
+      // (RLS on, zero policies, every grant revoked), so tsc will happily let a
+      // tenant-scoped client select from it and the database answers 42501.
+      task_photo_waiver_attempts: {
+        Row: {
+          attempt_no: number
+          company_id: string
+          conversation_id: string
+          created_at: string
+          id: string
+          inbound_message_id: string
+          task_id: string
+          worker_id: string
+        }
+        Insert: {
+          attempt_no: number
+          company_id: string
+          conversation_id: string
+          created_at?: string
+          id?: string
+          inbound_message_id: string
+          task_id: string
+          worker_id: string
+        }
+        Update: {
+          attempt_no?: number
+          company_id?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          inbound_message_id?: string
+          task_id?: string
+          worker_id?: string
+        }
+        Relationships: []
+      }
       task_reviews: {
         Row: {
           company_id: string
@@ -1859,6 +1911,12 @@ export type Database = {
           declared_by_worker_id: string | null
           id: string
           note: string | null
+          // PENDING 0049. NOT NULL DEFAULT false in the migration, so every
+          // pre-0049 claim reads as false, which is what they all are. A reader
+          // reaching this through `select('*')` on a deploy that landed BEFORE
+          // the migration gets `undefined`, so coerce with `=== true` rather
+          // than trusting the type — same rule the other pending columns take.
+          photo_waived: boolean
           resolved_at: string | null
           resolved_by: string | null
           status: string
@@ -1870,6 +1928,7 @@ export type Database = {
           declared_by_worker_id?: string | null
           id?: string
           note?: string | null
+          photo_waived?: boolean
           resolved_at?: string | null
           resolved_by?: string | null
           status?: string
@@ -1881,6 +1940,7 @@ export type Database = {
           declared_by_worker_id?: string | null
           id?: string
           note?: string | null
+          photo_waived?: boolean
           resolved_at?: string | null
           resolved_by?: string | null
           status?: string
@@ -2772,8 +2832,14 @@ export type Database = {
       note_day_link_opened: { Args: { p_token: string }; Returns: undefined }
       lisbon_hour: { Args: never; Returns: number }
       lisbon_today: { Args: never; Returns: string }
+      // PENDING 0049. The three-argument function is DROPPED and recreated with
+      // a fourth, `p_photo_waived boolean default false` — a drop rather than a
+      // `create or replace`, because an extra parameter makes a NEW function in
+      // Postgres and every existing three-argument call would then be an
+      // ambiguous overload. Callers that omit it (the check-in tap path, the
+      // manager's own "pedir controlo") behave exactly as they always have.
       open_task_review: {
-        Args: { p_note?: string; p_task: string; p_worker?: string }
+        Args: { p_note?: string; p_photo_waived?: boolean; p_task: string; p_worker?: string }
         Returns: string
       }
       resolve_task_review: {

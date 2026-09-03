@@ -249,7 +249,41 @@ export interface Catalog {
      *  translated. Keyed by the `kind` check constraint in
      *  0023_notifications.sql, so widening that constraint without adding
      *  copy in all three dictionaries is a tsc error. */
-    kind: Record<'review_pending' | 'worker_request', (subject: string) => string>;
+    kind: Record<
+      /** A crew member (or the manager) declared a task finished, with proof. */
+      | 'review_pending'
+      | 'worker_request'
+      /** ── A CLAIM WITH NO PHOTO (0049) ──────────────────────────────────
+       *  A crew member said a task was finished, Capo asked for a photo
+       *  TWICE, and they said they could not send one. Their reason is the
+       *  row's `body` and is quoted underneath, attributed, exactly as any
+       *  other worker-authored text.
+       *
+       *  Its own kind rather than a flag on 'review_pending', and the
+       *  reason is the push: a push renders from THIS record
+       *  (apps/web/app/notifications/push.ts), so one entry here reaches
+       *  the lock screen and the inbox and they cannot say different
+       *  things about the same claim.
+       *
+       *  ⚠ THIS IS A FACT, NOT AN ACCUSATION, like proofNone below. The
+       *  person could not photograph the work and said so. The sentence
+       *  says what happened; it does not imply anybody was cutting a
+       *  corner. */
+      | 'review_no_photo',
+      /**
+       * `subject` is the row's own title (a task name, or a crew member's name
+       * on a request) — data, interpolated and never translated.
+       *
+       * `quote` is the row's `body` when the SURFACE can only carry one line.
+       * The inbox calls this with ONE argument and renders the quote itself,
+       * attributed, beneath the sentence; the Web Push dispatcher has a single
+       * body slot and no room for a second block, so it passes the quote in
+       * here already trimmed to PUSH_QUOTE_MAX_CHARS. One entry, both surfaces,
+       * so a lock screen and an inbox row cannot describe one claim
+       * differently. An entry with nothing worth quoting simply ignores it.
+       */
+      (subject: string, quote?: string | null) => string
+    >;
     /** Stand-in when the row carries no title — an unnamed task. */
     noSubject: string;
     /** Label above the worker's quoted note. Sits ABOVE it and is never
@@ -569,6 +603,21 @@ export interface Catalog {
        *  things about the same row. */
       proofNone: string;
       proofPhotos(n: number): string;
+      /** ── THE CLAIM WAS FILED WITH NO PHOTO ON PURPOSE (0049) ────────────
+       *  Replaces proofNone when `task_reviews.photo_waived` is set: the crew
+       *  member was asked twice and said they could not send one. Unlike
+       *  proofNone this one IS rendered in the danger tone, and the difference
+       *  is real rather than decorative — proofNone is "nothing has arrived
+       *  yet", which is ordinary and often temporary, while this is "there
+       *  will not be one", settled at the moment the claim was filed. It is
+       *  what tells the manager to go and look.
+       *
+       *  Their reason is quoted beneath it, attributed, and must never be
+       *  merged into this sentence. Say a photo is still wanted; do not say
+       *  they refused. */
+      proofWaived: string;
+      /** The badge beside it. Read as a SHAPE, so two or three words at most. */
+      proofWaivedBadge: string;
     };
     taskDetail: {
       /** Page title when the task cannot be named (metadata runs before the row loads). */

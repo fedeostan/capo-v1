@@ -89,6 +89,22 @@ export interface WorkerContext {
   /** From workers.id, resolved by PHONE (or BSUID). Never from input. */
   workerId: string;
   conversationId: string;
+  /**
+   * Meta's id (`wamid`) for the message this turn is answering.
+   *
+   * REQUIRED rather than optional-with-a-default, for `confirmPosture`'s reason
+   * on the manager side: a new call site that forgot it would fall back to
+   * behaviour nobody chose, and here that behaviour decides whether a
+   * completion claim can be filed with no photo. Required makes it a `tsc`
+   * error instead.
+   *
+   * It is a STRING FROM META — not a manager field, and not anything the worker
+   * or the model can choose. That is exactly why the no-photo waiver counts
+   * with it (0049, ./photo-waiver.ts): every tool call inside one turn carries
+   * the same value, so three calls in one turn count as one ask. It is never
+   * shown to the model and nothing else here is derived from it.
+   */
+  inboundMessageId: string;
   /** workers.language ?? companies.language. One dial, theirs. */
   locale: Locale;
   /**

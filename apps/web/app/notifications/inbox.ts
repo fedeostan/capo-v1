@@ -52,6 +52,17 @@ export interface InboxItem {
    */
   photoCount: number | null;
   /**
+   * True when the claim this row is about was filed WITHOUT a photo on purpose
+   * (0049): the crew member was asked twice and said they could not send one.
+   * Null for a row whose subject is not a task review.
+   *
+   * Read here so the inbox says the same thing the board and Home say about
+   * one claim. Without it a waived claim reads "· Sem fotos anexadas." beside
+   * its own headline, which is the ORDINARY sentence — and this is the one
+   * surface of the four where the manager is most likely to be skimming.
+   */
+  photoWaived: boolean | null;
+  /**
    * When a crew request is needed FOR (issue #152), or null for every other
    * kind. `kind` is the result of subtracting lisbon_today() from
    * `worker_requests.needed_by`, and `date` is the raw ISO day for the reader
@@ -120,13 +131,21 @@ export async function loadInbox(ctx: AuthContext, limit = 50): Promise<InboxItem
     ),
   ];
   const taskByReview = new Map<string, string>();
+  const waivedReviews = new Set<string>();
   if (reviewIds.length > 0) {
+    // `select('*')` for 0049's `photo_waived`: naming a column a pending
+    // migration adds couples this read to that migration, and a deploy landing
+    // first answers 42703. Same rule loadPendingReviews follows.
     const { data: reviews } = await db
       .from('task_reviews')
-      .select('id, task_id')
+      .select('*')
       .eq('company_id', companyId)
       .in('id', reviewIds);
-    for (const r of reviews ?? []) taskByReview.set(r.id, r.task_id);
+    for (const r of reviews ?? []) {
+      taskByReview.set(r.id, r.task_id);
+      // `=== true`, never a bare read: absent before the migration lands.
+      if (r.photo_waived === true) waivedReviews.add(r.id);
+    }
   }
 
   // Whether each of those claims came with proof (issue #52). Same helper the
@@ -163,8 +182,8 @@ export async function loadInbox(ctx: AuthContext, limit = 50): Promise<InboxItem
   }
 
   return rows.map(row => {
-    const reviewTaskId =
-      row.subject_type === 'task_review' && row.subject_id ? taskByReview.get(row.subject_id) : undefined;
+    const isReview = row.subject_type === 'task_review' && !!row.subject_id;
+    const reviewTaskId = isReview ? taskByReview.get(row.subject_id as string) : undefined;
     const request = row.subject_type === 'worker_request' && row.subject_id ? requestById.get(row.subject_id) : undefined;
     // A request links to the task only when the crew member named one; there is
     // no screen a request of its own lives on, and a link to nowhere reads as a
@@ -184,6 +203,7 @@ export async function loadInbox(ctx: AuthContext, limit = 50): Promise<InboxItem
       createdAt: row.created_at,
       href,
       photoCount: reviewTaskId ? (photos.get(reviewTaskId) ?? 0) : null,
+      photoWaived: isReview ? waivedReviews.has(row.subject_id as string) : null,
       requestWhen: request ? { kind: describeUrgency(request.neededBy, today), date: request.neededBy } : null,
     };
   });

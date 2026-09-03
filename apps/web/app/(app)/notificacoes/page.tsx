@@ -66,7 +66,9 @@ function Item({ item, t, locale }: { item: InboxItem; t: Catalog; locale: Locale
                 {' · '}
                 {item.photoCount > 0
                   ? t.screens.taskReview.proofPhotos(item.photoCount)
-                  : t.screens.taskReview.proofNone}
+                  : item.photoWaived
+                    ? t.screens.taskReview.proofWaived
+                    : t.screens.taskReview.proofNone}
               </>
             )}
             {/* When a crew request is needed FOR (issue #152) — the whole

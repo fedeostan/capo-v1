@@ -39,7 +39,8 @@
     "./media/task-photo-store": "./src/media/task-photo-store.ts",
     "./channels/phone": "./src/channels/phone.ts",
     "./media/photo-inbox": "./src/media/photo-inbox.ts",
-    "./capabilities/render": "./src/capabilities/render.ts"
+    "./capabilities/render": "./src/capabilities/render.ts",
+    "./capabilities/worker/photo-waiver": "./src/capabilities/worker/photo-waiver.ts"
   },
   "scripts": {
     "lint": "eslint .",

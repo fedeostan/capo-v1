@@ -206,6 +206,10 @@ const dict: Catalog = {
     kind: {
       review_pending: subject => `“${subject}” is waiting for your review.`,
       worker_request: subject => `${subject} asked for something on site.`,
+      review_no_photo: (subject, quote) =>
+        quote
+          ? `“${subject}” was declared finished with no photo. They said: “${quote}”`
+          : `“${subject}” was declared finished with no photo.`,
     },
     noSubject: 'A task',
     noteLabel: 'What they wrote:',
@@ -435,6 +439,8 @@ const dict: Catalog = {
       failed: 'Could not resolve the review',
       proofNone: 'No photos attached.',
       proofPhotos: n => (n === 1 ? '1 photo attached.' : `${n} photos attached.`),
+      proofWaived: 'No photo. Capo asked twice, and one is still needed.',
+      proofWaivedBadge: 'No photo',
     },
     taskDetail: {
       fallbackTitle: 'Task',

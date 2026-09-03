@@ -207,6 +207,10 @@ const dict: Catalog = {
     kind: {
       review_pending: subject => `“${subject}” está a aguardar o teu controlo.`,
       worker_request: subject => `${subject} pediu uma coisa para a obra.`,
+      review_no_photo: (subject, quote) =>
+        quote
+          ? `“${subject}” foi dada como terminada sem foto. Disse: “${quote}”`
+          : `“${subject}” foi dada como terminada sem foto.`,
     },
     noSubject: 'Uma tarefa',
     noteLabel: 'O que escreveram:',
@@ -436,6 +440,8 @@ const dict: Catalog = {
       failed: 'Não foi possível resolver o controlo',
       proofNone: 'Sem fotos anexadas.',
       proofPhotos: n => (n === 1 ? '1 foto anexada.' : `${n} fotos anexadas.`),
+      proofWaived: 'Sem foto. Capo pediu duas vezes e continua a fazer falta uma.',
+      proofWaivedBadge: 'Sem foto',
     },
     taskDetail: {
       fallbackTitle: 'Tarefa',

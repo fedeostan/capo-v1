@@ -1905,10 +1905,12 @@ PASS  en-US — v2 starts and ends with literal text — Good morning {{1}}.
 Reply STOP to unsubscribe.
 PASS  pt_PT sends the v2 template — got "capo_daily_briefing_v2", want "capo_daily_briefing_v2"
 PASS  en_US sends the v2 template — got "capo_daily_briefing_v2", want "capo_daily_briefing_v2"
-PASS  es_ES stays on the old template until Meta approves — got "capo_daily_briefing", want "capo_daily_briefing"
+PASS  es_ES moved to v2 once Meta approved it (2026-09-03) — got "capo_daily_briefing_v2", want "capo_daily_briefing_v2"
 PASS  an unknown locale falls back to the old template — got "capo_daily_briefing", want "capo_daily_briefing"
 PASS  approved code pt_PT is one this repo submits — pt_PT
 PASS  and has a v2 definition to diff against Meta — pt_PT
+PASS  approved code es_ES is one this repo submits — es_ES
+PASS  and has a v2 definition to diff against Meta — es_ES
 PASS  approved code en_US is one this repo submits — en_US
 PASS  and has a v2 definition to diff against Meta — en_US
 PASS  the OK reply carries exactly the briefable-today tasks — got 1, want 1
@@ -2425,9 +2427,12 @@ https://www.construcapo.com/dia?t=abc123
 PASS  nothing is announced at 03:00
 PASS  nothing is announced at 23:00
 PASS  an assignment at midday is announced
-PASS  capo_task_assigned in pt_PT is NOT sent while unapproved
-PASS  capo_task_assigned in es_ES is NOT sent while unapproved
-PASS  capo_task_assigned in en_US is NOT sent while unapproved
+PASS  pt_PT is a locale this product actually has — pt_PT
+PASS  and pt_PT is therefore sendable
+PASS  es_ES is a locale this product actually has — es_ES
+PASS  and es_ES is therefore sendable
+PASS  en_US is a locale this product actually has — en_US
+PASS  and en_US is therefore sendable
 PASS  an unknown locale code is never treated as approved
 PASS  the app locale form is never mistaken for the Meta code
 PASS  two tasks in one message open in the plural — Olá Miguel. O teu chefe acabou de te dar 2 tarefas novas para hoje.
@@ -2471,7 +2476,7 @@ PASS  a partial win sends only what it won — got "[[\"b\"]]", want "[[\"b\"]]"
 PASS  an empty batch touches nothing at all
 PASS  and sends nothing
 
-WhatsApp check: 1439/1439 passed; failures: 0
+WhatsApp check: 1444/1444 passed; failures: 0
 === cache-check
 ok   cachedInstructions returns exactly two system messages
 ok   the first half carries the breakpoint
@@ -3524,3 +3529,117 @@ ok   finish_onboarding refuses clearly when the 0046 columns are not there yet
 ok   set_company_about turns a 42703 into a plain answer rather than a driver error
 
 Onboarding check: 81/81 passed; failures: 0
+=== web:build
+▲ Next.js 16.2.10 (Turbopack)
+- Environments: .env.local
+- Experiments (use with caution):
+  · serverActions
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 5.5s
+  Running TypeScript ...
+  Finished TypeScript in 6.9s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/24) ...
+  Generating static pages using 7 workers (6/24) 
+  Generating static pages using 7 workers (12/24) 
+  Generating static pages using 7 workers (18/24) 
+✓ Generating static pages using 7 workers (24/24) in 148ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ƒ /_not-found
+├ ƒ /api/chat
+├ ƒ /api/cron/checkin
+├ ƒ /api/cron/consolidate
+├ ƒ /api/cron/push
+├ ƒ /api/cron/reminders
+├ ƒ /api/cron/task-assigned
+├ ƒ /api/cron/welcome
+├ ƒ /api/proposals/[id]
+├ ƒ /api/push
+├ ƒ /api/stripe/webhook
+├ ƒ /api/transcribe
+├ ƒ /api/transcribe/feedback
+├ ƒ /api/translation/[batchId]
+├ ƒ /api/translation/[batchId]/run
+├ ƒ /api/whatsapp
+├ ○ /apple-icon.png
+├ ƒ /atividade
+├ ƒ /auth/callback
+├ ƒ /auth/confirm
+├ ƒ /auth/signout
+├ ƒ /chat
+├ ƒ /confirmar-email
+├ ƒ /design-system
+├ ƒ /design-system/screens
+├ ƒ /dia
+├ ƒ /instalar
+├ ƒ /landing
+├ ƒ /login
+├ ƒ /manifest.webmanifest
+├ ƒ /materiais
+├ ƒ /notificacoes
+├ ƒ /nova-password
+├ ƒ /obras
+├ ƒ /obras/[id]
+├ ƒ /offline
+├ ƒ /onboarding
+├ ƒ /perfil
+├ ƒ /perfil/automacoes
+├ ƒ /perfil/definicoes
+├ ƒ /perfil/equipa
+├ ƒ /perfil/memoria
+├ ƒ /perfil/pessoal
+├ ƒ /perfil/privacidade
+├ ƒ /perfil/reportar
+├ ƒ /recuperar
+├ ƒ /registar
+├ ○ /robots.txt
+├ ○ /sitemap.xml
+├ ƒ /subscricao
+├ ƒ /tarefas
+├ ƒ /tarefas/[id]
+├ ƒ /tarefas/[id]/ajuda
+└ ƒ /whatsapp
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+=== operator:build
+▲ Next.js 16.2.10 (Turbopack)
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 2.0s
+  Running TypeScript ...
+  Finished TypeScript in 2.8s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/2) ...
+✓ Generating static pages using 7 workers (2/2) in 68ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /companies
+├ ƒ /companies/[companyId]
+├ ƒ /companies/[companyId]/resend-welcome/[audience]/[personId]
+├ ƒ /conversations
+├ ƒ /conversations/[companyId]
+├ ƒ /cost
+├ ƒ /dispatch
+├ ƒ /reports
+├ ƒ /signups
+├ ƒ /tasks
+└ ƒ /tasks/[taskId]
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

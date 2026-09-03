@@ -26,6 +26,7 @@ import {
   buildPushPayload,
   decideRowState,
   PUSH_MAX_ATTEMPTS,
+  truncateForPush,
   type PushOutcome,
 } from '@capo/core/channels/push-rules';
 import { pushConfigured, sendPush, type StoredSubscription } from '@/lib/push';
@@ -39,6 +40,10 @@ interface PendingRow {
   subject_type: string | null;
   subject_id: string | null;
   title: string | null;
+  /** Worker-authored text — the note on a claim, the reason on a waived one.
+   *  Quoted INSIDE the headline here, because a push has one body slot and no
+   *  room for the separate attributed block the inbox renders. */
+  body: string | null;
   push_attempts: number;
 }
 
@@ -54,7 +59,7 @@ export async function dispatchPushes(
 
   let query = db
     .from('notifications')
-    .select('id, company_id, profile_id, kind, subject_type, subject_id, title, push_attempts')
+    .select('id, company_id, profile_id, kind, subject_type, subject_id, title, body, push_attempts')
     .is('pushed_at', null)
     .lt('push_attempts', PUSH_MAX_ATTEMPTS)
     // Oldest first: after an outage the backlog drains in the order things
@@ -113,7 +118,14 @@ export async function dispatchPushes(
     // renders (see notificacoes/page.tsx `headline`), so push and inbox
     // structurally cannot say different things.
     const line = t.notifications.kind[row.kind as keyof typeof t.notifications.kind];
-    const headline = line ? line(row.title ?? t.notifications.noSubject) : null;
+    // The quote goes INSIDE the sentence here and beneath it in the inbox, from
+    // the SAME catalog entry, because a lock screen has one body slot. Trimmed
+    // to PUSH_QUOTE_MAX_CHARS: an overrun would be cut by whichever phone the
+    // manager is holding, in a different place each time. Entries that have
+    // nothing to do with a quote ignore the argument.
+    const headline = line
+      ? line(row.title ?? t.notifications.noSubject, truncateForPush(row.body))
+      : null;
 
     // Belt-and-braces, same posture inbox.ts and dashboard-data.ts take on
     // this identical lookup: task_reviews.company_id must match the

@@ -99,6 +99,46 @@ export function buildPushPayload(input: {
 }
 
 /**
+ * How much of a crew member's own words a lock-screen alert may carry.
+ *
+ * A push body is not a document: iOS shows roughly two lines on a locked
+ * screen and Android about four, and every push service caps the whole
+ * encrypted payload (4 KB is the common floor). A quote that overran would not
+ * error — it would be cut by whichever platform the manager happens to hold,
+ * in a different place each time, which is the worst version of "truncated"
+ * because nobody can tell how much they are missing.
+ *
+ * 90 characters, which is a sentence: "não há luz e o telemóvel está sem
+ * bateria" fits whole, and anything longer ends in an ellipsis the manager can
+ * read as an ellipsis. The full text is always in the inbox one tap away.
+ */
+export const PUSH_QUOTE_MAX_CHARS = 90;
+
+/**
+ * Trim a quote to fit a lock screen, ending on a word where one is available.
+ *
+ * Returns null for nothing worth quoting, so a caller can drop the clause
+ * entirely rather than render empty quotation marks. Pure, so `pnpm push-check`
+ * pins it: this runs on WORKER-AUTHORED TEXT, and text somebody else chose is
+ * exactly the input worth having assertions about.
+ *
+ * It only ever SHORTENS. Nothing here rewrites, capitalises or punctuates what
+ * a crew member wrote — the manager reads it as their words, and a helpful
+ * tidy-up would be us putting words in their mouth.
+ */
+export function truncateForPush(text: string | null | undefined, max = PUSH_QUOTE_MAX_CHARS): string | null {
+  const trimmed = text?.replace(/\s+/g, ' ').trim() ?? '';
+  if (trimmed === '') return null;
+  if (trimmed.length <= max) return trimmed;
+  // Cut one character short of the budget so the ellipsis fits inside it, then
+  // back up to the last space if there is one late enough to be worth using.
+  const hard = trimmed.slice(0, max - 1);
+  const lastSpace = hard.lastIndexOf(' ');
+  const body = lastSpace > max / 2 ? hard.slice(0, lastSpace) : hard;
+  return `${body.trimEnd()}…`;
+}
+
+/**
  * Whether a push endpoint URL is safe for OUR server to POST to later.
  *
  * This is the guard against server-side request forgery: an authenticated

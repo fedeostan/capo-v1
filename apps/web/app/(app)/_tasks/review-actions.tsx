@@ -21,6 +21,7 @@ export default function ReviewActions({
   declaredByWorker,
   declaredByName,
   photoCount,
+  photoWaived,
   locale,
 }: {
   reviewId: string;
@@ -38,6 +39,13 @@ export default function ReviewActions({
    *  photo is ordinary, and the manager is about to decide whether to walk
    *  over and look. */
   photoCount: number;
+  /** True when the claim was filed WITHOUT a photo on purpose (0049): the crew
+   *  member was asked twice and said they could not send one, and their reason
+   *  is the quote above. This is the ONE thing here rendered in the danger
+   *  tone, and the exception is earned — `photoCount === 0` means "nothing has
+   *  arrived yet", which is ordinary, while this means "there will not be one",
+   *  which is the manager's cue to walk over and look. */
+  photoWaived: boolean;
   // A plain string, not a catalog: the catalog holds functions, which cannot
   // cross the server→client boundary.
   locale: Locale;
@@ -75,9 +83,23 @@ export default function ReviewActions({
           photos attached" is a true statement about a record, not a complaint
           about a person. Most claims have no photo for perfectly ordinary
           reasons. The photos themselves live on the task detail screen. */}
-      <p className="mt-1 text-[11px] text-zinc-500">
-        {photoCount > 0 ? t.proofPhotos(photoCount) : t.proofNone}
-      </p>
+      {/* A waived claim says so LOUDLY and everything else stays muted. The
+          badge is a shape, the sentence beside it is the fact, and neither
+          blames anybody: the crew member said they could not photograph the
+          work and Capo took their word for it after asking twice. A photo that
+          arrives later still counts, so the count wins once there is one. */}
+      {photoWaived && photoCount === 0 ? (
+        <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-red-600">
+          <span className="rounded bg-red-600/10 px-1.5 py-0.5 font-semibold uppercase tracking-wide">
+            {t.proofWaivedBadge}
+          </span>
+          {t.proofWaived}
+        </p>
+      ) : (
+        <p className="mt-1 text-[11px] text-zinc-500">
+          {photoCount > 0 ? t.proofPhotos(photoCount) : t.proofNone}
+        </p>
+      )}
       <div className="mt-2 flex flex-wrap gap-2">
         <button
           type="button"
