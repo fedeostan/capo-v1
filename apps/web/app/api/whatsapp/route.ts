@@ -1745,6 +1745,97 @@ async function sendWorkerDayDetail(
 }
 
 /**
+ * Did the photos this turn carried actually become evidence, or did nothing land?
+ *
+ * ── THE SIGNAL THAT DID NOT EXIST ──────────────────────────────────────────
+ * `task_photos` held zero rows for the entire life of the product and no log
+ * line anywhere said so. Every step that could lose a photo returned null in
+ * silence, so "the crew never sends photos" and "the photo path is broken"
+ * produced the identical empty log for a month, while a crew member sent four
+ * photos in one morning and was told four times that nothing had arrived.
+ *
+ * ── WHAT IT MAY AND MAY NOT CALL A LOSS (0047) ─────────────────────────────
+ * Before 0047 a photo lived for exactly one turn, so "nothing was attached"
+ * meant "the bytes are gone". That is no longer true and this function must not
+ * pretend it is: a staged photo waits in `worker_photo_inbox` for 24 hours and
+ * is offered back on the next thing the crew member writes, which is the
+ * DESIGNED path for a bare photo. Calling that a discard would fire an alarm on
+ * the happy path and teach everybody to ignore the alarm.
+ *
+ * So the three outcomes are told apart rather than merged:
+ *   attached  a `task_photos` row landed. The photo is evidence.
+ *   waiting   nothing landed, and nothing needed to. The photos are staged and
+ *             will be offered again. This is the ordinary bare-photo turn.
+ *   discarded the turn carried bytes that were never staged (0047 unapplied, or
+ *             Storage refused), so they were held in memory for this turn only
+ *             and are now gone. The original bug, in the one window where it
+ *             still happens.
+ *
+ * Counted from `task_photos` rather than taken from the tool result, because
+ * the row is the only thing that settles the question, and scoped to this
+ * worker and this turn so a colleague's photo cannot make a loss look like a
+ * save. `created_at` is compared against a timestamp taken before the turn
+ * began.
+ *
+ * Known and stated rather than hidden: `since` is this server's clock and
+ * `created_at` defaults to the DATABASE's, so a few seconds of skew can read a
+ * photo written by this turn as older than it. That errs toward `waiting` — the
+ * quiet outcome — and never toward a false `attached`, which would mute the
+ * alarm instead of raising a spurious one. Backdating `since` to cover the skew
+ * would trade that the wrong way round: it could count the PREVIOUS turn's
+ * photo and call a genuine loss a success.
+ *
+ * Never throws and never sends anything. One indexed count on a turn that has
+ * already paid for a model call, and only on turns that carried a photo.
+ */
+async function reportPhotoOutcome(
+  db: Db,
+  worker: { id: string; company_id: string },
+  message: WhatsAppMessage,
+  counts: { inbound: number; unstaged: number },
+  since: string,
+): Promise<void> {
+  const base = {
+    companyId: worker.company_id,
+    workerId: worker.id,
+    messageId: message.id,
+    // How many photos rode this message, and how many of those never reached
+    // the inbox and therefore only existed for this turn.
+    inbound: counts.inbound,
+    unstaged: counts.unstaged,
+  };
+  try {
+    const { count, error } = await db
+      .from('task_photos')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', worker.company_id)
+      .eq('worker_id', worker.id)
+      .gte('created_at', since);
+    if (error) {
+      logEvent('whatsapp.worker_photo_outcome_unknown', { ...base, error: error.message });
+      return;
+    }
+    const stored = count ?? 0;
+    if (stored > 0) {
+      logEvent('whatsapp.worker_photo_attached', { ...base, stored });
+      return;
+    }
+    // Grep `whatsapp.worker_photo_discarded`. A run of these against a crew
+    // that is plainly sending photos is bytes being thrown away, not a quiet
+    // week — and it means 0047 is not doing its job on this deployment.
+    logEvent(
+      counts.unstaged > 0 ? 'whatsapp.worker_photo_discarded' : 'whatsapp.worker_photo_waiting',
+      { ...base, stored },
+    );
+  } catch (err) {
+    logEvent('whatsapp.worker_photo_outcome_unknown', {
+      ...base,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Run one turn of the RESTRICTED worker agent.
  *
  * Everything the manager branch below does — approval labels, the sink that can
@@ -1791,6 +1882,10 @@ async function runWorkerTurn(
   },
 ): Promise<void> {
   const t = getCatalog(locale).whatsapp;
+
+  // Taken BEFORE anything in this turn can write a row, so a photo attached at
+  // any point inside it falls within the window reportPhotoOutcome asks about.
+  const turnStartedAt = new Date().toISOString();
 
   const text =
     opts.overrideText ??
@@ -1929,6 +2024,20 @@ async function runWorkerTurn(
     // voice-note path already guards against.
     await sendWhatsAppText(t.workerAgentFailed, sendConfig).catch(() => {});
   } finally {
+    // Inside the `finally`, so a turn that threw on its way to answering still
+    // records what became of the photo. That is precisely the turn most likely
+    // to have lost one.
+    const unstaged = opts.fallbackPhotos?.length ?? 0;
+    if (opts.inboundPhotos > 0 || unstaged > 0) {
+      await reportPhotoOutcome(
+        db,
+        worker,
+        message,
+        { inbound: opts.inboundPhotos, unstaged },
+        turnStartedAt,
+      );
+    }
+
     // ── the crew's requests reach the manager (issue #152) ──────────────────
     // AFTER the turn and OUTSIDE the try/catch, because a request already
     // written by `ask_manager` must be announced even if the turn then failed
