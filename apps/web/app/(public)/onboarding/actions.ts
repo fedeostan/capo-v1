@@ -4,16 +4,8 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createUserClient } from '@capo/db/user-client';
 import { asLocale } from '@capo/i18n/locale';
+import { asPhoneCountry, composeE164, defaultCountryFor } from '@capo/core/channels/phone';
 import { localeCookieOptions, LOCALE_COOKIE, publicLocale } from '@/lib/i18n';
-
-// Same normalization stance as the workers backfill in migration 0003: a bare
-// PT mobile ("912345678") becomes +351912345678; anything else must already
-// be E.164. The DB check constraint re-validates — this is UX, not the guard.
-function normalizePhone(raw: string): string | null {
-  const compact = raw.replace(/[\s\-().]/g, '');
-  const phone = /^9\d{8}$/.test(compact) ? `+351${compact}` : compact;
-  return /^\+[1-9]\d{7,14}$/.test(phone) ? phone : null;
-}
 
 // Creates company + profile atomically via the complete_onboarding RPC — the
 // only door into those tables (no INSERT policies exist). Runs on the user's
@@ -21,11 +13,17 @@ function normalizePhone(raw: string): string | null {
 export async function completeOnboarding(formData: FormData): Promise<void> {
   const companyName = String(formData.get('empresa') ?? '').trim();
   const fullName = String(formData.get('nome') ?? '').trim();
-  const phone = normalizePhone(String(formData.get('telemovel') ?? ''));
   // Falls back to whatever the page was already rendering in, so a submission
   // without the field (older cached HTML) still lands somewhere sensible. The
   // SQL function coerces an unknown value again — this is UX, not the guard.
   const language = asLocale(String(formData.get('idioma') ?? '')) ?? (await publicLocale());
+  // The country comes from the picker beside the number. An older cached page
+  // posts no country at all, so it falls back to the language dial, which is
+  // exactly the behaviour that form had before the picker existed (PT).
+  // composeE164 is the ONE normalizer: see packages/core/src/channels/phone.ts
+  // for why a number stored in the wrong shape is silent rather than loud.
+  const country = asPhoneCountry(String(formData.get('country') ?? '')) ?? defaultCountryFor(language);
+  const phone = composeE164(country, String(formData.get('telemovel') ?? ''));
 
   if (!companyName || !fullName) redirect('/onboarding?erro=dados');
   if (!phone) redirect('/onboarding?erro=telemovel');
