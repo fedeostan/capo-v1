@@ -301,11 +301,20 @@ export interface BillableCompany {
  * and a failed read look identical downstream, and one of them means "message
  * nobody today" while the other means "the database is broken".
  */
-export async function billableCompanies(db: Db): Promise<BillableCompany[]> {
-  const { data, error } = await db
+export async function billableCompanies(db: Db, companyId?: string): Promise<BillableCompany[]> {
+  // `companyId` NARROWS the same query, it never replaces it. The
+  // subscription_status filter stays in front of the id, so a caller that names
+  // one company still cannot reach past the billing gate — it simply gets an
+  // empty list for a company that is not billable, exactly as the estate-wide
+  // read would have omitted it. Added for the welcome's immediate trigger
+  // (issue #45 follow-up), which runs on every manager turn and must not read
+  // the whole estate to act on one tenant.
+  let query = db
     .from('companies')
     .select('id, name, language')
     .in('subscription_status', ['trialing', 'active']);
+  if (companyId) query = query.eq('id', companyId);
+  const { data, error } = await query;
   if (error) throw new Error(`company read failed: ${error.message}`);
   return data ?? [];
 }

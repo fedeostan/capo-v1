@@ -1,7 +1,7 @@
 import type { Db } from '@capo/db/client';
 import { getCatalog } from '@capo/i18n/catalog';
 import type { Locale } from '@capo/i18n/locale';
-import { isHiPayload, sendWhatsAppText, WhatsAppSendError, type WhatsAppSendConfig } from '@capo/core/channels/whatsapp';
+import { sendWhatsAppText, WhatsAppSendError, type WhatsAppSendConfig } from '@capo/core/channels/whatsapp';
 import { logEvent } from '../../lib/log';
 import { siteUrl } from '../../lib/site-url';
 import { dayLinkUrl, mintDayLinks } from '../../lib/day-link';
@@ -43,16 +43,10 @@ import { loadWorkerBriefing, renderWorkerFreeForm } from './briefing';
 // does, because silence is the safe direction and a paid recovery send for a
 // greeting is not.
 
-/** Did this inbound message carry the welcome's one button, in either shape? */
-export function isHiTap(message: {
-  type?: string;
-  button?: { payload?: string };
-  interactive?: { button_reply?: { id?: string } };
-}): boolean {
-  if (message.type === 'button') return isHiPayload(message.button?.payload);
-  if (message.type === 'interactive') return isHiPayload(message.interactive?.button_reply?.id);
-  return false;
-}
+// `isHiTap` itself lives in packages/core/src/channels/whatsapp.ts, beside the
+// payload it reads, so `pnpm whatsapp-check` can assert BOTH envelopes with no
+// credentials — the free-form half's failure is otherwise silent, because the
+// template half would go on working.
 
 /**
  * Answer a CREW member's tap: hello by name, one line about writing back, and
@@ -79,6 +73,29 @@ export async function answerWorkerHi(
       hasChosenLanguage: !!worker.language,
     });
 
+    // ── THE EMPTY DAY IS ITS OWN SHAPE, NOT THE FULL ONE PLUS A LINE ────────
+    // With no tasks the renderer says "nothing scheduled for today" and stops,
+    // which on a FIRST message reads as a dead end. It gets the 07:00 promise
+    // instead — and NOT a /dia link, because a page listing nothing is a worse
+    // answer than no page, and the link block would otherwise sit between the
+    // two sentences that belong together.
+    //
+    // hiWorkerMorning carries ONLY that promise: workerNothing has already said
+    // there is nothing on, one line above, and saying it twice in the first
+    // three lines Capo ever writes is the machine tell the voice work exists to
+    // remove.
+    if (briefing.tasks.length === 0) {
+      const empty = renderWorkerFreeForm(briefing, { opening });
+      await sendWhatsAppText(`${empty}\n\n${t.hiWorkerMorning}`, sendConfig);
+      logEvent('whatsapp.hi_answered', {
+        companyId: worker.company_id,
+        workerId: worker.id,
+        audience: 'worker',
+        tasks: 0,
+      });
+      return;
+    }
+
     // One clock: the same lisbon_today() the cron and the /dia page read. A
     // failed clock costs the link line, never the reply — same posture as
     // mintDayLinks itself, which swallows every failure into a Map of nothing.
@@ -92,13 +109,8 @@ export async function answerWorkerHi(
       opening,
       dayLinkUrl: token ? dayLinkUrl(token) : undefined,
     });
-    // With no tasks the renderer says "nothing scheduled for today" and stops,
-    // which on a FIRST message reads as a dead end. One line saying when the
-    // next one arrives is the difference between "this does nothing" and "this
-    // starts tomorrow at seven".
-    const withNext = briefing.tasks.length === 0 ? `${body}\n\n${t.hiWorkerMorning}` : body;
 
-    await sendWhatsAppText(withNext, sendConfig);
+    await sendWhatsAppText(body, sendConfig);
     logEvent('whatsapp.hi_answered', {
       companyId: worker.company_id,
       workerId: worker.id,
@@ -121,7 +133,14 @@ export async function answerWorkerHi(
     // Silence after a button OUR message asked them to press reads as "Capo is
     // broken" — the rule every other tap and keyword in this file follows. The
     // greeting alone still answers the tap.
-    await sendWhatsAppText(opening, sendConfig).catch(() => {});
+    //
+    // NARROWED to a 4xx, exactly as deliverWelcome and sendWorkerDayDetail are
+    // narrowed and for the same reason: a 4xx is Meta refusing OUR payload, so
+    // nothing was delivered and the greeting is the whole message they get. A
+    // socket reset or a 5xx may have delivered the full answer already, and
+    // following it with a bare greeting would say hello twice.
+    const rejected = err instanceof WhatsAppSendError && err.status >= 400 && err.status < 500;
+    if (rejected) await sendWhatsAppText(opening, sendConfig).catch(() => {});
   }
 }
 

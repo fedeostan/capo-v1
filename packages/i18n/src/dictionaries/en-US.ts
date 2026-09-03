@@ -922,7 +922,7 @@ const dict: Catalog = {
     reportFailed: "I couldn't log your report just now. Please try again in a bit.",
     hiWorkerGreeting: name => `Hi ${name}! 👋`,
     hiWorkerWriteAnyTime: 'Write to me here whenever you need to, in português, español or English.',
-    hiWorkerMorning: 'Nothing scheduled for you today. Every morning at 7am I send you your day here.',
+    hiWorkerMorning: 'Every morning at 7am I send you your day here.',
     hiManager: appUrl =>
       `Hi! Talk to me here whenever you need to. Your sites and tasks are in the app: ${appUrl}`,
   },

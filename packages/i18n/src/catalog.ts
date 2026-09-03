@@ -1483,9 +1483,17 @@ export interface Catalog {
      *  language. It is the only instruction in the answer: everything else is
      *  their actual work. */
     hiWorkerWriteAnyTime: string;
-    /** Shown INSTEAD of a task list, when the crew member has nothing on
-     *  today. Says when the next message arrives, so an empty first answer
-     *  does not read as "this thing does nothing". */
+    /**
+     * Added AFTER `reminders.workerNothing` when the crew member has nothing on
+     * today. Says when the next message arrives, so an empty first answer does
+     * not read as "this thing does nothing".
+     *
+     * ⚠ It must NOT repeat that there is nothing scheduled. `workerNothing`
+     * has already said so one line above ("Nada agendado para hoje."), and
+     * saying it twice in the first three lines Capo ever writes is precisely
+     * the machine tell the voice work exists to remove. This string is the
+     * 07:00 promise and nothing else.
+     */
     hiWorkerMorning: string;
     /** A MANAGER tapped the same button. One line, and a pointer to the app —
      *  their work lives on a screen, not in a task list. */

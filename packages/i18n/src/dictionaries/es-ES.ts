@@ -924,7 +924,7 @@ const dict: Catalog = {
     hiWorkerGreeting: name => `¡Hola ${name}! 👋`,
     hiWorkerWriteAnyTime:
       'Escríbeme por aquí siempre que lo necesites, en português, español o English.',
-    hiWorkerMorning: 'Hoy no tienes nada previsto. Cada mañana, a las 7h, te mando aquí tu día.',
+    hiWorkerMorning: 'Cada mañana, a las 7h, te mando aquí tu día.',
     hiManager: appUrl =>
       `¡Hola! Habla conmigo por aquí cuando quieras. Las obras y las tareas están en la aplicación: ${appUrl}`,
   },

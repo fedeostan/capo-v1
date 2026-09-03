@@ -16,6 +16,7 @@ import {
   readSender,
   routeWebhookChanges,
   senderLabel,
+  isHiTap,
   sendWhatsAppList,
   sendWhatsAppText,
   whatsappSink,
@@ -67,7 +68,7 @@ import {
 import { readThreadLocale, recordThreadEvent } from '../../notifications/thread';
 import { pingManagersAboutRequests } from '../../notifications/worker-request-ping';
 import { welcomeAnyoneNew } from '../../../lib/welcome-trigger';
-import { answerManagerHi, answerWorkerHi, isHiTap } from '../../notifications/welcome-hi';
+import { answerManagerHi, answerWorkerHi } from '../../notifications/welcome-hi';
 
 // WhatsApp manager channel — Meta Cloud API webhook (see
 // docs/whatsapp-cloud-api-runbook.md for the one-time Meta setup).
