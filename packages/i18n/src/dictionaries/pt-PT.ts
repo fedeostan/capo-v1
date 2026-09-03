@@ -115,6 +115,7 @@ const dict: Catalog = {
     retry: 'Tentar outra vez',
     dismiss: 'Dispensar',
     emptyThread: 'Fala com o Capo — ele trata das obras, das tarefas e da equipa.',
+    emptyThreadOnboarding: 'Diz olá ao Capo para começar a configurar a empresa.',
     proposalTitle: 'Proposta do Capo',
     pendingProposals: 'Propostas por decidir',
     approve: 'Aprovar',

@@ -54,6 +54,18 @@ export default async function Page({
   const autoVoice = sp.voice !== undefined;
   const autoFocus = sp.compose !== undefined;
 
+  // Is this company still being set up? `select('*')` rather than naming
+  // `onboarded_at`: it is a column migration 0046 adds, and a deploy landing
+  // before its migration would answer 42703 on a named column and break the
+  // whole chat screen for one line of placeholder copy. An absent field reads
+  // as undefined, which falls back to the general placeholder.
+  const { data: companyRow } = await db.from('companies').select('*').eq('id', companyId).maybeSingle();
+  // A FAILED read falls back to the general placeholder, never to the setup
+  // one: telling an established manager to start configuring his company is a
+  // worse wrong answer than showing him the ordinary line.
+  const company = companyRow as { onboarded_at?: string | null } | null;
+  const onboarding = company !== null && (company.onboarded_at ?? null) === null;
+
   let initialMessages: UIMessage[] = [];
   const proposalStatuses: Record<string, string> = {};
   const orphanedPending: PendingProposal[] = [];
@@ -102,6 +114,7 @@ export default async function Page({
       initialInput={initialInput}
       autoVoice={autoVoice}
       autoFocus={autoFocus}
+      onboarding={onboarding}
     />
   );
 }

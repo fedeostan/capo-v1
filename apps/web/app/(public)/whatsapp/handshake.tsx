@@ -24,11 +24,16 @@ export default function Handshake({
   link,
   qr,
   phone,
+  nextHref,
 }: {
   locale: Locale;
   link: string;
   qr: QrGeometry;
   phone: string;
+  /** Where this screen hands over once the handshake lands or is skipped. The
+   *  server decides it, because only the server knows whether this is a fresh
+   *  signup (which continues into the setup conversation) or a revisit. */
+  nextHref: string;
 }) {
   const t = getCatalog(locale).whatsappHandshake;
   const router = useRouter();
@@ -73,9 +78,9 @@ export default function Handshake({
     if (status !== 'arrived') return;
     // replace, not push: the back button must not return them to a screen whose
     // job is done and which would start polling again.
-    const id = setTimeout(() => router.replace('/instalar'), CONFIRM_BEAT_MS);
+    const id = setTimeout(() => router.replace(nextHref), CONFIRM_BEAT_MS);
     return () => clearTimeout(id);
-  }, [status, router]);
+  }, [status, router, nextHref]);
 
   useEffect(() => {
     if (status !== 'stalled') return;
@@ -168,7 +173,7 @@ export default function Handshake({
         <p className="text-center text-callout text-fg-muted">{t.waiting}</p>
       )}
 
-      <Link href="/instalar" className="block text-center text-callout text-fg-muted underline">
+      <Link href={nextHref} className="block text-center text-callout text-fg-muted underline">
         {t.skip}
       </Link>
     </div>

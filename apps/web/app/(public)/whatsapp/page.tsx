@@ -31,8 +31,16 @@ export async function generateMetadata(): Promise<Metadata> {
  * PUBLIC_PATHS in packages/db/src/proxy-session.ts — so this is the second
  * lock, not the only one.)
  */
-export default async function WhatsAppPage() {
+export default async function WhatsAppPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { db, userId, companyId, locale } = await requireAuth();
+  // PRESENCE, not value, like /chat's ?compose= and ?voice=: this is a flag the
+  // signup chain passes along, not data.
+  const fresh = (await searchParams).novo !== undefined;
+  const nextHref = fresh ? '/instalar?novo=1' : '/instalar';
   const t = getCatalog(locale);
 
   // Inside the request, never at module scope: a module-scope read of a
@@ -44,7 +52,7 @@ export default async function WhatsAppPage() {
     // because a silent skip would make a misconfigured deployment look like a
     // design decision.
     logEvent('handshake.no_business_number', { companyId });
-    redirect('/instalar');
+    redirect(nextHref);
   }
 
   // The phone is shown ONLY in the 90-second "is this really your number?"
@@ -72,7 +80,7 @@ export default async function WhatsAppPage() {
         <h1 className="text-title font-semibold">{t.whatsappHandshake.title}</h1>
         <p className="text-callout text-fg-muted">{t.whatsappHandshake.subtitle}</p>
       </div>
-      <Handshake locale={locale} link={link} qr={qrGeometry(link)} phone={profile?.phone ?? ''} />
+      <Handshake locale={locale} link={link} qr={qrGeometry(link)} phone={profile?.phone ?? ''} nextHref={nextHref} />
     </div>
   );
 }
