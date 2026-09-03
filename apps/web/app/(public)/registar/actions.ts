@@ -23,17 +23,12 @@ export async function signUp(formData: FormData): Promise<void> {
   // The visitor's own language, from the same cookie the public pages read, so
   // the email arrives in the language the signup form was written in.
   const locale = await publicLocale();
-  const result = await sendAuthEmail({ kind: 'confirm', email, password, locale });
-
-  // Signups disabled at the Supabase dashboard level (docs/human-todo.md
-  // step 2 flips this on) — the only case worth a distinct message, since
-  // it's a config state, not something about this particular email.
-  if (result === 'signups-disabled') redirect('/registar?erro=fechado');
-
-  // Every other outcome — sent, throttled, or skipped because the address
-  // already has a confirmed account — gets the same success screen as a real
-  // signup. No account enumeration. Real infra failures are still visible
-  // server-side in the auth_email.* log lines.
+  // The result is deliberately not inspected. Sent, throttled, and skipped
+  // because the address already has a confirmed account all get the same
+  // success screen a real signup gets: anything else would make this form a way
+  // to test whether a given person has a Capo account. Real infra failures stay
+  // visible server-side in the auth_email.* log lines.
+  await sendAuthEmail({ kind: 'confirm', email, password, locale });
 
   // Remembered so /confirmar-email can name the address (the typo check) and
   // offer a resend without asking for it again. Set on every path, so

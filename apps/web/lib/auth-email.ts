@@ -55,6 +55,24 @@ const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 export const AUTH_EMAIL_MAX_PER_WINDOW = 3;
 export const AUTH_EMAIL_WINDOW_MS = 60 * 60 * 1000;
 
+/**
+ * At most this many account emails IN TOTAL per window, across every address.
+ *
+ * The per-address counter above bounds what one victim receives; it does not
+ * bound what our sending domain does. GoTrue's limits were project-wide as well
+ * as per-address, and only the per-address half came across, so /registar was
+ * left able to mail an unlimited number of DISTINCT strangers. It also does not
+ * bound one victim reliably: `victim+1@`, `victim+2@` are distinct addresses to
+ * us and distinct users to GoTrue, but the same inbox to Gmail.
+ *
+ * 60/hour is set well above any believable real day (this is a product with
+ * tens of managers, and a normal signup costs one message) and well below the
+ * volume that gets a domain listed. It is a blast radius, not a capacity plan:
+ * if it is ever hit legitimately, that is the signal, and the number should
+ * move deliberately rather than quietly.
+ */
+export const AUTH_EMAIL_MAX_GLOBAL_PER_WINDOW = 60;
+
 export type AuthEmailKind = 'confirm' | 'resend' | 'recovery';
 
 /**
@@ -69,15 +87,25 @@ export type SendAuthEmailInput =
   | { kind: 'recovery'; email: string; locale: Locale };
 
 /**
- * What the caller is allowed to know.
+ * What the caller is allowed to know: nothing that distinguishes one address
+ * from another.
  *
- * Everything except `signups-disabled` MUST lead to the same screen. The three
- * flows are carefully written not to be account-enumeration oracles, and a
- * caller that could tell "sent" from "skipped" would turn each of them back
- * into one: "skipped" is exactly the answer for an address that already has a
- * confirmed account, or has no account at all.
+ * EVERY value leads to the same screen. The three flows are carefully written
+ * not to be account-enumeration oracles, and a caller that could tell "sent"
+ * from "skipped" would turn each of them back into one: "skipped" is exactly
+ * the answer for an address that already has a confirmed account, and for one
+ * that has no account at all.
+ *
+ * There used to be a fourth value, `signups-disabled`, which /registar turned
+ * into `?erro=fechado`. It was removed rather than kept: on the Resend path
+ * accounts are created through the admin API, which IGNORES the dashboard's
+ * "Allow new users to sign up" toggle, so the value could only ever come from
+ * the legacy fallback below. Copy describing a switch that no longer binds is
+ * worse than no copy, because the next person to read the action concludes the
+ * control works. If Capo ever needs to close signups again it needs its own
+ * flag, checked before this function is called.
  */
-export type AuthEmailResult = 'sent' | 'throttled' | 'skipped' | 'signups-disabled';
+export type AuthEmailResult = 'sent' | 'throttled' | 'skipped';
 
 /** Where each kind's link lands once the token verifies. */
 const NEXT: Record<AuthEmailKind, string> = {
@@ -110,16 +138,37 @@ function resendKey(): string | undefined {
 }
 
 /**
- * How many account emails this address has had inside the window.
+ * What the throttle knows right now.
  *
- * FAILS OPEN, and that is deliberate. This ships before migration 0045 is
- * applied, so the table legitimately does not exist yet (42P01) — and a read
- * that failed CLOSED would mean not one manager could confirm an email or reset
- * a password between the deploy and the migration. The failure it guards is
- * abuse; the failure it would cause is total. Same posture as
- * readCompanySchedules, which degrades to the defaults rather than throwing.
+ * Three states, not two, and the third is the point. A read that FAILS is not
+ * the same as a read that says zero, and neither is the same as a table that
+ * does not exist yet.
+ */
+type ThrottleState =
+  | { status: 'ok'; perAddress: number; global: number }
+  | { status: 'unavailable' }
+  | { status: 'error'; reason: string };
+
+// PostgREST answers a missing table with PGRST205 (not in the schema cache);
+// Postgres itself answers 42P01. Both mean "0045 has not been applied here".
+const MISSING_TABLE_CODES = new Set(['42P01', 'PGRST205']);
+
+/**
+ * Count this window's sends, per address and in total.
  *
- * Grep `auth_email.throttle_unavailable` before concluding the throttle works.
+ * ── THE ONE CASE THAT MAY STILL SEND ───────────────────────────────────────
+ * A MISSING TABLE, and only that. This code ships before migration 0045 is
+ * applied, so between the deploy and the migration the table legitimately does
+ * not exist, and refusing then would mean not one manager could confirm an
+ * email or reset a password. That window is known, bounded and watched.
+ *
+ * ── EVERYTHING ELSE FAILS CLOSED ───────────────────────────────────────────
+ * A revoked grant, a network failure, a broken service-role key: the table
+ * exists and we cannot read it, so we do not know what has already gone out.
+ * Sending anyway would mean the throttle silently stops existing at exactly the
+ * moment something is wrong, which is when it matters. The caller answers
+ * 'throttled' and the screen is unchanged, so a person retrying a minute later
+ * gets through once the read recovers.
  *
  * ⚠ A NULL COUNT IS A FAILURE, NOT A ZERO, and PostgREST will not tell you so.
  * A `head: true` count against a table that does not exist answers `204` with
@@ -127,31 +176,42 @@ function resendKey(): string | undefined {
  * nothing matched" would look like if null were read as zero. Verified against
  * the live project: a real table answers `200` with `count: 0` (a number) when
  * nothing matches, and `count: null` only when the count did not happen. So the
- * null is the whole signal, and collapsing it with `?? 0` is how the throttle
- * would go on reporting healthy after being silently switched off.
+ * null IS the missing-table signal, and collapsing it with `?? 0` is how the
+ * throttle would go on reporting healthy after being switched off.
+ *
+ * Grep `auth_email.throttle_unavailable` (sending, table absent) and
+ * `auth_email.throttle_failed` (refusing, read broken).
  */
-async function recentSendCount(emailLower: string): Promise<number> {
+async function readThrottle(emailLower: string): Promise<ThrottleState> {
   const since = new Date(Date.now() - AUTH_EMAIL_WINDOW_MS).toISOString();
   try {
-    const { count, error } = await getDb()
-      .from('auth_email_sends')
-      .select('id', { count: 'exact', head: true })
-      .eq('email_lower', emailLower)
-      .gte('sent_at', since);
-    if (error) {
-      logEvent('auth_email.throttle_unavailable', { reason: error.code ?? error.message });
-      return 0;
+    const db = getDb();
+    const [mine, all] = await Promise.all([
+      db
+        .from('auth_email_sends')
+        .select('id', { count: 'exact', head: true })
+        .eq('email_lower', emailLower)
+        .gte('sent_at', since),
+      db
+        .from('auth_email_sends')
+        .select('id', { count: 'exact', head: true })
+        .gte('sent_at', since),
+    ]);
+
+    for (const r of [mine, all]) {
+      if (r.error) {
+        if (MISSING_TABLE_CODES.has(r.error.code ?? '')) return { status: 'unavailable' };
+        return { status: 'error', reason: r.error.code || r.error.message || 'unreadable' };
+      }
     }
-    if (count === null) {
-      logEvent('auth_email.throttle_unavailable', { reason: 'no_count' });
-      return 0;
-    }
-    return count;
+    // The head-count trap: no error, no number. Table is not there.
+    if (mine.count === null || all.count === null) return { status: 'unavailable' };
+
+    return { status: 'ok', perAddress: mine.count, global: all.count };
   } catch (err) {
-    logEvent('auth_email.throttle_unavailable', {
-      reason: err instanceof Error ? err.message : 'unknown',
-    });
-    return 0;
+    // getDb() throws when the service-role key is missing. That is a broken
+    // deployment, not an absent migration, so it refuses.
+    return { status: 'error', reason: err instanceof Error ? err.message : 'unknown' };
   }
 }
 
@@ -169,12 +229,80 @@ async function recordSend(emailLower: string, kind: AuthEmailKind): Promise<void
     const { error } = await getDb()
       .from('auth_email_sends')
       .insert({ email_lower: emailLower, kind });
-    if (error) logEvent('auth_email.record_failed', { kind, reason: error.code ?? error.message });
+    if (error) logEvent('auth_email.record_failed', { kind, reason: error.code || error.message || 'unknown' });
   } catch (err) {
     logEvent('auth_email.record_failed', {
       kind,
       reason: err instanceof Error ? err.message : 'unknown',
     });
+  }
+}
+
+/**
+ * Is there already a CONFIRMED account on this address?
+ *
+ * Asked on the `resend` path only, and it closes a capability that this feature
+ * accidentally created. The resend button mints a MAGIC LINK, and a magic link
+ * signs its holder in; GoTrue will happily mint one for a confirmed account.
+ * The old `auth.resend({type:'signup'})` errored in that case and sent nothing,
+ * so this was new. The reachable sequence was: submit /registar with somebody
+ * else's address (the pending-email cookie is set on every path, deliberately),
+ * land on /confirmar-email, tap "Reenviar", and a working one-click login link
+ * arrives in a stranger's inbox, unrequested. It only ever reaches the account
+ * owner, so it is not takeover, but Capo has no magic-link login product and
+ * that is exactly the shape of a phishing lure.
+ *
+ * A resend is by definition for an account that exists and has NOT been
+ * confirmed, so refusing every other state costs a real user nothing.
+ *
+ * ── 'missing' REFUSES TOO, AND THAT IS NOT BELT-AND-BRACES ─────────────────
+ * `generateLink('magiclink')` on an address with NO account does not fail: it
+ * CREATES the user and mints a sign-in link, which is magic-link signup
+ * behaviour. (Confirmed live: an early version of this guard let exactly that
+ * through.) Without this branch the resend button would mail a working sign-in
+ * link to an address that never signed up, and leave a junk `auth.users` row
+ * behind each time. `recovery` does not share the hazard: GoTrue answers it
+ * `user_not_found`. Only 'unconfirmed' may proceed.
+ *
+ * ── WHY A RAW ADMIN CALL ───────────────────────────────────────────────────
+ * supabase-js has no lookup by email: `admin.listUsers()` takes page params
+ * only, and paging the whole project to find one address is O(users) on a path
+ * an anonymous visitor can trigger. GoTrue's admin endpoint does support a
+ * `filter`, so this asks it directly, the same endpoint the SDK itself calls.
+ *
+ * ⚠ `filter` is a SUBSTRING search, not an equality test: `a@b.com` matches
+ * `xa@b.com` too. The exact comparison below is what makes the answer mean what
+ * it says, and removing it would let a lookalike address decide somebody else's
+ * outcome.
+ *
+ * FAILS CLOSED. If we cannot find out, we do not send: the harm being prevented
+ * is mailing a sign-in link to a confirmed account, and the cost of a false
+ * refusal is one unconfirmed person retrying a resend.
+ */
+type ResendEligibility = 'unconfirmed' | 'confirmed' | 'missing' | 'unknown';
+
+async function resendEligibility(emailLower: string): Promise<ResendEligibility> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return 'unknown';
+
+  try {
+    const response = await fetch(
+      `${url}/auth/v1/admin/users?filter=${encodeURIComponent(emailLower)}`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } },
+    );
+    if (!response.ok) return 'unknown';
+
+    const body = (await response.json().catch(() => null)) as {
+      users?: { email?: string | null; email_confirmed_at?: string | null }[];
+    } | null;
+    if (!body?.users) return 'unknown';
+
+    const match = body.users.find((u) => (u.email ?? '').toLowerCase() === emailLower);
+    if (!match) return 'missing';
+    return match.email_confirmed_at ? 'confirmed' : 'unconfirmed';
+  } catch {
+    return 'unknown';
   }
 }
 
@@ -208,7 +336,7 @@ async function buildLink(input: SendAuthEmailInput, emailLower: string): Promise
   if (generated.error) {
     logEvent('auth_email.link_failed', {
       kind: input.kind,
-      reason: generated.error.code ?? generated.error.message,
+      reason: generated.error.code || generated.error.message || 'unknown',
     });
     return null;
   }
@@ -289,9 +417,35 @@ export async function sendAuthEmail(input: SendAuthEmailInput): Promise<AuthEmai
   const key = resendKey();
   if (!key) return sendThroughLegacyMailer(input, emailLower);
 
-  if ((await recentSendCount(emailLower)) >= AUTH_EMAIL_MAX_PER_WINDOW) {
-    logEvent('auth_email.throttled', { kind: input.kind });
+  const throttle = await readThrottle(emailLower);
+  if (throttle.status === 'error') {
+    // The table is there and unreadable. Refuse rather than send blind.
+    logEvent('auth_email.throttle_failed', { kind: input.kind, reason: throttle.reason });
     return 'throttled';
+  }
+  if (throttle.status === 'unavailable') {
+    // 0045 not applied here. The one case that may still send.
+    logEvent('auth_email.throttle_unavailable', { kind: input.kind, reason: 'no_table' });
+  } else {
+    if (throttle.perAddress >= AUTH_EMAIL_MAX_PER_WINDOW) {
+      logEvent('auth_email.throttled', { kind: input.kind, scope: 'address' });
+      return 'throttled';
+    }
+    if (throttle.global >= AUTH_EMAIL_MAX_GLOBAL_PER_WINDOW) {
+      logEvent('auth_email.throttled', { kind: input.kind, scope: 'global' });
+      return 'throttled';
+    }
+  }
+
+  // A resend is for an existing, UNCONFIRMED account and nothing else. Every
+  // other state (confirmed, no account, or a lookup we could not complete)
+  // sends nothing. See resendEligibility for why 'missing' is not optional.
+  if (input.kind === 'resend') {
+    const state = await resendEligibility(emailLower);
+    if (state !== 'unconfirmed') {
+      logEvent('auth_email.already_confirmed', { kind: input.kind, state });
+      return 'skipped';
+    }
   }
 
   const link = await buildLink(input, emailLower);
@@ -348,10 +502,12 @@ async function sendThroughLegacyMailer(
       options: { emailRedirectTo },
     });
     if (!error) return 'sent';
-    // Signups turned off at the dashboard: the one case worth its own message,
-    // because it is a config state rather than a fact about this address.
+    // Signups turned off at the dashboard. Only this path can still see it (the
+    // admin API ignores the toggle), so it is recorded as its own log line and
+    // then answered like every other non-send: the screen must not change.
     if (/sign\s*ups?/i.test(error.message) && /not allowed|disabled/i.test(error.message)) {
-      return 'signups-disabled';
+      logEvent('auth_email.signups_disabled', { kind: input.kind });
+      return 'skipped';
     }
     console.error('signUp failed:', error.message);
     return 'skipped';

@@ -462,29 +462,56 @@ Structural invariants (do not regress):
   - **`auth_email_sends` (0045) is the throttle, and it exists because GoTrue's
     rate limits left with GoTrue's mailer.** `/registar` and `/recuperar` are
     unauthenticated forms that cause mail to be delivered to an arbitrary
-    address. At most `AUTH_EMAIL_MAX_PER_WINDOW` (3) per address per hour,
-    counted across ALL THREE kinds together — a limit spendable three times over
-    by alternating doors is not a limit. Deny-all posture
+    address. **TWO bounds, and both are needed.** Per address,
+    `AUTH_EMAIL_MAX_PER_WINDOW` (3) per hour, counted across ALL THREE kinds
+    together — a limit spendable three times over by alternating doors is not a
+    limit. Globally, `AUTH_EMAIL_MAX_GLOBAL_PER_WINDOW` (60) per hour across
+    every address, because the per-address half bounds what one victim receives
+    and NOT what our sending domain does: without it `/registar` could still
+    mail unlimited distinct strangers, and `victim+1@`/`victim+2@` are distinct
+    addresses to us but one inbox to Gmail. Deny-all posture
     (`notification_log`'s): RLS on, zero policies, every grant revoked, service
     role only. It carries NO `company_id`, so the RLS matrix's per-tenant sweep
-    does not reach it and correctly should not. **The count FAILS OPEN** (a
-    missing table or an unreadable one logs `auth_email.throttle_unavailable`
-    and sends), because the failure it guards is abuse and the failure it would
-    cause is every manager locked out; the row is inserted AFTER Resend accepts,
-    never before. ⚠ **A null count is a FAILURE, not a zero**, and PostgREST
-    will not say so: a `head: true` count against a table that does not exist
-    answers `204` with `count: null` and NO error, which `?? 0` turns into a
-    throttle that reports healthy while being switched off. A real table answers
-    `count: 0`. Verified against the live project; same family of trap as the
-    RLS matrix's `readIsDenied`.
-  - **Only `signups-disabled` may reach the caller.** `sendAuthEmail` returns
-    `sent | throttled | skipped | signups-disabled`, and every value but the last
-    leads to the same screen: `skipped` is exactly the answer for "this address
-    already has a confirmed account" and for "there is no such account", which
-    are the two facts these flows are written not to leak. ⚠ Known: on the
-    Resend path the admin API bypasses the dashboard's "allow new users to sign
-    up" toggle, so `erro=fechado` is reachable only through the legacy fallback.
-    Turning signups off in the dashboard no longer stops them.
+    does not reach it and correctly should not. The row is inserted AFTER Resend
+    accepts, never before.
+  - **The throttle read FAILS CLOSED, with exactly one exception: a MISSING
+    TABLE.** 0045 ships before it is applied, so "table absent" must still send
+    or nobody could confirm an email between the deploy and the migration
+    (`auth_email.throttle_unavailable`). Every other failure — a revoked grant,
+    a network error, a broken service-role key — means the table exists and we
+    cannot read it, so we do not know what already went out, and sending anyway
+    would delete the throttle at exactly the moment something is wrong
+    (`auth_email.throttle_failed`, answered `throttled`). ⚠ **A null count is a
+    FAILURE, not a zero**, and PostgREST will not say so: a `head: true` count
+    against a table that does not exist answers `204` with `count: null` and NO
+    error, which `?? 0` turns into a throttle that reports healthy while being
+    switched off. A real table answers `count: 0`. That null is what identifies
+    the missing-table case; verified against the live project, and the same
+    family of trap as the RLS matrix's `readIsDenied`.
+  - **NOTHING the caller learns may distinguish one address from another.**
+    `sendAuthEmail` returns `sent | throttled | skipped` and every value leads to
+    the same screen: `skipped` is exactly the answer for "this address already
+    has a confirmed account" and for "there is no such account", which are the
+    two facts these flows are written not to leak. There was a fourth value,
+    `signups-disabled` (`/registar?erro=fechado`), and it is GONE along with its
+    copy in all three catalogs: on the Resend path accounts are created through
+    the admin API, which IGNORES the dashboard's "Allow new users to sign up"
+    toggle, so only the legacy fallback could ever produce it. **Closing signups
+    now needs a Capo-side flag checked before `sendAuthEmail`** — do not
+    reintroduce copy that describes a switch which no longer binds. The legacy
+    path still logs `auth_email.signups_disabled` and then answers like every
+    other non-send.
+  - **The resend path sends NOTHING to a CONFIRMED account.** A resend mints a
+    MAGIC LINK, and a magic link signs its holder in; GoTrue mints one happily
+    for a confirmed user, whereas the old `auth.resend({type:'signup'})` errored.
+    So this feature briefly let any visitor mail a working one-click login link
+    to any registered address: submit `/registar` with somebody else's email
+    (the pending-email cookie is set on every path, deliberately), then tap
+    "Reenviar". `confirmedAccountExists` gates it and logs
+    `auth_email.already_confirmed`. It **fails closed** — unknown means do not
+    send — and it matches the address EXACTLY, because GoTrue's admin `filter`
+    is a SUBSTRING search (`a@b.com` matches `xa@b.com`). supabase-js has no
+    lookup by email, which is why that one call is raw REST.
   Copy lives in the catalogs under `auth.emails`, all three languages, and the
   READER's language is rendered in full with the other two as one line each —
   possible only because the app knows the visitor's locale, which a Go template

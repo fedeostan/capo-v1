@@ -902,7 +902,7 @@ export interface Catalog {
       emailNote: string;
       haveAccount: string;
       signIn: string;
-      errors: Record<'dados' | 'fechado', string>;
+      errors: Record<'dados', string>;
     };
     /**
      * The /confirmar-email screen (issue #99). ONE screen with TWO entrances,

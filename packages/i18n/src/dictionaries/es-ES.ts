@@ -589,7 +589,6 @@ const dict: Catalog = {
       signIn: 'Entra aquí',
       errors: {
         dados: 'Introduce un email válido y una contraseña de al menos 8 caracteres.',
-        fechado: 'Los registros abren pronto — pide una invitación.',
       },
     },
     confirmEmail: {
