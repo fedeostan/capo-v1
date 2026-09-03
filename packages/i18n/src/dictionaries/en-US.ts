@@ -576,7 +576,8 @@ const dict: Catalog = {
       createAccount: 'Create account',
       errors: {
         credenciais: 'Wrong email or password. Check them and try again.',
-        'link-invalido': 'That link expired or was already used. Request a new one.',
+        'link-invalido':
+          'That link expired or was already used. If your email is already confirmed, sign in with your password. If not, request a new one.',
       },
     },
     signup: {
@@ -589,7 +590,6 @@ const dict: Catalog = {
       signIn: 'Sign in here',
       errors: {
         dados: 'Enter a valid email and a password of at least 8 characters.',
-        fechado: 'Sign-ups open soon — ask for an invite.',
       },
     },
     confirmEmail: {
@@ -622,6 +622,33 @@ const dict: Catalog = {
       errors: {
         curta: 'The password must be at least 8 characters.',
         guardar: "Couldn't save that. Request a new reset link.",
+      },
+    },
+    emails: {
+      languageLabel: 'English',
+      confirm: {
+        subject: 'Confirm your email · Capo',
+        preview: 'One step left before your account is ready.',
+        heading: 'Confirm your email',
+        body: 'You created a Capo account. One step is left: tap the button to confirm this email is yours. After that your account is ready.',
+        button: 'Confirm email',
+        fallback:
+          'The link can only be used once. If the button does not open, copy and paste this address into your browser:',
+        otherLine:
+          'You created a Capo account. Tap the button above to confirm your email and finish setting up.',
+        footer:
+          'You are getting this email because someone created a Capo account with this address. If it was not you, ignore this message: nothing happens.',
+      },
+      reset: {
+        subject: 'Reset your password · Capo',
+        preview: 'Choose a new password with the link inside.',
+        heading: 'Reset password',
+        body: 'You asked to reset the password on your Capo account. Tap the button to choose a new one.',
+        button: 'Set a new password',
+        fallback:
+          'For safety, the link expires soon after it is sent and can only be used once. If the button does not open, copy and paste this address into your browser:',
+        otherLine: 'You asked to reset your Capo password. Tap the button above to choose a new one.',
+        footer: 'If you did not ask for this change, ignore this email: your password stays as it is.',
       },
     },
   },

@@ -73,9 +73,9 @@ const BUDGET: Record<string, number> = {
   // message. Draining them is ordinary copy work that can happen a screen at a
   // time; what this table stops is the count going back UP while nobody is
   // looking.
-  'packages/i18n/src/dictionaries/pt-PT.ts': 63,
-  'packages/i18n/src/dictionaries/es-ES.ts': 61,
-  'packages/i18n/src/dictionaries/en-US.ts': 63,
+  'packages/i18n/src/dictionaries/pt-PT.ts': 62,
+  'packages/i18n/src/dictionaries/es-ES.ts': 60,
+  'packages/i18n/src/dictionaries/en-US.ts': 62,
 };
 
 /**

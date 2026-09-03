@@ -1,0 +1,2835 @@
+=== core:tsc
+=== db:tsc
+=== i18n:tsc
+=== ui:tsc
+Generating route types...
+✓ Types generated successfully
+=== web:tsc
+Generating route types...
+✓ Types generated successfully
+=== operator:tsc
+=== web:eslint
+=== operator:eslint
+=== core:eslint
+=== i18n:eslint
+=== db:eslint
+=== scheduler-check
+PASS  nextWorkday skips Sunday — got 2026-07-27, want 2026-07-27
+PASS  addWorkdays is inclusive of the start day — got 2026-07-27, want 2026-07-27
+PASS  5 working days from Thursday lands on Wednesday — got 2026-08-05, want 2026-08-05
+PASS  workdayAfter Friday is Monday — got 2026-08-03, want 2026-08-03
+PASS  Sexta-feira Santa 2026 (3 Apr) is a holiday
+PASS  Corpo de Deus 2026 (4 Jun) is a holiday
+PASS  Easter 2027 (28 Mar) is a holiday
+PASS  25 de Abril is a holiday
+PASS  Natal is a holiday
+PASS  Carnaval is deliberately NOT a holiday
+PASS  span across 1 May 2026 stretches — got 2026-05-05, want 2026-05-05
+PASS  every task is scheduled — got 4, want 4
+PASS  t1 starts on the requested Friday — got 2026-07-31, want 2026-07-31
+PASS  t1 (3 working days from Fri) is due Tuesday — got 2026-08-04, want 2026-08-04
+PASS  t2 starts the workday after t1 — got 2026-08-05, want 2026-08-05
+PASS  t3 runs in parallel with t2 — got 2026-08-05, want 2026-08-05
+PASS  t4 waits for the later of t2/t3 — got 2026-08-07, want 2026-08-07
+PASS  no task starts or ends on a weekend or holiday — t1:2026-07-31→2026-08-04(5) t2:2026-08-05→2026-08-06(3) t3:2026-08-05→2026-08-06(3) t4:2026-08-07→2026-08-12(5)
+PASS  every task starts on or after the plan start date
+PASS  every dependency finishes strictly before its dependent starts
+PASS  a plan starting on a holiday rolls forward — got 2026-04-27, want 2026-04-27
+PASS  countWorkdays is inclusive of both ends — got 1, want 1
+PASS  countWorkdays skips the weekend — got 5, want 5
+PASS  countWorkdays subtracts a weekday holiday — got 4, want 4
+PASS  countWorkdays inverts addWorkdays for every length 1..40
+PASS  workdayDelta is 0 for the same day — got 0, want 0
+PASS  workdayDelta Friday → Monday is 1 — got 1, want 1
+PASS  workdayDelta is signed when pulled earlier — got -1, want -1
+PASS  workdayDelta counts across a weekend — got 2, want 2
+PASS  closure reaches every dependent of the trigger
+PASS  closure excludes the trigger itself
+PASS  closure of a graph with no edges is empty — got 0, want 0
+PASS  closure terminates on a cyclic edge set
+PASS  early finish: B starts the workday after the ACTUAL finish — got 2026-08-05, want 2026-08-05
+PASS  early finish: B is due 2 working days later — got 2026-08-06, want 2026-08-06
+PASS  early finish: C runs in parallel with B — got 2026-08-05, want 2026-08-05
+PASS  early finish: D waits for the later of B/C — got 2026-08-07, want 2026-08-07
+PASS  early finish: D is due 4 working days later — got 2026-08-12, want 2026-08-12
+PASS  early finish: D is pulled in by 1 working day — got -1, want -1
+PASS  early finish: the trigger itself is never rewritten — got undefined, want undefined
+PASS  early finish: nothing is proposed in the past
+PASS  late finish: B starts the following Monday — got 2026-08-10, want 2026-08-10
+PASS  late finish: D is due a week later than planned — got 2026-08-17, want 2026-08-17
+PASS  late finish: D is pushed out by 2 working days — got 2, want 2
+PASS  only movable tasks are ever emitted
+PASS  an empty movable set produces no changes — got 0, want 0
+PASS  a job with no dependency edges cascades to nothing — got 0, want 0
+PASS  a cancelled predecessor does not hold a successor back — got 2026-08-05, want 2026-08-05
+PASS  all-cancelled dependencies floor the task at today — got 2026-08-04, want 2026-08-04
+PASS  an in_progress task keeps the start it actually began on — got 2026-08-03, want 2026-08-03
+PASS  an in_progress task still has its finish recomputed — got 2026-08-04, want 2026-08-04
+PASS  a successor follows the in_progress finish — got 2026-08-05, want 2026-08-05
+PASS  a long-running in_progress task is never given a past deadline — got 2026-08-04, want 2026-08-04
+PASS  …and still keeps the start it began on — got 2026-07-13, want 2026-07-13
+PASS  an unscheduled task gets a start — got 2026-08-05, want 2026-08-05
+PASS  an unscheduled task reports no prior dates — got null, want null
+PASS  an unscheduled task reports a zero shift rather than a fake one — got 0, want 0
+PASS  a task with no duration_days keeps its existing span — got 2026-08-10, want 2026-08-10
+PASS  a dependency cycle throws RescheduleError
+PASS  a self-dependency throws RescheduleError
+PASS  the briefing still defaults to 07:00 Lisbon — got 7, want 7
+PASS  the check-in still defaults to 16:00 Lisbon — got 16, want 16
+PASS  the send window is two Lisbon hours wide — got 2, want 2
+PASS  the 07:00 briefing window ends at Lisbon 08 — got 8, want 8
+PASS  the late-afternoon check-in window ends at Lisbon 17 — got 17, want 17
+PASS  the briefing sends on time, at Lisbon 07
+PASS  the check-in sends on time, at Lisbon 16
+PASS  a 49-minutes-late briefing dispatch that lands in the next Lisbon hour (08) still sends
+PASS  a 49-minutes-late check-in dispatch that lands in the next Lisbon hour (17) still sends
+PASS  two hours late is too late for the briefing (Lisbon 09)
+PASS  two hours late is too late for the check-in (Lisbon 18)
+PASS  the briefing never sends early (Lisbon 06)
+PASS  the check-in never sends early (Lisbon 15)
+PASS  a 22:00 send hour still gets its second hour — got 23, want 23
+PASS  a 23:00 send hour is clamped rather than wrapped — got 23, want 23
+PASS  a 23:00 send hour still accepts its own hour
+PASS  a 23:00 send hour does NOT spill into hour 0 the next day
+PASS  no legal send hour can produce a window that wraps past midnight — MAX_SEND_HOUR 21 → window ends 22
+PASS  the latest legal send hour still gets its full window — 21 → 22
+PASS  no send may be aimed at the small hours — MIN_SEND_HOUR 5
+PASS  both defaults are inside the range a manager may choose — choices 5..21
+PASS  /api/cron/reminders has at least one schedule
+PASS  /api/cron/reminders "0 * * * *" fires at :00 — minute field is "0"
+PASS  /api/cron/reminders has an entry landing ON the target hour in winter (UTC+0), for every hour a manager may pick — 5..21 all covered
+PASS  /api/cron/reminders has a SECOND in-window entry behind every target hour in winter (UTC+0) — every window carries two entries
+PASS  /api/cron/reminders has an entry landing ON the target hour in summer (UTC+1), for every hour a manager may pick — 5..21 all covered
+PASS  /api/cron/reminders has a SECOND in-window entry behind every target hour in summer (UTC+1) — every window carries two entries
+PASS  /api/cron/checkin has at least one schedule
+PASS  /api/cron/checkin "0 * * * *" fires at :00 — minute field is "0"
+PASS  /api/cron/checkin has an entry landing ON the target hour in winter (UTC+0), for every hour a manager may pick — 5..21 all covered
+PASS  /api/cron/checkin has a SECOND in-window entry behind every target hour in winter (UTC+0) — every window carries two entries
+PASS  /api/cron/checkin has an entry landing ON the target hour in summer (UTC+1), for every hour a manager may pick — 5..21 all covered
+PASS  /api/cron/checkin has a SECOND in-window entry behind every target hour in summer (UTC+1) — every window carries two entries
+PASS  /api/cron/push is scheduled exactly once — got 1, want 1
+PASS  /api/cron/push still runs all day, ungated — got */10 * * * *, want */10 * * * *
+PASS  the welcome window ends at Lisbon 19 — got 19, want 19
+PASS  a welcome may go out at 09
+PASS  a welcome may still go out at 19
+PASS  no welcome at 20:00
+PASS  no welcome at 03:00
+PASS  the welcome window opens only after the briefing window has closed — welcome starts at 9, briefing window ends at 8
+PASS  /api/cron/welcome is scheduled exactly once — got 1, want 1
+PASS  /api/cron/welcome sweeps every 15 minutes — got */15 * * * *, want */15 * * * *
+PASS  the welcome window is wide enough that cron drift cannot close it — 11 hours
+PASS  the nightly review window ends at Lisbon 04 — got 4, want 4
+PASS  the nightly review may run at its target hour
+PASS  the nightly review still runs two hours late
+PASS  no nightly review at 05:00
+PASS  no nightly review at 06:00
+PASS  no nightly review at 14:00
+PASS  no nightly review at 01:00
+PASS  the nightly review closes before the earliest legal send hour — review ends at 4, sends may start at 5
+PASS  the nightly review window cannot wrap past midnight — 2..4
+PASS  the nightly review window survives more than an hour of cron drift — 3 hours
+PASS  /api/cron/consolidate is scheduled exactly once — got 1, want 1
+PASS  /api/cron/consolidate is an hourly heartbeat — got 0 * * * *, want 0 * * * *
+PASS  /api/cron/consolidate fires at :00, never :30 — 0 * * * *
+PASS  a winter link expires at Lisbon midnight — got 2026-01-16T00:00:00.000Z, want 2026-01-16T00:00:00.000Z
+PASS  a summer link expires at Lisbon midnight, an hour before UTC midnight — got 2026-07-15T23:00:00.000Z, want 2026-07-15T23:00:00.000Z
+PASS  the spring-forward day still expires at local midnight — got 2026-03-29T23:00:00.000Z, want 2026-03-29T23:00:00.000Z
+PASS  the autumn fall-back day still expires at local midnight — got 2026-10-26T00:00:00.000Z, want 2026-10-26T00:00:00.000Z
+PASS  a link is alive all evening, every day of the year — got 365, want 365
+PASS  and never survives to the next briefing — got 0, want 0
+PASS  a consistent plan raises no warnings — got 0, want 0
+PASS  no warnings, no card text — not even a header — got 0, want 0
+PASS  case + containment + typo variants are all caught — got 2, want 2
+PASS  containment cluster carries the raw spellings, first-seen order — got ["Azulejo","azulejo 30x60"], want ["Azulejo","azulejo 30x60"]
+PASS  a one-letter typo in a token is the same material — got ["cimento cola","cemento cola"], want ["cimento cola","cemento cola"]
+PASS  accent-only spellings are one material — got 1, want 1
+PASS  three spellings come out as ONE question, not three pairs — got 1, want 1
+PASS  the cluster lists all three spellings — got 3, want 3
+PASS  different colours are different materials — got 0, want 0
+PASS  a one-character difference in a SIZE is two purchases, not a typo — got 0, want 0
+PASS  short words never typo-match ("cal" is not "cola") — got 0, want 0
+PASS  a same-trade consumable gap is caught — got 1, want 1
+PASS  …naming the task that is missing it — got Azulejo cozinha, want Azulejo cozinha
+PASS  …and what it is missing — got ["juntas"], want ["juntas"]
+PASS  variant coverage: the tile pair is a variants question — got 1, want 1
+PASS  variant coverage: the gap lists only what is genuinely absent — got ["juntas"], want ["juntas"]
+PASS  different trades are never compared — got 0, want 0
+PASS  same trade, disjoint lists = different sub-phases, left alone — got 0, want 0
+PASS  a task with NO materials is skipped, not flagged as missing everything — got 0, want 0
+PASS  tasks without a trade are never trade-compared — got 0, want 0
+PASS  warnings render as header + one line each — got 3, want 3
+PASS  the header leads the section — got HEADER, want HEADER
+
+Scheduler check: 145/145 passed; failures: 0
+=== whatsapp-check
+PASS  bold loses the doubled asterisk — got "*Casa de Paco*", want "*Casa de Paco*"
+PASS  two bold spans on one line — got "*a* e *b*", want "*a* e *b*"
+PASS  bold-italic becomes nested markers — got "*_a_*", want "*_a_*"
+PASS  underscore bold-italic — got "*_a_*", want "*_a_*"
+PASS  underscore bold — got "*a*", want "*a*"
+PASS  single underscores are left alone — got "_a_", want "_a_"
+PASS  snake_case survives (documented non-goal) — got "campo start_date", want "campo start_date"
+PASS  h1 becomes bold — got "*Plano*", want "*Plano*"
+PASS  heading with inner bold stays balanced — got "*Prazo*", want "*Prazo*"
+PASS  links are flattened — got "Capo (https://capo.pt)", want "Capo (https://capo.pt)"
+PASS  a self-titled link keeps only the url — got "https://x.pt", want "https://x.pt"
+PASS  images keep their alt text — got "obra (https://x.pt/a.png)", want "obra (https://x.pt/a.png)"
+PASS  asterisk bullets become dashes — got "- uma\n- duas", want "- uma\n- duas"
+PASS  plus bullets become dashes — got "- uma", want "- uma"
+PASS  dash bullets are already native — got "- uma\n- duas", want "- uma\n- duas"
+PASS  numbered lists are already native — got "1. uma\n2. duas", want "1. uma\n2. duas"
+PASS  block quotes are already native — got "> atenção", want "> atenção"
+PASS  horizontal rules are dropped — got "a\n\nb", want "a\n\nb"
+PASS  a bullet list is never eaten as one bold span — got "- a\n- b\n- c", want "- a\n- b\n- c"
+PASS  a fenced block is byte-identical — got "x\n\n```\n**nao** _tocar_\n```", want "x\n\n```\n**nao** _tocar_\n```"
+PASS  inline code is byte-identical — got "usa `**isto**` assim", want "usa `**isto**` assim"
+PASS  conversion is idempotent over every fixture
+PASS  a realistic reply converts whole — got "Listo, jefe. Obra creada: *Casa de Paco*.\n\n- cocina\n- baño\n\nVer el plan (https://capo.pt/p/1).", want "Listo, jefe. Obra creada: *Casa de Paco*.\n\n- cocina\n- baño\n\nVer el plan (https://capo.pt/p/1)."
+PASS  a 9k-char body is split — 13688 chars → 4 chunks
+PASS  every chunk fits WhatsApp's text limit — 3993, 3989, 4000, 1700
+PASS  splitting loses no content
+PASS  a short body is a single chunk — got 1, want 1
+PASS  button ids round-trip (decision) — got "approve", want "approve"
+PASS  button ids round-trip (proposal) — got "3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33", want "3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33"
+PASS  a minted id fits Meta's 256-char cap — 49 chars
+PASS  a malformed uuid is rejected — got null, want null
+PASS  a foreign prefix is rejected — got null, want null
+PASS  an unknown decision is rejected — got null, want null
+PASS  an empty id is rejected — got null, want null
+PASS  approve and reject ids differ — got false, want false
+PASS  check-in payloads round-trip (answer) — got "done", want "done"
+PASS  check-in payloads round-trip (notification) — got "3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33", want "3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33"
+PASS  the not_done answer round-trips too — got "not_done", want "not_done"
+PASS  a minted payload fits the 128-char cap — 54 chars
+PASS  the longer answer also fits — 58 chars
+PASS  a malformed uuid is rejected — got null, want null
+PASS  an unknown answer is rejected — got null, want null
+PASS  a foreign prefix is rejected — got null, want null
+PASS  an empty payload is rejected — got null, want null
+PASS  a bare button label is rejected — got null, want null
+PASS  done and not_done payloads differ — got false, want false
+PASS  a proposal id is not a check-in payload — got null, want null
+PASS  a check-in payload is not a proposal id — got null, want null
+PASS  a null task_ids snapshot yields no ids — got 0, want 0
+PASS  a non-array task_ids snapshot yields no ids — got 0, want 0
+PASS  non-string members are dropped — got 1, want 1
+PASS  duplicate ids are collapsed — got 1, want 1
+PASS  no error means the claim was filed — got "claimed", want "claimed"
+PASS  the one-pending unique violation is ordinary — got "already_pending", want "already_pending"
+PASS  a lost SQLSTATE still reads as already pending — got "already_pending", want "already_pending"
+PASS  0019's done/cancelled guard is ordinary — got "closed", want "closed"
+PASS  a vanished task is its own outcome — got "missing", want "missing"
+PASS  a tenant-guard refusal is a real failure — got "failed", want "failed"
+PASS  an unknown error is a real failure — got "failed", want "failed"
+PASS  one claim means the manager has it — got "awaiting", want "awaiting"
+PASS  an already-pending claim is the same end state — got "awaiting", want "awaiting"
+PASS  a partial success still reports awaiting — got "awaiting", want "awaiting"
+PASS  a failure alongside a claim does not drown it — got "awaiting", want "awaiting"
+PASS  every task already closed is not an error — got "nothing", want "nothing"
+PASS  an empty snapshot is not an error — got "nothing", want "nothing"
+PASS  a failure with nothing claimed is an error — got "error", want "error"
+PASS  a vanished task with nothing claimed is an error — got "error", want "error"
+PASS  pt-PT: all three done-acks are present and distinct
+PASS  pt-PT: the awaiting ack is not the superseded checkinDone
+PASS  pt-PT: the awaiting ack fits one WhatsApp message — 109 chars
+PASS  es-ES: all three done-acks are present and distinct
+PASS  es-ES: the awaiting ack is not the superseded checkinDone
+PASS  es-ES: the awaiting ack fits one WhatsApp message — 112 chars
+PASS  en-US: all three done-acks are present and distinct
+PASS  en-US: the awaiting ack is not the superseded checkinDone
+PASS  en-US: the awaiting ack fits one WhatsApp message — 105 chars
+PASS  a newly filed claim is worth asking about — got "11111111-1111-4111-8111-111111111111", want "11111111-1111-4111-8111-111111111111"
+PASS  so is one that was already pending — got "11111111-1111-4111-8111-111111111111", want "11111111-1111-4111-8111-111111111111"
+PASS  a closed, missing or failed task is not — got 0, want 0
+PASS  the ask order is the snapshot order — got "33333333-3333-4333-8333-333333333333,11111111-1111-4111-8111-111111111111", want "33333333-3333-4333-8333-333333333333,11111111-1111-4111-8111-111111111111"
+PASS  the cursor names the task at its index — got "22222222-2222-4222-8222-222222222222", want "22222222-2222-4222-8222-222222222222"
+PASS  past the end there is nothing left to ask — got null, want null
+PASS  a negative index is not a task — got null, want null
+PASS  a fractional index is not a task — got null, want null
+PASS  an empty snapshot asks about nothing — got null, want null
+PASS  an unexpired request is live — got true, want true
+PASS  an expired request is not — got false, want false
+PASS  a missing expiry is not — got false, want false
+PASS  an unparseable expiry is not — got false, want false
+PASS  the expiry is exactly the TTL past now — got 10800000, want 10800000
+PASS  the photo window closes before the free-form window does — 10800000 vs 82800000
+PASS  a request cannot survive until the next briefing — 10800000ms
+PASS  pt-PT: the photo ask names the task — Se puderes, manda-me uma foto de “Pintura do 2.º andar” que eu junto ao pedido. Se não der, não faz mal — o pedido segue na mesma.
+PASS  pt-PT: the follow-up names the next task — Recebi a foto, obrigado. E de “Pintura do 2.º andar”, tens alguma?
+PASS  pt-PT: neither leaks undefined
+PASS  pt-PT: all three photo strings are distinct
+PASS  pt-PT: the photo ask fits one WhatsApp message — 130 chars
+PASS  pt-PT: the photo next fits one WhatsApp message — 66 chars
+PASS  pt-PT: the photo thanks fits one WhatsApp message — 93 chars
+PASS  pt-PT: the photo thanks does not claim the task is done — Recebi a foto, obrigado. Vai junto com o pedido — falta na mesma o teu encarregado confirmar.
+PASS  es-ES: the photo ask names the task — Si puedes, mándame una foto de “Pintura do 2.º andar” y la adjunto al aviso. Si no puedes, no pasa nada — el aviso sigue igual.
+PASS  es-ES: the follow-up names the next task — Recibida, gracias. ¿Y de “Pintura do 2.º andar”, tienes alguna?
+PASS  es-ES: neither leaks undefined
+PASS  es-ES: all three photo strings are distinct
+PASS  es-ES: the photo ask fits one WhatsApp message — 127 chars
+PASS  es-ES: the photo next fits one WhatsApp message — 63 chars
+PASS  es-ES: the photo thanks fits one WhatsApp message — 89 chars
+PASS  es-ES: the photo thanks does not claim the task is done — Recibida, gracias. Va junto con el aviso — falta igualmente que tu encargado lo confirme.
+PASS  en-US: the photo ask names the task — If you can, send me a photo of “Pintura do 2.º andar” and I'll attach it. If you can't, no problem — it's logged either way.
+PASS  en-US: the follow-up names the next task — Got it, thanks. Any photo of “Pintura do 2.º andar”?
+PASS  en-US: neither leaks undefined
+PASS  en-US: all three photo strings are distinct
+PASS  en-US: the photo ask fits one WhatsApp message — 124 chars
+PASS  en-US: the photo next fits one WhatsApp message — 52 chars
+PASS  en-US: the photo thanks fits one WhatsApp message — 78 chars
+PASS  en-US: the photo thanks does not claim the task is done — Got it, thanks. It goes with the claim — your foreman still has to confirm it.
+PASS  only the messageable worker survives every gate — got 1, want 1
+PASS  and it is the one with a phone and an opt-in — got "w1", want "w1"
+PASS  inactive crew rows are counted, not invisible — got 2, want 2
+PASS  an inactive worker is not ALSO counted unreachable — got 1, want 1
+PASS  the consent count is unchanged by the new one — got 1, want 1
+PASS  the three exclusions plus the messaged crew account for everyone — got 5, want 5
+PASS  pt-PT: the morning note NAMES who was briefed — Bom dia. Hoje há 3 tarefas em curso · 2 atrasadas · 1 sem responsável. Enviei o resumo do dia a 3 pessoas: Zé, Ana, Miguel.
+PASS  pt-PT: and still carries the day's counts — Bom dia. Hoje há 3 tarefas em curso · 2 atrasadas · 1 sem responsável. Enviei o resumo do dia a 3 pessoas: Zé, Ana, Miguel.
+PASS  pt-PT: the check-in note names who was asked — Ao fim da tarde perguntei a 3 pessoas se acabaram o trabalho de hoje: Zé, Ana, Miguel. As respostas aparecem aqui à medida que chegam.
+PASS  pt-PT: the two answers read differently — Zé respondeu ao check-in: diz que acabou o trabalho de hoje (2 tarefas). Fica à espera da tua confirmação — até lá o trabalho continua em aberto. / Zé respondeu ao check-in: ainda não acabou o trabalho de hoje (2 tarefas).
+PASS  pt-PT: both name the crew member who answered
+PASS  pt-PT: the "done" note carries an extra "waiting on you" clause — 145 vs 74
+PASS  es-ES: the morning note NAMES who was briefed — Buenos días. Hoy hay 3 tareas en curso · 2 retrasadas · 1 sin responsable. He enviado el resumen del día a 3 personas: Zé, Ana, Miguel.
+PASS  es-ES: and still carries the day's counts — Buenos días. Hoy hay 3 tareas en curso · 2 retrasadas · 1 sin responsable. He enviado el resumen del día a 3 personas: Zé, Ana, Miguel.
+PASS  es-ES: the check-in note names who was asked — Al final de la tarde le he preguntado a 3 personas si han acabado el trabajo de hoy: Zé, Ana, Miguel. Las respuestas van apareciendo aquí.
+PASS  es-ES: the two answers read differently — Zé ha respondido al check-in: dice que ha acabado el trabajo de hoy (2 tareas). Queda a la espera de que lo confirmes — hasta entonces sigue abierto. / Zé ha respondido al check-in: todavía no ha acabado el trabajo de hoy (2 tareas).
+PASS  es-ES: both name the crew member who answered
+PASS  es-ES: the "done" note carries an extra "waiting on you" clause — 149 vs 81
+PASS  en-US: the morning note NAMES who was briefed — Morning. 3 tasks in progress today · 2 overdue · 1 unassigned. I sent today's rundown to 3 people: Zé, Ana, Miguel.
+PASS  en-US: and still carries the day's counts — Morning. 3 tasks in progress today · 2 overdue · 1 unassigned. I sent today's rundown to 3 people: Zé, Ana, Miguel.
+PASS  en-US: the check-in note names who was asked — Late this afternoon I asked 3 people whether they had finished today's work: Zé, Ana, Miguel. Their answers show up here as they come in.
+PASS  en-US: the two answers read differently — Zé answered the check-in: says today's work is finished (2 tasks). Waiting on you to confirm — it stays open on the board until you do. / Zé answered the check-in: not finished yet (2 tasks).
+PASS  en-US: both name the crew member who answered
+PASS  en-US: the "done" note carries an extra "waiting on you" clause — 135 vs 53
+PASS  pt-PT: a morning where nobody was messaged still reads as a sentence — Bom dia. Hoje há 3 tarefas em curso · 2 atrasadas · 1 sem responsável. Não enviei nada à equipa.
+PASS  pt-PT: an evening where nobody was asked still reads as a sentence — Ao fim da tarde não consegui perguntar a ninguém se acabou o trabalho de hoje.
+PASS  es-ES: a morning where nobody was messaged still reads as a sentence — Buenos días. Hoy hay 3 tareas en curso · 2 retrasadas · 1 sin responsable. No he enviado nada al equipo.
+PASS  es-ES: an evening where nobody was asked still reads as a sentence — Al final de la tarde no he podido preguntarle a nadie si ha acabado el trabajo de hoy.
+PASS  en-US: a morning where nobody was messaged still reads as a sentence — Morning. 3 tasks in progress today · 2 overdue · 1 unassigned. I didn't message the crew.
+PASS  en-US: an evening where nobody was asked still reads as a sentence — Late this afternoon I couldn't ask anybody whether they had finished today's work.
+PASS  a 30-person crew is capped, not listed in full — Bom dia. Hoje há 3 tarefas em curso · 2 atrasadas · 1 sem responsável. Enviei o resumo do dia a 30 pessoas: Trabalhador 1, Trabalhador 2, Trabalhador 3, Trabalhador 4, Trabalhador 5, Trabalhador 6, Trabalhador 7, Trabalhador 8, +22.
+PASS  and the count still tells the truth about how many were messaged — Bom dia. Hoje há 3 tarefas em curso · 2 atrasadas · 1 sem responsável. Enviei o resumo do dia a 30 pessoas: Trabalhador 1, Trabalhador 2, Trabalhador 3, Trabalhador 4, Trabalhador 5, Trabalhador 6, Trabalhador 7, Trabalhador 8, +22.
+PASS  a name with a newline in it is flattened — "Bom dia. Hoje há 3 tarefas em curso · 2 atrasadas · 1 sem responsável. Enviei o resumo do dia a 1 pessoa: Zé Silva."
+PASS  an empty task snapshot does not print a zero count — Ana respondeu ao check-in: diz que acabou o trabalho de hoje. Fica à espera da tua confirmação — até lá o trabalho continua em aberto.
+PASS  a real BSUID is accepted
+PASS  a one-character tail is accepted
+PASS  a 128-character tail is the limit
+PASS  a PARENT BSUID is rejected — got false, want false
+PASS  a phone number is not a BSUID — got false, want false
+PASS  a bare wa_id is not a BSUID — got false, want false
+PASS  an empty string is rejected — got false, want false
+PASS  a missing tail is rejected — got false, want false
+PASS  a missing dot is rejected — got false, want false
+PASS  a lowercase country code is rejected — got false, want false
+PASS  a one-letter country code is rejected — got false, want false
+PASS  a 129-character tail is rejected — got false, want false
+PASS  a trailing newline is rejected — got false, want false
+PASS  a leading space is rejected — got false, want false
+PASS  an embedded BSUID is rejected — got false, want false
+PASS  a phone sender is labelled by its last four — got "…5678", want "…5678"
+PASS  a BSUID-only sender is labelled and marked — got "id:…1918", want "id:…1918"
+PASS  neither identifier is still a label — got "unknown", want "unknown"
+PASS  the phone wins when both are present — got "…5678", want "…5678"
+PASS  no label contains a whole identifier
+PASS  a phone label and a BSUID label are distinguishable
+PASS  a phone-only sender is answered on the phone — got "phone", want "phone"
+PASS  and carries no BSUID — got undefined, want undefined
+PASS  a BSUID-only sender is answered on the BSUID — got "bsuid", want "bsuid"
+PASS  and has no phone to fall back to — got undefined, want undefined
+PASS  WITH BOTH PRESENT, THE PHONE WINS — got "phone", want "phone"
+PASS  and the reply goes to that exact wa_id — got "351912345678", want "351912345678"
+PASS  but the BSUID is still carried, for capture — got "PT.13491208655302741918", want "PT.13491208655302741918"
+PASS  neither identifier yields no sender at all — got null, want null
+PASS  a parent BSUID alone is not a usable sender — got null, want null
+PASS  and it never shadows a perfectly good phone — got undefined, want undefined
+PASS  a malformed BSUID is treated as absent — got null, want null
+PASS  a phone recipient is addressed in `to` — got "351912345678", want "351912345678"
+PASS  and emits no `recipient` — got false, want false
+PASS  a BSUID recipient is addressed in `recipient` — got "PT.13491208655302741918", want "PT.13491208655302741918"
+PASS  and emits no `to` — got false, want false
+PASS  exactly one addressing field on every body
+PASS  messaging_product survives both branches
+PASS  and so does the message payload itself
+PASS  a messages change yields its messages — got 2, want 2
+PASS  and no rotations — got 0, want 0
+PASS  and nothing unhandled — got 0, want 0
+PASS  message objects pass through untouched — got "wamid.1", want "wamid.1"
+PASS  a field-less change still yields its messages — got 1, want 1
+PASS  and is not reported as unhandled — got 0, want 0
+PASS  a rotation yields ZERO messages — got 0, want 0
+PASS  and one rotation — got 1, want 1
+PASS  the old id — got "PT.111", want "PT.111"
+PASS  the new id — got "PT.222", want "PT.222"
+PASS  the phone is carried for logs only — got "351912345678", want "351912345678"
+PASS  the parent BSUID is dropped, not carried — got "current,previous,waId", want "current,previous,waId"
+PASS  a rotation is never reported as an unhandled field — got 0, want 0
+PASS  an entry missing `previous` is not a rotation — got 0, want 0
+PASS  and all three are counted as unreadable — got 3, want 3
+PASS  an unknown field yields no messages — got 0, want 0
+PASS  and no rotations — got 0, want 0
+PASS  and is named once, so it is discoverable — got "message_template_status_update", want "message_template_status_update"
+PASS  a mixed batch keeps its message — got 1, want 1
+PASS  its rotation — got 1, want 1
+PASS  and its unknown field — got "statuses", want "statuses"
+PASS  an empty body yields no messages — got 0, want 0
+PASS  no rotations — got 0, want 0
+PASS  and nothing unhandled — got 0, want 0
+PASS  a change with neither field nor messages is reported, not dropped — got "(missing)", want "(missing)"
+PASS  a statuses-only change yields ZERO messages — got 0, want 0
+PASS  and is NOT reported as an unhandled field — got 0, want 0
+PASS  all three statuses are read — got 3, want 3
+PASS  the wamid is carried — got "wamid.A", want "wamid.A"
+PASS  the state is carried — got "delivered", want "delivered"
+PASS  the timestamp parses from Meta’s string seconds — got 1755100000, want 1755100000
+PASS  a failure carries its code — got 132001, want 132001
+PASS  and its title, for the raw line next to the plain-language one — Template name does not exist in the translation
+PASS  a mixed messages/statuses change keeps the message — got 1, want 1
+PASS  and the status — got 1, want 1
+PASS  a field-less statuses change is still read — got 1, want 1
+PASS  and is not reported as unhandled — got 0, want 0
+PASS  an unreadable status is not invented — got 0, want 0
+PASS  and all three are counted — got 3, want 3
+PASS  a status with no timestamp survives — got 1, want 1
+PASS  with a null timestamp rather than a guess — got null, want null
+PASS  the code is recovered from a stored send error — got 132001, want 132001
+PASS  the allow-list code from the old test tier still reads — got 131030, want 131030
+PASS  a message with no code yields null — got null, want null
+PASS  and so does an absent error — got null, want null
+PASS  a bare status line is not mistaken for a code — got null, want null
+PASS  a newline is flattened — got "a b", want "a b"
+PASS  a tab is flattened — got "a b", want "a b"
+PASS  a run of spaces collapses — got "a b", want "a b"
+PASS  surrounding whitespace is trimmed — got "a", want "a"
+PASS  already-flat text is untouched — got "Pintar paredes (Casa de Paco)", want "Pintar paredes (Casa de Paco)"
+PASS  the briefing's own separator survives — got "a · b", want "a · b"
+PASS  an over-long parameter is cut to 900 — got 900, want 900
+PASS  and is marked as truncated — "xx…"
+PASS  a button-less template sends one component — got 1, want 1
+PASS  and it is the body — got "body", want "body"
+PASS  two quick replies add two components — got 3, want 3
+PASS  the button component type — got "button", want "button"
+PASS  the button sub_type — got "quick_reply", want "quick_reply"
+PASS  the first index is the string "0" — got "0", want "0"
+PASS  and it really is a string — got "string", want "string"
+PASS  the second index is "1" — got "1", want "1"
+PASS  the parameter type is payload — got "payload", want "payload"
+PASS  index 0 carries the done payload — got "capo:checkin:done:3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33", want "capo:checkin:done:3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33"
+PASS  index 1 carries the not_done payload — got "capo:checkin:not_done:3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33", want "capo:checkin:not_done:3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33"
+PASS  an over-long payload throws rather than truncating
+PASS  no record at all → no consent
+PASS  nulls → no consent
+PASS  opted in, never out → consent
+PASS  opted out after opting in → no consent
+PASS  opted back in after opting out → consent
+PASS  opted out with no opt-in → no consent
+PASS  a simultaneous pair → no consent
+PASS  an unparseable opt-out → no consent
+PASS  an unparseable opt-in → no consent
+PASS  23 hours is the window, not 24 — got 82800000, want 82800000
+PASS  a message a minute ago is inside
+PASS  a message 22 hours ago is inside
+PASS  a message 25 hours ago is outside
+PASS  THE MARGIN: 23.5 hours is outside, even though Meta would still allow it
+PASS  exactly at the margin is inside
+PASS  one millisecond past it is outside
+PASS  one millisecond inside it is inside
+PASS  this instant is inside
+PASS  null → template
+PASS  undefined (the column does not exist yet) → template
+PASS  an empty string → template
+PASS  an unparseable timestamp → template
+PASS  a date-shaped non-date → template
+PASS  a timestamp one hour in the FUTURE → template
+PASS  a timestamp one second in the future → template
+PASS  a wildly future timestamp → template
+PASS  a receipt is addressed by message_id — got "wamid.HBgL", want "wamid.HBgL"
+PASS  and carries messaging_product — got "whatsapp", want "whatsapp"
+PASS  and is a status update, not a send — got "read", want "read"
+PASS  a receipt has NO `type` — it is not a message
+PASS  a receipt has NO `template` — it can never be a paid send
+PASS  a typing indicator has NO `type` either
+PASS  a typing indicator has NO `template` either
+PASS  a receipt has NO `to`
+PASS  a receipt has NO `recipient`
+PASS  a typing indicator has NO `to`
+PASS  a typing indicator has NO `recipient`
+PASS  typing: false emits no typing_indicator
+PASS  typing: true emits Meta's text indicator — got "{\"type\":\"text\"}", want "{\"type\":\"text\"}"
+PASS  and still marks the message read — got "read", want "read"
+PASS  Meta dismisses the typing indicator after 25s — got 25000, want 25000
+PASS  the progress note fires BEFORE the indicator lapses
+PASS  a turn that started this instant may narrate
+PASS  a turn 30 seconds in may narrate
+PASS  exactly at the margin may narrate
+PASS  one millisecond past the margin may NOT
+PASS  a start time in the FUTURE may not
+PASS  NaN may not
+PASS  Infinity may not
+PASS  a fast turn still returns its value — got "answer", want "answer"
+PASS  and sends no progress note at all — got 0, want 0
+PASS  and nothing fires after it returns — the timer was cleared — got 0, want 0
+PASS  a slow turn still returns its value — got "answer", want "answer"
+PASS  and sends EXACTLY ONE note, never a heartbeat — got 1, want 1
+PASS  and reports it as sent
+PASS  and still exactly one after the call returns — got 1, want 1
+PASS  A FAILED NOTE NEVER BREAKS THE ANSWER — got "answer", want "answer"
+PASS  and the failure is reported, not swallowed silently
+PASS  a throwing turn still propagates its error — got "turn blew up", want "turn blew up"
+PASS  and the note it had already fired is still accounted for — got 1, want 1
+PASS  the code is Meta's re-engagement error — got 131047, want 131047
+PASS  131047 is recoverable
+PASS  131026 (undeliverable) is not
+PASS  131030 (allow-list) is not
+PASS  132000 (bad parameter) is not
+PASS  an unparseable error body is not
+PASS  a plain Error is not
+PASS  null is not
+PASS  undefined is not
+PASS  a look-alike object is not
+PASS  the body greets by name — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+PASS  and names the task — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+PASS  and its obra — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+PASS  AND THE DESCRIPTION — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+PASS  AND THE MATERIALS — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+PASS  the body uses newlines — "Bom dia, Miguel.\n\nHoje tens 1 tarefa:\n\n1. Canalização (Casa de Paco)\n   Morada: Rua das Flores 12, Lisboa\n   Substituir os tubos da cozinha.\n   Material: tubo PVC 50mm, cola, fita\n   Depende de: Demolir parede"
+PASS  and never explains how to change language — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+PASS  a bare task is still a complete message — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Depende de: Demolir parede
+PASS  and invents no empty Material line — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Depende de: Demolir parede
+PASS  a worker with nothing on still gets a message — Bom dia, Miguel.
+
+Nada agendado para hoje.
+PASS  and it says so — Bom dia, Miguel.
+
+Nada agendado para hoje.
+PASS  a 20-item material list is truncated — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: material 0, material 1, material 2, material 3, material 4, material 5, +14
+   Depende de: Demolir parede
+PASS  and says how many were left out — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: material 0, material 1, material 2, material 3, material 4, material 5, +14
+   Depende de: Demolir parede
+PASS  while still showing the first ones — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: material 0, material 1, material 2, material 3, material 4, material 5, +14
+   Depende de: Demolir parede
+PASS  more than five tasks are truncated — Bom dia, Miguel.
+
+Hoje tens 9 tarefas:
+
+1. Tarefa 0 (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+2. Tarefa 1 (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+3. Tarefa 2 (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+4. Tarefa 3 (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+5. Tarefa 4 (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
++4
+PASS  and the remainder is counted — Bom dia, Miguel.
+
+Hoje tens 9 tarefas:
+
+1. Tarefa 0 (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+2. Tarefa 1 (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+3. Tarefa 2 (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+4. Tarefa 3 (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+5. Tarefa 4 (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
++4
+PASS  an essay of a description is cut — not truncated
+PASS  even a pathological briefing fits one WhatsApp message — 3000 chars
+PASS  so it is never split — got 1, want 1
+PASS  the overdue task is listed first — Bom dia, Miguel.
+
+Hoje tens 2 tarefas:
+
+1. Atrasada (Casa de Paco) — atrasada 3d
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+2. A tempo (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+PASS  and is marked with its age — Bom dia, Miguel.
+
+Hoje tens 2 tarefas:
+
+1. Atrasada (Casa de Paco) — atrasada 3d
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+2. A tempo (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+PASS  pt-PT — renders a body
+PASS  pt-PT — leaks no undefined — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+PASS  pt-PT — still carries the materials — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+PASS  es-ES — renders a body
+PASS  es-ES — leaks no undefined — Buenos días, Miguel.
+
+Hoy tienes 1 tarea:
+
+1. Canalização (Casa de Paco)
+   Dirección: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+PASS  es-ES — still carries the materials — Buenos días, Miguel.
+
+Hoy tienes 1 tarea:
+
+1. Canalização (Casa de Paco)
+   Dirección: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+PASS  en-US — renders a body
+PASS  en-US — leaks no undefined — Morning, Miguel.
+
+You have 1 task today:
+
+1. Canalização (Casa de Paco)
+   Address: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Materials: tubo PVC 50mm, cola, fita
+   Waiting on: Demolir parede
+PASS  en-US — still carries the materials — Morning, Miguel.
+
+You have 1 task today:
+
+1. Canalização (Casa de Paco)
+   Address: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Materials: tubo PVC 50mm, cola, fita
+   Waiting on: Demolir parede
+PASS  the CTA carries the URL — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+🔗 Vê a tua lista completa aqui:
+https://www.construcapo.com/dia?t=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk
+PASS  and a sentence above it — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+🔗 Vê a tua lista completa aqui:
+https://www.construcapo.com/dia?t=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk
+PASS  the URL is on its own line, so WhatsApp gives it the whole tap target — "r parede\n\n🔗 Vê a tua lista completa aqui:\nhttps://www.construcapo.com/dia?t=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+PASS  and the CTA is LAST — the work comes first, the control surface after it — "i:\nhttps://www.construcapo.com/dia?t=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+PASS  no link means the message is unchanged — got "Bom dia, Miguel.\n\nHoje tens 1 tarefa:\n\n1. Canalização (Casa de Paco)\n   Morada: Rua das Flores 12, Lisboa\n   Substituir os tubos da cozinha.\n   Material: tubo PVC 50mm, cola, fita\n   Depende de: Demolir parede", want "Bom dia, Miguel.\n\nHoje tens 1 tarefa:\n\n1. Canalização (Casa de Paco)\n   Morada: Rua das Flores 12, Lisboa\n   Substituir os tubos da cozinha.\n   Material: tubo PVC 50mm, cola, fita\n   Depende de: Demolir parede"
+PASS  an idle day still carries the link — missing
+PASS  a pathological briefing still carries an INTACT link — the URL was truncated by the cap
+PASS  and still fits one WhatsApp message — 3000 chars
+PASS  so it is still never split — got 1, want 1
+PASS  pt-PT — the CTA renders — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+🔗 Vê a tua lista completa aqui:
+https://www.construcapo.com/dia?t=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk
+PASS  pt-PT — and leaks no undefined — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+🔗 Vê a tua lista completa aqui:
+https://www.construcapo.com/dia?t=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk
+PASS  es-ES — the CTA renders — Buenos días, Miguel.
+
+Hoy tienes 1 tarea:
+
+1. Canalização (Casa de Paco)
+   Dirección: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+🔗 Mira tu lista completa aquí:
+https://www.construcapo.com/dia?t=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk
+PASS  es-ES — and leaks no undefined — Buenos días, Miguel.
+
+Hoy tienes 1 tarea:
+
+1. Canalização (Casa de Paco)
+   Dirección: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola, fita
+   Depende de: Demolir parede
+
+🔗 Mira tu lista completa aquí:
+https://www.construcapo.com/dia?t=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk
+PASS  en-US — the CTA renders — Morning, Miguel.
+
+You have 1 task today:
+
+1. Canalização (Casa de Paco)
+   Address: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Materials: tubo PVC 50mm, cola, fita
+   Waiting on: Demolir parede
+
+🔗 See your full list here:
+https://www.construcapo.com/dia?t=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk
+PASS  en-US — and leaks no undefined — Morning, Miguel.
+
+You have 1 task today:
+
+1. Canalização (Casa de Paco)
+   Address: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Materials: tubo PVC 50mm, cola, fita
+   Waiting on: Demolir parede
+
+🔗 See your full list here:
+https://www.construcapo.com/dia?t=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk
+PASS  both people on the task get a briefing
+PASS  the lead is briefed about it — got 1, want 1
+PASS  and so is the collaborator — got 1, want 1
+PASS  the lead is told they lead it — got "lead", want "lead"
+PASS  the collaborator is told they are helping — got "collaborator", want "collaborator"
+PASS  and who they are helping — got "Miguel", want "Miguel"
+PASS  the lead is told who is with them — got "João", want "João"
+PASS  two people, ONE task id between them — got 1, want 1
+PASS  and the collaborator sees the SAME material list, not a second one — got "tinta 10L|rolo|fita", want "tinta 10L|rolo|fita"
+PASS  which is exactly what is on the task — got "tinta 10L|rolo|fita", want "tinta 10L|rolo|fita"
+PASS  the manager's 'today' count still says one task — got 1, want 1
+PASS  pt-PT — the helper is told whose job it is — Bom dia, João.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco) — a ajudar Miguel
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  pt-PT — using the collaborator wording, not the plain title — Bom dia, João.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco) — a ajudar Miguel
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  pt-PT — and leaks no undefined — Bom dia, João.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco) — a ajudar Miguel
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  pt-PT — the helper still gets the address — Bom dia, João.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco) — a ajudar Miguel
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  pt-PT — and the same materials — Bom dia, João.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco) — a ajudar Miguel
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  pt-PT — the lead is told who is with them — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco)
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+   Contigo: João
+PASS  pt-PT — the helper is NOT given a "with you" list — Bom dia, João.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco) — a ajudar Miguel
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  pt-PT — the lead's headline gains no role clause — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco)
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+   Contigo: João
+PASS  es-ES — the helper is told whose job it is — Buenos días, João.
+
+Hoy tienes 1 tarea:
+
+1. Pintar tecto (Casa de Paco) — ayudando a Miguel
+   Dirección: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  es-ES — using the collaborator wording, not the plain title — Buenos días, João.
+
+Hoy tienes 1 tarea:
+
+1. Pintar tecto (Casa de Paco) — ayudando a Miguel
+   Dirección: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  es-ES — and leaks no undefined — Buenos días, João.
+
+Hoy tienes 1 tarea:
+
+1. Pintar tecto (Casa de Paco) — ayudando a Miguel
+   Dirección: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  es-ES — the helper still gets the address — Buenos días, João.
+
+Hoy tienes 1 tarea:
+
+1. Pintar tecto (Casa de Paco) — ayudando a Miguel
+   Dirección: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  es-ES — and the same materials — Buenos días, João.
+
+Hoy tienes 1 tarea:
+
+1. Pintar tecto (Casa de Paco) — ayudando a Miguel
+   Dirección: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  es-ES — the lead is told who is with them — Buenos días, Miguel.
+
+Hoy tienes 1 tarea:
+
+1. Pintar tecto (Casa de Paco)
+   Dirección: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+   Contigo: João
+PASS  es-ES — the helper is NOT given a "with you" list — Buenos días, João.
+
+Hoy tienes 1 tarea:
+
+1. Pintar tecto (Casa de Paco) — ayudando a Miguel
+   Dirección: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  es-ES — the lead's headline gains no role clause — Buenos días, Miguel.
+
+Hoy tienes 1 tarea:
+
+1. Pintar tecto (Casa de Paco)
+   Dirección: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+   Contigo: João
+PASS  en-US — the helper is told whose job it is — Morning, João.
+
+You have 1 task today:
+
+1. Pintar tecto (Casa de Paco) — helping Miguel
+   Address: Rua das Flores 12
+   Duas demãos.
+   Materials: tinta 10L, rolo, fita
+PASS  en-US — using the collaborator wording, not the plain title — Morning, João.
+
+You have 1 task today:
+
+1. Pintar tecto (Casa de Paco) — helping Miguel
+   Address: Rua das Flores 12
+   Duas demãos.
+   Materials: tinta 10L, rolo, fita
+PASS  en-US — and leaks no undefined — Morning, João.
+
+You have 1 task today:
+
+1. Pintar tecto (Casa de Paco) — helping Miguel
+   Address: Rua das Flores 12
+   Duas demãos.
+   Materials: tinta 10L, rolo, fita
+PASS  en-US — the helper still gets the address — Morning, João.
+
+You have 1 task today:
+
+1. Pintar tecto (Casa de Paco) — helping Miguel
+   Address: Rua das Flores 12
+   Duas demãos.
+   Materials: tinta 10L, rolo, fita
+PASS  en-US — and the same materials — Morning, João.
+
+You have 1 task today:
+
+1. Pintar tecto (Casa de Paco) — helping Miguel
+   Address: Rua das Flores 12
+   Duas demãos.
+   Materials: tinta 10L, rolo, fita
+PASS  en-US — the lead is told who is with them — Morning, Miguel.
+
+You have 1 task today:
+
+1. Pintar tecto (Casa de Paco)
+   Address: Rua das Flores 12
+   Duas demãos.
+   Materials: tinta 10L, rolo, fita
+   With you: João
+PASS  en-US — the helper is NOT given a "with you" list — Morning, João.
+
+You have 1 task today:
+
+1. Pintar tecto (Casa de Paco) — helping Miguel
+   Address: Rua das Flores 12
+   Duas demãos.
+   Materials: tinta 10L, rolo, fita
+PASS  en-US — the lead's headline gains no role clause — Morning, Miguel.
+
+You have 1 task today:
+
+1. Pintar tecto (Casa de Paco)
+   Address: Rua das Flores 12
+   Duas demãos.
+   Materials: tinta 10L, rolo, fita
+   With you: João
+PASS  an overdue helper task names the lead — Bom dia, João.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco) — a ajudar Miguel — atrasada 3d
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  and still marks the delay — Bom dia, João.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco) — a ajudar Miguel — atrasada 3d
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  with the delay after the role, not before it — Bom dia, João.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco) — a ajudar Miguel — atrasada 3d
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  a helper on a lead-less task is told it is a team job — Bom dia, João.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco) — em equipa
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  and never reads "null" or "undefined" — Bom dia, João.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco) — em equipa
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  the paid template also names the lead — Pintar tecto (Casa de Paco) — a ajudar Miguel
+PASS  and stays one line — "Pintar tecto (Casa de Paco) — a ajudar Miguel"
+PASS  a task with no helpers reaches only its assignee — got 1, want 1
+PASS  and its message carries no "with you" line — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco)
+   Morada: Rua das Flores 12
+   Duas demãos.
+   Material: tinta 10L, rolo, fita
+PASS  a pre-migration row still briefs the assignee — got 1, want 1
+PASS  and briefs nobody else — got 0, want 0
+PASS  mismatched collaborator arrays name nobody rather than guessing — got 0, want 0
+PASS  a definition per managed template per locale — got 15, want 15
+PASS  capo_daily_briefing is defined in pt_PT
+PASS  capo_daily_briefing is defined in es_ES
+PASS  capo_daily_briefing is defined in en_US
+PASS  capo_task_checkin is defined in pt_PT
+PASS  capo_task_checkin is defined in es_ES
+PASS  capo_task_checkin is defined in en_US
+PASS  capo_welcome is defined in pt_PT
+PASS  capo_welcome is defined in es_ES
+PASS  capo_welcome is defined in en_US
+PASS  capo_daily_briefing_v2 is defined in pt_PT
+PASS  capo_daily_briefing_v2 is defined in es_ES
+PASS  capo_daily_briefing_v2 is defined in en_US
+PASS  capo_message_waiting is defined in pt_PT
+PASS  capo_message_waiting is defined in es_ES
+PASS  capo_message_waiting is defined in en_US
+PASS  capo_daily_briefing pt_PT — language matches a real locale
+PASS  capo_daily_briefing pt_PT — category — got "UTILITY", want "UTILITY"
+PASS  capo_daily_briefing pt_PT — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_daily_briefing pt_PT — has {{1}} exactly once — got 1, want 1
+PASS  capo_daily_briefing pt_PT — has {{2}} exactly once — got 1, want 1
+PASS  capo_daily_briefing pt_PT — has no {{3}} — got false, want false
+PASS  capo_daily_briefing pt_PT — does not start with a parameter — Bom dia {{1}
+PASS  capo_daily_briefing pt_PT — does not end with a parameter —  de receber.
+PASS  capo_daily_briefing pt_PT — supplies two example values — got 2, want 2
+PASS  capo_daily_briefing pt_PT — declares no buttons
+PASS  capo_daily_briefing es_ES — language matches a real locale
+PASS  capo_daily_briefing es_ES — category — got "UTILITY", want "UTILITY"
+PASS  capo_daily_briefing es_ES — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_daily_briefing es_ES — has {{1}} exactly once — got 1, want 1
+PASS  capo_daily_briefing es_ES — has {{2}} exactly once — got 1, want 1
+PASS  capo_daily_briefing es_ES — has no {{3}} — got false, want false
+PASS  capo_daily_briefing es_ES — does not start with a parameter — Buenos días 
+PASS  capo_daily_briefing es_ES — does not end with a parameter —  de recibir.
+PASS  capo_daily_briefing es_ES — supplies two example values — got 2, want 2
+PASS  capo_daily_briefing es_ES — declares no buttons
+PASS  capo_daily_briefing en_US — language matches a real locale
+PASS  capo_daily_briefing en_US — category — got "UTILITY", want "UTILITY"
+PASS  capo_daily_briefing en_US — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_daily_briefing en_US — has {{1}} exactly once — got 1, want 1
+PASS  capo_daily_briefing en_US — has {{2}} exactly once — got 1, want 1
+PASS  capo_daily_briefing en_US — has no {{3}} — got false, want false
+PASS  capo_daily_briefing en_US — does not start with a parameter — Good morning
+PASS  capo_daily_briefing en_US — does not end with a parameter — unsubscribe.
+PASS  capo_daily_briefing en_US — supplies two example values — got 2, want 2
+PASS  capo_daily_briefing en_US — declares no buttons
+PASS  capo_task_checkin pt_PT — language matches a real locale
+PASS  capo_task_checkin pt_PT — category — got "UTILITY", want "UTILITY"
+PASS  capo_task_checkin pt_PT — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_task_checkin pt_PT — has {{1}} exactly once — got 1, want 1
+PASS  capo_task_checkin pt_PT — has {{2}} exactly once — got 1, want 1
+PASS  capo_task_checkin pt_PT — has no {{3}} — got false, want false
+PASS  capo_task_checkin pt_PT — does not start with a parameter — Olá {{1}}, t
+PASS  capo_task_checkin pt_PT — does not end with a parameter —  terminaste?
+PASS  capo_task_checkin pt_PT — supplies two example values — got 2, want 2
+PASS  capo_task_checkin pt_PT — exactly two buttons — got 2, want 2
+PASS  capo_task_checkin pt_PT — both are quick replies
+PASS  capo_task_checkin pt_PT — button 0 is the done label — got "Sim, terminei", want "Sim, terminei"
+PASS  capo_task_checkin pt_PT — button 1 is the not-done label — got "Ainda não", want "Ainda não"
+PASS  capo_task_checkin pt_PT — labels differ
+PASS  capo_task_checkin pt_PT — "Sim, terminei" is 1..25 chars — 13
+PASS  capo_task_checkin pt_PT — "Ainda não" is 1..25 chars — 9
+PASS  capo_task_checkin es_ES — language matches a real locale
+PASS  capo_task_checkin es_ES — category — got "UTILITY", want "UTILITY"
+PASS  capo_task_checkin es_ES — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_task_checkin es_ES — has {{1}} exactly once — got 1, want 1
+PASS  capo_task_checkin es_ES — has {{2}} exactly once — got 1, want 1
+PASS  capo_task_checkin es_ES — has no {{3}} — got false, want false
+PASS  capo_task_checkin es_ES — does not start with a parameter — Hola {{1}}, 
+PASS  capo_task_checkin es_ES — does not end with a parameter — s terminado?
+PASS  capo_task_checkin es_ES — supplies two example values — got 2, want 2
+PASS  capo_task_checkin es_ES — exactly two buttons — got 2, want 2
+PASS  capo_task_checkin es_ES — both are quick replies
+PASS  capo_task_checkin es_ES — button 0 is the done label — got "Sí, he terminado", want "Sí, he terminado"
+PASS  capo_task_checkin es_ES — button 1 is the not-done label — got "Todavía no", want "Todavía no"
+PASS  capo_task_checkin es_ES — labels differ
+PASS  capo_task_checkin es_ES — "Sí, he terminado" is 1..25 chars — 16
+PASS  capo_task_checkin es_ES — "Todavía no" is 1..25 chars — 10
+PASS  capo_task_checkin en_US — language matches a real locale
+PASS  capo_task_checkin en_US — category — got "UTILITY", want "UTILITY"
+PASS  capo_task_checkin en_US — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_task_checkin en_US — has {{1}} exactly once — got 1, want 1
+PASS  capo_task_checkin en_US — has {{2}} exactly once — got 1, want 1
+PASS  capo_task_checkin en_US — has no {{3}} — got false, want false
+PASS  capo_task_checkin en_US — does not start with a parameter — Hi {{1}}. To
+PASS  capo_task_checkin en_US — does not end with a parameter — ll finished?
+PASS  capo_task_checkin en_US — supplies two example values — got 2, want 2
+PASS  capo_task_checkin en_US — exactly two buttons — got 2, want 2
+PASS  capo_task_checkin en_US — both are quick replies
+PASS  capo_task_checkin en_US — button 0 is the done label — got "Yes, all done", want "Yes, all done"
+PASS  capo_task_checkin en_US — button 1 is the not-done label — got "Not yet", want "Not yet"
+PASS  capo_task_checkin en_US — labels differ
+PASS  capo_task_checkin en_US — "Yes, all done" is 1..25 chars — 13
+PASS  capo_task_checkin en_US — "Not yet" is 1..25 chars — 7
+PASS  capo_welcome pt_PT — language matches a real locale
+PASS  capo_welcome pt_PT — category — got "UTILITY", want "UTILITY"
+PASS  capo_welcome pt_PT — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_welcome pt_PT — has {{1}} exactly once — got 1, want 1
+PASS  capo_welcome pt_PT — has {{2}} exactly once — got 1, want 1
+PASS  capo_welcome pt_PT — has no {{3}} — got false, want false
+PASS  capo_welcome pt_PT — does not start with a parameter — Olá {{1}}, s
+PASS  capo_welcome pt_PT — does not end with a parameter —  de receber.
+PASS  capo_welcome pt_PT — supplies two example values — got 2, want 2
+PASS  capo_welcome pt_PT — declares no buttons
+PASS  capo_welcome es_ES — language matches a real locale
+PASS  capo_welcome es_ES — category — got "UTILITY", want "UTILITY"
+PASS  capo_welcome es_ES — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_welcome es_ES — has {{1}} exactly once — got 1, want 1
+PASS  capo_welcome es_ES — has {{2}} exactly once — got 1, want 1
+PASS  capo_welcome es_ES — has no {{3}} — got false, want false
+PASS  capo_welcome es_ES — does not start with a parameter — Hola {{1}}, 
+PASS  capo_welcome es_ES — does not end with a parameter —  de recibir.
+PASS  capo_welcome es_ES — supplies two example values — got 2, want 2
+PASS  capo_welcome es_ES — declares no buttons
+PASS  capo_welcome en_US — language matches a real locale
+PASS  capo_welcome en_US — category — got "UTILITY", want "UTILITY"
+PASS  capo_welcome en_US — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_welcome en_US — has {{1}} exactly once — got 1, want 1
+PASS  capo_welcome en_US — has {{2}} exactly once — got 1, want 1
+PASS  capo_welcome en_US — has no {{3}} — got false, want false
+PASS  capo_welcome en_US — does not start with a parameter — Hi {{1}}, I 
+PASS  capo_welcome en_US — does not end with a parameter — unsubscribe.
+PASS  capo_welcome en_US — supplies two example values — got 2, want 2
+PASS  capo_welcome en_US — declares no buttons
+PASS  capo_daily_briefing_v2 pt_PT — language matches a real locale
+PASS  capo_daily_briefing_v2 pt_PT — category — got "UTILITY", want "UTILITY"
+PASS  capo_daily_briefing_v2 pt_PT — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_daily_briefing_v2 pt_PT — has {{1}} exactly once — got 1, want 1
+PASS  capo_daily_briefing_v2 pt_PT — has {{2}} exactly once — got 1, want 1
+PASS  capo_daily_briefing_v2 pt_PT — has no {{3}} — got false, want false
+PASS  capo_daily_briefing_v2 pt_PT — does not start with a parameter — Bom dia {{1}
+PASS  capo_daily_briefing_v2 pt_PT — does not end with a parameter —  de receber.
+PASS  capo_daily_briefing_v2 pt_PT — supplies two example values — got 2, want 2
+PASS  capo_daily_briefing_v2 pt_PT — declares no buttons
+PASS  capo_daily_briefing_v2 es_ES — language matches a real locale
+PASS  capo_daily_briefing_v2 es_ES — category — got "UTILITY", want "UTILITY"
+PASS  capo_daily_briefing_v2 es_ES — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_daily_briefing_v2 es_ES — has {{1}} exactly once — got 1, want 1
+PASS  capo_daily_briefing_v2 es_ES — has {{2}} exactly once — got 1, want 1
+PASS  capo_daily_briefing_v2 es_ES — has no {{3}} — got false, want false
+PASS  capo_daily_briefing_v2 es_ES — does not start with a parameter — Buenos días 
+PASS  capo_daily_briefing_v2 es_ES — does not end with a parameter —  de recibir.
+PASS  capo_daily_briefing_v2 es_ES — supplies two example values — got 2, want 2
+PASS  capo_daily_briefing_v2 es_ES — declares no buttons
+PASS  capo_daily_briefing_v2 en_US — language matches a real locale
+PASS  capo_daily_briefing_v2 en_US — category — got "UTILITY", want "UTILITY"
+PASS  capo_daily_briefing_v2 en_US — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_daily_briefing_v2 en_US — has {{1}} exactly once — got 1, want 1
+PASS  capo_daily_briefing_v2 en_US — has {{2}} exactly once — got 1, want 1
+PASS  capo_daily_briefing_v2 en_US — has no {{3}} — got false, want false
+PASS  capo_daily_briefing_v2 en_US — does not start with a parameter — Good morning
+PASS  capo_daily_briefing_v2 en_US — does not end with a parameter — unsubscribe.
+PASS  capo_daily_briefing_v2 en_US — supplies two example values — got 2, want 2
+PASS  capo_daily_briefing_v2 en_US — declares no buttons
+PASS  capo_message_waiting pt_PT — language matches a real locale
+PASS  capo_message_waiting pt_PT — category — got "UTILITY", want "UTILITY"
+PASS  capo_message_waiting pt_PT — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_message_waiting pt_PT — has {{1}} exactly once — got 1, want 1
+PASS  capo_message_waiting pt_PT — has {{2}} exactly once — got 1, want 1
+PASS  capo_message_waiting pt_PT — has no {{3}} — got false, want false
+PASS  capo_message_waiting pt_PT — does not start with a parameter — Olá {{1}}. {
+PASS  capo_message_waiting pt_PT — does not end with a parameter —  de receber.
+PASS  capo_message_waiting pt_PT — supplies two example values — got 2, want 2
+PASS  capo_message_waiting pt_PT — declares no buttons
+PASS  capo_message_waiting es_ES — language matches a real locale
+PASS  capo_message_waiting es_ES — category — got "UTILITY", want "UTILITY"
+PASS  capo_message_waiting es_ES — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_message_waiting es_ES — has {{1}} exactly once — got 1, want 1
+PASS  capo_message_waiting es_ES — has {{2}} exactly once — got 1, want 1
+PASS  capo_message_waiting es_ES — has no {{3}} — got false, want false
+PASS  capo_message_waiting es_ES — does not start with a parameter — Hola {{1}}. 
+PASS  capo_message_waiting es_ES — does not end with a parameter —  de recibir.
+PASS  capo_message_waiting es_ES — supplies two example values — got 2, want 2
+PASS  capo_message_waiting es_ES — declares no buttons
+PASS  capo_message_waiting en_US — language matches a real locale
+PASS  capo_message_waiting en_US — category — got "UTILITY", want "UTILITY"
+PASS  capo_message_waiting en_US — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_message_waiting en_US — has {{1}} exactly once — got 1, want 1
+PASS  capo_message_waiting en_US — has {{2}} exactly once — got 1, want 1
+PASS  capo_message_waiting en_US — has no {{3}} — got false, want false
+PASS  capo_message_waiting en_US — does not start with a parameter — Hi {{1}}. {{
+PASS  capo_message_waiting en_US — does not end with a parameter — unsubscribe.
+PASS  capo_message_waiting en_US — supplies two example values — got 2, want 2
+PASS  capo_message_waiting en_US — declares no buttons
+PASS  a card turn is exactly one message — got 1, want 1
+PASS  and that message is the card — got "interactive", want "interactive"
+PASS  the card body is the rendered text — got "Crear tarea: «x».", want "Crear tarea: «x»."
+PASS  prose ahead of a card is dropped as well — got 1, want 1
+PASS  leaving only the card — got "interactive", want "interactive"
+PASS  every card in the turn is delivered — got 2, want 2
+PASS  and nothing but cards
+PASS  a short card is one interactive message — got 1, want 1
+PASS  a short card body is byte-identical — got "Crear tarea: «Pintar» en la obra Casa de Paco.", want "Crear tarea: «Pintar» en la obra Casa de Paco."
+PASS  card text is never markdown-converted — got "Crear obra: «Casa **de** Paco».", want "Crear obra: «Casa **de** Paco»."
+PASS  an over-limit card becomes text + interactive — got 2, want 2
+PASS  the card text is sent first — got "text", want "text"
+PASS  the buttons follow in an interactive — got "interactive", want "interactive"
+PASS  the interactive falls back to the prompt — got "¿Apruebas, jefe?", want "¿Apruebas, jefe?"
+PASS  a 6k card splits across two texts + interactive — got 3, want 3
+PASS  the last message carries the buttons — got "interactive", want "interactive"
+PASS  an over-limit card still becomes text + interactive — got 2, want 2
+PASS  the card text survives (it is the card, not commentary) — got "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL", want "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
+PASS  and the buttons follow — got "interactive", want "interactive"
+PASS  every interactive body fits Meta's 1024 limit
+PASS  every text body fits the 4000-char split
+PASS  every button title fits Meta's 20-char limit
+PASS  the two button titles are distinct (Meta requires it)
+PASS  every card offers exactly approve and reject
+PASS  an over-long label is truncated, not passed through — got 20, want 20
+PASS  non-proposal parts yield only the prose — got 1, want 1
+PASS  and no tool chips leak into WhatsApp — got "pronto", want "pronto"
+PASS  an executed write still gets its confirmation — got 1, want 1
+PASS  and it is the model's own line — got "Feito, chefe. Demolição para o Zé, prazo sexta.", want "Feito, chefe. Demolição para o Zé, prazo sexta."
+PASS  a card with no prose is still delivered — got 1, want 1
+PASS  prose is markdown-converted and then flattened — got "Obra creada: Casa de Paco.", want "Obra creada: Casa de Paco."
+PASS  a worker turn is one plain text message — got 1, want 1
+PASS  and it is never interactive — got "text", want "text"
+PASS  worker prose is converted and flattened too — got "Precisas de primário e rolo.", want "Precisas de primário e rolo."
+PASS  non-proposal tool outputs are ignored — got 1, want 1
+PASS  a silent turn sends nothing — got 0, want 0
+PASS  a long worker reply is split, never truncated
+PASS  a proposal on the worker path THROWS rather than being dropped
+PASS  a menu task row round-trips (kind) — got "task", want "task"
+PASS  a menu task row round-trips (task id) — got "3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33", want "3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33"
+PASS  the manager row round-trips — got "manager", want "manager"
+PASS  a malformed task uuid is rejected — got null, want null
+PASS  a foreign prefix is rejected — got null, want null
+PASS  an empty row id is rejected — got null, want null
+PASS  the manager row id contains no uuid — capo:wm:manager
+PASS  a check-in payload is not a menu row — got null, want null
+PASS  a proposal id is not a menu row — got null, want null
+PASS  a menu row is not a check-in payload — got null, want null
+PASS  the manager row is not a check-in payload — got null, want null
+PASS  a menu row is not a proposal id — got null, want null
+PASS  the manager row is not a proposal id — got null, want null
+PASS  language and opt-out keywords are disjoint
+PASS  language and opt-in keywords are disjoint
+PASS  language and menu keywords are disjoint
+PASS  language and detail keywords are disjoint
+PASS  language and report keywords are disjoint
+PASS  opt-out and opt-in keywords are disjoint
+PASS  opt-out and menu keywords are disjoint
+PASS  opt-out and detail keywords are disjoint
+PASS  opt-out and report keywords are disjoint
+PASS  opt-in and menu keywords are disjoint
+PASS  opt-in and detail keywords are disjoint
+PASS  opt-in and report keywords are disjoint
+PASS  menu and detail keywords are disjoint
+PASS  menu and report keywords are disjoint
+PASS  detail and report keywords are disjoint
+PASS  a bare ES resolves to Spanish — got "es-ES", want "es-ES"
+PASS  and is case- and whitespace-insensitive — got "es-ES", want "es-ES"
+PASS  the menu never claims it — got false, want false
+PASS  and neither does consent — got null, want null
+PASS  PT and EN resolve too — got "pt-PT/en-US", want "pt-PT/en-US"
+PASS  a sentence starting with es is not a language switch — got null, want null
+PASS  a sentence starting with stop is not an opt-out — got null, want null
+PASS  a sentence starting with ajuda is not a menu request — got false, want false
+PASS  an empty message is no command at all — got false, want false
+PASS  and neither is undefined — got false, want false
+PASS  a bare OK summons the full briefing — got true, want true
+PASS  and is case- and whitespace-insensitive — got true, want true
+PASS  a thumb-typed "Ok." works too — got true, want true
+PASS  and "ok!" — got true, want true
+PASS  DETALHE works in all three languages — got "true/true/true", want "true/true/true"
+PASS  a sentence starting with ok is not a request — got false, want false
+PASS  an empty message asks for nothing — got false, want false
+PASS  and neither does undefined — got false, want false
+PASS  the menu never claims ok — got false, want false
+PASS  nor does the language table — got null, want null
+PASS  nor does consent — got null, want null
+PASS  the detail table never claims "bug" — bug
+PASS  the detail table never claims "problema" — problema
+PASS  the detail table never claims "erro" — erro
+PASS  the detail table never claims "problem" — problem
+PASS  the detail table never claims "error" — error
+PASS  the detail table never claims "fallo" — fallo
+PASS  a bare "bug" arms the two-message flow — got "arm", want "arm"
+PASS  case- and whitespace-insensitive — got "arm", want "arm"
+PASS  a labelled bare keyword still arms ("problema:") — got "arm", want "arm"
+PASS  all six words arm — got "arm,arm,arm,arm,arm,arm", want "arm,arm,arm,arm,arm,arm"
+PASS  keyword-first files inline — got "inline", want "inline"
+PASS  with the rest of the message as the report, verbatim — got "o menu não abre", want "o menu não abre"
+PASS  a labelled inline report drops the label punctuation — got "não recebo o resumo das 07:00", want "não recebo o resumo das 07:00"
+PASS  mid-sentence "bug" is not a report — got null, want null
+PASS  a sentence about a site problem does not start the flow — got null, want null
+PASS  an unrelated message is untouched — got null, want null
+PASS  empty and undefined are no command — got "null/null", want "null/null"
+PASS  the menu never claims "bug" — got false, want false
+PASS  a bare ES is still Spanish, never a report — got null, want null
+PASS  the request TTL is 30 minutes — got 1800000, want 1800000
+PASS  a request is live inside its TTL
+PASS  and dead the moment it passes
+PASS  an unparseable expires_at reads as expired
+PASS  and so does a missing one
+PASS  a short report passes through trimmed — got "a lista duplica", want "a lista duplica"
+PASS  a long report is clamped to the CHECK bound — got 2000, want 2000
+PASS  emoji count as one, matching char_length() — got 2000, want 2000
+PASS  a list is an interactive message — got "interactive", want "interactive"
+PASS  of subtype list — got "list", want "list"
+PASS  with exactly one section — got 1, want 1
+PASS  carrying both rows — got 2, want 2
+PASS  a list has no header — ["type","body","action"]
+PASS  and no footer — ["type","body","action"]
+PASS  a description-less row omits the key — {"id":"capo:wm:manager","title":"Falar com o chefe"}
+PASS  a long button label is clamped to 20 — BBBBBBBBBBBBBBBBBBB…
+PASS  a long section title is clamped to 24 — SSSSSSSSSSSSSSSSSSSSSSS…
+PASS  a long row title is clamped to 24 — TTTTTTTTTTTTTTTTTTTTTTT…
+PASS  a long row description is clamped to 72
+PASS  an oversized body throws
+PASS  an empty body throws
+PASS  zero rows throws
+PASS  eleven rows throws
+PASS  an over-long row id throws
+PASS  listFits accepts a 1024-char body
+PASS  and refuses 1025
+PASS  and refuses an empty one
+PASS  a list to a BSUID uses recipient — ["messaging_product","recipient","type","interactive"]
+PASS  and a list to a phone uses to — ["messaging_product","to","type","interactive"]
+PASS  the briefing now says WHERE — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola
+   Depende de: Demolir parede
+PASS  and what the task waits on — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola
+   Depende de: Demolir parede
+PASS  while keeping the description — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola
+   Depende de: Demolir parede
+PASS  and the materials — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+   Morada: Rua das Flores 12, Lisboa
+   Substituir os tubos da cozinha.
+   Material: tubo PVC 50mm, cola
+   Depende de: Demolir parede
+PASS  a bare task invents no empty address line — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+PASS  and no empty dependency line — Bom dia, Miguel.
+
+Hoje tens 1 tarefa:
+
+1. Canalização (Casa de Paco)
+PASS  pt-PT — the template summary carries no language line by default — Canalização (Casa de Paco)
+PASS  pt-PT — and carries it when the caller asks — Canalização (Casa de Paco). Responde PT, ES ou EN para mudares de idioma
+PASS  pt-PT — the hint is at the end — Canalização (Casa de Paco). Responde PT, ES ou EN para mudares de idioma
+PASS  pt-PT — an idle first-contact worker gets it — Nada agendado para hoje. Responde PT, ES ou EN para mudares de idioma
+PASS  pt-PT — the free-form briefing never carries it — pt-PT
+PASS  es-ES — the template summary carries no language line by default — Canalização (Casa de Paco)
+PASS  es-ES — and carries it when the caller asks — Canalização (Casa de Paco). Responde PT, ES o EN para cambiar de idioma
+PASS  es-ES — the hint is at the end — Canalização (Casa de Paco). Responde PT, ES o EN para cambiar de idioma
+PASS  es-ES — an idle first-contact worker gets it — Nada previsto para hoy. Responde PT, ES o EN para cambiar de idioma
+PASS  es-ES — the free-form briefing never carries it — es-ES
+PASS  en-US — the template summary carries no language line by default — Canalização (Casa de Paco)
+PASS  en-US — and carries it when the caller asks — Canalização (Casa de Paco). Reply PT, ES or EN to change language
+PASS  en-US — the hint is at the end — Canalização (Casa de Paco). Reply PT, ES or EN to change language
+PASS  en-US — an idle first-contact worker gets it — Nothing scheduled for today. Reply PT, ES or EN to change language
+PASS  en-US — the free-form briefing never carries it — en-US
+PASS  pt-PT — the hint carries no trailing full stop — Responde PT, ES ou EN para mudares de idioma
+PASS  pt-PT — no doubled full stop after a task list — Canalização (Casa de Paco). Responde PT, ES ou EN para mudares de idioma
+PASS  pt-PT — nor after "nothing today" — Nada agendado para hoje. Responde PT, ES ou EN para mudares de idioma
+PASS  pt-PT — and the hint is still a separate sentence — Nada agendado para hoje. Responde PT, ES ou EN para mudares de idioma
+PASS  es-ES — the hint carries no trailing full stop — Responde PT, ES o EN para cambiar de idioma
+PASS  es-ES — no doubled full stop after a task list — Canalização (Casa de Paco). Responde PT, ES o EN para cambiar de idioma
+PASS  es-ES — nor after "nothing today" — Nada previsto para hoy. Responde PT, ES o EN para cambiar de idioma
+PASS  es-ES — and the hint is still a separate sentence — Nada previsto para hoy. Responde PT, ES o EN para cambiar de idioma
+PASS  en-US — the hint carries no trailing full stop — Reply PT, ES or EN to change language
+PASS  en-US — no doubled full stop after a task list — Canalização (Casa de Paco). Reply PT, ES or EN to change language
+PASS  en-US — nor after "nothing today" — Nothing scheduled for today. Reply PT, ES or EN to change language
+PASS  en-US — and the hint is still a separate sentence — Nothing scheduled for today. Reply PT, ES or EN to change language
+PASS  the hinted summary survives toTemplateParam
+PASS  and stays newline-free
+PASS  pt_PT — the briefing template no longer offers PT/ES/EN — Bom dia {{1}}. Hoje tens: {{2}}. Responde STOP para deixar de receber.
+PASS  pt_PT — but still states the opt-out — Bom dia {{1}}. Hoje tens: {{2}}. Responde STOP para deixar de receber.
+PASS  es_ES — the briefing template no longer offers PT/ES/EN — Buenos días {{1}}. Hoy tienes: {{2}}. Responde STOP para dejar de recibir.
+PASS  es_ES — but still states the opt-out — Buenos días {{1}}. Hoy tienes: {{2}}. Responde STOP para dejar de recibir.
+PASS  en_US — the briefing template no longer offers PT/ES/EN — Good morning {{1}}. Today you have: {{2}}. Reply STOP to unsubscribe.
+PASS  en_US — but still states the opt-out — Good morning {{1}}. Today you have: {{2}}. Reply STOP to unsubscribe.
+PASS  a menu is built
+PASS  with one row per task plus the manager row — got 2, want 2
+PASS  and the manager row is ALWAYS last — got "capo:wm:manager", want "capo:wm:manager"
+PASS  the task row carries its id — capo:wm:task:3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33
+PASS  and names the obra in its sub-line — Casa de Paco · Rua das Flores 12, Lisboa
+PASS  no more than ten rows ever — 7
+PASS  every row title fits 24 chars
+PASS  every row description fits 72
+PASS  the capped menu still builds a payload
+PASS  an oversized body yields no menu — got null, want null
+PASS  the overdue task is the first row — got "Atrasada", want "Atrasada"
+PASS  the sheet names the task and obra — 📋 Canalização (Casa de Paco)
+Prazo: 20/08
+Morada: Rua das Flores 12, Lisboa
+Substituir os tubos da cozinha.
+Material: tubo PVC 50mm, cola
+Depende de: Demolir parede
+PASS  and the address — 📋 Canalização (Casa de Paco)
+Prazo: 20/08
+Morada: Rua das Flores 12, Lisboa
+Substituir os tubos da cozinha.
+Material: tubo PVC 50mm, cola
+Depende de: Demolir parede
+PASS  and the materials — 📋 Canalização (Casa de Paco)
+Prazo: 20/08
+Morada: Rua das Flores 12, Lisboa
+Substituir os tubos da cozinha.
+Material: tubo PVC 50mm, cola
+Depende de: Demolir parede
+PASS  an empty task says there is nothing more — 📋 Canalização (Casa de Paco)
+Não tenho mais detalhes sobre esta tarefa. Se precisares, fala com o teu encarregado.
+PASS  a declared task says it is waiting on the manager — 📋 Canalização (Casa de Paco)
+Prazo: 20/08
+Morada: Rua das Flores 12, Lisboa
+Substituir os tubos da cozinha.
+Material: tubo PVC 50mm, cola
+Depende de: Demolir parede
+Já disseste que acabaste — à espera da confirmação do chefe.
+PASS  the sheet states the deadline — 📋 Canalização (Casa de Paco)
+Prazo: 20/08
+Morada: Rua das Flores 12, Lisboa
+Substituir os tubos da cozinha.
+Material: tubo PVC 50mm, cola
+Depende de: Demolir parede
+PASS  and never shifts it by a day — 📋 Canalização (Casa de Paco)
+Prazo: 20/08
+Morada: Rua das Flores 12, Lisboa
+Substituir os tubos da cozinha.
+Material: tubo PVC 50mm, cola
+Depende de: Demolir parede
+PASS  an unparseable date is passed through, never "Invalid Date"
+PASS  a task with no deadline says nothing about one
+PASS  an overdue task says so on the sheet — 📋 Canalização (Casa de Paco) — atrasada
+Prazo: 20/08
+Morada: Rua das Flores 12, Lisboa
+Substituir os tubos da cozinha.
+Material: tubo PVC 50mm, cola
+Depende de: Demolir parede
+PASS  but never invents a day count — 📋 Canalização (Casa de Paco) — atrasada
+Prazo: 20/08
+Morada: Rua das Flores 12, Lisboa
+Substituir os tubos da cozinha.
+Material: tubo PVC 50mm, cola
+Depende de: Demolir parede
+PASS  a whitespace-only title still yields a non-empty row — {"id":"capo:wm:task:3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33","title":"Nada agendado para hoje.","description":"Casa de Paco · Rua das Flores 12, Lisboa"}
+PASS  and the payload still builds
+PASS  an empty row title throws in buildListPayload
+PASS  pt-PT — a truncated menu body differs from a complete one — Tens 11 tarefas em aberto — mostro-te as 6 mais próximas. Escolhe uma para veres os detalhes.
+PASS  pt-PT — and names both numbers — Tens 11 tarefas em aberto — mostro-te as 6 mais próximas. Escolhe uma para veres os detalhes.
+PASS  pt-PT — a complete menu names the count once — Tens 3 tarefas em aberto. Escolhe uma para veres os detalhes.
+PASS  es-ES — a truncated menu body differs from a complete one — Tienes 11 tareas abiertas — te enseño las 6 más próximas. Elige una para ver los detalles.
+PASS  es-ES — and names both numbers — Tienes 11 tareas abiertas — te enseño las 6 más próximas. Elige una para ver los detalles.
+PASS  es-ES — a complete menu names the count once — Tienes 3 tareas abiertas. Elige una para ver los detalles.
+PASS  en-US — a truncated menu body differs from a complete one — You have 11 open tasks — here are the 6 closest. Pick one to see the details.
+PASS  en-US — and names both numbers — You have 11 open tasks — here are the 6 closest. Pick one to see the details.
+PASS  en-US — a complete menu names the count once — You have 3 open tasks. Pick one to see the details.
+PASS  pt-PT — the task sheet renders
+PASS  pt-PT — and leaks no undefined — 📋 Canalização (Casa de Paco)
+Prazo: 20/08
+Morada: Rua das Flores 12, Lisboa
+Substituir os tubos da cozinha.
+Material: tubo PVC 50mm, cola
+Depende de: Demolir parede
+PASS  pt-PT — the menu labels leak no undefined — {"body":"x","button":"Ver tarefa","section":"As tuas tarefas","rows":[{"id":"capo:wm:task:3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33","title":"Canalização","description":"Casa de Paco · Rua das Flores 12, Lisboa"},{"id":"capo:wm:manager","title":"Falar com o chefe","description":"Para tudo o que eu não posso resolver daqui"}]}
+PASS  es-ES — the task sheet renders
+PASS  es-ES — and leaks no undefined — 📋 Canalização (Casa de Paco)
+Plazo: 20/8
+Dirección: Rua das Flores 12, Lisboa
+Substituir os tubos da cozinha.
+Material: tubo PVC 50mm, cola
+Depende de: Demolir parede
+PASS  es-ES — the menu labels leak no undefined — {"body":"x","button":"Ver tarea","section":"Tus tareas","rows":[{"id":"capo:wm:task:3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33","title":"Canalização","description":"Casa de Paco · Rua das Flores 12, Lisboa"},{"id":"capo:wm:manager","title":"Hablar con el jefe","description":"Para todo lo que yo no puedo resolver desde aquí"}]}
+PASS  en-US — the task sheet renders
+PASS  en-US — and leaks no undefined — 📋 Canalização (Casa de Paco)
+Due: 08/20
+Address: Rua das Flores 12, Lisboa
+Substituir os tubos da cozinha.
+Materials: tubo PVC 50mm, cola
+Waiting on: Demolir parede
+PASS  en-US — the menu labels leak no undefined — {"body":"x","button":"View task","section":"Your tasks","rows":[{"id":"capo:wm:task:3f1a9c02-5b7d-4e88-9a10-2c6d4f8b1e33","title":"Canalização","description":"Casa de Paco · Rua das Flores 12, Lisboa"},{"id":"capo:wm:manager","title":"Talk to the boss","description":"For anything I can't sort out from here"}]}
+PASS  pt-PT — the knock counts one task — 1 tarefa hoje — responde OK para veres o detalhe
+PASS  pt-PT — and two — 2 tarefas hoje — responde OK para veres o detalhe
+PASS  pt-PT — with a real plural, not just a digit swap — 1 tarefa hoje — responde OK para veres o detalhe / 2 tarefas hoje — responde OK para veres o detalhe
+PASS  pt-PT — a late day reads differently — 3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe
+PASS  pt-PT — and names how many are late — 3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe
+PASS  pt-PT — the knock carries no trailing full stop — 3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe
+PASS  pt-PT — the knock needs no flattening — got "3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe", want "3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe"
+PASS  pt-PT — and is newline-free — 3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe
+PASS  pt-PT — the knock renderer names the worker — got "Miguel", want "Miguel"
+PASS  pt-PT — and counts the day — 3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe
+PASS  pt-PT — including the late ones — 3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe
+PASS  pt-PT — the hint appends on request — 3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe. Responde PT, ES ou EN para mudares de idioma
+PASS  pt-PT — and never by default — 3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe
+PASS  pt-PT — with no doubled full stop — 3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe. Responde PT, ES ou EN para mudares de idioma
+PASS  pt-PT — a worker with nothing today reads exactly what the old renderer said — got "Nada agendado para hoje. Responde PT, ES ou EN para mudares de idioma", want "Nada agendado para hoje. Responde PT, ES ou EN para mudares de idioma"
+PASS  pt-PT — capo_daily_briefing exists for this locale
+PASS  pt-PT — the knock reads cleanly inside capo_daily_briefing — Bom dia Miguel. Hoje tens: 3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe. Responde PT, ES ou EN para mudares de idioma. Responde STOP para deixar de receber.
+PASS  pt-PT — and arrives intact — Bom dia Miguel. Hoje tens: 3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe. Responde PT, ES ou EN para mudares de idioma. Responde STOP para deixar de receber.
+PASS  pt-PT — capo_daily_briefing_v2 exists for this locale
+PASS  pt-PT — the knock reads cleanly inside capo_daily_briefing_v2 — Bom dia Miguel.
+
+3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe. Responde PT, ES ou EN para mudares de idioma
+
+Responde STOP para deixar de receber.
+PASS  pt-PT — and arrives intact — Bom dia Miguel.
+
+3 tarefas hoje, 1 atrasada — responde OK para veres o detalhe. Responde PT, ES ou EN para mudares de idioma
+
+Responde STOP para deixar de receber.
+PASS  pt-PT — v2 gives {{2}} its own paragraph — "Bom dia {{1}}.\n\n{{2}}\n\nResponde STOP para deixar de receber."
+PASS  pt-PT — v2 never offers PT/ES/EN — Bom dia {{1}}.
+
+{{2}}
+
+Responde STOP para deixar de receber.
+PASS  pt-PT — v2 still states the opt-out — Bom dia {{1}}.
+
+{{2}}
+
+Responde STOP para deixar de receber.
+PASS  pt-PT — v2 starts and ends with literal text — Bom dia {{1}}.
+
+{{2}}
+
+Responde STOP para deixar de receber.
+PASS  es-ES — the knock counts one task — 1 tarea hoy — responde OK para ver el detalle
+PASS  es-ES — and two — 2 tareas hoy — responde OK para ver el detalle
+PASS  es-ES — with a real plural, not just a digit swap — 1 tarea hoy — responde OK para ver el detalle / 2 tareas hoy — responde OK para ver el detalle
+PASS  es-ES — a late day reads differently — 3 tareas hoy, 1 retrasada — responde OK para ver el detalle
+PASS  es-ES — and names how many are late — 3 tareas hoy, 1 retrasada — responde OK para ver el detalle
+PASS  es-ES — the knock carries no trailing full stop — 3 tareas hoy, 1 retrasada — responde OK para ver el detalle
+PASS  es-ES — the knock needs no flattening — got "3 tareas hoy, 1 retrasada — responde OK para ver el detalle", want "3 tareas hoy, 1 retrasada — responde OK para ver el detalle"
+PASS  es-ES — and is newline-free — 3 tareas hoy, 1 retrasada — responde OK para ver el detalle
+PASS  es-ES — the knock renderer names the worker — got "Miguel", want "Miguel"
+PASS  es-ES — and counts the day — 3 tareas hoy, 1 retrasada — responde OK para ver el detalle
+PASS  es-ES — including the late ones — 3 tareas hoy, 1 retrasada — responde OK para ver el detalle
+PASS  es-ES — the hint appends on request — 3 tareas hoy, 1 retrasada — responde OK para ver el detalle. Responde PT, ES o EN para cambiar de idioma
+PASS  es-ES — and never by default — 3 tareas hoy, 1 retrasada — responde OK para ver el detalle
+PASS  es-ES — with no doubled full stop — 3 tareas hoy, 1 retrasada — responde OK para ver el detalle. Responde PT, ES o EN para cambiar de idioma
+PASS  es-ES — a worker with nothing today reads exactly what the old renderer said — got "Nada previsto para hoy. Responde PT, ES o EN para cambiar de idioma", want "Nada previsto para hoy. Responde PT, ES o EN para cambiar de idioma"
+PASS  es-ES — capo_daily_briefing exists for this locale
+PASS  es-ES — the knock reads cleanly inside capo_daily_briefing — Buenos días Miguel. Hoy tienes: 3 tareas hoy, 1 retrasada — responde OK para ver el detalle. Responde PT, ES o EN para cambiar de idioma. Responde STOP para dejar de recibir.
+PASS  es-ES — and arrives intact — Buenos días Miguel. Hoy tienes: 3 tareas hoy, 1 retrasada — responde OK para ver el detalle. Responde PT, ES o EN para cambiar de idioma. Responde STOP para dejar de recibir.
+PASS  es-ES — capo_daily_briefing_v2 exists for this locale
+PASS  es-ES — the knock reads cleanly inside capo_daily_briefing_v2 — Buenos días Miguel.
+
+3 tareas hoy, 1 retrasada — responde OK para ver el detalle. Responde PT, ES o EN para cambiar de idioma
+
+Responde STOP para dejar de recibir.
+PASS  es-ES — and arrives intact — Buenos días Miguel.
+
+3 tareas hoy, 1 retrasada — responde OK para ver el detalle. Responde PT, ES o EN para cambiar de idioma
+
+Responde STOP para dejar de recibir.
+PASS  es-ES — v2 gives {{2}} its own paragraph — "Buenos días {{1}}.\n\n{{2}}\n\nResponde STOP para dejar de recibir."
+PASS  es-ES — v2 never offers PT/ES/EN — Buenos días {{1}}.
+
+{{2}}
+
+Responde STOP para dejar de recibir.
+PASS  es-ES — v2 still states the opt-out — Buenos días {{1}}.
+
+{{2}}
+
+Responde STOP para dejar de recibir.
+PASS  es-ES — v2 starts and ends with literal text — Buenos días {{1}}.
+
+{{2}}
+
+Responde STOP para dejar de recibir.
+PASS  en-US — the knock counts one task — 1 task today — reply OK to see the details
+PASS  en-US — and two — 2 tasks today — reply OK to see the details
+PASS  en-US — with a real plural, not just a digit swap — 1 task today — reply OK to see the details / 2 tasks today — reply OK to see the details
+PASS  en-US — a late day reads differently — 3 tasks today, 1 late — reply OK to see the details
+PASS  en-US — and names how many are late — 3 tasks today, 1 late — reply OK to see the details
+PASS  en-US — the knock carries no trailing full stop — 3 tasks today, 1 late — reply OK to see the details
+PASS  en-US — the knock needs no flattening — got "3 tasks today, 1 late — reply OK to see the details", want "3 tasks today, 1 late — reply OK to see the details"
+PASS  en-US — and is newline-free — 3 tasks today, 1 late — reply OK to see the details
+PASS  en-US — the knock renderer names the worker — got "Miguel", want "Miguel"
+PASS  en-US — and counts the day — 3 tasks today, 1 late — reply OK to see the details
+PASS  en-US — including the late ones — 3 tasks today, 1 late — reply OK to see the details
+PASS  en-US — the hint appends on request — 3 tasks today, 1 late — reply OK to see the details. Reply PT, ES or EN to change language
+PASS  en-US — and never by default — 3 tasks today, 1 late — reply OK to see the details
+PASS  en-US — with no doubled full stop — 3 tasks today, 1 late — reply OK to see the details. Reply PT, ES or EN to change language
+PASS  en-US — a worker with nothing today reads exactly what the old renderer said — got "Nothing scheduled for today. Reply PT, ES or EN to change language", want "Nothing scheduled for today. Reply PT, ES or EN to change language"
+PASS  en-US — capo_daily_briefing exists for this locale
+PASS  en-US — the knock reads cleanly inside capo_daily_briefing — Good morning Miguel. Today you have: 3 tasks today, 1 late — reply OK to see the details. Reply PT, ES or EN to change language. Reply STOP to unsubscribe.
+PASS  en-US — and arrives intact — Good morning Miguel. Today you have: 3 tasks today, 1 late — reply OK to see the details. Reply PT, ES or EN to change language. Reply STOP to unsubscribe.
+PASS  en-US — capo_daily_briefing_v2 exists for this locale
+PASS  en-US — the knock reads cleanly inside capo_daily_briefing_v2 — Good morning Miguel.
+
+3 tasks today, 1 late — reply OK to see the details. Reply PT, ES or EN to change language
+
+Reply STOP to unsubscribe.
+PASS  en-US — and arrives intact — Good morning Miguel.
+
+3 tasks today, 1 late — reply OK to see the details. Reply PT, ES or EN to change language
+
+Reply STOP to unsubscribe.
+PASS  en-US — v2 gives {{2}} its own paragraph — "Good morning {{1}}.\n\n{{2}}\n\nReply STOP to unsubscribe."
+PASS  en-US — v2 never offers PT/ES/EN — Good morning {{1}}.
+
+{{2}}
+
+Reply STOP to unsubscribe.
+PASS  en-US — v2 still states the opt-out — Good morning {{1}}.
+
+{{2}}
+
+Reply STOP to unsubscribe.
+PASS  en-US — v2 starts and ends with literal text — Good morning {{1}}.
+
+{{2}}
+
+Reply STOP to unsubscribe.
+PASS  pt_PT sends the v2 template — got "capo_daily_briefing_v2", want "capo_daily_briefing_v2"
+PASS  en_US sends the v2 template — got "capo_daily_briefing_v2", want "capo_daily_briefing_v2"
+PASS  es_ES stays on the old template until Meta approves — got "capo_daily_briefing", want "capo_daily_briefing"
+PASS  an unknown locale falls back to the old template — got "capo_daily_briefing", want "capo_daily_briefing"
+PASS  approved code pt_PT is one this repo submits — pt_PT
+PASS  and has a v2 definition to diff against Meta — pt_PT
+PASS  approved code en_US is one this repo submits — en_US
+PASS  and has a v2 definition to diff against Meta — en_US
+PASS  the OK reply carries exactly the briefable-today tasks — got 1, want 1
+PASS  as the lead — got "lead", want "lead"
+PASS  a task in review is not nagged about — ["Pintar tecto"]
+PASS  a helper gets the task too — got 1, want 1
+PASS  told they are helping — got "collaborator", want "collaborator"
+PASS  and by whom — got "Miguel", want "Miguel"
+PASS  the OK reply tells a helper whose job it is — Bom dia, João.
+
+Hoje tens 1 tarefa:
+
+1. Pintar tecto (Casa de Paco) — a ajudar Miguel
+   Material: tinta 10L
+PASS  handshake — the link strips the + and keeps every digit — got "https://wa.me/351911097383", want "https://wa.me/351911097383"
+PASS  handshake — the link is https — https://wa.me/351911097383?text=Ol%C3%A1%20Capo!
+PASS  handshake — exactly one query separator — https://wa.me/351911097383?text=Ol%C3%A1%20Capo!
+PASS  handshake — no raw spaces survive encoding
+PASS  handshake — spaces and dashes in the number are tolerated — got "https://wa.me/351911097383?text=x", want "https://wa.me/351911097383?text=x"
+PASS  handshake — a number without a + is refused — got null, want null
+PASS  handshake — an empty number is refused — got null, want null
+PASS  handshake — a too-short number is refused — got null, want null
+PASS  handshake — a BSUID is refused, never digit-stripped — got null, want null
+PASS  handshake — accented text round-trips through the link — got "Olá! Acabei de me registar. Ajudas-me a começar?", want "Olá! Acabei de me registar. Ajudas-me a começar?"
+PASS  pt-PT — the prefilled text round-trips through the link — got "Olá Capo! Acabei de me registar. Ajudas-me a começar?", want "Olá Capo! Acabei de me registar. Ajudas-me a começar?"
+PASS  pt-PT — the prefill is not empty — Olá Capo! Acabei de me registar. Ajudas-me a começar?
+PASS  es-ES — the prefilled text round-trips through the link — got "¡Hola Capo! Acabo de registrarme. ¿Me ayudas a empezar?", want "¡Hola Capo! Acabo de registrarme. ¿Me ayudas a empezar?"
+PASS  es-ES — the prefill is not empty — ¡Hola Capo! Acabo de registrarme. ¿Me ayudas a empezar?
+PASS  en-US — the prefilled text round-trips through the link — got "Hi Capo! I just signed up. Can you help me get started?", want "Hi Capo! I just signed up. Can you help me get started?"
+PASS  en-US — the prefill is not empty — Hi Capo! I just signed up. Can you help me get started?
+PASS  handshake — all three prefills differ — Olá Capo! Acabei de me registar. Ajudas-me a começar? | ¡Hola Capo! Acabo de registrarme. ¿Me ayudas a empezar? | Hi Capo! I just signed up. Can you help me get started?
+PASS  qr — the module count is a real QR version — 45
+PASS  qr — the path is not empty
+PASS  qr — the path is only SVG path commands — M0 0h1v1h-1zM1 0h1v1h-1zM2 0h1v1h-1zM3 0
+PASS  qr — the viewBox carries the 4-module quiet zone — -4 -4 53 53
+PASS  qr — the same text yields the same path
+PASS  qr — different text yields a different path
+PASS  the welcome kind is its own
+PASS  and is neither daily kind
+PASS  only the never-welcomed, consenting, reachable people are pending — got "p1,w1,w6", want "p1,w1,w6"
+PASS  a worker with no recorded opt-in is NEVER pending
+PASS  a manager with no recorded opt-in is NEVER pending either
+PASS  an already-welcomed worker is not welcomed twice
+PASS  a failed welcome from yesterday, on a retryable code, IS pending again
+PASS  a failure from TODAY is not retried until tomorrow
+PASS  a permanent failure is never retried
+PASS  a spent attempt cap is final
+PASS  the consent exclusion is counted, not silent — got 1, want 1
+PASS  and so is the unreachable one — got 1, want 1
+PASS  and the inactive one — got 1, want 1
+PASS  and the manager one — got 1, want 1
+PASS  and the not-retried failures are too — got 3, want 3
+PASS  only truly blocking rows count as already welcomed — got 1, want 1
+PASS  a crew member is addressed as a worker — got "worker", want "worker"
+PASS  a profile is addressed as a manager — got "manager", want "manager"
+PASS  pt-PT — the name parameter needs no flattening — got "Zé", want "Zé"
+PASS  pt-PT — the worker sentence needs no flattening — got "A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.", want "A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma."
+PASS  pt-PT — the manager sentence needs no flattening — got "A tua conta da Construções Silva está pronta: recebes aqui o resumo de cada manhã e podes falar comigo por WhatsApp tal como falas na aplicação.", want "A tua conta da Construções Silva está pronta: recebes aqui o resumo de cada manhã e podes falar comigo por WhatsApp tal como falas na aplicação."
+PASS  pt-PT — worker and manager are told different things — A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT — the welcome names the company — A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT — the crew welcome offers PT/ES/EN — A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT — the manager welcome does not — A tua conta da Construções Silva está pronta: recebes aqui o resumo de cada manhã e podes falar comigo por WhatsApp tal como falas na aplicação.
+PASS  pt-PT — the free-form welcome is the template body, rejoined — got "Olá Zé, sou o Capo, o assistente de obra. A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma. Responde STOP para deixar de receber.", want "Olá Zé, sou o Capo, o assistente de obra. A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma. Responde STOP para deixar de receber."
+PASS  pt-PT — the free-form welcome still states the opt-out — Olá Zé, sou o Capo, o assistente de obra.
+
+A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.
+
+Responde STOP para deixar de receber.
+PASS  pt-PT — and leaks no undefined — Olá Zé, sou o Capo, o assistente de obra.
+
+A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.
+
+Responde STOP para deixar de receber.
+PASS  es-ES — the name parameter needs no flattening — got "Zé", want "Zé"
+PASS  es-ES — the worker sentence needs no flattening — got "Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.", want "Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma."
+PASS  es-ES — the manager sentence needs no flattening — got "Tu cuenta de Construções Silva ya está lista: recibes aquí el resumen de cada mañana y puedes hablar conmigo por WhatsApp igual que en la aplicación.", want "Tu cuenta de Construções Silva ya está lista: recibes aquí el resumen de cada mañana y puedes hablar conmigo por WhatsApp igual que en la aplicación."
+PASS  es-ES — worker and manager are told different things — Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.
+PASS  es-ES — the welcome names the company — Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.
+PASS  es-ES — the crew welcome offers PT/ES/EN — Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.
+PASS  es-ES — the manager welcome does not — Tu cuenta de Construções Silva ya está lista: recibes aquí el resumen de cada mañana y puedes hablar conmigo por WhatsApp igual que en la aplicación.
+PASS  es-ES — the free-form welcome is the template body, rejoined — got "Hola Zé, soy Capo, el asistente de obra. Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma. Responde STOP para dejar de recibir.", want "Hola Zé, soy Capo, el asistente de obra. Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma. Responde STOP para dejar de recibir."
+PASS  es-ES — the free-form welcome still states the opt-out — Hola Zé, soy Capo, el asistente de obra.
+
+Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.
+
+Responde STOP para dejar de recibir.
+PASS  es-ES — and leaks no undefined — Hola Zé, soy Capo, el asistente de obra.
+
+Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.
+
+Responde STOP para dejar de recibir.
+PASS  en-US — the name parameter needs no flattening — got "Zé", want "Zé"
+PASS  en-US — the worker sentence needs no flattening — got "Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.", want "Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language."
+PASS  en-US — the manager sentence needs no flattening — got "Your Construções Silva account is ready: you get each morning's summary here, and you can talk to me on WhatsApp just as you do in the app.", want "Your Construções Silva account is ready: you get each morning's summary here, and you can talk to me on WhatsApp just as you do in the app."
+PASS  en-US — worker and manager are told different things — Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.
+PASS  en-US — the welcome names the company — Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.
+PASS  en-US — the crew welcome offers PT/ES/EN — Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.
+PASS  en-US — the manager welcome does not — Your Construções Silva account is ready: you get each morning's summary here, and you can talk to me on WhatsApp just as you do in the app.
+PASS  en-US — the free-form welcome is the template body, rejoined — got "Hi Zé, I am Capo, your site assistant. Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language. Reply STOP to unsubscribe.", want "Hi Zé, I am Capo, your site assistant. Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language. Reply STOP to unsubscribe."
+PASS  en-US — the free-form welcome still states the opt-out — Hi Zé, I am Capo, your site assistant.
+
+Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.
+
+Reply STOP to unsubscribe.
+PASS  en-US — and leaks no undefined — Hi Zé, I am Capo, your site assistant.
+
+Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.
+
+Reply STOP to unsubscribe.
+PASS  a multi-line company name is flattened before it reaches Meta — got "A Obras Silva & Filhos, Lda, a maior empresa de construção ci… pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.", want "A Obras Silva & Filhos, Lda, a maior empresa de construção ci… pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma."
+PASS  and clamped rather than allowed to run on — A Obras Silva & Filhos, Lda, a maior empresa de construção ci… pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT — the welcome thread note names who was introduced — Apresentei-me a 2 pessoas novas da equipa no WhatsApp: Zé, Pepe.
+PASS  pt-PT — and leaks no undefined — Apresentei-me a 2 pessoas novas da equipa no WhatsApp: Zé, Pepe.
+PASS  es-ES — the welcome thread note names who was introduced — Me he presentado por WhatsApp a 2 personas nuevas del equipo: Zé, Pepe.
+PASS  es-ES — and leaks no undefined — Me he presentado por WhatsApp a 2 personas nuevas del equipo: Zé, Pepe.
+PASS  en-US — the welcome thread note names who was introduced — I introduced myself on WhatsApp to 2 new people on the team: Zé, Pepe.
+PASS  en-US — and leaks no undefined — I introduced myself on WhatsApp to 2 new people on the team: Zé, Pepe.
+PASS  132001 — template missing in a locale — is retryable (the pilot case) — got "retryable", want "retryable"
+PASS  130429 — rate limited — is retryable — got "retryable", want "retryable"
+PASS  131026 — undeliverable recipient — is permanent — got "permanent", want "permanent"
+PASS  a code-less failure is permanent — unknown must not earn a paid loop — got "permanent", want "permanent"
+PASS  an unparseable error is permanent — got "permanent", want "permanent"
+PASS  an absent error is permanent — got "permanent", want "permanent"
+PASS  the attempt cap is three — got 3, want 3
+PASS  no history — never attempted — got "never_attempted", want "never_attempted"
+PASS  a sent row blocks forever — got "blocked", want "blocked"
+PASS  a skipped row blocks forever — 0033 backfill rows stay untouchable — got "blocked", want "blocked"
+PASS  a pending row blocks — a claim in flight is not a failure — got "blocked", want "blocked"
+PASS  a row with no readable status blocks — fail closed — got "blocked", want "blocked"
+PASS  yesterday, retryable, first attempt — retry — got "retry", want "retry"
+PASS  a failure from TODAY cools down — one paid attempt per Lisbon day — got "cooldown", want "cooldown"
+PASS  a future-dated failure cools down too — a weird clock must not fail open — got "cooldown", want "cooldown"
+PASS  an undatable failure cools down — got "cooldown", want "cooldown"
+PASS  the NEWEST failure governs: retryable after permanent — retry — got "retry", want "retry"
+PASS  and permanent after retryable — permanent — got "permanent", want "permanent"
+PASS  three failures — exhausted, whatever the codes say — got "exhausted", want "exhausted"
+PASS  a parenthetical pair becomes commas, not full stops — got "A demolição, que começa segunda, está atrasada.", want "A demolição, que começa segunda, está atrasada."
+PASS  and it is reported — got "em_dash", want "em_dash"
+PASS  a numeric range becomes a hyphen — got "Leva 10-12 dias.", want "Leva 10-12 dias."
+PASS  a line-leading dash is a bullet marker, not punctuation — got "Hoje:\npintar\nazulejo", want "Hoje:\npintar\nazulejo"
+PASS  formatting is flattened, not converted — got "Casa de Paco\n\ndemolição\npintura", want "Casa de Paco\n\ndemolição\npintura"
+PASS  the first emoji survives — got "Pronto 👍 já está tudo", want "Pronto 👍 já está tudo"
+PASS  an assistant reflex is cut, in Portuguese as well as English — got "Tarefa criada.", want "Tarefa criada."
+PASS  clean prose is returned untouched
+PASS  f(f(x)) === f(x)
+PASS  applyVoice leaves markup alone — got "*Casa*, pronto", want "*Casa*, pronto"
+PASS  no long dash reaches the manager
+PASS  and the prose is repaired, not dropped — got "Feito, chefe, a demolição fica para sexta.", want "Feito, chefe, a demolição fica para sexta."
+PASS  the crew path gets the identical treatment — got "Feito, chefe, a demolição fica para sexta.", want "Feito, chefe, a demolição fica para sexta."
+PASS  an approval card is NOT voiced — got "Crear tarea: «Pintar» — obra Casa de Paco — 10—12 días.", want "Crear tarea: «Pintar» — obra Casa de Paco — 10—12 días."
+PASS  so a card may still carry a long dash
+PASS  nor on the text branch of an over-limit card
+PASS  every rule that fired is reported — got "em_dash,emoji_cap,flatten_formatting", want "em_dash,emoji_cap,flatten_formatting"
+PASS  and each carries a sentence, not a code
+PASS  a clean turn reports nothing
+PASS  needed_by today — "today" — got "today", want "today"
+PASS  needed_by tomorrow — "tomorrow" — got "tomorrow", want "tomorrow"
+PASS  needed_by next week — "later" — got "later", want "later"
+PASS  needed_by yesterday — "overdue" — got "overdue", want "overdue"
+PASS  no date — "undated", never a guess — got "undated", want "undated"
+PASS  an empty date — "undated" — got "undated", want "undated"
+PASS  garbage — "undated", never a rank — got "undated", want "undated"
+PASS  no clock — "undated" rather than a wrong bucket — got "undated", want "undated"
+PASS  spring forward: 28 Mar → 29 Mar is still tomorrow — got "tomorrow", want "tomorrow"
+PASS  autumn back: 24 Oct → 25 Oct is still tomorrow — got "tomorrow", want "tomorrow"
+PASS  ranking is overdue < today < tomorrow < later < undated
+PASS  only overdue/today/tomorrow count as pressing
+PASS  pt-PT: the WhatsApp line QUOTES the crew member verbatim
+PASS  pt-PT: and names them
+PASS  pt-PT: and says which day it is for
+PASS  pt-PT: the THREAD NOTE never quotes the crew member
+PASS  pt-PT: the thread note still names who asked
+PASS  pt-PT: the thread note still says when for
+PASS  pt-PT: an undated request SAYS it is undated
+PASS  es-ES: the WhatsApp line QUOTES the crew member verbatim
+PASS  es-ES: and names them
+PASS  es-ES: and says which day it is for
+PASS  es-ES: the THREAD NOTE never quotes the crew member
+PASS  es-ES: the thread note still names who asked
+PASS  es-ES: the thread note still says when for
+PASS  es-ES: an undated request SAYS it is undated
+PASS  en-US: the WhatsApp line QUOTES the crew member verbatim
+PASS  en-US: and names them
+PASS  en-US: and says which day it is for
+PASS  en-US: the THREAD NOTE never quotes the crew member
+PASS  en-US: the thread note still names who asked
+PASS  en-US: the thread note still says when for
+PASS  en-US: an undated request SAYS it is undated
+PASS  tomorrow is sane
+PASS  yesterday is sane — "era para ontem" is a real request
+PASS  three months out is sane
+PASS  a year out is refused
+PASS  a year back is refused
+PASS  30 February is refused rather than rolled into March
+PASS  a non-date is refused
+PASS  a timestamp is refused — the column is a DAY
+PASS  a push-to-talk voice note is audio
+PASS  an uploaded audio file is audio too
+PASS  audio with no media id is not audio
+PASS  text is not audio
+PASS  an image is not audio
+PASS  a sticker is not audio, and still gets the ack
+PASS  a document is not audio
+PASS  the worker audio cap IS the manager audio cap — got 15728640, want 15728640
+PASS  and it sits under Meta's 16 MiB inbound ceiling
+PASS  an empty transcript is unusable — got null, want null
+PASS  whitespace only is unusable — got null, want null
+PASS  null is unusable — got null, want null
+PASS  undefined is unusable — got null, want null
+PASS  a single character is unusable — got null, want null
+PASS  punctuation alone is unusable — got null, want null
+PASS  a lone question mark is unusable — got null, want null
+PASS  "ok" is a real message — got "ok", want "ok"
+PASS  "sim" is a real message — got "sim", want "sim"
+PASS  a sentence is trimmed, not altered — got "acabei a pintura", want "acabei a pintura"
+PASS  the floor is two characters — got 2, want 2
+PASS  a voice note yields NO keyword text — got undefined, want undefined
+PASS  nor does a photo — got undefined, want undefined
+PASS  nor does a template button tap — got undefined, want undefined
+PASS  typed text does — got "stop", want "stop"
+PASS  the written STOP is still the unsubscribe
+PASS  the written MENU is still the menu
+PASS  the written ES is still the language switch
+PASS  a spoken "stop" resolves to no consent command — got null, want null
+PASS  a spoken "menu" resolves to no menu command — got false, want false
+PASS  a spoken "ES" resolves to no language command — got null, want null
+PASS  a spoken "ok" resolves to no detail command — got false, want false
+PASS  a spoken "bug" resolves to no report command — got null, want null
+PASS  the worker path asks for NO vocabulary — got "none", want "none"
+PASS  scope "none" reads NOTHING from the database — got 0, want 0
+PASS  and yields an empty vocabulary
+PASS  scope "company" still reads the three vocabulary sources — workers, jobs, transcription_vocab
+PASS  pt-PT: an empty vocabulary produces no name hints in the instruction
+PASS  pt-PT: while the language and glossary lines survive
+PASS  es-ES: an empty vocabulary produces no name hints in the instruction
+PASS  es-ES: while the language and glossary lines survive
+PASS  en-US: an empty vocabulary produces no name hints in the instruction
+PASS  en-US: while the language and glossary lines survive
+
+WhatsApp check: 1110/1110 passed; failures: 0
+=== cache-check
+ok   cachedInstructions returns exactly two system messages
+ok   the first half carries the breakpoint
+ok   the second half carries none
+ok   rejoined, the two halves reproduce the old single-string prompt byte for byte
+ok   an empty volatile half emits one message, still cached
+ok   and it keeps the breakpoint
+ok   an empty stable half emits one message
+ok   and spends NO breakpoint on it
+ok   cachedInstructions of nothing emits nothing
+ok   manager/pt-PT: two system messages
+ok   manager/pt-PT: breakpoint on the first
+ok   manager/pt-PT: none on the second
+ok   manager/pt-PT: the cached half is exactly persona ⊕ policy ⊕ language directive
+ok   manager/pt-PT: "Today's date" stays BELOW the breakpoint
+ok   manager/pt-PT: "Construções Silva" stays BELOW the breakpoint
+ok   manager/pt-PT: "Aníbal Gatsby" stays BELOW the breakpoint
+ok   manager/pt-PT: "Prefere obras a norte" stays BELOW the breakpoint
+ok   manager/pt-PT: "https://www.construcapo.com" stays BELOW the breakpoint
+ok   manager/pt-PT: "Trata-me por tu" stays BELOW the breakpoint
+ok   manager/pt-PT: the conversation summary stays below the breakpoint
+ok   manager/pt-PT: the language-directive carve-out survives the split intact
+ok   manager/pt-PT: a colleague's personal memory reaches NEITHER half
+ok   manager/pt-PT: cached prefix clears Sonnet 5's 1024-token floor (~4458 tok, 22293 chars)
+ok   manager/es-ES: two system messages
+ok   manager/es-ES: breakpoint on the first
+ok   manager/es-ES: none on the second
+ok   manager/es-ES: the cached half is exactly persona ⊕ policy ⊕ language directive
+ok   manager/es-ES: "Today's date" stays BELOW the breakpoint
+ok   manager/es-ES: "Construções Silva" stays BELOW the breakpoint
+ok   manager/es-ES: "Aníbal Gatsby" stays BELOW the breakpoint
+ok   manager/es-ES: "Prefere obras a norte" stays BELOW the breakpoint
+ok   manager/es-ES: "https://www.construcapo.com" stays BELOW the breakpoint
+ok   manager/es-ES: "Trata-me por tu" stays BELOW the breakpoint
+ok   manager/es-ES: the conversation summary stays below the breakpoint
+ok   manager/es-ES: the language-directive carve-out survives the split intact
+ok   manager/es-ES: a colleague's personal memory reaches NEITHER half
+ok   manager/es-ES: cached prefix clears Sonnet 5's 1024-token floor (~4524 tok, 22622 chars)
+ok   manager/en-US: two system messages
+ok   manager/en-US: breakpoint on the first
+ok   manager/en-US: none on the second
+ok   manager/en-US: the cached half is exactly persona ⊕ policy ⊕ language directive
+ok   manager/en-US: "Today's date" stays BELOW the breakpoint
+ok   manager/en-US: "Construções Silva" stays BELOW the breakpoint
+ok   manager/en-US: "Aníbal Gatsby" stays BELOW the breakpoint
+ok   manager/en-US: "Prefere obras a norte" stays BELOW the breakpoint
+ok   manager/en-US: "https://www.construcapo.com" stays BELOW the breakpoint
+ok   manager/en-US: "Trata-me por tu" stays BELOW the breakpoint
+ok   manager/en-US: the conversation summary stays below the breakpoint
+ok   manager/en-US: the language-directive carve-out survives the split intact
+ok   manager/en-US: a colleague's personal memory reaches NEITHER half
+ok   manager/en-US: cached prefix clears Sonnet 5's 1024-token floor (~4462 tok, 22310 chars)
+ok   the onboarding checklist appears when onboarded_at is null
+ok   and it stays BELOW the cache breakpoint
+ok   the cached half is still exactly persona ⊕ policy ⊕ language directive
+ok   the dashboard URL reaches NEITHER half while onboarded_at is null
+ok   an ABSENT onboarded_at column renders no checklist at all
+ok   and the tenant is treated as onboarded, so the dashboard line is present
+ok   manager: the name survives a failed company-snapshot read
+ok   manager: and the counts are absent rather than reported as zero
+ok   worker/pt-PT: two system messages
+ok   worker/pt-PT: breakpoint on the first
+ok   worker/pt-PT: none on the second
+ok   worker/pt-PT: the cached half is exactly persona ⊕ policy ⊕ language directive
+ok   worker/pt-PT: today's date and this crew member's tasks stay BELOW the breakpoint
+ok   worker/pt-PT: cached prefix clears Sonnet 5's 1024-token floor (~2798 tok, 13994 chars)
+ok   worker/pt-PT: the crew member's own name and company sit BELOW the breakpoint
+ok   worker/pt-PT: and their manager's name is below it too
+ok   worker/pt-PT: nothing about this crew member reached the cached half
+ok   worker/pt-PT: the cached half is IDENTICAL for a different crew member
+ok   worker/pt-PT: while the uncached half follows the person
+ok   worker/pt-PT: a failed identity read leaves the cached half untouched
+ok   worker/pt-PT: and drops the block rather than the turn
+ok   worker/es-ES: two system messages
+ok   worker/es-ES: breakpoint on the first
+ok   worker/es-ES: none on the second
+ok   worker/es-ES: the cached half is exactly persona ⊕ policy ⊕ language directive
+ok   worker/es-ES: today's date and this crew member's tasks stay BELOW the breakpoint
+ok   worker/es-ES: cached prefix clears Sonnet 5's 1024-token floor (~2804 tok, 14024 chars)
+ok   worker/es-ES: the crew member's own name and company sit BELOW the breakpoint
+ok   worker/es-ES: and their manager's name is below it too
+ok   worker/es-ES: nothing about this crew member reached the cached half
+ok   worker/es-ES: the cached half is IDENTICAL for a different crew member
+ok   worker/es-ES: while the uncached half follows the person
+ok   worker/es-ES: a failed identity read leaves the cached half untouched
+ok   worker/es-ES: and drops the block rather than the turn
+ok   worker/en-US: two system messages
+ok   worker/en-US: breakpoint on the first
+ok   worker/en-US: none on the second
+ok   worker/en-US: the cached half is exactly persona ⊕ policy ⊕ language directive
+ok   worker/en-US: today's date and this crew member's tasks stay BELOW the breakpoint
+ok   worker/en-US: cached prefix clears Sonnet 5's 1024-token floor (~2777 tok, 13889 chars)
+ok   worker/en-US: the crew member's own name and company sit BELOW the breakpoint
+ok   worker/en-US: and their manager's name is below it too
+ok   worker/en-US: nothing about this crew member reached the cached half
+ok   worker/en-US: the cached half is IDENTICAL for a different crew member
+ok   worker/en-US: while the uncached half follows the person
+ok   worker/en-US: a failed identity read leaves the cached half untouched
+ok   worker/en-US: and drops the block rather than the turn
+ok   manager roster: is non-empty (21 tools)
+ok   manager roster: exactly one tool carries a breakpoint
+ok   manager roster: and it is the LAST one
+ok   manager roster: breakpoint value is the shared constant
+ok   manager roster: key order is preserved
+ok   manager roster: the marked tool keeps its description, schema AND execute
+ok   manager roster: earlier tools are passed through untouched
+ok   manager roster: the input ToolSet is not mutated
+ok   worker roster: is non-empty (5 tools)
+ok   worker roster: exactly one tool carries a breakpoint
+ok   worker roster: and it is the LAST one
+ok   worker roster: breakpoint value is the shared constant
+ok   worker roster: key order is preserved
+ok   worker roster: the marked tool keeps its description, schema AND execute
+ok   worker roster: earlier tools are passed through untouched
+ok   worker roster: the input ToolSet is not mutated
+ok   an empty ToolSet is returned unchanged
+ok   a turn spends 2 of Anthropic's 4 breakpoints
+ok   MODEL_IDS.conversation matches what getModel actually builds
+ok   MODEL_IDS.summarizer matches what getModel actually builds
+ok   MODEL_IDS.consolidation matches what getModel actually builds
+ok   MODEL_IDS.transcription matches what getModel actually builds
+ok   MODEL_IDS.extraction matches what getModel actually builds
+ok   MODEL_IDS.planner matches what getModel actually builds
+ok   MODEL_IDS.translation matches what getModel actually builds
+ok   exactly one role is cached
+ok   and it is the conversation role (both agent loops)
+ok   the cached role runs on a model whose floor we know
+ok   summarizer is deliberately UNCACHED
+ok   summarizer sits behind Haiku 4.5's 4096-token floor
+ok   extraction is deliberately UNCACHED
+ok   extraction sits behind Haiku 4.5's 4096-token floor
+ok   translation is deliberately UNCACHED
+ok   translation sits behind Haiku 4.5's 4096-token floor
+ok   planner is deliberately UNCACHED (one call per plan, prompt under the floor)
+ok   transcription is not an Anthropic model at all
+ok   a request body was captured
+ok   wire: the system prompt is two text blocks, not one
+ok   wire: cache_control on the FIRST system block
+ok   wire: none on the second
+ok   wire: the dated half is the uncached one
+ok   wire: tools were sent
+ok   wire: exactly one tool definition carries cache_control
+ok   wire: and it is the last tool sent
+ok   wire: its TTL is the 5-minute default (no ttl field)
+ok   wire: the whole request spends exactly two breakpoints
+ok   wire: no cache_control leaked onto the user turn
+ok   a company memory (null owner) is visible to everyone
+ok   an ABSENT profile_id reads as company-wide
+ok   my own memory is visible to me
+ok   a colleague's memory is NOT visible to me
+ok   a colleague's memory is not visible to a NULL reader either
+ok   the row cap binds at MEMORY_PROMPT_ROWS
+ok   and everything else is reported dropped
+ok   the NEWEST rows are the ones carried
+ok   the carried rows are rendered chronologically
+ok   the character cap binds before the row cap when rows are long
+ok   and the carried block stays within 6000 chars
+ok   one over-budget row is still carried rather than erasing memory
+ok   no visible memories carries nothing
+
+Cache check: 158/158 passed; failures: 0
+=== guard-check
+PASS  the default posture is always_ask — got always_ask, want always_ask
+PASS  there are exactly two postures — got 2, want 2
+PASS  a missing column (pre-0031 bundle) coerces to always_ask — got always_ask, want always_ask
+PASS  a null coerces to always_ask — got always_ask, want always_ask
+PASS  an unrecognised value coerces to always_ask — got always_ask, want always_ask
+PASS  a stored trust_quote survives the coerce — got trust_quote, want trust_quote
+PASS  an exact substring matches
+PASS  the whole message matches itself
+PASS  accents are folded on BOTH sides
+PASS  accents are folded when the QUOTE carries them and the message does not
+PASS  runs of whitespace collapse
+PASS  case is folded
+PASS  a quote the manager never said does not match
+PASS  a quote shorter than 4 chars never matches
+PASS  a 3-char quote is refused even when it IS present verbatim
+PASS  an empty evidence pool matches nothing
+PASS  the newest message is searched too, not only the first
+PASS  the 14 Aug case: 'trolha' vs 'Trolha' is the same card — got {"name":"rui","phone":"+351912345678","trade":"trolha"}, want {"name":"rui","phone":"+351912345678","trade":"trolha"}
+PASS  object key order does not matter
+PASS  strings fold case at any depth
+PASS  a different phone is a different card
+PASS  an extra field is a different card
+PASS  a number is not the string of itself
+PASS  array order is a real difference — erring toward a second card is the safe direction
+PASS  accents are NOT folded: José and Jose are different values, unlike in the quote match above
+PASS  only the real manager row is evidence — got 1, want 1
+PASS  and it is the one the manager actually typed — got bom dia, want bom dia
+PASS  the morning briefing note is NOT evidence, though the model does see it
+PASS  a crew member's check-in answer is NOT evidence either
+PASS  neither of them could authorize a direct write by being quoted back
+PASS  all four rows still reach the model — got 4, want 4
+PASS  and an event reaches it tagged as a system event, not as the manager
+PASS  trust_quote executes on an exact match — got execute, want execute
+PASS  trust_quote executes on an accent-insensitive match — got execute, want execute
+PASS  trust_quote PROPOSES when the quote is absent from the thread — got propose, want propose
+PASS  trust_quote PROPOSES on a quote under 4 chars — got propose, want propose
+PASS  trust_quote PROPOSES when no quote was supplied at all — got propose, want propose
+PASS  trust_quote PROPOSES on an empty-string quote — got propose, want propose
+PASS  trust_quote PROPOSES when the evidence pool is empty — got propose, want propose
+PASS  always_ask PROPOSES even on an exact verbatim match — got propose, want propose
+PASS  always_ask PROPOSES on an accent-insensitive match too — got propose, want propose
+PASS  always_ask PROPOSES with no quote — got propose, want propose
+PASS  always_ask PROPOSES with a fabricated quote — got propose, want propose
+PASS  always_ask + "criar a tarefa de pintura" yields execute or propose, never a refusal — got propose
+PASS  always_ask + "cri" yields execute or propose, never a refusal — got propose
+PASS  always_ask + "cancela tudo" yields execute or propose, never a refusal — got propose
+PASS  always_ask + no quote yields execute or propose, never a refusal — got propose
+PASS  trust_quote + "criar a tarefa de pintura" yields execute or propose, never a refusal — got execute
+PASS  trust_quote + "cri" yields execute or propose, never a refusal — got propose
+PASS  trust_quote + "cancela tudo" yields execute or propose, never a refusal — got propose
+PASS  trust_quote + no quote yields execute or propose, never a refusal — got propose
+PASS  always_ask gives one identical answer whatever the quote is — got 1, want 1
+PASS  the always_ask reason is distinguishable from the no-match reason
+PASS  runGuarded executes under trust_quote with a matching quote — got executed, want executed
+PASS  and the tool actually ran — got 1, want 1
+PASS  and it ran as the manager, so tasks.source records a manager write — got manager, want manager
+PASS  and no card was stored — got 0, want 0
+PASS  runGuarded PROPOSES under always_ask with the SAME matching quote — got proposed, want proposed
+PASS  and the tool did NOT run — got 1, want 1
+PASS  and exactly one card was stored — got 1, want 1
+PASS  the card is filed against the tool that was called — got create_job, want create_job
+PASS  the stored card text is rendered from the args, not model-authored — Criar obra: «Casa do Zé».
+PASS  manager_instruction is stripped from the stored payload — {"name":"Casa do Zé"}
+PASS  the proposed result carries a reason the model can relay
+PASS  an identical card differing only in case is refused — got already_pending, want already_pending
+PASS  and no second card was stored — got 1, want 1
+PASS  the refusal names the existing card, so the model knows which one is waiting
+PASS  and its message reads as settled-and-waiting, never as an error to retry
+PASS  it is NOT status 'proposed', the literal both channels render a card from — so no second card can reach the manager
+PASS  genuinely different args still get their own card — got proposed, want proposed
+PASS  stored as a second row — got 2, want 2
+PASS  the same args on a DIFFERENT conversation are not a duplicate — got proposed, want proposed
+PASS  and stored as a third row — got 3, want 3
+PASS  a non-pending twin does not block a new card — got proposed, want proposed
+PASS  and it was stored as a fourth row — got 4, want 4
+PASS  pt-PT: a consent-only update_worker RENDERS rather than throwing — null
+PASS  pt-PT: the granted card names the worker — Alterar trabalhador Zé: passa a receber as mensagens do Capo no WhatsApp.
+PASS  pt-PT: withdrawing consent renders too — Alterar trabalhador Zé: deixa de receber as mensagens do Capo no WhatsApp.
+PASS  pt-PT: granting and withdrawing do NOT read as the same card — Alterar trabalhador Zé: passa a receber as mensagens do Capo no WhatsApp. / Alterar trabalhador Zé: deixa de receber as mensagens do Capo no WhatsApp.
+PASS  pt-PT: neither card leaks an undefined from a missing translation — Alterar trabalhador Zé: passa a receber as mensagens do Capo no WhatsApp. / Alterar trabalhador Zé: deixa de receber as mensagens do Capo no WhatsApp.
+PASS  es-ES: a consent-only update_worker RENDERS rather than throwing — null
+PASS  es-ES: the granted card names the worker — Modificar trabajador Zé: pasa a recibir los mensajes del Capo en WhatsApp.
+PASS  es-ES: withdrawing consent renders too — Modificar trabajador Zé: deja de recibir los mensajes del Capo en WhatsApp.
+PASS  es-ES: granting and withdrawing do NOT read as the same card — Modificar trabajador Zé: pasa a recibir los mensajes del Capo en WhatsApp. / Modificar trabajador Zé: deja de recibir los mensajes del Capo en WhatsApp.
+PASS  es-ES: neither card leaks an undefined from a missing translation — Modificar trabajador Zé: pasa a recibir los mensajes del Capo en WhatsApp. / Modificar trabajador Zé: deja de recibir los mensajes del Capo en WhatsApp.
+PASS  en-US: a consent-only update_worker RENDERS rather than throwing — null
+PASS  en-US: the granted card names the worker — Update worker Zé: starts getting Capo's messages on WhatsApp.
+PASS  en-US: withdrawing consent renders too — Update worker Zé: stops getting Capo's messages on WhatsApp.
+PASS  en-US: granting and withdrawing do NOT read as the same card — Update worker Zé: starts getting Capo's messages on WhatsApp. / Update worker Zé: stops getting Capo's messages on WhatsApp.
+PASS  en-US: neither card leaks an undefined from a missing translation — Update worker Zé: starts getting Capo's messages on WhatsApp. / Update worker Zé: stops getting Capo's messages on WhatsApp.
+PASS  an update_worker naming no field at all is still refused
+PASS  a phone change renders the number as it will be STORED, with the Argentine 9 — Alterar trabalhador Zé: telemóvel → +5491178876189.
+
+Guard check: 92/92 passed; failures: 0
+=== voice-check
+Voice check
+
+model-facing (budget: zero, always)
+user-facing (budget: ratcheting down)
+
+scanned 25 files
+green
+=== design-check
+PASS  packages/ui/src/tokens.css exists
+PASS  tokens.css contains no @utility rule — @utility in an imported file makes Tailwind drop the entire file silently
+PASS  light theme block parsed — 37 tokens
+PASS  dark theme block parsed — 32 tokens
+PASS  system theme block parsed — 32 tokens
+PASS  light: --fg on --surface (body text on a card) — 17.49:1, need 4.5:1
+PASS  light: --fg on --bg (body text on the page) — 16.74:1, need 4.5:1
+PASS  light: --fg-muted on --surface (secondary text on a card) — 7.63:1, need 4.5:1
+PASS  light: --fg-muted on --bg (secondary text on the page) — 7.30:1, need 4.5:1
+PASS  light: --fg-faint on --surface (timestamps and hints) — 4.80:1, need 4.5:1
+PASS  light: --on-brand on --brand (the primary button label) — 5.18:1, need 4.5:1
+PASS  light: --brand on --surface (brand text on a card) — 5.18:1, need 4.5:1
+PASS  light: --danger on --surface (error text) — 6.47:1, need 4.5:1
+PASS  light: --warn on --surface (at-risk text) — 5.02:1, need 4.5:1
+PASS  light: --success on --surface (done text) — 5.02:1, need 4.5:1
+PASS  light: --info on --surface (informational text) — 6.70:1, need 4.5:1
+PASS  light: --review on --surface (pending-review text) — 7.10:1, need 4.5:1
+PASS  light: --border-control on --surface (the edge of an input) — 4.80:1, need 3:1
+PASS  light: --border-control on --surface-sunken (the edge of a filled input) — 4.40:1, need 3:1
+PASS  light: --brand-vivid on --bg (a non-text brand fill) — 3.41:1, need 3:1
+PASS  light: --on-solid on --danger-solid (text on a danger banner) — 6.47:1, need 4.5:1
+PASS  light: --on-solid on --warn-solid (text on an at-risk banner) — 5.02:1, need 4.5:1
+PASS  light: --on-solid on --success-solid (text on a success banner) — 5.02:1, need 4.5:1
+PASS  light: --on-solid on --info-solid (text on an info banner) — 6.70:1, need 4.5:1
+PASS  light: --on-solid on --review-solid (text on a review banner) — 7.10:1, need 4.5:1
+PASS  light: --on-solid on --brand-solid (text on a brand banner) — 5.18:1, need 4.5:1
+PASS  dark: --fg on --surface (body text on a card) — 16.74:1, need 4.5:1
+PASS  dark: --fg on --bg (body text on the page) — 18.92:1, need 4.5:1
+PASS  dark: --fg-muted on --surface (secondary text on a card) — 6.93:1, need 4.5:1
+PASS  dark: --fg-muted on --bg (secondary text on the page) — 7.83:1, need 4.5:1
+PASS  dark: --fg-faint on --surface (timestamps and hints) — 4.91:1, need 4.5:1
+PASS  dark: --on-brand on --brand (the primary button label) — 7.73:1, need 4.5:1
+PASS  dark: --brand on --surface (brand text on a card) — 7.73:1, need 4.5:1
+PASS  dark: --danger on --surface (error text) — 6.32:1, need 4.5:1
+PASS  dark: --warn on --surface (at-risk text) — 10.48:1, need 4.5:1
+PASS  dark: --success on --surface (done text) — 10.04:1, need 4.5:1
+PASS  dark: --info on --surface (informational text) — 6.88:1, need 4.5:1
+PASS  dark: --review on --surface (pending-review text) — 6.43:1, need 4.5:1
+PASS  dark: --border-control on --surface (the edge of an input) — 3.65:1, need 3:1
+PASS  dark: --border-control on --surface-sunken (the edge of a filled input) — 3.93:1, need 3:1
+PASS  dark: --brand-vivid on --bg (a non-text brand fill) — 5.55:1, need 3:1
+PASS  dark: --on-solid on --danger-solid (text on a danger banner) — 6.47:1, need 4.5:1
+PASS  dark: --on-solid on --warn-solid (text on an at-risk banner) — 5.02:1, need 4.5:1
+PASS  dark: --on-solid on --success-solid (text on a success banner) — 5.02:1, need 4.5:1
+PASS  dark: --on-solid on --info-solid (text on an info banner) — 6.70:1, need 4.5:1
+PASS  dark: --on-solid on --review-solid (text on a review banner) — 7.10:1, need 4.5:1
+PASS  dark: --on-solid on --brand-solid (text on a brand banner) — 5.18:1, need 4.5:1
+PASS  system: --fg on --surface (body text on a card) — 16.74:1, need 4.5:1
+PASS  system: --fg on --bg (body text on the page) — 18.92:1, need 4.5:1
+PASS  system: --fg-muted on --surface (secondary text on a card) — 6.93:1, need 4.5:1
+PASS  system: --fg-muted on --bg (secondary text on the page) — 7.83:1, need 4.5:1
+PASS  system: --fg-faint on --surface (timestamps and hints) — 4.91:1, need 4.5:1
+PASS  system: --on-brand on --brand (the primary button label) — 7.73:1, need 4.5:1
+PASS  system: --brand on --surface (brand text on a card) — 7.73:1, need 4.5:1
+PASS  system: --danger on --surface (error text) — 6.32:1, need 4.5:1
+PASS  system: --warn on --surface (at-risk text) — 10.48:1, need 4.5:1
+PASS  system: --success on --surface (done text) — 10.04:1, need 4.5:1
+PASS  system: --info on --surface (informational text) — 6.88:1, need 4.5:1
+PASS  system: --review on --surface (pending-review text) — 6.43:1, need 4.5:1
+PASS  system: --border-control on --surface (the edge of an input) — 3.65:1, need 3:1
+PASS  system: --border-control on --surface-sunken (the edge of a filled input) — 3.93:1, need 3:1
+PASS  system: --brand-vivid on --bg (a non-text brand fill) — 5.55:1, need 3:1
+PASS  system: --on-solid on --danger-solid (text on a danger banner) — 6.47:1, need 4.5:1
+PASS  system: --on-solid on --warn-solid (text on an at-risk banner) — 5.02:1, need 4.5:1
+PASS  system: --on-solid on --success-solid (text on a success banner) — 5.02:1, need 4.5:1
+PASS  system: --on-solid on --info-solid (text on an info banner) — 6.70:1, need 4.5:1
+PASS  system: --on-solid on --review-solid (text on a review banner) — 7.10:1, need 4.5:1
+PASS  system: --on-solid on --brand-solid (text on a brand banner) — 5.18:1, need 4.5:1
+PASS  :root.system declares exactly the same tokens as :root.dark — dark has 32, system has 32
+PASS  :root.system --bg matches :root.dark — system #0c0a09 vs dark #0c0a09
+PASS  :root.system --border-control matches :root.dark — system #78716c vs dark #78716c
+PASS  :root.system --brand matches :root.dark — system #fb923c vs dark #fb923c
+PASS  :root.system --brand-hover matches :root.dark — system #fdba74 vs dark #fdba74
+PASS  :root.system --brand-quiet matches :root.dark — system rgb(251 146 60 / 0.15) vs dark rgb(251 146 60 / 0.15)
+PASS  :root.system --brand-solid matches :root.dark — system #c2410c vs dark #c2410c
+PASS  :root.system --brand-vivid matches :root.dark — system #ea580c vs dark #ea580c
+PASS  :root.system --danger matches :root.dark — system #f87171 vs dark #f87171
+PASS  :root.system --danger-quiet matches :root.dark — system rgb(248 113 113 / 0.15) vs dark rgb(248 113 113 / 0.15)
+PASS  :root.system --danger-solid matches :root.dark — system #b91c1c vs dark #b91c1c
+PASS  :root.system --fg matches :root.dark — system #fafaf9 vs dark #fafaf9
+PASS  :root.system --fg-faint matches :root.dark — system #8c8781 vs dark #8c8781
+PASS  :root.system --fg-muted matches :root.dark — system #a8a29e vs dark #a8a29e
+PASS  :root.system --focus matches :root.dark — system #fb923c vs dark #fb923c
+PASS  :root.system --hairline matches :root.dark — system #292524 vs dark #292524
+PASS  :root.system --info matches :root.dark — system #60a5fa vs dark #60a5fa
+PASS  :root.system --info-quiet matches :root.dark — system rgb(96 165 250 / 0.15) vs dark rgb(96 165 250 / 0.15)
+PASS  :root.system --info-solid matches :root.dark — system #1d4ed8 vs dark #1d4ed8
+PASS  :root.system --on-brand matches :root.dark — system #1c1917 vs dark #1c1917
+PASS  :root.system --on-solid matches :root.dark — system #ffffff vs dark #ffffff
+PASS  :root.system --review matches :root.dark — system #a78bfa vs dark #a78bfa
+PASS  :root.system --review-quiet matches :root.dark — system rgb(167 139 250 / 0.15) vs dark rgb(167 139 250 / 0.15)
+PASS  :root.system --review-solid matches :root.dark — system #6d28d9 vs dark #6d28d9
+PASS  :root.system --success matches :root.dark — system #4ade80 vs dark #4ade80
+PASS  :root.system --success-quiet matches :root.dark — system rgb(74 222 128 / 0.15) vs dark rgb(74 222 128 / 0.15)
+PASS  :root.system --success-solid matches :root.dark — system #15803d vs dark #15803d
+PASS  :root.system --surface matches :root.dark — system #1c1917 vs dark #1c1917
+PASS  :root.system --surface-hover matches :root.dark — system rgb(250 250 249 / 0.06) vs dark rgb(250 250 249 / 0.06)
+PASS  :root.system --surface-sunken matches :root.dark — system #121110 vs dark #121110
+PASS  :root.system --warn matches :root.dark — system #fbbf24 vs dark #fbbf24
+PASS  :root.system --warn-quiet matches :root.dark — system rgb(251 191 36 / 0.15) vs dark rgb(251 191 36 / 0.15)
+PASS  :root.system --warn-solid matches :root.dark — system #b45309 vs dark #b45309
+PASS  light: --brand-vivid is NOT safe behind --on-brand text — 3.56:1 — if this ever passes, use --brand instead
+PASS  scanned the source tree — 161 files
+PASS  ledger entry still needed: apps/operator/app/companies/page.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: apps/operator/app/conversations/[companyId]/page.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: apps/operator/app/conversations/page.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: apps/operator/app/cost/page.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: apps/operator/app/dispatch/page.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: apps/operator/app/layout.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: apps/operator/app/page.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: apps/operator/app/signups/page.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: apps/operator/app/tasks/page.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: apps/web/app/(app)/_tasks/completion-sheet.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: apps/web/app/(app)/_tasks/materials-editor.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: apps/web/app/(app)/_tasks/review-actions.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: apps/web/app/(app)/_tasks/task-actions.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: packages/ui/src/dashboard-ui.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  ledger entry still needed: packages/ui/src/task-detail.tsx — this file is clean now — delete it from UNCONVERTED
+PASS  the unconverted ledger only ever shrinks — 15 dirty vs 15 listed
+
+ALL PASS
+=== push-check
+PASS  201 is ok — got ok, want ok
+PASS  200 is ok — got ok, want ok
+PASS  404 is gone — got gone, want gone
+PASS  410 is gone — got gone, want gone
+PASS  429 is retry — got retry, want retry
+PASS  500 is retry — got retry, want retry
+PASS  503 is retry — got retry, want retry
+PASS  0 (network error) is retry — got retry, want retry
+PASS  400 is retry, not gone — got retry, want retry
+PASS  no registrations at all stamps — got stamp, want stamp
+PASS  one ok stamps — got stamp, want stamp
+PASS  ok alongside a failure still stamps — got stamp, want stamp
+PASS  ok alongside a dead phone still stamps — got stamp, want stamp
+PASS  every registration gone stamps (nothing left to chase) — got stamp, want stamp
+PASS  single gone stamps — got stamp, want stamp
+PASS  a transient failure retries — got retry, want retry
+PASS  gone + retry retries (one live phone still unreached) — got retry, want retry
+PASS  a resolved task deep-links to it — got /tarefas/abc, want /tarefas/abc
+PASS  an unresolved subject falls back to the inbox — got /notificacoes, want /notificacoes
+PASS  a renderable row produces a payload
+PASS  title is the app name — got Capo, want Capo
+PASS  body is the inbox headline — got "Pintura sala" está a aguardar o teu controlo., want "Pintura sala" está a aguardar o teu controlo.
+PASS  url deep-links to the task — got /tarefas/t1, want /tarefas/t1
+PASS  tag is the notification id, so a redelivery replaces — got n1, want n1
+PASS  an unrenderable kind is skipped, not sent bare — got null, want null
+PASS  a whitespace-only headline is skipped too — got null, want null
+PASS  isValidPushEndpoint rejects https://localhost/x
+PASS  isValidPushEndpoint rejects https://localhost./x
+PASS  isValidPushEndpoint rejects https://localhost../x
+PASS  isValidPushEndpoint rejects https://localhost.../x
+PASS  isValidPushEndpoint rejects https://localhost...../x
+PASS  isValidPushEndpoint rejects https://foo.internal/x
+PASS  isValidPushEndpoint rejects https://foo.internal./x
+PASS  isValidPushEndpoint rejects https://foo.internal../x
+PASS  isValidPushEndpoint rejects https://foo.internal.../x
+PASS  isValidPushEndpoint rejects https://foo.internal...../x
+PASS  isValidPushEndpoint rejects https://foo.local/x
+PASS  isValidPushEndpoint rejects https://foo.local./x
+PASS  isValidPushEndpoint rejects https://foo.local../x
+PASS  isValidPushEndpoint rejects https://foo.local.../x
+PASS  isValidPushEndpoint rejects https://foo.local...../x
+PASS  isValidPushEndpoint rejects https://127.0.0.1/x
+PASS  isValidPushEndpoint rejects https://127.0.0.1./x
+PASS  isValidPushEndpoint rejects https://127.0.0.1../x
+PASS  isValidPushEndpoint rejects https://127.0.0.1.../x
+PASS  isValidPushEndpoint rejects https://127.0.0.1...../x
+PASS  isValidPushEndpoint rejects https://169.254.169.254/x
+PASS  isValidPushEndpoint rejects https://169.254.169.254./x
+PASS  isValidPushEndpoint rejects https://169.254.169.254../x
+PASS  isValidPushEndpoint rejects https://169.254.169.254.../x
+PASS  isValidPushEndpoint rejects https://169.254.169.254...../x
+PASS  isValidPushEndpoint accepts real push service https://fcm.googleapis.com/fcm/send/abc123
+PASS  isValidPushEndpoint accepts real push service https://updates.push.services.mozilla.com/wpush/v2/abc123
+PASS  isValidPushEndpoint accepts real push service https://web.push.apple.com/QAbc123
+PASS  isValidPushEndpoint rejects http scheme
+PASS  isValidPushEndpoint rejects a userinfo-smuggled loopback
+PASS  isValidPushEndpoint rejects a decimal-encoded loopback IP
+PASS  isValidPushEndpoint rejects an IPv6 loopback literal
+PASS  isValidPushEndpoint rejects a non-URL string
+PASS  attempt cap is 3 — got 3, want 3
+
+ALL PASS
+=== memory-check
+PASS  case is folded — got cliente paga tarde, want cliente paga tarde
+PASS  accents are stripped — got prefere manhas, want prefere manhas
+PASS  punctuation is dropped — got paga tarde sempre, want paga tarde sempre
+PASS  whitespace is collapsed — got paga tarde, want paga tarde
+PASS  an empty string stays empty — got , want 
+PASS  two spellings of one fact normalise to the same string — got o cliente prefere manhas, want o cliente prefere manhas
+PASS  a full profile name is caught
+PASS  a SURNAME alone is caught — the half a rename usually changes
+PASS  a first name alone is caught
+PASS  accents do not evade the guard
+PASS  case does not evade the guard
+PASS  punctuation does not evade the guard
+PASS  the company name is caught in full
+PASS  a memory naming nobody passes
+PASS  a CREW member's name is deliberately NOT forbidden — kind:"worker" memories exist precisely for this
+PASS  a short token inside a name does not reject everything — tokens under four characters are skipped so "de"/"da" cannot match
+PASS  an empty forbidden list rejects nothing — got false, want false
+PASS  a blank name in the list is ignored — got false, want false
+PASS  a clean candidate is accepted — got 1, want 1
+PASS  and nothing is rejected — got 0, want 0
+PASS  a restatement of a stored memory is rejected — got 0, want 0
+PASS  and counted as a duplicate — got 1, want 1
+PASS  two candidates saying the same thing collide with each other — got 1, want 1
+PASS  and the second is counted as a duplicate — got 1, want 1
+PASS  a candidate naming the manager is refused — got 0, want 0
+PASS  and counted as a name — got 1, want 1
+PASS  an over-length candidate never reaches the database — got 0, want 0
+PASS  and counted as invalid — got 1, want 1
+PASS  exactly MEMORY_CONTENT_MAX_CHARS is accepted — got 1, want 1
+PASS  whitespace and punctuation-only candidates are refused — got 0, want 0
+PASS  the per-run cap binds — got 5, want 5
+PASS  accepted content is trimmed — got cliente paga tarde, want cliente paga tarde
+PASS  no candidates writes nothing — got 0, want 0
+
+Memory check: 33/33 passed; failures: 0
+=== cost-check
+{"evt":"ai_usage.write_failed","surface":"manager_chat","modelId":"claude-sonnet-5","companyId":"c-1","error":"permission denied"}
+{"evt":"ai_usage.write_failed","surface":"manager_chat","modelId":"claude-sonnet-5","companyId":"c-1","error":"connection reset"}
+PASS  cached request: input is the NON-cached half only — got 300, want 300
+PASS  cached request: cache read is carried separately — got 5000, want 5000
+PASS  cached request: cache write is zero — got 0, want 0
+PASS  cached request: output — got 120, want 120
+PASS  cached request: the three input buckets sum back to the reported total — got 5300, want 5300
+PASS  cache-write request: input is the non-cached half only — got 300, want 300
+PASS  cache-write request: cache write is carried separately — got 5000, want 5000
+PASS  no cache breakdown: the whole prompt is full-price input — got 900, want 900
+PASS  no cache breakdown: cache read is zero — got 0, want 0
+PASS  no cache breakdown: cache write is zero — got 0, want 0
+PASS  missing usage: input is 0 — got 0, want 0
+PASS  missing usage: output is 0 — got 0, want 0
+PASS  contradictory usage never goes negative — got 0
+PASS  negative output is clamped to 0 — got 0, want 0
+PASS  fractional token counts are rounded to integers
+PASS  fractional output is rounded to an integer
+PASS  MODEL_IDS.conversation (claude-sonnet-5) has a line in the rate card — an unpriced model silently costs ZERO on the dashboard
+PASS  MODEL_PROVIDERS.conversation is set
+PASS  MODEL_IDS.summarizer (claude-haiku-4-5-20251001) has a line in the rate card — an unpriced model silently costs ZERO on the dashboard
+PASS  MODEL_PROVIDERS.summarizer is set
+PASS  MODEL_IDS.consolidation (claude-sonnet-5) has a line in the rate card — an unpriced model silently costs ZERO on the dashboard
+PASS  MODEL_PROVIDERS.consolidation is set
+PASS  MODEL_IDS.transcription (gemini-3.5-flash) has a line in the rate card — an unpriced model silently costs ZERO on the dashboard
+PASS  MODEL_PROVIDERS.transcription is set
+PASS  MODEL_IDS.extraction (claude-haiku-4-5-20251001) has a line in the rate card — an unpriced model silently costs ZERO on the dashboard
+PASS  MODEL_PROVIDERS.extraction is set
+PASS  MODEL_IDS.planner (claude-sonnet-5) has a line in the rate card — an unpriced model silently costs ZERO on the dashboard
+PASS  MODEL_PROVIDERS.planner is set
+PASS  MODEL_IDS.translation (claude-haiku-4-5-20251001) has a line in the rate card — an unpriced model silently costs ZERO on the dashboard
+PASS  MODEL_PROVIDERS.translation is set
+PASS  MODEL_PROVIDERS covers exactly the roles MODEL_IDS does — got consolidation,conversation,extraction,planner,summarizer,transcription,translation, want consolidation,conversation,extraction,planner,summarizer,transcription,translation
+PASS  an unknown model is flagged unpriced — got false, want false
+PASS  an unknown model reports confidence "unpriced" — got unpriced, want unpriced
+PASS  an unknown model does not quietly cost 0 with priced=true — got 0, want 0
+PASS  Sonnet 5: four buckets priced at four different rates — got 22.05, want 22.05
+PASS  Sonnet 5 is a published price — got published, want published
+PASS  cache READ is 0.1x input — got 0.30000000000000004, want 0.30000000000000004
+PASS  cache WRITE is 1.25x input — got 3.75, want 3.75
+PASS  the read multiplier cache.ts argues from is 0.1 — got 0.1, want 0.1
+PASS  the write multiplier cache.ts argues from is 1.25 — got 1.25, want 1.25
+PASS  caching one write + nine reads beats paying full price ten times — $6.45 vs $30
+PASS  the cached figure is exact — got 6.45, want 6.45
+PASS  the uncached comparison prices every prompt token at the input rate — got 30, want 30
+PASS  uncached comparison prices 3M prompt tokens once each — got 9, want 9
+PASS  a migration declares the ai_usage surface CHECK
+PASS  0037_memory_scope.sql CHECK lists exactly the UsageSurface union — got consolidation,manager_chat,planner,summarizer,transcription,translation,vocab_extraction,worker_chat, want consolidation,manager_chat,planner,summarizer,transcription,translation,vocab_extraction,worker_chat
+PASS  there is no "briefing" surface (the daily sends call no model)
+PASS  0032 declares input_tokens with a non-negative CHECK
+PASS  0032 declares output_tokens with a non-negative CHECK
+PASS  0032 declares cache_read_tokens with a non-negative CHECK
+PASS  0032 declares cache_write_tokens with a non-negative CHECK
+PASS  0032 stores no currency column — prices go stale; the ledger stores tokens and nothing else
+PASS  0032 stamps usage_date from lisbon_today(), not from the caller
+PASS  0032 keeps usage_date OUT of the tenant INSERT grant
+PASS  0032 grants tenants no SELECT on ai_usage — cross-company cost belongs to the operator app, on the service role
+PASS  stream: every part is forwarded — got 6, want 6
+PASS  stream: parts arrive in the original order, unmodified — got stream-start,text-start,text-delta,text-delta,text-end,finish, want stream-start,text-start,text-delta,text-delta,text-end,finish
+PASS  stream: text content is untouched — got Bom dia, want Bom dia
+PASS  stream: non-stream fields of the result are passed through — got sentinel, want sentinel
+PASS  stream: exactly one usage row is written per request — got 1, want 1
+PASS  stream row: company — got c-1, want c-1
+PASS  stream row: actor — got manager, want manager
+PASS  stream row: profile_id set — got p-1, want p-1
+PASS  stream row: worker_id null on a manager row — got null, want null
+PASS  stream row: surface — got manager_chat, want manager_chat
+PASS  stream row: model id — got claude-sonnet-5, want claude-sonnet-5
+PASS  stream row: full-price input only — got 300, want 300
+PASS  stream row: cache read — got 5000, want 5000
+PASS  stream row: output — got 120, want 120
+PASS  stream row: no currency field is ever sent
+PASS  stream row: usage_date is NOT sent (the DB stamps it)
+PASS  worker row: actor — got worker, want worker
+PASS  worker row: worker_id set — got w-1, want w-1
+PASS  worker row: profile_id null — got null, want null
+PASS  aborted stream: parts still forwarded — got 3, want 3
+PASS  aborted stream: no usage row invented — got 0, want 0
+PASS  empty usage report writes no row — got 0, want 0
+PASS  a REJECTED ledger insert never breaks the stream
+PASS  a THROWN ledger failure never breaks the stream
+PASS  and every part still reached the reader — got 6, want 6
+PASS  generate: the model result is passed through unchanged — got ok, want ok
+PASS  generate: one usage row — got 1, want 1
+PASS  generate: an unbroken-down prompt is all full-price input — got 900, want 900
+PASS  generate: output — got 40, want 40
+PASS  zero formats as $0 — got $0, want $0
+PASS  sub-cent keeps four decimals — got $0.0012, want $0.0012
+PASS  a few dollars keeps two — got $1.24, want $1.24
+PASS  tens round to whole dollars — got $1235, want $1235
+PASS  a negative saving reads as -$1.23 — got -$1.23, want -$1.23
+PASS  a negative sub-cent saving keeps four decimals — got -$0.0012, want -$0.0012
+PASS  a real profile id bills the person — got manager, want manager
+PASS  a null user bills the company, not a made-up person — got system, want system
+PASS  undefined behaves the same as null — got system, want system
+PASS  an empty string is not a profile id — got system, want system
+
+ALL PASS
+=== activity-check
+PASS  pt-PT renders task_claimed — "Zé diz que terminou Pintar tecto."
+PASS  pt-PT renders task_approved — "Confirmaste Pintar tecto."
+PASS  pt-PT renders task_rejected — "Devolveste Pintar tecto para ser refeita."
+PASS  pt-PT renders photos_added — "3 fotografias adicionadas a Pintar tecto."
+PASS  pt-PT renders checkin_done — "Zé respondeu que acabou o dia."
+PASS  pt-PT renders checkin_not_done — "Zé respondeu que ainda não acabou."
+PASS  es-ES renders task_claimed — "Zé dice que ha terminado Pintar tecto."
+PASS  es-ES renders task_approved — "Has confirmado Pintar tecto."
+PASS  es-ES renders task_rejected — "Has devuelto Pintar tecto para rehacerla."
+PASS  es-ES renders photos_added — "3 fotos añadidas a Pintar tecto."
+PASS  es-ES renders checkin_done — "Zé ha respondido que ha acabado el día."
+PASS  es-ES renders checkin_not_done — "Zé ha respondido que todavía no ha acabado."
+PASS  en-US renders task_claimed — "Zé says Pintar tecto is finished."
+PASS  en-US renders task_approved — "You confirmed Pintar tecto."
+PASS  en-US renders task_rejected — "You sent Pintar tecto back to be redone."
+PASS  en-US renders photos_added — "3 photos added to Pintar tecto."
+PASS  en-US renders checkin_done — "Zé answered that the day is done."
+PASS  en-US renders checkin_not_done — "Zé answered that it is not finished yet."
+PASS  pt-PT names nobody when no worker is attached — "Pintar tecto foi dada como terminada."
+PASS  pt-PT still names the task when anonymous — "Pintar tecto foi dada como terminada."
+PASS  es-ES names nobody when no worker is attached — "Pintar tecto se ha dado por terminada."
+PASS  es-ES still names the task when anonymous — "Pintar tecto se ha dado por terminada."
+PASS  en-US names nobody when no worker is attached — "Pintar tecto was reported finished."
+PASS  en-US still names the task when anonymous — "Pintar tecto was reported finished."
+PASS  pt-PT degrades a missing task title to the catalog fallback — "Zé diz que terminou Uma tarefa."
+PASS  es-ES degrades a missing task title to the catalog fallback — "Zé dice que ha terminado Una tarea."
+PASS  en-US degrades a missing task title to the catalog fallback — "Zé says A task is finished."
+PASS  pt-PT singular photo — "1 fotografia adicionada a Pintar tecto."
+PASS  pt-PT plural photos — "6 fotografias adicionadas a Pintar tecto."
+PASS  es-ES singular photo — "1 foto añadida a Pintar tecto."
+PASS  es-ES plural photos — "6 fotos añadidas a Pintar tecto."
+PASS  en-US singular photo — "1 photo added to Pintar tecto."
+PASS  en-US plural photos — "6 photos added to Pintar tecto."
+PASS  grouping produces one bucket per day — 3 buckets
+PASS  today is labelled Hoje — Hoje
+PASS  the day before is labelled Ontem — Ontem
+PASS  an older day gets a real date, not Hoje/Ontem — quinta-feira, 20 de agosto
+PASS  same-day events stay in one bucket — 2
+PASS  newest-first order survives grouping — a,b
+PASS  every event survives grouping — 4 of 4
+PASS  a late-evening UTC stamp is labelled by the LISBON day — Hoje
+PASS  a winter stamp agrees with UTC — Hoje
+PASS  a null today still groups
+PASS  a null today never claims Hoje — segunda-feira, 24 de agosto
+PASS  no events produces no buckets
+
+Activity check: 45/45 passed; failures: 0
+=== billing-check
+PASS  Stripe's floor is 48 hours — got 172800, want 172800
+PASS  the carry margin is 5 minutes — got 300, want 300
+PASS  no company row carries no trial — got undefined, want undefined
+PASS  an unparseable timestamp carries no trial — got undefined, want undefined
+PASS  an empty string carries no trial — got undefined, want undefined
+PASS  a fresh 14-day trial is passed through untouched — got 1787918400, want 1787918400
+PASS  twelve days left is passed through untouched — got 1787745600, want 1787745600
+PASS  three days left is passed through untouched — got 1786968000, want 1786968000
+PASS  one day left charges today — got undefined, want undefined
+PASS  47 hours left charges today — got undefined, want undefined
+PASS  an expired trial charges today — got undefined, want undefined
+PASS  a trial that expired a week ago charges today — got undefined, want undefined
+PASS  exactly 48 hours charges today — it would land inside the floor — got undefined, want undefined
+PASS  floor plus four minutes still charges today — got undefined, want undefined
+PASS  floor plus six minutes is carried — got 1786881960, want 1786881960
+PASS  -336h left never yields a trial_end inside Stripe's floor — got undefined
+PASS  -72h left never yields a trial_end inside Stripe's floor — got undefined
+PASS  -1h left never yields a trial_end inside Stripe's floor — got undefined
+PASS  0h left never yields a trial_end inside Stripe's floor — got undefined
+PASS  1h left never yields a trial_end inside Stripe's floor — got undefined
+PASS  24h left never yields a trial_end inside Stripe's floor — got undefined
+PASS  47h left never yields a trial_end inside Stripe's floor — got undefined
+PASS  47.9h left never yields a trial_end inside Stripe's floor — got undefined
+PASS  48h left never yields a trial_end inside Stripe's floor — got undefined
+PASS  48.1h left never yields a trial_end inside Stripe's floor — got 1786881960
+PASS  49h left never yields a trial_end inside Stripe's floor — got 1786885200
+PASS  72h left never yields a trial_end inside Stripe's floor — got 1786968000
+PASS  336h left never yields a trial_end inside Stripe's floor — got 1787918400
+PASS  8760h left never yields a trial_end inside Stripe's floor — got 1818244800
+PASS  49h left is never extended beyond the promised trial end — got 1786885200
+PASS  72h left is never extended beyond the promised trial end — got 1786968000
+PASS  336h left is never extended beyond the promised trial end — got 1787918400
+PASS  8760h left is never extended beyond the promised trial end — got 1818244800
+
+ALL PASS
+=== phone-check
+PASS  five countries are offered — got 5, want 5
+PASS  in the order the brief fixes: PT, ES, AR, BR, US — got "PT,ES,AR,BR,US", want "PT,ES,AR,BR,US"
+PASS  every dial code is digits only, with no plus
+PASS  no two countries share a dial code
+PASS  every country has a name in every language, so the picker can never render a blank row
+PASS  an unknown ISO from a form post is refused — got null, want null
+PASS  a known one is narrowed — got "AR", want "AR"
+PASS  a Portuguese manager starts on Portugal — got "PT", want "PT"
+PASS  a Spanish one starts on Spain — got "ES", want "ES"
+PASS  an English one starts on the United States — got "US", want "US"
+PASS  anything unrecognised falls back to the home market — got "PT", want "PT"
+PASS  AR: "11 7887 6189" — got "+5491178876189", want "+5491178876189"
+PASS  AR: "1178876189" — got "+5491178876189", want "+5491178876189"
+PASS  AR: "011 15 7887 6189" — got "+5491178876189", want "+5491178876189"
+PASS  AR: "011157887 6189" — got "+5491178876189", want "+5491178876189"
+PASS  AR: "+54 11 7887 6189" — got "+5491178876189", want "+5491178876189"
+PASS  AR: "+54 9 11 7887 6189" — got "+5491178876189", want "+5491178876189"
+PASS  AR: "+5491178876189" — got "+5491178876189", want "+5491178876189"
+PASS  AR: "(011) 15-7887-6189" — got "+5491178876189", want "+5491178876189"
+PASS  the composed Argentine number is a valid E.164 string
+PASS  AR: a 3-digit area code with the legacy 15 — got "+5492615554444", want "+5492615554444"
+PASS  AR: a 4-digit area code with the legacy 15 — got "+5492966554444", want "+5492966554444"
+PASS  AR: the same 3-digit number written modern — got "+5492615554444", want "+5492615554444"
+PASS  PT: a bare mobile — got "+351912345678", want "+351912345678"
+PASS  PT: the same with the country code typed in anyway — got "+351912345678", want "+351912345678"
+PASS  PT: the international prefix spelled 00 — got "+351912345678", want "+351912345678"
+PASS  PT: a landline — got "+351212345678", want "+351212345678"
+PASS  ES: a bare mobile — got "+34612345678", want "+34612345678"
+PASS  ES: with the country code — got "+34612345678", want "+34612345678"
+PASS  BR: an 11-digit mobile with the trunk 0 — got "+5511987654321", want "+5511987654321"
+PASS  BR: a 10-digit landline — got "+551139001234", want "+551139001234"
+PASS  US: ten digits, punctuated the way Americans write them — got "+15551234567", want "+15551234567"
+PASS  US: with the leading 1 — got "+15551234567", want "+15551234567"
+PASS  BR: area code 55 survives the dial-code strip — got "+5555999998888", want "+5555999998888"
+PASS  refuses "" — got null, want null
+PASS  refuses "   " — got null, want null
+PASS  refuses "abc" — got null, want null
+PASS  refuses "12" — got null, want null
+PASS  refuses "9123456789012345678" — got null, want null
+PASS  refuses "+" — got null, want null
+PASS  refuses "0" — got null, want null
+PASS  a PT number one digit short is refused — got null, want null
+PASS  a PT number one digit long is refused — got null, want null
+PASS  a US number one digit short is refused — got null, want null
+PASS  an unknown country is refused outright — got null, want null
+PASS  a full international number from another country passes through — got "+447700900123", want "+447700900123"
+PASS  and is still refused when it is not a valid E.164 string — got null, want null
+PASS  an Argentine number missing the 9 gains it — got "+5491178876189", want "+5491178876189"
+PASS  one that already has it is unchanged — got "+5491178876189", want "+5491178876189"
+PASS  the legacy 15 form is repaired too — got "+5491178876189", want "+5491178876189"
+PASS  a Portuguese number is untouched — got "+351912345678", want "+351912345678"
+PASS  a Brazilian number is untouched — got "+5511987654321", want "+5511987654321"
+PASS  a US number is untouched — got "+15551234567", want "+15551234567"
+PASS  a +54 number of a length nothing can explain is left alone, never mangled — got "+5412345", want "+5412345"
+PASS  a string that is not E.164 at all passes through unchanged — got "nonsense", want "nonsense"
+PASS  compose then canonicalize is a fixed point for PT — +351912345678
+PASS  and canonicalize is idempotent for PT
+PASS  compose then canonicalize is a fixed point for ES — +34612345678
+PASS  and canonicalize is idempotent for ES
+PASS  compose then canonicalize is a fixed point for AR — +5491178876189
+PASS  and canonicalize is idempotent for AR
+PASS  compose then canonicalize is a fixed point for BR — +5511987654321
+PASS  and canonicalize is idempotent for BR
+PASS  compose then canonicalize is a fixed point for US — +15551234567
+PASS  and canonicalize is idempotent for US
+PASS  an Argentine number splits to its flag — got "AR", want "AR"
+PASS  and is shown WITHOUT the 9, which is the number people know — got "1178876189", want "1178876189"
+PASS  and composing it again puts the 9 back — got "+5491178876189", want "+5491178876189"
+PASS  +351912345678 splits
+PASS  +351912345678 round-trips through the form unchanged — got "+351912345678", want "+351912345678"
+PASS  +34612345678 splits
+PASS  +34612345678 round-trips through the form unchanged — got "+34612345678", want "+34612345678"
+PASS  +5491178876189 splits
+PASS  +5491178876189 round-trips through the form unchanged — got "+5491178876189", want "+5491178876189"
+PASS  +5511987654321 splits
+PASS  +5511987654321 round-trips through the form unchanged — got "+5511987654321", want "+5511987654321"
+PASS  +15551234567 splits
+PASS  +15551234567 round-trips through the form unchanged — got "+15551234567", want "+15551234567"
+PASS  +551139001234 splits
+PASS  +551139001234 round-trips through the form unchanged — got "+551139001234", want "+551139001234"
+PASS  a country outside the picker does not split, so the form keeps it whole — got null, want null
+PASS  nor does a string that is not E.164 — got null, want null
+
+Phone check: 82/82 passed; failures: 0
+=== onboarding-check
+ok   a brand new company is missing all four items
+ok   the order is the order to ask in: what the business does comes first
+ok   a description alone leaves three
+ok   whitespace is not a description
+ok   THE BUG: one obra and one worker is NOT a finished setup
+ok   all four present leaves nothing
+ok   the rule ignores onboarded_at entirely
+ok   pt-PT/column-absent: a healthy tenant gets NO onboarding block
+ok   pt-PT/column-absent: a gap is the pre-0046 soft nudge, never the checklist
+ok   pt-PT/column-absent: and never the checklist, even with nothing on record at all
+ok   pt-PT/column-null: the SAME company with an explicit NULL DOES get the checklist
+ok   es-ES/column-absent: a healthy tenant gets NO onboarding block
+ok   es-ES/column-absent: a gap is the pre-0046 soft nudge, never the checklist
+ok   es-ES/column-absent: and never the checklist, even with nothing on record at all
+ok   es-ES/column-null: the SAME company with an explicit NULL DOES get the checklist
+ok   en-US/column-absent: a healthy tenant gets NO onboarding block
+ok   en-US/column-absent: a gap is the pre-0046 soft nudge, never the checklist
+ok   en-US/column-absent: and never the checklist, even with nothing on record at all
+ok   en-US/column-null: the SAME company with an explicit NULL DOES get the checklist
+ok   pt-PT/fresh: renders the checklist
+ok   pt-PT/fresh: names finish_onboarding as the end of the road
+ok   pt-PT/fresh: names set_company_about
+ok   pt-PT/fresh: names add_worker
+ok   pt-PT/fresh: does NOT tell Capo to finish now
+ok   pt-PT/about-only: still the checklist
+ok   pt-PT/about-only: quotes what the manager said
+ok   pt-PT/obra-only: still the checklist
+ok   pt-PT/obra-only: the obra tally is shown, so the missing address can be asked for
+ok   pt-PT/no-tasks: the checklist is STILL on
+ok   pt-PT/no-tasks: and it does not claim the list is complete
+ok   pt-PT/complete-unstamped: the block is still rendered
+ok   pt-PT/complete-unstamped: and it tells Capo to call finish_onboarding NOW
+ok   pt-PT/stamped: a healthy tenant gets no block at all
+ok   pt-PT/stamped: an empty obra list is the soft nudge, not the checklist
+ok   pt-PT/stamped: and never the checklist
+ok   es-ES/fresh: renders the checklist
+ok   es-ES/fresh: names finish_onboarding as the end of the road
+ok   es-ES/fresh: names set_company_about
+ok   es-ES/fresh: names add_worker
+ok   es-ES/fresh: does NOT tell Capo to finish now
+ok   es-ES/about-only: still the checklist
+ok   es-ES/about-only: quotes what the manager said
+ok   es-ES/obra-only: still the checklist
+ok   es-ES/obra-only: the obra tally is shown, so the missing address can be asked for
+ok   es-ES/no-tasks: the checklist is STILL on
+ok   es-ES/no-tasks: and it does not claim the list is complete
+ok   es-ES/complete-unstamped: the block is still rendered
+ok   es-ES/complete-unstamped: and it tells Capo to call finish_onboarding NOW
+ok   es-ES/stamped: a healthy tenant gets no block at all
+ok   es-ES/stamped: an empty obra list is the soft nudge, not the checklist
+ok   es-ES/stamped: and never the checklist
+ok   en-US/fresh: renders the checklist
+ok   en-US/fresh: names finish_onboarding as the end of the road
+ok   en-US/fresh: names set_company_about
+ok   en-US/fresh: names add_worker
+ok   en-US/fresh: does NOT tell Capo to finish now
+ok   en-US/about-only: still the checklist
+ok   en-US/about-only: quotes what the manager said
+ok   en-US/obra-only: still the checklist
+ok   en-US/obra-only: the obra tally is shown, so the missing address can be asked for
+ok   en-US/no-tasks: the checklist is STILL on
+ok   en-US/no-tasks: and it does not claim the list is complete
+ok   en-US/complete-unstamped: the block is still rendered
+ok   en-US/complete-unstamped: and it tells Capo to call finish_onboarding NOW
+ok   en-US/stamped: a healthy tenant gets no block at all
+ok   en-US/stamped: an empty obra list is the soft nudge, not the checklist
+ok   en-US/stamped: and never the checklist
+ok   set_company_about is in the manager roster
+ok   finish_onboarding is in the manager roster
+ok   set_company_about is UNGUARDED
+ok   finish_onboarding is UNGUARDED
+ok   set_company_about refuses a description over the 600-char column limit
+ok   and accepts an ordinary one
+ok   finish_onboarding refuses a company that is not set up
+ok   and says what is missing
+ok   an already-finished company is not an error
+ok   and still hands back the dashboard link
+ok   a complete company is stamped
+ok   and the dashboard link comes back with it
+ok   finish_onboarding refuses clearly when the 0046 columns are not there yet
+ok   set_company_about turns a 42703 into a plain answer rather than a driver error
+
+Onboarding check: 81/81 passed; failures: 0

@@ -431,6 +431,100 @@ Structural invariants (do not regress):
     decision (2026-08-14) is that Stripe computes no IVA and collects no NIF;
     invoicing happens outside Stripe. Adding IVA later means a NEW price object,
     leaving existing subscribers alone. It is never an edit to this one.
+- **Capo sends its own account emails, and it builds its own confirmation
+  link** (`apps/web/lib/auth-email.ts`, `apps/web/lib/emails/`, migration
+  `0045`, W1). Signup confirmation, the resend and password recovery used to be
+  `auth.signUp` / `auth.resend` / `resetPasswordForEmail`, with GoTrue mailing a
+  Go template pasted into its dashboard. The paste was never done, so the
+  DEFAULT template kept going out, and it routes the click through Supabase's
+  own `/auth/v1/verify`: the token is consumed, the account IS confirmed, and
+  the browser arrives at `/auth/confirm` with no `token_hash`. The app then told
+  a person whose account had just been confirmed that their link had expired,
+  while their password worked. Six things:
+  - **`generateLink` mints, Resend delivers, and the split is the whole fix.**
+    `auth.admin.generateLink()` on the SERVICE-ROLE client creates or finds the
+    user and returns a token without sending anything; the message goes out over
+    Resend's HTTP API with plain `fetch` (no `resend` npm package) from
+    `Capo <ola@construcapo.com>`. GoTrue is still the only authority on
+    identity; only the envelope moved. **Use `properties.hashed_token`, never
+    `properties.action_link`** — `action_link` IS the `/auth/v1/verify` URL that
+    caused the bug.
+  - **The link shape is fixed**:
+    `${siteUrl()}/auth/confirm?token_hash=<hashed_token>&type=<signup|magiclink|recovery>&next=</onboarding|/nova-password>`.
+    The resend is a MAGIC LINK rather than a second signup token because there
+    is no password at that point; verifying a magiclink token sets
+    `email_confirmed_at`, which is the entire job. That was confirmed against
+    the live project before it was written, not assumed.
+  - **`/auth/confirm` also accepts `?code=`**, and that is load-bearing rather
+    than tidy-up: it is what keeps the legacy fallback's links working. Do not
+    delete it while that fallback exists.
+  - **The no-key fallback is deliberate and is the ONLY place in `apps/` allowed
+    to call `auth.signUp` / `auth.resend` / `resetPasswordForEmail`.** With
+    neither `RESEND_API_KEY` nor `RESEND_SMTP_KEY` set, `sendAuthEmail` makes
+    the exact pre-W1 call with the same `emailRedirectTo` and logs
+    `auth_email.legacy_mailer` — because a deploy landing before the key would
+    otherwise mean NO account emails at all: no signups, no password resets.
+    `sendThroughLegacyMailer` is marked for deletion once the key is on Vercel;
+    the built-in mailer must not be reintroduced anywhere else.
+  - **`auth_email_sends` (0045) is the throttle, and it exists because GoTrue's
+    rate limits left with GoTrue's mailer.** `/registar` and `/recuperar` are
+    unauthenticated forms that cause mail to be delivered to an arbitrary
+    address. **TWO bounds, and both are needed.** Per address,
+    `AUTH_EMAIL_MAX_PER_WINDOW` (3) per hour, counted across ALL THREE kinds
+    together — a limit spendable three times over by alternating doors is not a
+    limit. Globally, `AUTH_EMAIL_MAX_GLOBAL_PER_WINDOW` (60) per hour across
+    every address, because the per-address half bounds what one victim receives
+    and NOT what our sending domain does: without it `/registar` could still
+    mail unlimited distinct strangers, and `victim+1@`/`victim+2@` are distinct
+    addresses to us but one inbox to Gmail. Deny-all posture
+    (`notification_log`'s): RLS on, zero policies, every grant revoked, service
+    role only. It carries NO `company_id`, so the RLS matrix's per-tenant sweep
+    does not reach it and correctly should not. The row is inserted AFTER Resend
+    accepts, never before.
+  - **The throttle read FAILS CLOSED, with exactly one exception: a MISSING
+    TABLE.** 0045 ships before it is applied, so "table absent" must still send
+    or nobody could confirm an email between the deploy and the migration
+    (`auth_email.throttle_unavailable`). Every other failure — a revoked grant,
+    a network error, a broken service-role key — means the table exists and we
+    cannot read it, so we do not know what already went out, and sending anyway
+    would delete the throttle at exactly the moment something is wrong
+    (`auth_email.throttle_failed`, answered `throttled`). ⚠ **A null count is a
+    FAILURE, not a zero**, and PostgREST will not say so: a `head: true` count
+    against a table that does not exist answers `204` with `count: null` and NO
+    error, which `?? 0` turns into a throttle that reports healthy while being
+    switched off. A real table answers `count: 0`. That null is what identifies
+    the missing-table case; verified against the live project, and the same
+    family of trap as the RLS matrix's `readIsDenied`.
+  - **NOTHING the caller learns may distinguish one address from another.**
+    `sendAuthEmail` returns `sent | throttled | skipped` and every value leads to
+    the same screen: `skipped` is exactly the answer for "this address already
+    has a confirmed account" and for "there is no such account", which are the
+    two facts these flows are written not to leak. There was a fourth value,
+    `signups-disabled` (`/registar?erro=fechado`), and it is GONE along with its
+    copy in all three catalogs: on the Resend path accounts are created through
+    the admin API, which IGNORES the dashboard's "Allow new users to sign up"
+    toggle, so only the legacy fallback could ever produce it. **Closing signups
+    now needs a Capo-side flag checked before `sendAuthEmail`** — do not
+    reintroduce copy that describes a switch which no longer binds. The legacy
+    path still logs `auth_email.signups_disabled` and then answers like every
+    other non-send.
+  - **The resend path sends NOTHING to a CONFIRMED account.** A resend mints a
+    MAGIC LINK, and a magic link signs its holder in; GoTrue mints one happily
+    for a confirmed user, whereas the old `auth.resend({type:'signup'})` errored.
+    So this feature briefly let any visitor mail a working one-click login link
+    to any registered address: submit `/registar` with somebody else's email
+    (the pending-email cookie is set on every path, deliberately), then tap
+    "Reenviar". `confirmedAccountExists` gates it and logs
+    `auth_email.already_confirmed`. It **fails closed** — unknown means do not
+    send — and it matches the address EXACTLY, because GoTrue's admin `filter`
+    is a SUBSTRING search (`a@b.com` matches `xa@b.com`). supabase-js has no
+    lookup by email, which is why that one call is raw REST.
+  Copy lives in the catalogs under `auth.emails`, all three languages, and the
+  READER's language is rendered in full with the other two as one line each —
+  possible only because the app knows the visitor's locale, which a Go template
+  inside GoTrue never could. `pnpm email-check` (credential-free, in CI) pins
+  the link in both parts, the absence of template holes, and the presence of all
+  three languages.
 - **System-vs-user client split**: `getDb()` (service role) is system-only;
   `createUserClient()` (publishable key, RLS) is the client for everything on
   the tenant request path.

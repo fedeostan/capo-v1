@@ -1,9 +1,9 @@
 'use server';
 
 import { redirect } from 'next/navigation';
-import { createUserClient } from '@capo/db/user-client';
+import { sendAuthEmail } from '@/lib/auth-email';
+import { publicLocale } from '@/lib/i18n';
 import { readPendingEmail } from '@/lib/pending-email';
-import { siteUrl } from '@/lib/site-url';
 
 // Resend the signup confirmation to whichever address this browser is waiting
 // on. The address comes from the pending-email cookie and never from the
@@ -20,19 +20,17 @@ export async function resendConfirmation(formData: FormData): Promise<void> {
   // state, so this is a stale submit — send them back rather than pretending.
   if (!email) redirect(back);
 
-  const supabase = await createUserClient();
-  const { error } = await supabase.auth.resend({
-    type: 'signup',
-    email,
-    options: { emailRedirectTo: `${siteUrl()}/auth/confirm?next=/onboarding` },
-  });
+  const locale = await publicLocale();
+  // A magic link rather than a second signup token: there is no password at
+  // this point (the person typed it minutes ago and we never kept it), and
+  // verifying a magic link confirms an unconfirmed email, which is the whole
+  // job. See OTP_TYPE in lib/auth-email.ts.
+  await sendAuthEmail({ kind: 'resend', email, locale });
 
   // Same posture as requestPasswordReset: the screen answers identically
   // whatever happened, so it can never become an oracle for "does this address
-  // have a signup waiting". The commonest real error is
-  // over_email_send_rate_limit — Supabase refuses a second send inside a
-  // minute — which is exactly what the `resent` copy prepares the reader for.
-  if (error) console.error('resend signup confirmation failed:', error.message);
-
+  // have a signup waiting". The result is deliberately not inspected — the
+  // commonest non-send is now our own hourly throttle, which the `resent` copy
+  // already prepares the reader for ("it can take a minute to arrive").
   redirect(`${back}${blocked ? '&' : '?'}reenviado=1`);
 }

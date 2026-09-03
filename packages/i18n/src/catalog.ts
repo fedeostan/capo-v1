@@ -907,7 +907,7 @@ export interface Catalog {
       emailNote: string;
       haveAccount: string;
       signIn: string;
-      errors: Record<'dados' | 'fechado', string>;
+      errors: Record<'dados', string>;
     };
     /**
      * The /confirmar-email screen (issue #99). ONE screen with TWO entrances,
@@ -948,6 +948,47 @@ export interface Catalog {
       title: string;
       label: string;
       errors: Record<'curta' | 'guardar', string>;
+    };
+    /**
+     * The two account emails Capo sends itself, through Resend (issue W1).
+     *
+     * They used to be Go templates pasted into the Supabase dashboard, which
+     * could not know the reader's language and so stacked all three in every
+     * message. The app DOES know it (the same locale cookie the public pages
+     * already read), so the reader's language is rendered fully and the other
+     * two get one line each under a divider. `otherLine` is that one line.
+     *
+     * Rendered by apps/web/lib/emails/{confirm,reset}.ts, the only consumers.
+     * Keep every string here free of HTML: the renderers escape these before
+     * putting them in the markup, so a tag written here would arrive in
+     * somebody's inbox as literal text.
+     */
+    emails: {
+      /** Names this language in itself, for the divider labels. */
+      languageLabel: string;
+      confirm: {
+        subject: string;
+        /** Shown beside the subject in the inbox list, never in the open email. */
+        preview: string;
+        heading: string;
+        body: string;
+        button: string;
+        /** Introduces the copy-and-paste URL under the button. */
+        fallback: string;
+        /** The whole email in one sentence, for readers of the other two languages. */
+        otherLine: string;
+        footer: string;
+      };
+      reset: {
+        subject: string;
+        preview: string;
+        heading: string;
+        body: string;
+        button: string;
+        fallback: string;
+        otherLine: string;
+        footer: string;
+      };
     };
   };
 
