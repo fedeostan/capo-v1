@@ -31,6 +31,16 @@
 //      messages reach the third attempt. The two unique indexes in 0049 are the
 //      backstop; the `attemptNo === null` on a repeat is what stops us asking
 //      for that refusal in the first place.
+//   5. Asks that outlive the claim they belong to (fix round 1, I2). Two asks
+//      are a fact about ONE attempt to report ONE piece of work. If they
+//      survived the claim, then after a manager REJECTED a claim and the work
+//      was redone, the very next message about that task could be waived on its
+//      first try — a second "sem foto" claim about different work, with no
+//      evidence Capo ever asked. `cycleStartedAt` is the boundary, and the
+//      numbering has to survive it: `attempt_no` is unique across the whole
+//      (conversation, task) pair, so restarting at 1 would be refused by the
+//      database, the count would never advance, and the crew member could never
+//      report that job again.
 //
 // Credential-free, no network and no model, like `pnpm guard-check` and
 // `pnpm scheduler-check`. Run with `pnpm waiver-check`. Exit 0 = green.
@@ -53,7 +63,12 @@ function eq(name: string, actual: unknown, expected: unknown) {
   check(name, actual === expected, `got ${String(actual)}, want ${String(expected)}`);
 }
 
-const at = (...ids: string[]): PhotoWaiverAttempt[] => ids.map(inboundMessageId => ({ inboundMessageId }));
+// Attempts, oldest first, one per hour from 10:00 on 5 January. `createdAt`
+// matters now: attempts recorded before the task's most recent review belong to
+// a claim that has already been made and do not count.
+const T = (h: number) => `2026-01-05T${String(h).padStart(2, '0')}:00:00.000Z`;
+const at = (...ids: string[]): PhotoWaiverAttempt[] =>
+  ids.map((inboundMessageId, i) => ({ inboundMessageId, attemptNo: i + 1, createdAt: T(10 + i) }));
 
 const M1 = 'wamid.HBgLMzUx.AAAA';
 const M2 = 'wamid.HBgLMzUx.BBBB';
@@ -68,7 +83,7 @@ eq('two asks are required before a waiver', WAIVER_ASKS_REQUIRED, 2);
 // ── photos present: the waiver is not on the table at all ───────────────────
 {
   const d = decidePhotoWaiver({ attempts: [], currentInboundId: M1, hasPhotos: true });
-  eq('a photo is waiting, so the outcome is photos', d.outcome, 'photos');
+  eq('the call named a photo, so the outcome is photos', d.outcome, 'photos');
   eq('and nothing is recorded', d.attemptNo, null);
   eq('and no reason is carried', d.reason, null);
 }
@@ -82,7 +97,7 @@ eq('two asks are required before a waiver', WAIVER_ASKS_REQUIRED, 2);
     hasPhotos: true,
     reason: 'não há luz',
   });
-  eq('a photo beats two prior asks and a reason', d.outcome, 'photos');
+  eq('a named photo beats two prior asks and a reason', d.outcome, 'photos');
   eq('and still records nothing', d.attemptNo, null);
 }
 
@@ -153,7 +168,108 @@ eq('two asks are required before a waiver', WAIVER_ASKS_REQUIRED, 2);
   const d = decidePhotoWaiver({ attempts: at(M1, M1, M1), currentInboundId: M2, hasPhotos: false });
   eq('three rows for ONE message are one ask', d.priorAsks, 1);
   eq('so the second message asks again rather than waiving', d.outcome, 'ask_again');
-  eq('and this message is attempt 2', d.attemptNo, 2);
+  // The NUMBER is one past the highest on file, not one past the ask count:
+  // 0049's unique index is on (conversation, task, attempt_no) and reusing a
+  // number is a refused insert, which is a count that never advances.
+  eq('and it is numbered past every row on file', d.attemptNo, 4);
+}
+
+// ── THE CLAIM CYCLE (fix round 1, I2) ───────────────────────────────────────
+// Two asks belong to ONE attempt to report ONE piece of work. Once a claim has
+// been filed on the task — waived, photographed, later rejected, whatever
+// happened to it — the next report starts from nothing. Without this, the
+// second claim on a task could be waived on its very first message.
+{
+  // Two asks on file at 10:00 and 11:00; a review was filed at 12:00. The crew
+  // member comes back afterwards (the manager rejected it, the work was redone)
+  // and says it is finished with no photo.
+  const d = decidePhotoWaiver({
+    attempts: at(M1, M2),
+    currentInboundId: M3,
+    hasPhotos: false,
+    reason: 'não há luz',
+    cycleStartedAt: T(12),
+  });
+  eq('asks from before the last claim do not count', d.priorAsks, 0);
+  eq('so the next report is asked from the start', d.outcome, 'ask_first');
+  eq('and the attempt number continues past the old rows', d.attemptNo, 3);
+}
+{
+  // The same rows with NO review on the task: nothing has been claimed, so
+  // every ask still counts. This is the ordinary first-report case and it must
+  // be unchanged by the cycle filter.
+  const d = decidePhotoWaiver({
+    attempts: at(M1, M2),
+    currentInboundId: M3,
+    hasPhotos: false,
+    reason: 'não há luz',
+    cycleStartedAt: null,
+  });
+  eq('with no claim ever filed, every ask counts', d.priorAsks, 2);
+  eq('and the third message waives', d.outcome, 'waive');
+}
+{
+  // Asks recorded AFTER the boundary count normally: the second cycle reaches
+  // its own third message and waives there, exactly as the first did.
+  const attempts: PhotoWaiverAttempt[] = [
+    { inboundMessageId: M1, attemptNo: 1, createdAt: T(10) },
+    { inboundMessageId: M2, attemptNo: 2, createdAt: T(11) },
+    { inboundMessageId: 'wamid.NEW.1', attemptNo: 3, createdAt: T(13) },
+    { inboundMessageId: 'wamid.NEW.2', attemptNo: 4, createdAt: T(14) },
+  ];
+  const d = decidePhotoWaiver({
+    attempts,
+    currentInboundId: 'wamid.NEW.3',
+    hasPhotos: false,
+    reason: 'continua sem luz',
+    cycleStartedAt: T(12),
+  });
+  eq('the new cycle counts only its own asks', d.priorAsks, 2);
+  eq('and waives on its own third message', d.outcome, 'waive');
+  eq('numbered past every row, old cycle included', d.attemptNo, 5);
+}
+{
+  // A row written at the very moment of the claim does not count: the boundary
+  // is exclusive, so an attempt and the claim it produced never both count.
+  const attempts: PhotoWaiverAttempt[] = [
+    { inboundMessageId: M1, attemptNo: 1, createdAt: T(10) },
+    { inboundMessageId: M2, attemptNo: 2, createdAt: T(12) },
+  ];
+  const d = decidePhotoWaiver({ attempts, currentInboundId: M3, hasPhotos: false, cycleStartedAt: T(12) });
+  eq('an attempt stamped at the claim itself does not count', d.priorAsks, 0);
+}
+{
+  // An UNPARSEABLE boundary excludes everything. loadClaimCycleStart never
+  // throws and answers "now" on a failed read, so the same thing happens there:
+  // Capo asks again rather than inheriting asks it cannot place.
+  const d = decidePhotoWaiver({
+    attempts: at(M1, M2),
+    currentInboundId: M3,
+    hasPhotos: false,
+    reason: 'não há luz',
+    cycleStartedAt: 'not a date',
+  });
+  eq('an unreadable cycle boundary counts nothing', d.priorAsks, 0);
+  eq('and asks from the start', d.outcome, 'ask_first');
+}
+{
+  // An unparseable ROW timestamp drops that row, same direction.
+  const attempts: PhotoWaiverAttempt[] = [
+    { inboundMessageId: M1, attemptNo: 1, createdAt: 'nonsense' },
+    { inboundMessageId: M2, attemptNo: 2, createdAt: T(13) },
+  ];
+  const d = decidePhotoWaiver({ attempts, currentInboundId: M3, hasPhotos: false, cycleStartedAt: T(12) });
+  eq('an unreadable attempt timestamp does not count', d.priorAsks, 1);
+  eq('so this is the second ask', d.outcome, 'ask_again');
+}
+{
+  // The same-turn repeat is refused across cycles too. `attempt_no` and
+  // `inbound_message_id` are BOTH unique for the whole (conversation, task)
+  // pair, so a message already on file from an earlier cycle can never be
+  // recorded again — asking for it would be a refused insert.
+  const attempts: PhotoWaiverAttempt[] = [{ inboundMessageId: M1, attemptNo: 1, createdAt: T(10) }];
+  const d = decidePhotoWaiver({ attempts, currentInboundId: M1, hasPhotos: false, cycleStartedAt: T(12) });
+  eq('a message already on file records nothing, cycle or no cycle', d.attemptNo, null);
 }
 
 // ── the reason is required, and it is theirs ────────────────────────────────

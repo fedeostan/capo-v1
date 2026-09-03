@@ -70,10 +70,13 @@ create table task_photo_waiver_attempts (
   -- thread, so today the two are the same thing, and keying on the thread means
   -- this table never has to learn about a second channel before it exists.
   conversation_id uuid not null references worker_conversations(id),
-  -- 1, 2, 3, … in the order the asks happened. Its only job is the unique
-  -- index below; nothing reads it as a decision input, because the decision is
-  -- taken from the number of DISTINCT inbound message ids and that is a
-  -- question the rows themselves answer.
+  -- 1, 2, 3, … in the order the asks happened, and it NEVER restarts. It is not
+  -- a decision input: how many asks have happened is taken from the number of
+  -- DISTINCT inbound message ids inside the current claim cycle (see the note
+  -- at the end of this file). This column exists for the unique index below, so
+  -- the next value is one past the HIGHEST on file for the pair, across every
+  -- cycle. Restarting it per cycle would be a refused insert, a count that
+  -- never advances, and a crew member who can never report that job again.
   attempt_no integer not null check (attempt_no > 0),
   -- Meta's `wamid` for the message this attempt belongs to. A string minted by
   -- Meta, not by us and not by the worker, and the whole reason the model
@@ -290,13 +293,26 @@ begin
 end;
 $$;
 
--- ── what is NOT here ───────────────────────────────────────────────────────
--- Nothing sweeps task_photo_waiver_attempts, and nothing expires a row. The
--- two asks are not a session: a crew member who says "acabei" on Monday with no
--- photo, is asked, and comes back on Wednesday has already been asked once, and
--- pretending otherwise would restart the whole conversation. The row is the
--- evidence that the asking happened, which is also why there is no DELETE
--- policy for anybody.
+-- ── the claim cycle, and what is NOT here ─────────────────────────────────
+-- Nothing sweeps task_photo_waiver_attempts and nothing expires a row: the row
+-- is the evidence that the asking happened, which is also why there is no
+-- DELETE policy for anybody. But rows do STOP COUNTING, and the boundary is not
+-- a clock.
+--
+-- Two asks belong to ONE attempt to report ONE piece of work. The reader
+-- (loadClaimCycleStart, packages/core/src/capabilities/worker/photo-waiver-store.ts)
+-- takes `declared_at` from the task's most recent `task_reviews` row of ANY
+-- status and ignores every attempt older than it. So a crew member asked on
+-- Monday who comes back on Wednesday with the same unreported job has still
+-- been asked once — that is right, and it is why this is not a TTL — while a
+-- claim the manager REJECTED starts the next report from nothing. Without that,
+-- the second claim on a task could be waived on its very first message, and the
+-- manager would get a second "sem foto" claim about different work with no
+-- evidence that Capo had asked at all.
+--
+-- Enforced by the READER, like every other expiry in this schema (0034, 0039,
+-- 0047), and for the same reason: a sweep that fails leaves the rows behind and
+-- says nothing. Pinned in `pnpm waiver-check`.
 --
 -- There is deliberately NO un-waive. A manager who disagrees resolves the
 -- review the ordinary way — approve, reject or dismiss — and a photo that turns

@@ -28,13 +28,54 @@ export async function loadWaiverAttempts(
   try {
     const { data, error } = await db
       .from('task_photo_waiver_attempts')
-      .select('inbound_message_id')
+      .select('inbound_message_id, attempt_no, created_at')
       .eq('conversation_id', conversationId)
       .eq('task_id', taskId);
     if (error) return [];
-    return (data ?? []).map(row => ({ inboundMessageId: row.inbound_message_id }));
+    return (data ?? []).map(row => ({
+      inboundMessageId: row.inbound_message_id,
+      attemptNo: row.attempt_no,
+      createdAt: row.created_at,
+    }));
   } catch {
     return [];
+  }
+}
+
+/**
+ * When the CURRENT claim cycle on this task began: `declared_at` of its most
+ * recent `task_reviews` row of any status, or null when no claim has ever been
+ * filed on it.
+ *
+ * This is what stops "asked twice" becoming a permanent property of a task. A
+ * claim was filed, the manager rejected it, the work was redone: the next
+ * report starts from nothing, exactly as the first one did. ANY status, on
+ * purpose — a review that is still `pending` also ends the cycle, because the
+ * asks that led to it have already been spent.
+ *
+ * NEVER THROWS, and the failure direction is deliberate: an unreadable review
+ * history answers "the cycle started now", so every attempt on file is older
+ * than the boundary, none of them counts, and Capo asks again. Losing an ask is
+ * the safe way to be wrong; inheriting two stale ones is not.
+ */
+export async function loadClaimCycleStart(
+  db: Db,
+  companyId: string,
+  taskId: string,
+): Promise<string | null> {
+  try {
+    const { data, error } = await db
+      .from('task_reviews')
+      .select('declared_at')
+      .eq('company_id', companyId)
+      .eq('task_id', taskId)
+      .order('declared_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) return new Date().toISOString();
+    return data?.declared_at ?? null;
+  } catch {
+    return new Date().toISOString();
   }
 }
 

@@ -6,7 +6,7 @@ import {
   storeWorkerTaskPhoto,
 } from '../../media/task-photo-store';
 import { decidePhotoWaiver } from './photo-waiver';
-import { loadWaiverAttempts, recordWaiverAttempt } from './photo-waiver-store';
+import { loadClaimCycleStart, loadWaiverAttempts, recordWaiverAttempt } from './photo-waiver-store';
 import type { WorkerTool } from './types';
 import { workerToolError } from './types';
 
@@ -140,31 +140,49 @@ export const declareTaskDone: WorkerTool<DeclareTaskDoneInput> = {
     // inside attachInboxPhotos: company_id AND worker_id, both phone-derived,
     // on the read that resolves every id below.
     const known = new Set(ctx.pendingPhotos.map(p => p.id));
-    const requested = [...new Set(input.photo_ids)].filter(id => known.has(id));
+    const named = [...new Set(input.photo_ids)];
+    const requested = named.filter(id => known.has(id));
+
+    // ── ids that were NAMED but resolve to nothing ───────────────────────────
+    // Stale (the photo aged out of the 24-hour inbox, or an earlier claim
+    // already took it) or invented. This is NOT the crew member saying they
+    // have no photo — they sent one and the model is naming it wrongly — so it
+    // must not spend one of the two asks. Refused, nothing recorded, and the
+    // count is exactly where it was.
+    if (requested.length === 0 && named.length > 0) {
+      return workerToolError(
+        'None of those photo ids are waiting for this worker. Ask them to send the photo again. Nothing has been recorded.',
+      );
+    }
 
     let attached = 0;
     let waivedReason: string | null = null;
 
     if (requested.length === 0) {
       // ── the no-photo waiver (0049) ─────────────────────────────────────────
-      // Reached when this call names no photo that is actually waiting: an
-      // empty array, or ids that have already been used or expired.
+      // Reached when this call names NO photo at all, which is the model saying
+      // on the crew member's behalf that there is not one for this task.
       //
-      // The attempts read is SKIPPED when photos are waiting, because that case
-      // is not a waiver at all — it is the model failing to pass ids it was
-      // given — and asking the database about it would be a query bought for
-      // nothing. `hasPhotos` still travels into the decision so the rule is
-      // stated in ONE place and `pnpm waiver-check` can pin that branch too.
-      const hasPhotos = ctx.pendingPhotos.length > 0;
-      const attempts = hasPhotos
-        ? []
-        : await loadWaiverAttempts(ctx.db, ctx.conversationId, input.task_id);
+      // The decision turns on what THIS CALL NAMED, never on what happens to be
+      // sitting in the inbox. `ctx.pendingPhotos` is every unattached photo
+      // that person has sent in the last day, of any job or none, so keying on
+      // it made the waiver unreachable for every other task until a stray photo
+      // aged out — and the refusal it produced pushed the model toward filing
+      // Tuesday's wall as proof of tonight's basement. Photos waiting are
+      // MENTIONED below, as a fact and a question to ask, never as ids to pass
+      // here.
+      const cycleStartedAt = await loadClaimCycleStart(ctx.db, ctx.companyId, input.task_id);
+      const attempts = await loadWaiverAttempts(ctx.db, ctx.conversationId, input.task_id);
 
       const decision = decidePhotoWaiver({
         attempts,
         currentInboundId: ctx.inboundMessageId,
-        hasPhotos,
+        // False by construction here — a call that named a resolvable photo
+        // took the branch below. Passed anyway so the rule lives in ONE place
+        // and `pnpm waiver-check` pins the guard rather than the call site.
+        hasPhotos: requested.length > 0,
         reason: input.no_photo_reason,
+        cycleStartedAt,
       });
 
       // Written BEFORE we act on the decision, and only when this inbound
@@ -182,19 +200,30 @@ export const declareTaskDone: WorkerTool<DeclareTaskDoneInput> = {
         });
       }
 
+      // ── what the refusals may and may not say about waiting photos ────────
+      // They MAY state that N photos are unattached and that the crew member
+      // can be asked which job those show. They may NEVER tell the model to
+      // pass them for THIS task: a photo of one job filed as proof of another
+      // is evidence, it is wrong, and 0023 has no DELETE policy anywhere.
+      const waiting = ctx.pendingPhotos.length;
+      const strays =
+        waiting > 0
+          ? ` Separately: ${waiting} photo(s) from this person are still unattached to any task. They are NOT proof of this task. You may ask which job they show; only pass their ids if the crew member says they are of THIS one.`
+          : '';
+
       if (decision.outcome === 'photos') {
         return workerToolError(
-          'Photos from this worker ARE waiting. Pass their ids from the "# Photos received" block instead of an empty list.',
+          'This call named photos, so it is not a no-photo declaration. Retry with the ids you meant.',
         );
       }
       if (decision.outcome === 'ask_first') {
         return workerToolError(
-          'No photo has arrived for this task. Ask them for one, in one line, and stop. Nothing has been recorded.',
+          `No photo has been given for this task. Ask them for one, in one line, and stop. Nothing has been recorded.${strays}`,
         );
       }
       if (decision.outcome === 'ask_again') {
         return workerToolError(
-          'Still no photo. Tell them a photo is required, ask once more, and say that ANY photo of the work will do, even a dark one. Stop there. Nothing has been recorded.',
+          `Still no photo for this task. Tell them a photo is required, ask once more, and say that ANY photo of the work will do, even a dark one. Stop there. Nothing has been recorded.${strays}`,
         );
       }
       if (decision.outcome === 'need_reason') {
