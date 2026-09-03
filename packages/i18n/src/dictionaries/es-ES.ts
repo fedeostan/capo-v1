@@ -1019,7 +1019,7 @@ const dict: Catalog = {
       const who = names ? `: ${names}` : '';
       return `Me he presentado por WhatsApp a ${notified} ${notified === 1 ? 'persona nueva' : 'personas nuevas'} del equipo${who}.`;
     },
-    welcomeButton: '¡Hola! 👋',
+    welcomeButton: '¡Hola!',
   },
 };
 

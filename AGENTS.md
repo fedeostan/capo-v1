@@ -886,6 +886,78 @@ Structural invariants (do not regress):
   07:00 gets their first briefing BEFORE their welcome. Fixing it means the
   morning send reading the welcome ledger, which couples it to a feature it has
   nothing to do with.
+- **The welcome now goes out AT ONCE, and the sweep is still the mechanism.**
+  `runWelcomeSweep(db, { companyId?, window })` in
+  `apps/web/app/notifications/welcome-sweep.ts` is the whole send, and the cron
+  route is a shell over it. Four request paths call it from `after()` for their
+  own company the moment a manager could have made somebody messageable: the
+  chat turn, the WhatsApp manager turn, `/perfil` saving consent or a phone, and
+  an approved card. Five things:
+  - **The trigger is an OPTIMISATION, exactly as the immediate `dispatchPushes`
+    call is.** It takes ONLY a company id and asks the sweep the same question
+    the cron asks; it never remembers an event, never queues and never writes
+    app state. Delete every call site and the product still welcomes everybody,
+    at 09:00 at the latest. That is what lets a sixth door be added with no hook
+    at all, and it is why `welcomeAnyoneNew` swallows every failure into one log
+    line.
+  - **The immediate gate is WIDER than the sweep's and the two must not be
+    collapsed** (`apps/web/lib/welcome-window.ts`): Lisbon 08:00-21:59 against
+    the sweep's 09:00-19:59. A manager adding somebody at 20:15 is standing next
+    to them; making that person wait for 09:00 tomorrow is the complaint the
+    feature answers. Outside the gate the trigger does NOTHING and logs
+    `welcome.outside_send_hour`; the cron picks the person up. `pnpm
+    scheduler-check` derives the containment property (every hour the sweep may
+    send in, the trigger may too) rather than pinning it.
+  - **Idempotency is UNCHANGED and is still 0033's partial unique index.** Four
+    call sites racing each other inside one request, and a trigger racing the
+    cron, all lose to `claimNotification`'s 23505. Nothing here is made safe by
+    remembering anything.
+  - **It runs on the SERVICE ROLE inside a tenant request**, which is the
+    system-vs-user split's documented shape for a system job a request starts
+    (`dispatchPushes` again): the welcome writes `notification_log`, which
+    tenants hold no grant on. The company id comes from the caller's
+    authenticated session AND is intersected with `billableCompanies`, so a
+    wrong id reaches nobody.
+  - **The crew welcome opens with WHO ADDED THEM**, from the most recently
+    created named profile, read off the profiles list `loadPendingWelcomes`
+    already orders. NULL is a real answer (no profile yet, a blank `full_name`)
+    and the clause is then OMITTED, never filled with a placeholder naming
+    nobody. It lives in `{{2}}`, so it needs no Meta re-approval.
+- **The welcome ends in a "Say hi" button, and `capo:hi` is the FOURTH tappable
+  payload.** `capo_welcome_v2` is `capo_welcome`'s body byte for byte plus ONE
+  quick reply; the free-form twin sends the same button as an interactive
+  reply-buttons message. Five things:
+  - **The template NAME and the BUTTON are decided together**, by one call to
+    `welcomeTemplateFor` (`apps/web/lib/welcome-template.ts`,
+    `BRIEFING_V2_APPROVED_LANGUAGES`' shape and reasoning). A button component
+    against a template that declares none is a 132000 on every send; NO button
+    component against one that does makes Meta accept the send and echo the
+    button's own LABEL back as the payload, so the tap parses as nothing.
+    `WELCOME_V2_APPROVED_LANGUAGES` is EMPTY until Meta approves each locale by
+    hand, and an unapproved locale keeps sending the button-less `capo_welcome`.
+  - **A quick-reply LABEL may hold no emoji**, no variable, no newline and no
+    formatted character. Meta refuses the submission with `error_subcode`
+    2388060, which is how this button lost the waving hand it was written with.
+    Nothing in a build catches it, so `pnpm whatsapp-check` pins it for every
+    buttoned template.
+  - **`capo:hi` arrives on TWO envelope fields** — `button.payload` from the
+    template and `interactive.button_reply.id` from the twin — and is one
+    payload for both, because "the person said hello" is one fact. It carries no
+    id, for `workerMenuRowId('manager')`'s reason, and is an exact whole-string
+    match so no other parser can accept it. It is consulted FIRST on both sender
+    paths: below the other handlers, every hello would log
+    `whatsapp.unknown_checkin_payload` or `whatsapp.unknown_button`, which are
+    the two lines that are supposed to mean a template lost its buttons.
+  - **The answer is deterministic, with zero model calls**
+    (`apps/web/app/notifications/welcome-hi.ts`), and it renders the crew
+    member's tasks through the SAME `loadWorkerBriefing` / `renderWorkerFreeForm`
+    the 07:00 message uses. `WorkerFreeFormOptions.opening` exists only because
+    that renderer's greeting is a GOOD MORNING and this tap can land at 20:00 —
+    a second renderer would let the two surfaces describe one task differently.
+  - **A failure is never answered with a template.** The tap opened the free
+    window, so 131047 is logged and swallowed and the fallback is the greeting
+    alone: a paid recovery send for a greeting is not worth it, and silence
+    after a button we asked them to press is the thing to avoid.
 - **Sender identity is the PHONE, with the BSUID as a fallback — in that order,
   and the order is the safety property.** WhatsApp usernames mean Meta omits
   `from` entirely for anyone who has adopted one and sends only `from_user_id`,

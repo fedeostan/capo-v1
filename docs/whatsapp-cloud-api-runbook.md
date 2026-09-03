@@ -223,8 +223,9 @@ unwelcomed for 17 days (issue #121).
 | `capo_welcome` | welcome sweep (`api/cron/welcome`) | §6c; approved in all three locales 31 Aug 2026 |
 | `capo_daily_briefing_v2` | nothing yet | submitted 31 Aug 2026 (issue #108); {{2}} on its own paragraph |
 | `capo_message_waiting` | nothing yet | submitted 31 Aug 2026 (issue #123 B); the window-reopener |
+| `capo_welcome_v2` | welcome sweep, once approved | §6d; `capo_welcome` plus ONE "Say hi" quick reply; submitted 3 Sep 2026, PENDING |
 
-All five are in `MANAGED_TEMPLATE_NAMES`, so `pnpm whatsapp-template status`
+All six are in `MANAGED_TEMPLATE_NAMES`, so `pnpm whatsapp-template status`
 checks every name × locale pair and is the way to verify approval actually
 happened — Meta approves each pair separately and tells nobody.
 
@@ -440,6 +441,18 @@ The first message Capo ever sends somebody (issue #45), from
 `pnpm whatsapp-template create`; the definition is `capoWelcome()` in
 `scripts/whatsapp-templates.ts`.
 
+**There are now two ways the send starts, and one function behind both**
+(`runWelcomeSweep` in `apps/web/app/notifications/welcome-sweep.ts`): the
+`*/15` cron across every company, gated to Lisbon **09:00-19:59**, and an
+IMMEDIATE trigger for one company from four request paths (the chat turn, the
+WhatsApp manager turn, `/perfil` saving consent or a phone, an approved card),
+gated to the wider Lisbon **08:00-21:59**. Both windows live in
+`apps/web/lib/welcome-window.ts` and `pnpm scheduler-check` asserts the
+relationship between them. The trigger is an OPTIMISATION: it takes only a
+company id, the sweep re-derives who is owed a welcome, and deleting every call
+site would still welcome everybody, just later. Idempotency is the ledger below
+and never app state.
+
 > ⚠ **MANUAL GO-LIVE STEP.** Nothing is sent until this template is APPROVED in
 > all three languages (done 31 Aug 2026 — verify with
 > `pnpm whatsapp-template status` before trusting this sentence). Until then
@@ -462,10 +475,11 @@ The first message Capo ever sends somebody (issue #45), from
   fixed halves around it are frozen at approval; `{{2}}` is ours and can be
   reworded any day without Meta seeing it again. This is the lesson of the
   briefing's "reply PT, ES or EN" line (§6a), applied in advance.
-- **No buttons.** A reply of any kind opens the free 24-hour window, and the
-  crew already have `STOP`, `PT`/`ES`/`EN` and `MENU` as whole-message keywords.
-  A quick-reply button would be a fourth tappable payload shape to keep disjoint
-  from the other three for no gain.
+- **No buttons on THIS name.** That is now a compatibility fact rather than a
+  decision — `capo_welcome_v2` (§6d) is this template plus one quick reply, and
+  the send path falls back here for any locale that one is not yet approved in.
+  A send that declared a button component against `capo_welcome` would earn a
+  **132000** and welcome nobody at all.
 - The body text is BUILT from `reminders.welcomeGreeting` and
   `reminders.welcomeStop` in `@capo/i18n`, because the same welcome also goes
   out as free text to anybody already inside their 24-hour window.
@@ -491,6 +505,54 @@ deploy does not introduce Capo to people who have been using it for a month, and
 creates `welcome_ledger_ready()` — a marker function the sweep asks for before
 it sends anything, so shipping the code without the migration produces silence
 rather than a mass mailing.
+
+### 6d. `capo_welcome_v2` — the welcome with a way in
+
+The same welcome, ending in one quick-reply button instead of in silence.
+Submitted **3 September 2026**; all three locales **PENDING** at the time of
+writing. Definition: `capoWelcomeV2()` in `scripts/whatsapp-templates.ts`.
+
+> ⚠ **MANUAL GO-LIVE STEP.** Nothing uses it until it is APPROVED per locale.
+> The gate is `WELCOME_V2_APPROVED_LANGUAGES` in
+> `apps/web/lib/welcome-template.ts` — a hand-maintained mirror of the
+> dashboard, empty today, exactly the shape and for exactly the reasons of
+> `BRIEFING_V2_APPROVED_LANGUAGES` (§6a). Run `pnpm whatsapp-template status`;
+> when a locale shows `capo_welcome_v2` as APPROVED, add its code to that set
+> and ship. A locale not in the set keeps sending `capo_welcome`, button and
+> all absent, which is exactly what it sent before.
+
+- **The body is `capo_welcome`'s, byte for byte.** The copy was already right
+  and a re-review of new wording would have delayed the button for no product
+  reason. `pnpm whatsapp-check` asserts the two bodies are identical, so a
+  change to the welcome's wording cannot land on one name and not the other.
+- **ONE button, payload `capo:hi`.** Unlike §6b's two, this carries no index
+  contract: there is a single payload and no id inside it, so there is nothing
+  to invert. Do not add a second button without giving it §6b's treatment.
+- ⚠ **The label carries no emoji, and that is Meta's rule.** It was submitted
+  as `Olá 👋` and refused with `error_subcode` **2388060** — "los botones no
+  pueden contener variables, nuevas líneas, emojis ni caracteres con formato".
+  It is now `Olá!` / `¡Hola!` / `Say hi`, and `pnpm whatsapp-check` pins the
+  no-emoji rule for every buttoned template, because nothing else in the repo
+  can see that failure until somebody runs `create` and reads Spanish error
+  prose.
+- **The name and the button must be decided together.** A button component
+  against a template that declares none is a **132000** on every send; NO
+  button component against one that does makes Meta accept the send happily and
+  echo the button's own LABEL back as the payload, so the tap arrives as
+  `Olá!` and parses as nothing. `welcomeTemplateFor()` therefore returns both
+  facts from one call.
+- **The free-form twin carries the same button with no approval at all.**
+  Inside the recipient's 24-hour window the welcome goes out as an interactive
+  reply-buttons message (`sendWhatsAppButtons`), which is a session message:
+  free, unreviewed, and refused with 131047 outside the window like any other
+  free-form send. So the button is live there today, template or no template.
+- **The tap** arrives as `type: 'button'` with `button.payload` from the
+  template and as `type: 'interactive'` with `interactive.button_reply.id` from
+  the twin. Same payload on both. It is answered deterministically in
+  `apps/web/app/notifications/welcome-hi.ts`, above every other tap handler on
+  both sender paths — a `capo:hi` reaching `handleCheckinTap` would log
+  `whatsapp.unknown_checkin_payload`, which is supposed to mean §6b lost its
+  button component.
 
 ## Opt-in and opt-out (migration `0025`)
 

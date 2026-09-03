@@ -268,6 +268,13 @@ export function capoWelcome(): TemplateDefinition[] {
  * not add a second button here without giving it the same index-is-a-contract
  * treatment the check-in has.
  *
+ * ⚠ THE LABEL CARRIES NO EMOJI, AND THAT IS META'S RULE. It was written as
+ * "Olá 👋" and refused at submission with error_subcode 2388060: a quick-reply
+ * label may hold no emoji, no variable, no newline and no formatted character.
+ * Nothing in a build catches that — it fails the next time somebody runs
+ * `pnpm whatsapp-template create` and reads Spanish error prose — so
+ * scripts/whatsapp-check.mts now pins it for every buttoned template.
+ *
  * ⚠ A NEW NAME rather than an edit, for capo_daily_briefing_v2's reason: Meta
  * has no API to rewrite an approved name+language pair, and the send path must
  * be able to fall back to the button-less template until every locale of this

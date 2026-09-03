@@ -1761,6 +1761,13 @@ for (const def of defs) {
   check(`${label} — every button is a quick reply`, buttons.every(b => b.type === 'QUICK_REPLY'));
   for (const b of buttons) {
     check(`${label} — "${b.text}" is 1..25 chars`, b.text.length >= 1 && b.text.length <= 25, `${b.text.length}`);
+    // Meta refuses a quick-reply label carrying an emoji, a variable, a newline
+    // or any formatted character — error_subcode 2388060 at SUBMISSION time,
+    // which is the one failure this repo cannot see until somebody runs
+    // `pnpm whatsapp-template create` and reads Spanish error prose. It cost
+    // capo_welcome_v2 the waving hand it was written with.
+    check(`${label} — "${b.text}" carries no emoji`, !/\p{Extended_Pictographic}/u.test(b.text), b.text);
+    check(`${label} — "${b.text}" is one plain line`, !/[\n\t]|\{\{/.test(b.text), b.text);
   }
 
   if (def.name === 'capo_welcome_v2') {

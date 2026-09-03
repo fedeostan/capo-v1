@@ -1024,7 +1024,7 @@ const dict: Catalog = {
       const who = names ? `: ${names}` : '';
       return `Apresentei-me a ${notified} ${notified === 1 ? 'pessoa nova' : 'pessoas novas'} da equipa no WhatsApp${who}.`;
     },
-    welcomeButton: 'Olá 👋',
+    welcomeButton: 'Olá!',
   },
 };
 

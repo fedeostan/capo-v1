@@ -1863,7 +1863,15 @@ export interface Catalog {
      */
     welcomeEvent(args: { notified: number; names: string }): string;
     /**
-     * The welcome's ONE quick-reply button label ("Olá 👋").
+     * The welcome's ONE quick-reply button label ("Olá!").
+     *
+     * ⚠ NO EMOJI, AND THAT IS META'S RULE RATHER THAN A TASTE. A quick-reply
+     * label containing an emoji, a variable, a newline or any formatted
+     * character is refused at SUBMISSION with error_subcode 2388060 ("los
+     * botones no pueden contener variables, nuevas líneas, emojis ni caracteres
+     * con formato"), which is how this label lost the waving hand it was
+     * written with. Adding one back does not fail at build time, it fails the
+     * next time somebody submits a template.
      *
      * ⚠ IT IS APPROVED COPY, NOT APP COPY. It rides the Meta template
      * capo_welcome_v2, whose buttons are frozen at approval exactly as its body
