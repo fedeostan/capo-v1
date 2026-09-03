@@ -90,12 +90,103 @@ const BUDGET: Record<string, number> = {
  * Whole-line only, never trailing: a `//` inside a string literal is a URL far
  * more often than it is a comment, and mistaking one for the other would hide
  * real copy from the scan.
+ *
+ * ── Why this reads block-comment STATE and not the first character ─────────
+ *
+ * The first version of this filter dropped every line whose first
+ * non-whitespace was `//`, `*` or a block-comment opener. The `*` was there to
+ * catch a JSDoc continuation line. It also caught this, which is not a comment
+ * at all but live instruction text sent to the model on every single turn:
+ *
+ *     **When the two disagree, the live fact wins — every time, silently.**
+ *
+ * The prompt files are Markdown inside template literals, so a bold run, a
+ * bold heading and a `*` bullet all begin with the very character the filter
+ * was using as its proof of a comment. Every long dash in the orchestration
+ * policy sat on a line like that, and the gate reported the file green at
+ * zero: the one file the whole finding was about was the one file the gate
+ * could not see.
+ *
+ * Tightening the pattern instead (a JSDoc `*` is followed by a space or the
+ * end of the line; a bold run is `**` followed by a non-space) would have
+ * fixed that one example and left the class of bug standing, because a
+ * Markdown bullet is also `*` followed by a space and is indistinguishable
+ * from a JSDoc line by appearance alone. The character a line starts with is
+ * not evidence about what the line IS. Where the line sits, inside a comment
+ * block or outside one, is evidence, so that is what is read here: a line
+ * inside a block comment is a comment whatever it starts with, and a line
+ * outside one is content whatever it starts with.
+ *
+ * Two deliberate pieces of conservatism, both in the direction of counting too
+ * much rather than too little:
+ *
+ *   A block is only ever ENTERED from a line whose first non-whitespace opens
+ *   one, which is what the old filter already assumed, so an opener appearing
+ *   mid-line inside a string cannot black out the file behind it.
+ *
+ *   A block that is opened and never closed would hide everything after it in
+ *   exactly the way the old filter hid those prompt lines, silently. It is
+ *   reported to the caller and fails the file instead of being counted.
  */
-function stringsOnly(body: string): string {
-  return body
-    .split('\n')
-    .filter(line => !/^\s*(\/\/|\*|\/\*)/.test(line))
-    .join('\n');
+type Stripped = { text: string; unterminated: boolean };
+
+function stringsOnly(body: string): Stripped {
+  const kept: string[] = [];
+  let inBlock = false;
+
+  for (const line of body.split('\n')) {
+    if (inBlock) {
+      if (line.includes('*/')) inBlock = false;
+      continue;
+    }
+
+    const trimmed = line.trimStart();
+
+    if (trimmed.startsWith('//')) continue;
+
+    if (trimmed.startsWith('/*')) {
+      // A block opened and closed on the same line is just a one-line comment.
+      if (!line.includes('*/', line.indexOf('/*') + 2)) inBlock = true;
+      continue;
+    }
+
+    kept.push(line);
+  }
+
+  return { text: kept.join('\n'), unterminated: inBlock };
+}
+
+/**
+ * The filter above guards the rest of this file, and nothing guards the
+ * filter. It shipped with a blind spot that made the gate report zero on the
+ * file it was written for, so its two halves are asserted here, on a fixture,
+ * before a single real file is opened: a comment must be dropped and Markdown
+ * must survive. A gate that cannot see the text it is scanning is worse than
+ * no gate, because it reports green while it does it.
+ */
+function checkTheFilter(): void {
+  const fixture = [
+    '/**',
+    ' * A JSDoc line with a — dash in it.',
+    ' * @param x nothing',
+    ' */',
+    '// A whole-line comment with a — dash in it.',
+    'export const block = `',
+    '**A bold Markdown heading — kept.**',
+    '* A Markdown bullet — kept.',
+    'Ordinary prompt text — kept.',
+    '`;',
+  ].join('\n');
+
+  const stripped = stringsOnly(fixture);
+  const found = (stripped.text.match(DASHES) ?? []).length;
+
+  if (stripped.unterminated) fail('the comment filter lost track of a closed block comment.');
+  if (found !== 3) {
+    fail(
+      `the comment filter counted ${found} dash(es) in its own fixture, expected 3 (the two comment lines dropped, the three Markdown lines kept).`,
+    );
+  }
 }
 
 function tsFiles(dir: string): string[] {
@@ -117,8 +208,14 @@ function fail(message: string): void {
 function scan(dir: string, modelFacing: boolean): void {
   for (const file of tsFiles(dir)) {
     scanned += 1;
-    const body = stringsOnly(readFileSync(file, 'utf8'));
-    const found = (body.match(DASHES) ?? []).length;
+    const stripped = stringsOnly(readFileSync(file, 'utf8'));
+
+    if (stripped.unterminated) {
+      fail(`${file}: a block comment is opened and never closed, so everything after it would be dropped unread. Refusing to count this file.`);
+      continue;
+    }
+
+    const found = (stripped.text.match(DASHES) ?? []).length;
     const budget = BUDGET[file] ?? 0;
 
     if (found > budget) {
@@ -138,6 +235,7 @@ function scan(dir: string, modelFacing: boolean): void {
 }
 
 console.log('Voice check\n');
+checkTheFilter();
 console.log('model-facing (budget: zero, always)');
 for (const dir of MODEL_FACING) scan(dir, true);
 console.log('user-facing (budget: ratcheting down)');
