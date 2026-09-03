@@ -16,6 +16,7 @@ import { jobPauseTools } from './job-pause';
 import { onboardingTools } from './onboarding';
 // #123: reaching one crew member. Unguarded on purpose, see message-worker.ts.
 import { crewMessageTools } from './message-worker';
+import { requestMaterialsTools } from './request-materials';
 import { managerInstructionField, runGuarded } from './guard';
 import type { CapoTool, ToolContext } from './types';
 
@@ -30,7 +31,10 @@ import type { CapoTool, ToolContext } from './types';
 // reschedule_job is the third of that family — apply_reschedule is likewise
 // absent here. pause_job (issue #95) is the fourth: apply_job_pause erases
 // dates, which nothing in its payload could put back, so it lives only in
-// propose.ts.
+// propose.ts. add_requested_materials (issue #152 follow-up) is the fifth:
+// apply_request_materials puts a crew member's request on the buy list, which
+// has no delete path in chat, and "sim, adiciona isso aos materiais" is a
+// sentence the model can always quote, so it too lives only in propose.ts.
 //
 // crew_requests (issue #152's follow-up) is the one entry here that reads
 // WORKER-AUTHORED text. It is a read, so it is unguarded like every other read,
@@ -51,6 +55,7 @@ export const roster: CapoTool[] = [
   ...rescheduleTools,
   ...jobPauseTools,
   ...crewMessageTools,
+  ...requestMaterialsTools,
   propose,
   generatePlan,
   // Appended at the END, and it must stay there: the tool cache breakpoint
