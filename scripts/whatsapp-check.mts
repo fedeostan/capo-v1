@@ -100,7 +100,7 @@ import {
   type ApprovalLabels,
 } from '@capo/core/channels/whatsapp';
 import { getCatalog } from '@capo/i18n/catalog';
-import { LOCALES } from '@capo/i18n/locale';
+import { LOCALES, type Locale } from '@capo/i18n/locale';
 import { allTemplates, MANAGED_TEMPLATE_NAMES, TEMPLATE_LANGUAGES } from './whatsapp-templates.ts';
 // The free-form renderer lives in the web app rather than @capo/core, for the
 // same reason renderWorkerBriefing does: it needs the USER copy catalog, which
@@ -124,6 +124,18 @@ import {
   BRIEFING_V2_APPROVED_LANGUAGES,
   briefingTemplateFor,
 } from '../apps/web/lib/briefing-template.ts';
+// The IMMEDIATE ASSIGNMENT NOTE (issue W7). Pure renderers plus the two gates
+// that decide whether anything is sent at all — the working-day hours and the
+// per-locale template approval — reached the same way and for the same reason.
+import {
+  renderAssignmentMessage,
+  renderAssignmentTemplateParam,
+} from '../apps/web/lib/task-assigned-message.ts';
+import {
+  TASK_ASSIGNED_APPROVED_LANGUAGES,
+  taskAssignedTemplateApproved,
+} from '../apps/web/lib/task-assigned-template.ts';
+import { withinAssignmentHours } from '../apps/web/lib/task-assigned-window.ts';
 // The GUIDED MENU (issue #49). Pure renderers over the same rows the briefing
 // reads, reached the same way — no Db, no clock, no network.
 import {
@@ -3119,6 +3131,136 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   check('30 February is refused rather than rolled into March', !neededByIsSane('2026-02-30', now));
   check('a non-date is refused', !neededByIsSane('amanhã', now));
   check('a timestamp is refused — the column is a DAY', !neededByIsSane('2026-09-01T08:00:00Z', now));
+}
+
+// ── the immediate assignment note (issue W7) ────────────────────────────────
+//
+// "When we assign a new task to a worker we need to send it immediately, only
+// in working hours." Before this, a task given to somebody at nine in the
+// morning reached them at 07:00 the NEXT day, and nothing told the manager the
+// person had not been told.
+//
+// Four things are pinned here, and each of them is a defect with no build-time
+// signal:
+//   * The message must say WHY it arrived. Reusing the 07:00 greeting would
+//     open an afternoon message with "Bom dia".
+//   * The new task must be MARKED. The whole day is sent, so an unmarked one
+//     makes the reader hunt for the change.
+//   * The marker must be a PREFIX. `taskHeadline` renders "Pintar tecto (Casa
+//     de Paco)", so a suffix produces two unrelated parentheses in a row.
+//   * The paid template must not go out to a locale Meta has not approved:
+//     that is a 132001 per recipient, which reads as a broken send rather than
+//     as a missing approval.
+{
+  const NEW_TASK = '11111111-1111-4111-8111-111111111111';
+  const OLD_TASK = '22222222-2222-4222-8222-222222222222';
+
+  function assignmentTask(id: string, title: string): BriefingTask {
+    return {
+      id,
+      title,
+      job_name: 'Casa de Paco',
+      overdue: false,
+      days_overdue: 0,
+      description: null,
+      materials: [],
+      job_address: null,
+      waiting_on: [],
+      awaiting_review: false,
+      due_date: null,
+      role: 'lead',
+    };
+  }
+
+  function assignmentBriefing(locale: Locale): WorkerBriefing {
+    return {
+      workerId: uuid,
+      name: 'Miguel',
+      recipient: { kind: 'phone', waId },
+      locale,
+      hasChosenLanguage: false,
+      tasks: [assignmentTask(NEW_TASK, 'Pintar tecto'), assignmentTask(OLD_TASK, 'Canalização')],
+      lastInboundAt: new Date().toISOString(),
+    };
+  }
+
+  for (const locale of LOCALES) {
+    const t = getCatalog(locale).reminders;
+    const body = renderAssignmentMessage(assignmentBriefing(locale), new Set([NEW_TASK]));
+
+    check(
+      `${locale}: the note opens by saying a task was just assigned`,
+      body.startsWith(t.assignmentGreeting('Miguel')),
+      body.slice(0, 80),
+    );
+    // NOT the morning greeting. This message goes out at any hour of the
+    // working day, and "Bom dia" at 15:00 is the tell that a renderer was
+    // reused without being read.
+    check(
+      `${locale}: and NOT with the 07:00 greeting`,
+      !body.includes(t.freeFormGreeting('Miguel')),
+      body.slice(0, 80),
+    );
+    // The rest of the day is still there, unmarked, from the SAME renderer the
+    // 07:00 briefing uses.
+    check(`${locale}: the whole day is carried, not just the new task`, body.includes('Canalização'), body);
+    check(`${locale}: the new task is marked`, body.includes(t.taskNewlyAssigned('Pintar tecto')), body);
+    check(
+      `${locale}: and the task they already knew about is NOT`,
+      !body.includes(t.taskNewlyAssigned('Canalização')),
+      body,
+    );
+    // A PREFIX. "Pintar tecto (nova) (Casa de Paco)" is what a suffix produces.
+    check(
+      `${locale}: the marker sits in front of the title, not between it and the obra`,
+      body.includes(`${t.taskNewlyAssigned('Pintar tecto')} `) || body.includes(t.taskWithJob(t.taskNewlyAssigned('Pintar tecto'), 'Casa de Paco')),
+      body,
+    );
+    check(`${locale}: the obra survives the marking`, body.includes('Casa de Paco'), body);
+
+    // The paid template's {{2}}: only what is new, and one flat line — Meta
+    // rejects a newline in a body parameter with 132000.
+    const param = renderAssignmentTemplateParam([assignmentTask(NEW_TASK, 'Pintar tecto')], locale);
+    check(`${locale}: the template parameter names the new task`, param.includes('Pintar tecto'), param);
+    check(`${locale}: and carries no newline`, !param.includes('\n'), JSON.stringify(param));
+    check(
+      `${locale}: and does NOT carry the rest of the day`,
+      !param.includes('Canalização'),
+      param,
+    );
+  }
+
+  // The day link rides this message exactly as it rides the 07:00 one.
+  const LINK = 'https://www.construcapo.com/dia?t=abc123';
+  const linked = renderAssignmentMessage(assignmentBriefing('pt-PT'), new Set([NEW_TASK]), {
+    dayLinkUrl: LINK,
+  });
+  check('the crew day link rides the assignment note', linked.includes(LINK), linked.slice(-160));
+
+  // ── the two gates ─────────────────────────────────────────────────────────
+  // Quiet hours. The full window is asserted in scripts/scheduler-check.mts,
+  // beside the other Lisbon-hour gates; what is pinned HERE is that the SEND
+  // path consults one at all — a manager doing admin at midnight must not wake
+  // their crew.
+  check('nothing is announced at 03:00', !withinAssignmentHours(3));
+  check('nothing is announced at 23:00', !withinAssignmentHours(23));
+  check('an assignment at midday is announced', withinAssignmentHours(12));
+
+  // The approval switch, which is what stands between an unapproved template
+  // and a 132001 for every out-of-window crew member. It starts EMPTY on
+  // purpose: until Meta approves capo_task_assigned, an out-of-window person
+  // gets nothing extra and still gets the task in tomorrow's 07:00 briefing.
+  for (const language of TEMPLATE_LANGUAGES) {
+    eq(
+      `capo_task_assigned in ${language} is only sent when approved`,
+      taskAssignedTemplateApproved(language),
+      TASK_ASSIGNED_APPROVED_LANGUAGES.has(language),
+    );
+  }
+  check(
+    'an unknown locale code is never treated as approved',
+    !taskAssignedTemplateApproved('fr_FR'),
+  );
 }
 
 // ── report ──────────────────────────────────────────────────────────────────
