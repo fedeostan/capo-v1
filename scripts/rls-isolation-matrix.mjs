@@ -618,6 +618,28 @@ async function seedTenant(label) {
     `worker_day_link(${label})`,
   );
 
+  // 0048 (issue W7): the assignment-notice queue. Deny-all with every grant
+  // revoked, like the two tables above — and seeded for the same reason: a
+  // deny-all read that passes because the table is EMPTY has proved nothing.
+  //
+  // A row here is not a record of a message, it is an INSTRUCTION to send one:
+  // the drain reads it on the service role and puts a WhatsApp message in
+  // Capo's voice on a real crew member's phone. So the write attacks matter as
+  // much as the read.
+  //
+  // `queued_date` is set explicitly rather than left to lisbon_today(), because
+  // the trigger this migration installs has very likely ALREADY written a row
+  // for (task1, worker) dated today — the seed above assigns task1 — and the
+  // unique key is (task_id, worker_id, queued_date). A fixed past date cannot
+  // collide with it.
+  const assignmentNotice = await must(
+    admin.from('task_assignment_notices').insert({
+      company_id: companyId, task_id: task1.id, worker_id: worker.id,
+      queued_date: '2026-01-05',
+    }).select().single(),
+    `task_assignment_notice(${label})`,
+  );
+
   const client = createClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: false },
   });
@@ -637,6 +659,7 @@ async function seedTenant(label) {
     pushEndpoint, colleaguePushEndpoint,
     workerConversationId: workerConversation.id, workerMessageId: workerMessage.id, workerSecret,
     dayLinkToken,
+    assignmentNoticeId: assignmentNotice.id,
   };
 }
 
@@ -732,6 +755,10 @@ async function cleanupTenant(t) {
   // but worker_id is a plain FK and would strand the company.
   await companyEq(admin.from('worker_requests').delete());
   await admin.from('task_dependencies').delete().in('task_id', t.taskIds);
+  // Before tasks and before workers: task_assignment_notices holds a FK to each
+  // (0048). The task FK cascades, the worker FK deliberately does not, so an
+  // explicit delete here is what keeps the order honest rather than lucky.
+  await companyEq(admin.from('task_assignment_notices').delete());
   await companyEq(admin.from('tasks').delete());
   await companyEq(admin.from('memories').delete());
   await companyEq(admin.from('memory_consolidations').delete());
@@ -940,6 +967,17 @@ async function runMatrix(self, other) {
   {
     const { data, error } = await db.from('worker_day_links').select('token');
     check(`${L}: worker_day_links deny-all (bonus)`, ...readIsDenied(data, error));
+  }
+
+  // task_assignment_notices (0048, issue W7) — the sixth deny-all relation, and
+  // the only one whose rows are an INSTRUCTION rather than a record: the drain
+  // turns one into a WhatsApp message, in Capo's voice, on a crew member's
+  // phone. Reading one tells an attacker who was just put on what; both
+  // tenants' seeded rows exist by the time this runs, so a policy exposing
+  // every company would show TWO here.
+  {
+    const { data, error } = await db.from('task_assignment_notices').select('id');
+    check(`${L}: task_assignment_notices deny-all (bonus)`, ...readIsDenied(data, error));
   }
 
   // problem_reports (0042, issue #120) — write-only for tenants, like ai_usage
@@ -1832,6 +1870,127 @@ async function runAdversarial(attacker, victim) {
       'adversarial: cross-company crew day token blocked by the FK trigger',
       error != null,
       error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a token can name another tenant\'s worker!',
+    );
+  }
+
+  // ── 0048 task_assignment_notices (issue W7) ──────────────────────────────
+  // The assignment-notice queue. Deny-all with every grant revoked, so these
+  // are grant-layer checks — and what they protect is the ability to make Capo
+  // SPEAK. Every other deny-all table here records something that happened; a
+  // row in this one is an instruction that has not been carried out yet.
+  //
+  // Five attacks, each buying something different:
+  //   READ   a foreign notice — who was just put on which job, in another
+  //          company, with the timing of that manager's own working day.
+  //   INSERT a notice of the attacker's choosing — the drain would then send a
+  //          WhatsApp message in Capo's voice about a task the attacker picked.
+  //   UPDATE stamping notified_at on their own crew's rows — the SILENCING
+  //          attack: the queue drains, nobody is told, and the outcome column
+  //          says a decision was made.
+  //   DELETE the row — the same silencing, with no trail at all.
+  //   FK     a row whose company_id is honest and whose worker_id belongs to
+  //          another tenant, on the SERVICE ROLE, which is the only writer
+  //          there actually is.
+  //
+  // The read is aimed CROSS-TENANT and the three writes at the attacker's OWN
+  // company, for the reason the checkin_photo_requests block gives: a
+  // cross-tenant write would be refused for the wrong reason (the FK trigger
+  // rather than the grant), and would pass while the grant leaked.
+  //
+  // WRITTEN BUT NOT YET RUN. 0048 was unapplied when these were added, so this
+  // block is unverified against a live database. Two shapes are both legitimate
+  // passes and readIsDenied accepts either: a table with a SELECT grant and no
+  // policy answers `0 rows, no error`, while one that also revokes every grant
+  // — which 0048 does — answers 42501 before RLS is consulted. It deliberately
+  // rejects 42P01: a table the migration never created must not read as secure.
+  {
+    const { data, error } = await db
+      .from('task_assignment_notices')
+      .select('company_id, worker_id, task_id')
+      .eq('id', victim.assignmentNoticeId);
+    check(
+      "adversarial: reading another tenant's assignment notice blocked",
+      ...readIsDenied(data, error),
+    );
+  }
+  {
+    const { error } = await db.from('task_assignment_notices').insert({
+      company_id: attacker.companyId,
+      task_id: attacker.taskIds[0],
+      worker_id: attacker.workerId,
+      queued_date: '2026-01-08',
+    });
+    check(
+      'adversarial: tenant queueing its own assignment notice blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a tenant can make Capo send a message!',
+    );
+    if (!error) {
+      await admin
+        .from('task_assignment_notices')
+        .delete()
+        .eq('company_id', attacker.companyId)
+        .eq('queued_date', '2026-01-08');
+    }
+  }
+  {
+    const { error } = await db
+      .from('task_assignment_notices')
+      .update({ notified_at: new Date().toISOString(), outcome: 'sent_free_form' })
+      .eq('id', attacker.assignmentNoticeId);
+    check(
+      'adversarial: tenant silencing its own assignment notice blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a tenant can mark the crew as told',
+    );
+  }
+  {
+    const { error } = await db
+      .from('task_assignment_notices')
+      .delete()
+      .eq('id', attacker.assignmentNoticeId);
+    check(
+      'adversarial: tenant DELETE of its own assignment notice blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
+  {
+    const { error } = await admin.from('task_assignment_notices').insert({
+      company_id: attacker.companyId,
+      task_id: attacker.taskIds[0],
+      worker_id: victim.workerId,
+      queued_date: '2026-01-09',
+    });
+    check(
+      'adversarial: cross-company assignment notice blocked by the FK trigger',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : "ACCEPTED — a notice can name another tenant's worker!",
+    );
+    if (!error) {
+      await admin
+        .from('task_assignment_notices')
+        .delete()
+        .eq('company_id', attacker.companyId)
+        .eq('queued_date', '2026-01-09');
+    }
+  }
+  // THE POSITIVE CONTROL, and this file needs it more here than almost
+  // anywhere: every assertion above is a REFUSAL, so a table that had been
+  // dropped, or one nobody could write at all, would pass all five while the
+  // feature was completely dead. The service role is the only actor that may
+  // touch this queue, and the drain is useless if it cannot read it back —
+  // with notified_at still null, which is what "still queued" means.
+  {
+    const { data, error } = await admin
+      .from('task_assignment_notices')
+      .select('id, notified_at')
+      .eq('id', attacker.assignmentNoticeId)
+      .maybeSingle();
+    check(
+      'control: the service role still reads the assignment queue',
+      !error && data?.id === attacker.assignmentNoticeId && data?.notified_at === null,
+      error ? `error=${error.code ?? error.message}` : `row=${JSON.stringify(data)}`,
     );
   }
 
