@@ -10,7 +10,7 @@ import { toAiTools } from '../capabilities';
 import type { Db } from '@capo/db/client';
 import type { ConfirmPosture } from '@capo/db/posture';
 import type { LocaleContext } from '@capo/i18n/locale';
-import type { ToolContext } from '../capabilities/types';
+import type { ToolContext, WorkerMessenger } from '../capabilities/types';
 import type { InboundMessage, OutboundSink } from '../channels/types';
 import { withToolCacheBreakpoint } from './cache';
 import { buildSystemPrompt } from './context';
@@ -62,6 +62,12 @@ export interface HandleInboundOptions {
   // this package reads no environment. Required for the same reason
   // confirmPosture is: see ToolContext.appUrl.
   appUrl: string;
+  // How `message_worker` reaches one crew member on WhatsApp (issue #123).
+  // Required and nullable for the same reason confirmPosture is required: a
+  // channel lost by omission would be silent. Null is the safe direction here
+  // though, not the risky one — the tool reports that it could not send.
+  // See ToolContext.messageWorker.
+  messageWorker: WorkerMessenger | null;
   inbound: InboundMessage;
   sink: OutboundSink;
 }
@@ -215,7 +221,8 @@ async function runTurnIteration(
   conversationId: string,
   lock: TurnRef | null,
 ): Promise<string | null> {
-  const { db, companyId, userId, locales, confirmPosture, appUrl, inbound, sink } = opts;
+  const { db, companyId, userId, locales, confirmPosture, appUrl, messageWorker, inbound, sink } =
+    opts;
 
   const window = await loadWindow(db, conversationId);
   const thread = toThread(window);
@@ -229,6 +236,7 @@ async function runTurnIteration(
     userId,
     confirmPosture,
     appUrl,
+    messageWorker,
     locales,
   };
 

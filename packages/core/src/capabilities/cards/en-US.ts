@@ -30,6 +30,7 @@ export const cards: CardStrings = {
     sameLanguage: 'The data is already in that language',
     languageMoved: 'The company data language has changed in the meantime',
     nothingToTranslate: 'There is nothing to translate',
+    requestNotFound: id => `Crew request not found (${id})`,
   },
 
   createTask: p => {
@@ -157,6 +158,18 @@ export const cards: CardStrings = {
     more: n => `… and ${n} more task${n === 1 ? '' : 's'}.`,
     footer:
       'The tasks stay on the job and on the board. They lose their booked day, stop counting as overdue, and the crew stops getting them in the morning. Put the dates back when you know them.',
+  },
+
+  requestMaterials: {
+    header: p => {
+      const where = p.jobName ? `"${p.taskTitle}" (${p.jobName} job)` : `"${p.taskTitle}"`;
+      const when = p.neededBy ? `needed by ${p.neededBy}` : 'no date given';
+      return `${p.workerName} asked for materials, ${when}. Add to the task ${where}:`;
+    },
+    row: material => `• ${material}`,
+    existing: list => `Already on the list: ${list.join(', ')}.`,
+    footer:
+      "Approve and these go on this task's buy list. To take one off later you have to open the task and remove it by hand. The words of the request are in your notifications.",
   },
 
   plan: {

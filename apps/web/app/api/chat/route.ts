@@ -2,9 +2,12 @@ import { after } from 'next/server';
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from 'ai';
 import { handleInbound } from '@capo/core/agent';
 import { webSink } from '@capo/core/channels/web';
+import { getDb } from '@capo/db/client';
 import { getApiAuth } from '@capo/db/session';
 import { assertNotBlocked, BillingBlockedError } from '@/lib/billing';
 import { siteUrl } from '@/lib/site-url';
+import { whatsappSendEnv } from '@/lib/whatsapp';
+import { whatsappWorkerMessenger } from '../../notifications/worker-message';
 import { logEvent } from '../../../lib/log';
 import { drainAssignmentNotices } from '../../notifications/task-assigned';
 import { welcomeAnyoneNew } from '../../../lib/welcome-trigger';
@@ -56,6 +59,18 @@ export async function POST(req: Request) {
         // dashboard at the end of the setup conversation. Read here rather than
         // in @capo/core, which touches no environment by contract.
         appUrl: siteUrl(),
+        // Reaching one crew member (issue #123). The SERVICE client, and
+        // deliberately not `auth.db`: a WhatsApp send has to claim a row in
+        // notification_log, which is deny-all for tenants (0016), and the paid
+        // ledger is a system concern. What keeps it inside this tenant is
+        // `companyId`, which the messenger scopes every read by, and which
+        // comes off the session rather than off anything the model wrote.
+        //
+        // Env is read HERE, inside the handler, never at module scope: a
+        // module-scope read of a secret breaks `next build` in CI. A missing
+        // WhatsApp config yields null, and Capo says it cannot reach the crew
+        // rather than pretending it did.
+        messageWorker: whatsappWorkerMessenger(getDb, whatsappSendEnv()),
         locales: { user: auth.locale, company: auth.companyLocale },
         inbound: { channel: 'web', text },
         sink: webSink(writer),

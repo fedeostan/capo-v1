@@ -41,6 +41,10 @@ export interface CardStrings {
      *  referential re-check — the analogue of a dangling job id. */
     languageMoved: string;
     nothingToTranslate: string;
+    /** The crew request behind an apply_request_materials card is gone. Its
+     *  referential check, the analogue of a dangling job id: the card names
+     *  who asked and when for, and both are read back off that row. */
+    requestNotFound(id: string): string;
   };
 
   createTask(p: {
@@ -216,6 +220,45 @@ export interface CardStrings {
      *  the persisted audit artifact, quoted byte-identically on resolution. */
     more(n: number): string;
     /** The last line: what does NOT happen. */
+    footer: string;
+  };
+
+  /** What the crew asked for, going onto a task's buy list
+   *  (apply_request_materials, issue #152 follow-up).
+   *
+   *  ⚠ THIS CARD MAY NOT QUOTE THE CREW MEMBER, and the signature is what
+   *  enforces it: there is no parameter the words could go in, the same shape
+   *  renderCheckinAnswerEvent keeps and for the same reason. `rendered_text` is
+   *  quoted into an `event` row in `messages` when the manager taps, and
+   *  `messages` is the table thread.recentUserTexts reads. So a quote on this
+   *  card is worker-authored prose in the manager's own thread, which is the
+   *  one thing 0027, 0043 and AGENTS.md all forbid. Adding a `text` parameter
+   *  here breaks that boundary and `scripts/rls-isolation-matrix.mjs`'s
+   *  checkWorkerTextIsolation is what would catch it.
+   *
+   *  What the manager gets instead: the crew member's NAME (typed by the
+   *  manager on the crew screen), the day it is needed for, the task and the
+   *  obra, the exact lines being added, what is already on the list, and a
+   *  pointer to the notifications where the words are already rendered as an
+   *  attributed quote. */
+  requestMaterials: {
+    header(p: {
+      workerName: string;
+      taskTitle: string;
+      jobName?: string;
+      /** Pre-formatted, like every other date on a card. Absent means the crew
+       *  member never said when, which is a first-class answer (0043) and must
+       *  be shown as undated rather than guessed at. */
+      neededBy?: string;
+    }): string;
+    /** One line being ADDED. Never a line being removed: this card only ever
+     *  appends, so there is no "before" to show per row. */
+    row(material: string): string;
+    /** What the task already carries, so the manager can see he is not being
+     *  asked to buy the same thing twice. Omitted entirely when empty. */
+    existing(list: string[]): string;
+    /** The last line: that approving is not cheaply undone, and where the crew
+     *  member's own words are. */
     footer: string;
   };
 

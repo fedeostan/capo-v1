@@ -1319,6 +1319,66 @@ Structural invariants (do not regress):
     loop back DOWN to the crew member ("handled") is the flagged follow-up —
     it needs a manager action that produces a proactive send, which outside the
     window is a paid template that does not exist.
+- **The manager can now reach ONE crew member on purpose, and the tool's whole
+  contract is saying WHICH of three things happened** (`message_worker`, issue
+  #123). This is the other direction of the pipe #152 opened, and it closes a
+  refusal that was structural rather than a model failure: a crew member asked
+  for materials, the manager said "pergunta-lhes de que material precisam", and
+  Capo apologised, correctly, because nothing in the roster could put a word in
+  front of a crew member. Seven things:
+  - **THE LADDER HAS THREE RUNGS AND ONLY THE FIRST ONE DELIVERS.** Inside the
+    crew member's own 24-hour window an ordinary free-form message goes out,
+    free and verbatim. Outside it, free-form is refused whole (131047) and the
+    only legal contact is `capo_message_waiting`, a WINDOW REOPENER whose frozen
+    body says a message is waiting and asks them to reply: **the manager's words
+    do not travel with it.** If that fails, nothing reached them.
+  - **`nudged` may NEVER be rounded up to `sent`.** That is why
+    `WorkerMessageOutcome` is a three-valued enum rather than a boolean: the
+    middle value is the one a summary flattens, and flattening it recreates the
+    exact incident this feature exists to end, pointed the other way. The
+    orchestration policy makes stating the outcome a rule, and every string in
+    it is Capo's own copy.
+  - **It is UNGUARDED, and that is a decision about honesty rather than about
+    risk appetite.** Guarded plus the `always_ask` default would make it an
+    approval card, and on that path `resolveProposal` DISCARDS the tool's return
+    value: the manager is shown `rendered_text` echoed by `events.approved` on
+    the web and the flat `whatsapp.proposalApproved` on WhatsApp. For every
+    other tool that echo is honest by construction; here it would assert a
+    delivery that may not have happened. Revisit if the proposal machinery ever
+    grows a way to surface an executed tool's outcome. What replaces the guard
+    is structural: one named person per call with no broadcast, the same
+    fail-closed consent gate the crons use, `ctx.companyId` scoping the lookup,
+    one paid nudge per person per day, and no domain mutation at all.
+  - **`ToolContext.messageWorker` is an INJECTED FUNCTION, not a channel
+    config**, and required-but-nullable. A config would mean reimplementing
+    `recipientFor`'s phone-before-BSUID preference and `partitionCrew`'s consent
+    gate inside `@capo/core`, which is the second copy of an addressing rule
+    AGENTS.md forbids; and the crew member's own copy comes from the catalog,
+    which must never enter the agent bundle. **`WorkerContext` must never gain
+    this field** — a crew member able to make Capo message another crew member
+    on the manager's behalf is an escalation, and the two context types stay
+    mutually unassignable so `tsc` refuses it.
+  - **The FREE rung writes nothing to `notification_log`; the PAID rung claims
+    it under `kind = 'manager_message'`.** Same split, and the same reasoning, as
+    `worker_requests.manager_notified_at` next door: that table is the paid
+    template ledger and its unique key is the only thing preventing a
+    double-billed send. Under its own kind the nudge collides with neither daily
+    send AND is capped at one per person per Lisbon day, which is the
+    double-billing guard. `kind` carries no CHECK in 0016, so **no migration**.
+  - **Consent gates BOTH rungs, including the free one.** `hasWhatsAppConsent`
+    is documented as governing proactive sends, and Capo answering somebody's
+    own message is not one. This is neither: the crew member did not ask for it,
+    the manager did, which is exactly the class of message an opt-out exists to
+    stop. It goes through `partitionCrew` over a one-element array rather than
+    calling the predicate directly, so 0025's rule stays in one copy.
+  - Known and NOT done, stated rather than buried: **there is no held-message
+    queue, so rung 3 does not fall back to the 07:00 briefing.** Holding the
+    words needs a durable per-worker text column plus a delivered marker, and no
+    table in this schema can carry one — it is a migration, and this change
+    deliberately made none. Until it exists the honest answer is the one Capo
+    gives. ⚠ **`capo_message_waiting` was submitted 31 Aug 2026 and its approval
+    at Meta has never been confirmed**; until all three locales are approved,
+    rung 2 fails with 132001 every time (runbook §6d).
 - **The worker roster is an ALLOWLIST in its own type system, never a filter
   over `roster`.** `packages/core/src/capabilities/worker/` holds five tools
   (`my_tasks`, `search_knowledge`, `declare_task_done`, `set_my_language`,
