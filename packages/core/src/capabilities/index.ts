@@ -12,6 +12,7 @@ import { propose } from './propose';
 import { generatePlan } from './plan';
 import { rescheduleTools } from './reschedule-propose';
 import { jobPauseTools } from './job-pause';
+import { onboardingTools } from './onboarding';
 import { managerInstructionField, runGuarded } from './guard';
 import type { CapoTool, ToolContext } from './types';
 
@@ -40,6 +41,10 @@ export const roster: CapoTool[] = [
   ...jobPauseTools,
   propose,
   generatePlan,
+  // Appended at the END, and it must stay there: the tool cache breakpoint
+  // (agent/cache.ts) is placed on whatever tool is last, so an insertion in the
+  // middle rewrites every tenant's cached tool prefix for nothing.
+  ...onboardingTools,
 ];
 
 // Mechanical mapping from the roster to AI SDK tools. Guarded writes get the
