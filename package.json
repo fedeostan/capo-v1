@@ -24,7 +24,10 @@
     "knowledge-ingest": "tsx scripts/knowledge-ingest.mts",
     "activity-check": "tsx scripts/activity-check.mts",
     "migration-check": "tsx scripts/migration-drift.mts",
-    "phone-check": "tsx scripts/phone-check.mts"
+    "phone-check": "tsx scripts/phone-check.mts",
+    "onboarding-check": "tsx scripts/onboarding-check.mts",
+    "email-check": "tsx scripts/email-check.mts",
+    "waiver-check": "tsx scripts/waiver-check.mts"
   },
   "devDependencies": {
     "@ai-sdk/google": "^4.0.8",

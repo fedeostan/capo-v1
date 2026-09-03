@@ -301,6 +301,53 @@
 // client that could name it could tick tomorrow), `checked_by` and
 // `checked_at` (both stamped by triggers). The UPDATE grant reaches `status`
 // ALONE. tsc will happily let you set any of them; the database answers 42501.
+//
+// ── PENDING 0047 (issue: photos from the crew), WRITTEN BY HAND ────────────
+// worker_photo_inbox — every photo a crew member sends, staged in the
+// task-photos bucket the moment it arrives so it stops living for exactly one
+// turn. Added by hand for the standing reason: regenerating against a project
+// that lacks the table would silently DELETE this block rather than add it.
+//
+// One consequence while the migration is unapplied, and the code is written to
+// survive it: every query answers 42P01 ("relation does not exist").
+//
+// ⚠ THAT WINDOW IS NOT HYPOTHETICAL AND IT IS NOT SHORT. 0038 sat merged and
+// unapplied for three weeks on this project while the app half was live, and
+// 0026/0027 were once skipped entirely. So the degradation is a designed path
+// rather than a hope, and it is this: `stageInboxPhoto` logs
+// `task_photo.store_failed` and answers null, but it hands the DOWNLOADED BYTES
+// back to the caller, and every branch on the worker path then does what it did
+// before 0047. A bare photo with an open check-in request is written straight
+// to the task by `storeWorkerTaskPhoto`, which touches nothing this migration
+// creates. A bare photo with no request, and a captioned photo, reach the agent
+// carrying the bytes as this turn's photos, and `declare_task_done` writes them
+// the same pre-0047 way.
+//
+// What is LOST in that window, and only this: a photo does not outlive its
+// turn, so "photo now, which job a minute later" fails as it did before, and
+// the "more photos or is that everything?" buttons do not go out. No photo that
+// the pre-0047 product would have kept is lost.
+//
+// Invisible here as usual: this table is deny-all under RLS with ZERO policies
+// and every grant revoked from `authenticated` (checkin_photo_requests'
+// posture). tsc will let a tenant-scoped client select from it; the database
+// refuses at the grant layer. The only writer is the WhatsApp webhook on the
+// service role.
+//
+// ── PENDING 0049 (no-photo waiver), WRITTEN BY HAND ────────────────────────
+// Three things: `task_reviews.photo_waived`, the new `task_photo_waiver_attempts`
+// table, and a fourth argument on `open_task_review`. Added by hand for the
+// standing reason: regenerating against a project that lacks them would
+// silently DELETE these blocks rather than add them.
+//
+// While the migration is unapplied the feature degrades to today's product,
+// deliberately and in one direction only — MORE strictly, never less. The
+// attempt read answers 42P01 and is treated as "no attempts", so a crew member
+// with no photo is asked for one and never waived; the attempt write fails and
+// is logged; and `open_task_review` still exists with three arguments, so
+// nothing that files an ordinary claim is affected. The one visible symptom is
+// that "there is no light" keeps getting the old refusal, which is exactly
+// where the product stands today.
 export type Json =
   | string
   | number
@@ -393,6 +440,33 @@ export type Database = {
           },
         ]
       }
+      // PENDING 0045 — hand-written, not generated. The throttle ledger behind
+      // the account emails the app now sends itself through Resend
+      // (apps/web/lib/auth-email.ts). Service-role only: RLS on, zero policies,
+      // every grant revoked, so nothing on the tenant request path can read or
+      // write it, and it has no foreign keys to describe. Regenerate this block
+      // once 0045 is applied to the live project.
+      auth_email_sends: {
+        Row: {
+          email_lower: string
+          id: string
+          kind: string
+          sent_at: string
+        }
+        Insert: {
+          email_lower: string
+          id?: string
+          kind: string
+          sent_at?: string
+        }
+        Update: {
+          email_lower?: string
+          id?: string
+          kind?: string
+          sent_at?: string
+        }
+        Relationships: []
+      }
       checkin_photo_requests: {
         Row: {
           checkin_date: string
@@ -469,30 +543,42 @@ export type Database = {
       }
       companies: {
         Row: {
+          // PENDING 0046
+          about: string | null
           created_at: string
           id: string
           language: string
           name: string
+          // PENDING 0046
+          onboarded_at: string | null
           stripe_customer_id: string | null
           stripe_subscription_id: string | null
           subscription_status: string
           trial_ends_at: string
         }
         Insert: {
+          // PENDING 0046
+          about?: string | null
           created_at?: string
           id?: string
           language?: string
           name: string
+          // PENDING 0046
+          onboarded_at?: string | null
           stripe_customer_id?: string | null
           stripe_subscription_id?: string | null
           subscription_status?: string
           trial_ends_at?: string
         }
         Update: {
+          // PENDING 0046
+          about?: string | null
           created_at?: string
           id?: string
           language?: string
           name?: string
+          // PENDING 0046
+          onboarded_at?: string | null
           stripe_customer_id?: string | null
           stripe_subscription_id?: string | null
           subscription_status?: string
@@ -1623,6 +1709,65 @@ export type Database = {
           },
         ]
       }
+      // PENDING 0048 — hand-written, not regenerated. task_assignment_notices
+      // is the queue behind "the crew member hears about a new task now"
+      // (0048_task_assignment_notices.sql). Deny-all for tenants: only the
+      // service-role drain ever touches it.
+      task_assignment_notices: {
+        Row: {
+          company_id: string
+          id: string
+          notified_at: string | null
+          outcome: string | null
+          queued_at: string
+          queued_date: string
+          task_id: string
+          worker_id: string
+        }
+        Insert: {
+          company_id: string
+          id?: string
+          notified_at?: string | null
+          outcome?: string | null
+          queued_at?: string
+          queued_date?: string
+          task_id: string
+          worker_id: string
+        }
+        Update: {
+          company_id?: string
+          id?: string
+          notified_at?: string | null
+          outcome?: string | null
+          queued_at?: string
+          queued_date?: string
+          task_id?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_assignment_notices_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_assignment_notices_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_assignment_notices_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       task_photos: {
         Row: {
           byte_size: number
@@ -1722,6 +1867,43 @@ export type Database = {
           },
         ]
       }
+      // PENDING 0049: task_photo_waiver_attempts. Every column is written by
+      // the worker agent on the SERVICE ROLE; the table is deny-all for tenants
+      // (RLS on, zero policies, every grant revoked), so tsc will happily let a
+      // tenant-scoped client select from it and the database answers 42501.
+      task_photo_waiver_attempts: {
+        Row: {
+          attempt_no: number
+          company_id: string
+          conversation_id: string
+          created_at: string
+          id: string
+          inbound_message_id: string
+          task_id: string
+          worker_id: string
+        }
+        Insert: {
+          attempt_no: number
+          company_id: string
+          conversation_id: string
+          created_at?: string
+          id?: string
+          inbound_message_id: string
+          task_id: string
+          worker_id: string
+        }
+        Update: {
+          attempt_no?: number
+          company_id?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          inbound_message_id?: string
+          task_id?: string
+          worker_id?: string
+        }
+        Relationships: []
+      }
       task_reviews: {
         Row: {
           company_id: string
@@ -1729,6 +1911,12 @@ export type Database = {
           declared_by_worker_id: string | null
           id: string
           note: string | null
+          // PENDING 0049. NOT NULL DEFAULT false in the migration, so every
+          // pre-0049 claim reads as false, which is what they all are. A reader
+          // reaching this through `select('*')` on a deploy that landed BEFORE
+          // the migration gets `undefined`, so coerce with `=== true` rather
+          // than trusting the type — same rule the other pending columns take.
+          photo_waived: boolean
           resolved_at: string | null
           resolved_by: string | null
           status: string
@@ -1740,6 +1928,7 @@ export type Database = {
           declared_by_worker_id?: string | null
           id?: string
           note?: string | null
+          photo_waived?: boolean
           resolved_at?: string | null
           resolved_by?: string | null
           status?: string
@@ -1751,6 +1940,7 @@ export type Database = {
           declared_by_worker_id?: string | null
           id?: string
           note?: string | null
+          photo_waived?: boolean
           resolved_at?: string | null
           resolved_by?: string | null
           status?: string
@@ -2292,6 +2482,70 @@ export type Database = {
           },
         ]
       }
+      worker_photo_inbox: {
+        Row: {
+          attached_at: string | null
+          attached_task_id: string | null
+          byte_size: number
+          caption: string | null
+          company_id: string
+          expires_at: string
+          id: string
+          mime: string
+          received_at: string
+          storage_path: string
+          worker_id: string
+        }
+        Insert: {
+          attached_at?: string | null
+          attached_task_id?: string | null
+          byte_size: number
+          caption?: string | null
+          company_id: string
+          expires_at: string
+          id?: string
+          mime: string
+          received_at?: string
+          storage_path: string
+          worker_id: string
+        }
+        Update: {
+          attached_at?: string | null
+          attached_task_id?: string | null
+          byte_size?: number
+          caption?: string | null
+          company_id?: string
+          expires_at?: string
+          id?: string
+          mime?: string
+          received_at?: string
+          storage_path?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_photo_inbox_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_photo_inbox_attached_task_id_fkey"
+            columns: ["attached_task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_photo_inbox_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       worker_requests: {
         Row: {
           category: string | null
@@ -2578,8 +2832,14 @@ export type Database = {
       note_day_link_opened: { Args: { p_token: string }; Returns: undefined }
       lisbon_hour: { Args: never; Returns: number }
       lisbon_today: { Args: never; Returns: string }
+      // PENDING 0049. The three-argument function is DROPPED and recreated with
+      // a fourth, `p_photo_waived boolean default false` — a drop rather than a
+      // `create or replace`, because an extra parameter makes a NEW function in
+      // Postgres and every existing three-argument call would then be an
+      // ambiguous overload. Callers that omit it (the check-in tap path, the
+      // manager's own "pedir controlo") behave exactly as they always have.
       open_task_review: {
-        Args: { p_note?: string; p_task: string; p_worker?: string }
+        Args: { p_note?: string; p_photo_waived?: boolean; p_task: string; p_worker?: string }
         Returns: string
       }
       resolve_task_review: {

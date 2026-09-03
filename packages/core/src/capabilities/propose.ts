@@ -254,6 +254,12 @@ export async function resolveProposal(
   proposalId: string,
   decision: 'approve' | 'reject',
   locales: LocaleContext,
+  // The dashboard address, for the ToolContext the approved tool runs in. A
+  // REQUIRED parameter rather than a pinned placeholder: no proposal-executable
+  // tool reads it today, and handing one a fabricated URL is exactly how that
+  // stops being true silently, in a commit about something else. Same reasoning
+  // as taking both language dials rather than only the user one.
+  appUrl: string,
 ): Promise<ProposalResolution> {
   const e = events[locales.user];
   const { data: row } = await db
@@ -317,6 +323,7 @@ export async function resolveProposal(
       // real posture here: it would let one manager's trust_quote setting change
       // what a card another manager is looking at does.
       confirmPosture: 'always_ask',
+      appUrl,
       locales,
     };
     const result = await target.execute(parsed.data, ctx);

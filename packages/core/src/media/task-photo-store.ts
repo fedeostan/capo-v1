@@ -2,21 +2,37 @@ import type { Db } from '@capo/db/client';
 import {
   TASK_PHOTO_BUCKET,
   checkTaskPhoto,
+  isTaskPhotoMime,
   taskPhotoPath,
   type TaskPhotoMime,
 } from './photos';
+import { errorText, logPhotoStoreFailure } from './photo-log';
+import { photoInboxLive } from './photo-inbox';
 
 // The ONE writer of a crew-sourced task photo.
 //
-// Two paths now put a worker's photo into Storage — the restricted agent's
-// `declare_task_done` (issue #22) and the check-in photo follow-up (issue #52)
-// — and they must not drift, because what they write is an ATTRIBUTION. A
-// `task_photos` row saying `source: 'worker'` is the claim "the crew sent
-// this", and 0023 makes that claim unforgeable at the GRANT layer: `source`,
-// `worker_id` and `uploaded_by` are absent from the tenant's column-scoped
-// INSERT grant, so only a service-role caller can set them. Both callers here
-// are that caller. Having one function say it means there is one place to read
-// to know who is entitled to.
+// TWO functions here put bytes into the bucket, and the difference between them
+// is only WHERE THE BYTES ARE COMING FROM:
+//
+//   attachInboxPhotos    the normal path since 0047. The photo is already in
+//                        Storage, staged under the company's inbox prefix, and
+//                        is MOVED into the task's folder.
+//   storeWorkerTaskPhoto the FALLBACK, and the pre-0047 path. The bytes are in
+//                        memory for this request and are uploaded straight to
+//                        the task's folder. It is what runs when staging failed
+//                        — a deploy that landed before 0047, or a transient
+//                        Storage error — so a photo that the pre-0047 product
+//                        would have kept is still kept.
+//
+// ⚠ NEITHER OF THEM WRITES THE ROW. Both call `insertTaskPhotoRow` below, and
+// that is deliberate: what a `task_photos` row carries is an ATTRIBUTION.
+// `source: 'worker'` is the claim "the crew sent this", and 0023 makes that
+// claim unforgeable at the GRANT layer — `source`, `worker_id` and
+// `uploaded_by` are absent from the tenant's column-scoped INSERT grant, so
+// only a service-role caller can set them. Every caller here is that caller.
+// Two functions asserting an attribution would eventually assert it
+// differently; one function asserting it means there is one place to read to
+// know who is entitled to what.
 //
 // Deliberately separate from ./photos.ts, which is dependency-free because the
 // manager's completion sheet is a CLIENT component and imports it for its
@@ -53,6 +69,37 @@ export interface StoreWorkerPhotoInput {
 }
 
 /**
+ * The ONE place a crew-sourced `task_photos` row is written.
+ *
+ * Both writers above end here. `source: 'worker'` and `worker_id` are the
+ * ATTRIBUTION, and 0023 makes them unforgeable at the grant layer by leaving
+ * them out of the tenant's column-scoped INSERT grant; only the service role
+ * can set them, and every caller of this function is the service role.
+ *
+ * `uploaded_by` is deliberately left to its `auth.uid()` default, which is NULL
+ * for the service role — exactly what a crew-sourced row should carry. Do not
+ * fill it in; there is no profile behind this write.
+ *
+ * Returns the Postgres error message on failure, or null on success. It does
+ * not log: the caller knows which stage it is in and which photo it was for.
+ */
+async function insertTaskPhotoRow(
+  db: Db,
+  row: { companyId: string; taskId: string; workerId: string; path: string; mime: TaskPhotoMime; byteSize: number },
+): Promise<string | null> {
+  const { error } = await db.from('task_photos').insert({
+    company_id: row.companyId,
+    task_id: row.taskId,
+    storage_path: row.path,
+    source: 'worker',
+    worker_id: row.workerId,
+    mime: row.mime,
+    byte_size: row.byteSize,
+  });
+  return error ? error.message : null;
+}
+
+/**
  * Write one photo's bytes into the bucket and record the row that points at it.
  * Returns the object key on success, or null on any refusal or failure.
  *
@@ -63,11 +110,16 @@ export interface StoreWorkerPhotoInput {
  * lists the bucket. A row with no object renders a broken frame on the
  * manager's screen forever, and there is no DELETE policy to clear it with.
  *
- * `uploaded_by` is deliberately left to its `auth.uid()` default, which is NULL
- * for the service role — exactly what a crew-sourced row should carry. Do not
- * fill it in; there is no profile behind this write.
+ * THE FALLBACK PATH, and the reason it was not deleted when 0047 landed. It
+ * runs when staging a photo into the inbox failed — most importantly on a
+ * deploy that lands before 0047 is applied, where every query on
+ * `worker_photo_inbox` answers 42P01. This function touches no table 0047
+ * creates, so a photo that the pre-0047 product would have kept is still kept,
+ * by both crew paths. On this project a migration has sat merged and unapplied
+ * for three weeks while the app half was live; that window must not be one
+ * where nobody can attach a photo to anything.
  *
- * Never throws. Both callers are inside a WhatsApp turn where a failed photo
+ * Never throws. Every caller is inside a WhatsApp turn where a failed photo
  * must cost the photo and nothing else: the agent path still has a claim to
  * file, and the check-in path still owes the worker an answer.
  */
@@ -80,30 +132,161 @@ export async function storeWorkerTaskPhoto(
   // far enough apart in the call graph that sharing one check would be sharing
   // an assumption. The bucket's own file_size_limit/allowed_mime_types and the
   // CHECK constraints on task_photos are the two that bind regardless.
-  if (checkTaskPhoto(photo.mime, photo.byteSize) !== null) return null;
+  const rejection = checkTaskPhoto(photo.mime, photo.byteSize);
+  if (rejection !== null) {
+    logPhotoStoreFailure({ stage: 'check', companyId, workerId, taskId, error: rejection });
+    return null;
+  }
 
   const path = taskPhotoPath(companyId, taskId, photo.id, photo.mime);
   try {
     const { error: uploadError } = await db.storage
       .from(TASK_PHOTO_BUCKET)
       .upload(path, photo.bytes, { contentType: photo.mime, upsert: false });
-    if (uploadError) return null;
+    if (uploadError) {
+      logPhotoStoreFailure({ stage: 'upload', companyId, workerId, taskId, error: uploadError.message });
+      return null;
+    }
 
-    const { error: rowError } = await db.from('task_photos').insert({
-      company_id: companyId,
-      task_id: taskId,
-      storage_path: path,
-      source: 'worker',
-      worker_id: workerId,
+    const rowError = await insertTaskPhotoRow(db, {
+      companyId,
+      taskId,
+      workerId,
+      path,
       mime: photo.mime,
-      byte_size: photo.byteSize,
+      byteSize: photo.byteSize,
     });
-    if (rowError) return null;
-  } catch {
+    if (rowError) {
+      logPhotoStoreFailure({ stage: 'row', companyId, workerId, taskId, error: rowError });
+      return null;
+    }
+  } catch (err) {
+    logPhotoStoreFailure({ stage: 'exception', companyId, workerId, taskId, error: errorText(err) });
     return null;
   }
 
   return path;
+}
+
+/**
+ * Attach photos that have been WAITING in the inbox (0047) to a task.
+ *
+ * The second way a crew-sourced `task_photos` row is written, and deliberately
+ * in this file rather than beside the inbox reader: what a `source: 'worker'`
+ * row asserts is an ATTRIBUTION that 0023 makes unforgeable at the grant layer,
+ * and two places writing that claim would eventually disagree about it.
+ *
+ * ── THE TENANT BOUNDARY IS THESE FILTERS ───────────────────────────────────
+ * The caller runs on the service role, so RLS enforces nothing. `company_id`
+ * and `worker_id` are both phone-derived and both are applied to the inbox read
+ * below, in ONE query, so a photo id belonging to a colleague, another company,
+ * or nobody at all collapses into the same silent miss with no timing
+ * difference to read as an existence oracle. The TASK has already been proven
+ * to be this worker's own by the caller (three filters, the same shape
+ * `declare_task_done` and `seekPhotoTarget` both use); this function does not
+ * re-prove it and must never be called without it.
+ *
+ * ── OBJECT, ROW, THEN BOOKKEEPING ──────────────────────────────────────────
+ * Move the bytes, write the row, stamp the inbox. Every ordering here is chosen
+ * for what a crash in the middle leaves behind:
+ *   - move then row: an object in a task folder with no row is invisible and
+ *     harmless, exactly as `storeWorkerTaskPhoto`'s upload-then-insert is. A row
+ *     first would name bytes that may never arrive, and there is no DELETE
+ *     policy to clear it with.
+ *   - row then stamp: the photo IS attached at that point, and a lost stamp
+ *     only means the inbox goes on offering it until it expires. The next
+ *     attempt's move fails (the object has gone), so it cannot be double
+ *     attached; it is logged, not silent.
+ *
+ * Never throws, and one photo failing must never abort the others. A batch is a
+ * batch of independent photos, and a claim with two of three photos is far
+ * better than a claim with none.
+ */
+export interface AttachInboxPhotosInput {
+  photoIds: readonly string[];
+  taskId: string;
+  companyId: string;
+  workerId: string;
+  /** For the expiry re-check. Passed in so this stays testable and single-clocked. */
+  now?: number;
+}
+
+export async function attachInboxPhotos(
+  db: Db,
+  { photoIds, taskId, companyId, workerId, now = Date.now() }: AttachInboxPhotosInput,
+): Promise<{ attached: number }> {
+  const ids = [...new Set(photoIds)];
+  if (ids.length === 0) return { attached: 0 };
+
+  let rows: { id: string; storage_path: string; mime: string; byte_size: number; expires_at: string }[];
+  try {
+    const { data, error } = await db
+      .from('worker_photo_inbox')
+      .select('id, storage_path, mime, byte_size, expires_at')
+      .in('id', ids)
+      .eq('company_id', companyId)
+      .eq('worker_id', workerId)
+      .is('attached_task_id', null);
+    if (error) {
+      logPhotoStoreFailure({ stage: 'read', companyId, workerId, taskId, error: error.message });
+      return { attached: 0 };
+    }
+    rows = data ?? [];
+  } catch (err) {
+    logPhotoStoreFailure({ stage: 'exception', companyId, workerId, taskId, error: errorText(err) });
+    return { attached: 0 };
+  }
+
+  let attached = 0;
+  for (const row of rows) {
+    // Re-checked here as well as in the reader, because a prompt built minutes
+    // ago can still name an id that has since gone stale. Fail closed, for
+    // `photoInboxLive`'s own reason.
+    if (!photoInboxLive(row.expires_at, now)) continue;
+    if (!isTaskPhotoMime(row.mime)) {
+      logPhotoStoreFailure({ stage: 'check', companyId, workerId, taskId, photoId: row.id, error: 'mime' });
+      continue;
+    }
+    // The object's new name is the inbox row's own id, so the key in the bucket
+    // and the row that produced it name each other. Nothing is derived from the
+    // old basename.
+    const path = taskPhotoPath(companyId, taskId, row.id, row.mime);
+    try {
+      const { error: moveError } = await db.storage
+        .from(TASK_PHOTO_BUCKET)
+        .move(row.storage_path, path);
+      if (moveError) {
+        logPhotoStoreFailure({ stage: 'move', companyId, workerId, taskId, photoId: row.id, error: moveError.message });
+        continue;
+      }
+
+      const rowError = await insertTaskPhotoRow(db, {
+        companyId,
+        taskId,
+        workerId,
+        path,
+        mime: row.mime,
+        byteSize: row.byte_size,
+      });
+      if (rowError) {
+        logPhotoStoreFailure({ stage: 'row', companyId, workerId, taskId, photoId: row.id, error: rowError });
+        continue;
+      }
+      attached += 1;
+
+      const { error: stampError } = await db
+        .from('worker_photo_inbox')
+        .update({ storage_path: path, attached_task_id: taskId, attached_at: new Date(now).toISOString() })
+        .eq('id', row.id);
+      if (stampError) {
+        logPhotoStoreFailure({ stage: 'stamp', companyId, workerId, taskId, photoId: row.id, error: stampError.message });
+      }
+    } catch (err) {
+      logPhotoStoreFailure({ stage: 'exception', companyId, workerId, taskId, photoId: row.id, error: errorText(err) });
+    }
+  }
+
+  return { attached };
 }
 
 /**
@@ -141,6 +324,46 @@ export async function markTaskProofPhotos(
       // write across companies. Note it deliberately does NOT touch `status` —
       // an update of status would fire tasks_supersede_review (0020) and
       // supersede the very claim the photo is proof for.
+      .eq('company_id', companyId);
+  } catch {
+    // Swallowed on purpose — see the note above.
+  }
+}
+
+/**
+ * Record that this task's completion has NO photographic proof behind it
+ * (0049, the no-photo waiver).
+ *
+ * NULL, never 'skipped'. Those are different sentences and only one of them is
+ * ours to write: 'skipped' is the MANAGER declining proof through the
+ * completion sheet, and 0034's column comment says so. NULL is UNKNOWN, which
+ * is the honest value for a claim filed by somebody who could not photograph
+ * anything — the manager may still walk over and look, and a photo sent later
+ * still attaches, because a task in `pending_review` is still open
+ * (task_board.is_open is a denylist, 0013) and nothing on the photo path reads
+ * its status.
+ *
+ * Unconditional within the task, and that is deliberate rather than careless.
+ * The column answers "does THIS completion have proof", and this one does not;
+ * a 'photos' left over from an earlier, superseded claim on the same task is a
+ * statement about a different moment. Nothing evidential is lost either way:
+ * the board and the inbox count `task_photos` at read time, which is what
+ * actually tells the manager whether there is anything to look at.
+ *
+ * Best-effort and never throws, for markTaskProofPhotos' reason, and like it
+ * this deliberately does NOT touch `status` — an update of status would fire
+ * tasks_supersede_review (0020) and supersede the claim it is about.
+ */
+export async function markTaskProofUnknown(
+  db: Db,
+  companyId: string,
+  taskId: string,
+): Promise<void> {
+  try {
+    await db
+      .from('tasks')
+      .update({ completion_proof: null })
+      .eq('id', taskId)
       .eq('company_id', companyId);
   } catch {
     // Swallowed on purpose — see the note above.

@@ -39,6 +39,12 @@ export const OPERATOR_RESEND_WELCOME_KIND = 'operator_resend_welcome';
 //     ← apps/web/lib/welcome-retry.ts (issue #121)
 //   clamp ← apps/web/app/notifications/briefing.ts
 //   recipientFor / describeRecipient ← apps/web/lib/whatsapp.ts
+//   MAX_PERSON_NAME / MAX_MANAGER_NAME ← apps/web/app/notifications/welcome.ts
+//
+// ⚠ ONE thing here is deliberately NOT hand-copied: WHICH manager the welcome
+// names. That rule lives in @capo/db (`pickAccountOwnerName`) precisely because
+// this file and the sweep must reach the same answer — see I3 in the note above
+// planWelcomeResend.
 
 /** ← apps/web/lib/welcome-retry.ts — the sweep's own cap. */
 const WELCOME_MAX_ATTEMPTS = 3;
@@ -91,6 +97,10 @@ export function describeRecipient(recipient: WhatsAppRecipient): string {
 // costs cents when it occurs.
 
 const MAX_COMPANY_NAME = 60;
+/** ← apps/web/app/notifications/welcome.ts — {{1}}, the recipient's own name. */
+const MAX_PERSON_NAME = 40;
+/** ← apps/web/app/notifications/welcome.ts — the manager's name, inside {{2}}. */
+const MAX_MANAGER_NAME = 40;
 
 export interface WelcomeSendPlan {
   templateName: 'capo_welcome';
@@ -107,16 +117,45 @@ export interface WelcomeSendPlan {
   renderedPreview: string;
 }
 
+/**
+ * ── THE RESEND SAYS EXACTLY WHAT THE SWEEP SAYS, MANAGER'S NAME INCLUDED ────
+ *
+ * The crew welcome now opens with who added them ("O teu gerente na Silva,
+ * Miguel, acabou de te adicionar ao Capo"), and this path had to gain the same
+ * clause rather than quietly drop it. The population this button exists for is,
+ * by definition, people whose FIRST welcome failed — so if `managerName` were
+ * hard-wired to null here they would be the only people in the product reading
+ * the older, colder wording, and the comment above claiming this is "built from
+ * the same catalog keys renderWelcome uses" would have become untrue.
+ *
+ * WHICH manager is not decided here and must not be: `pickAccountOwnerName` in
+ * @capo/db is the one rule, and loadWelcomeResendContext feeds it the same
+ * created_at-ascending profiles list the sweep reads. Null still means the
+ * clause is omitted, exactly as it is on the sweep's path.
+ *
+ * ⚠ Still the button-less `capo_welcome`, never `capo_welcome_v2`. A resend is
+ * one paid template from an operator screen, and giving it the "Say hi" button
+ * would mean this file also owning WELCOME_V2_APPROVED_LANGUAGES — a second
+ * copy of the approval gate whose failure mode is a 132000 on every resend.
+ * The person still reaches Capo by replying, which is what they could always do.
+ */
 export function planWelcomeResend(args: {
   audience: 'worker' | 'manager';
   personName: string;
   companyName: string;
+  /** Who owns the account, from pickAccountOwnerName. Null omits the clause. */
+  managerName: string | null;
   locale: Locale;
 }): WelcomeSendPlan {
   const t = getCatalog(args.locale).reminders;
   const company = clamp(args.companyName, MAX_COMPANY_NAME);
-  const name = clamp(args.personName, 40);
-  const middle = args.audience === 'worker' ? t.welcomeWorker(company) : t.welcomeManager(company);
+  const name = clamp(args.personName, MAX_PERSON_NAME);
+  // Trimmed to null rather than passed through, exactly as renderWelcome does:
+  // a full_name that is whitespace must take the no-manager branch, not render
+  // "na Silva, ,".
+  const manager = args.managerName?.trim() ? clamp(args.managerName, MAX_MANAGER_NAME) : null;
+  const middle =
+    args.audience === 'worker' ? t.welcomeWorker({ company, manager }) : t.welcomeManager(company);
   // toTemplateParam is what sendWhatsAppTemplate applies on the wire; applying
   // it here too makes the preview byte-identical to what Meta receives.
   const bodyParams: [string, string] = [toTemplateParam(name), toTemplateParam(middle)];

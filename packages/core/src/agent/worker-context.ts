@@ -7,8 +7,9 @@ import workerOrchestration from './prompts/worker-orchestration';
 import voice from './prompts/voice';
 import { localeName } from './prompts/language';
 import { loadKnowledgeIndex } from './context';
+import { promptBlocks } from '../i18n';
 import { toWorkerTaskView, type WorkerTaskRow } from '../capabilities/worker/tasks';
-import type { PendingPhoto } from '../capabilities/worker/types';
+import type { InboxPhoto } from '../media/photo-inbox';
 
 // The worker agent's system prompt — assembled from a deliberately short list.
 //
@@ -30,10 +31,15 @@ import type { PendingPhoto } from '../capabilities/worker/types';
 //                        ./memory/worker-conversation.ts.
 //
 // What IS here: who you are (crew persona), how to behave (worker policy),
-// which language to write in, today's date, this person's own open tasks, the
-// index of what the knowledge base can answer, and how many photos just
-// arrived. Nothing that names another person, another task, or the company's
-// shape.
+// which language to write in, today's date, WHO THIS PERSON IS (their own name,
+// trade, company and who runs it), this person's own open tasks, the index of
+// what the knowledge base can answer, and how many photos just arrived. Nothing
+// that names another crew member, another task, or the company's shape.
+//
+// The identity block is the one addition to that list since PRD 4, and it is
+// not a loosening of the absences above: see loadWorkerIdentity below for the
+// line between "facts about the person holding the phone" and "facts about the
+// company and everybody in it".
 
 /**
  * The single-dial language directive. The manager's version
@@ -90,21 +96,133 @@ function buildTaskBlock(rows: WorkerTaskRow[]): string {
 }
 
 /**
- * How many photos arrived with this message, and their per-turn ids.
+ * The four facts the person on the other end already knows about themselves.
  *
- * The ids are handles for `declare_task_done`, nothing more — they are not
- * database ids and they do not survive the turn. The COUNT is the entire fact
- * the model learns about the photos: no dimensions, no filename, and above all
- * nothing read out of the image. Feeding an inbound photo to a vision model is
- * a text-in-image injection surface with no mitigation, so the images never
- * reach one (0023, and AGENTS.md).
+ * ── WHY THIS IS NOT ONE OF THE DELIBERATE ABSENCES ABOVE ───────────────────
+ * A crew member wrote "who am I?" and Capo answered that it could not give out
+ * personal information. That was not a guardrail working; it was the model
+ * correctly reporting that it had been told nothing. Their own name, their own
+ * trade, the company they work for and who runs it are not company SHAPE (the
+ * snapshot's head counts) and they are not another person's business: they are
+ * facts this person could read off their own payslip, and Capo was the only
+ * party in the conversation that did not have them.
+ *
+ * What it is NOT, and must never become: another crew member's name, another
+ * crew member's work, phone numbers, pay, or anything about the company beyond
+ * its name. Manager names come from `profiles.full_name`, which managers type
+ * about themselves.
  */
-function buildPhotoBlock(photos: readonly PendingPhoto[]): string | null {
+export interface WorkerIdentity {
+  workerName: string;
+  trade: string | null;
+  companyName: string;
+  /** At most MAX_MANAGER_NAMES, in a stable order. Never phone or email. */
+  managerNames: string[];
+}
+
+/**
+ * A crew of three managers is already unusual; naming ten would turn a one-line
+ * answer into a directory and would be the first step towards this block being
+ * a company roster. Three is "who to ask", which is the question behind it.
+ */
+const MAX_MANAGER_NAMES = 3;
+
+/**
+ * Three small reads, and ANY failure drops the whole block rather than the
+ * turn. Same posture as `loadCompanySnapshot` and `loadManagerName` in
+ * ./context.ts: a crew member standing in the rain does not care that one
+ * select timed out, and the prompt is correct without this block because it was
+ * correct without it for the whole of PRD 4.
+ *
+ * Called from handleWorkerInbound rather than from the WhatsApp route, so the
+ * route needs no new query and there is exactly one place this can be loaded
+ * from.
+ */
+export async function loadWorkerIdentity(
+  db: Db,
+  ids: { workerId: string; companyId: string },
+): Promise<WorkerIdentity | null> {
+  try {
+    const [worker, company, managers] = await Promise.all([
+      db.from('workers').select('name, trade').eq('id', ids.workerId).single(),
+      db.from('companies').select('name').eq('id', ids.companyId).single(),
+      db
+        .from('profiles')
+        .select('full_name')
+        .eq('company_id', ids.companyId)
+        .order('created_at')
+        .limit(MAX_MANAGER_NAMES),
+    ]);
+
+    // The worker's own row and the company name are the block. Without either
+    // of them there is nothing worth rendering, so the block is dropped whole
+    // rather than half printed.
+    if (worker.error || !worker.data || company.error || !company.data) return null;
+
+    return {
+      workerName: worker.data.name,
+      trade: worker.data.trade,
+      companyName: company.data.name,
+      // Managers are the one part that may legitimately be empty (a company
+      // whose only account was deleted), and an empty list simply drops its
+      // line below.
+      managerNames: (managers.data ?? [])
+        .map(row => row.full_name)
+        .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+        .slice(0, MAX_MANAGER_NAMES),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Rendered in the UNCACHED half, and that is not a preference. Every line of it
+ * is per-WORKER, so above the breakpoint it would write one cache entry per
+ * crew member and read none, exactly the trap `loadManagerName` had to avoid on
+ * the manager side (issue #62).
+ */
+export function buildIdentityBlock(identity: WorkerIdentity | null, locale: Locale): string | null {
+  if (!identity) return null;
+  const t = promptBlocks[locale];
+  const lines = [
+    t.workerIdentityHeading,
+    `- ${t.workerIdentityName}: ${identity.workerName}`,
+    identity.trade ? `- ${t.workerIdentityTrade}: ${identity.trade}` : null,
+    `- ${t.workerIdentityCompany}: ${identity.companyName}`,
+    identity.managerNames.length > 0
+      ? `- ${t.workerIdentityManagers}: ${identity.managerNames.join(', ')}`
+      : null,
+    `- ${t.workerIdentityLanguage}: ${localeName(locale)}`,
+    t.workerIdentityNote,
+  ].filter((line): line is string => line !== null);
+  return lines.join('\n');
+}
+
+/**
+ * The photos this crew member has sent that no task has claimed yet, with the
+ * time each one arrived.
+ *
+ * Since 0047 this is NOT "photos that arrived with this message". Every inbound
+ * image is staged the moment it lands, so a photo sent on its own and explained
+ * a minute later is still here on the next turn, and three photos sent as three
+ * messages are all here rather than only the last. That is the whole point: the
+ * old block described bytes that lived for one turn, and a crew member who did
+ * the natural thing lost them.
+ *
+ * The ids are handles for `declare_task_done` and nothing else. The COUNT and
+ * the TIME are the entire fact the model learns about the photos: no
+ * dimensions, no filename, and above all nothing read out of the image. Feeding
+ * an inbound photo to a vision model is a text-in-image injection surface with
+ * no mitigation, so the images never reach one (0023, and AGENTS.md).
+ */
+function buildPhotoBlock(photos: readonly InboxPhoto[]): string | null {
   if (photos.length === 0) return null;
   return [
     '# Photos received',
-    `${photos.length} photo(s) arrived with this message. You have NOT seen them and must not describe or judge them.`,
-    `Ids, for declare_task_done: ${photos.map(p => p.id).join(', ')}`,
+    `${photos.length} photo(s) from this person are waiting to be attached to a task. Some may have arrived in EARLIER messages. You have NOT seen any of them and must not describe or judge them.`,
+    'When they tell you which task they finished, pass ALL of these ids to declare_task_done unless they say some belong to a different job.',
+    ...photos.map(p => `- ${p.id} (received ${p.receivedAt})`),
   ].join('\n');
 }
 
@@ -113,7 +231,10 @@ export interface WorkerPromptInput {
   locale: Locale;
   today: string;
   tasks: WorkerTaskRow[];
-  pendingPhotos: readonly PendingPhoto[];
+  pendingPhotos: readonly InboxPhoto[];
+  /** Null when the read failed, or on a caller that has not loaded it. The
+   *  block is then absent and the prompt is what it was before issue W4. */
+  identity: WorkerIdentity | null;
 }
 
 /**
@@ -141,6 +262,10 @@ export async function buildWorkerSystemPrompt(input: WorkerPromptInput): Promise
 
   return cachedInstructions(workerStableBlocks(input.locale), [
     `# Today's date\n${input.today}`,
+    // Above the task list on purpose: who this is comes before what they have
+    // to do, and a question about the person is answered from the first block
+    // the model reads about them.
+    buildIdentityBlock(input.identity, input.locale),
     buildTaskBlock(input.tasks),
     knowledgeBlock,
     buildPhotoBlock(input.pendingPhotos),

@@ -381,6 +381,7 @@ for (const posture of CONFIRM_POSTURES) {
     recentUserTexts: ['cria a obra Casa do Zé'],
     userId: '33333333-3333-3333-3333-333333333333',
     confirmPosture: posture,
+    appUrl: 'https://www.construcapo.com',
     locales: { user: 'pt-PT', company: 'pt-PT' },
   });
 

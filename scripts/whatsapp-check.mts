@@ -79,8 +79,10 @@ import {
   FREE_FORM_WINDOW_MS,
   OUTSIDE_WINDOW_ERROR_CODE,
   parseCheckinPayload,
+  parsePhotoBatchPayload,
   parseProposalButtonId,
   parseWorkerMenuRowId,
+  photoBatchPayload,
   planAssistantMessages,
   planWorkerMessages,
   applyVoice,
@@ -95,12 +97,25 @@ import {
   toTemplateParam,
   toWhatsAppMarkdown,
   workerMenuRowId,
+  hiPayload,
+  isHiPayload,
+  isHiTap,
   WhatsAppSendError,
   withinFreeFormWindow,
   type ApprovalLabels,
 } from '@capo/core/channels/whatsapp';
 import { getCatalog } from '@capo/i18n/catalog';
-import { LOCALES } from '@capo/i18n/locale';
+// 0047 — the photo inbox's pure half. Credential-free by construction: the
+// reader and the writer take `now` as an argument for exactly this reason.
+import {
+  MAX_INBOX_PHOTOS,
+  PHOTO_INBOX_TTL_MS,
+  photoInboxExpiry,
+  photoInboxLive,
+} from '@capo/core/media/photo-inbox';
+import { taskPhotoInboxPath, taskPhotoPath } from '@capo/core/media/photos';
+import { PHOTO_REQUEST_TTL_MS, photosSinceRequest } from '../apps/web/lib/checkin-photo.ts';
+import { LOCALES, type Locale } from '@capo/i18n/locale';
 import { allTemplates, MANAGED_TEMPLATE_NAMES, TEMPLATE_LANGUAGES } from './whatsapp-templates.ts';
 // The free-form renderer lives in the web app rather than @capo/core, for the
 // same reason renderWorkerBriefing does: it needs the USER copy catalog, which
@@ -124,6 +139,27 @@ import {
   BRIEFING_V2_APPROVED_LANGUAGES,
   briefingTemplateFor,
 } from '../apps/web/lib/briefing-template.ts';
+// The IMMEDIATE ASSIGNMENT NOTE (issue W7). Pure renderers plus the two gates
+// that decide whether anything is sent at all — the working-day hours and the
+// per-locale template approval — reached the same way and for the same reason.
+import {
+  renderAssignmentMessage,
+  renderAssignmentTemplateParam,
+} from '../apps/web/lib/task-assigned-message.ts';
+import {
+  TASK_ASSIGNED_APPROVED_LANGUAGES,
+  taskAssignedTemplateApproved,
+} from '../apps/web/lib/task-assigned-template.ts';
+// The DECISION half: what to do about one crew member's queued notices, and the
+// claim-then-send ORDER, which is the only defence the free-form path has
+// against two overlapping drains.
+import {
+  claimThenSend,
+  decideDelivery,
+  ENGAGED_OUTCOMES,
+  noticeIsStale,
+} from '../apps/web/lib/task-assigned-plan.ts';
+import { withinAssignmentHours } from '../apps/web/lib/task-assigned-window.ts';
 // The GUIDED MENU (issue #49). Pure renderers over the same rows the briefing
 // reads, reached the same way — no Db, no clock, no network.
 import {
@@ -148,6 +184,40 @@ import {
   decideWelcomeRetry,
   WELCOME_MAX_ATTEMPTS,
 } from '../apps/web/lib/welcome-retry.ts';
+// A crew member's VOICE NOTE (W4). Pure: the predicate, the size cap and the
+// transcript-emptiness rule take no clock, no network and no Db, which is what
+// lets them be pinned here. `transcribeWorkerAudio` itself is not called.
+import {
+  isWorkerAudioMessage,
+  MIN_WORKER_TRANSCRIPT_CHARS,
+  usableTranscript,
+  WORKER_AUDIO_MAX_BYTES,
+  WORKER_VOCABULARY_SCOPE,
+} from '../apps/web/lib/worker-audio.ts';
+import {
+  buildTranscriptionInstruction,
+  MAX_AUDIO_BYTES,
+  resolveTranscriptionVocabulary,
+} from '@capo/core/transcription';
+// Which Meta template the welcome goes out under, per locale, and whether that
+// name carries the "Say hi" button. Pure and dependency-free for exactly
+// briefing-template.ts's reason — and the two facts come back TOGETHER because
+// getting them out of step is a 132000 or an unparseable tap, neither of which
+// looks like a failure.
+import {
+  WELCOME_V2_APPROVED_LANGUAGES,
+  welcomeTemplateFor,
+} from '../apps/web/lib/welcome-template.ts';
+// The one rule that must give the SAME answer in two apps: which manager the
+// welcome credits. It lives in @capo/db because apps may not import each other
+// (i18n ← db ← core ← {web, operator}), and the drift it prevents is invisible.
+import { pickAccountOwnerName } from '@capo/db/account-owner';
+// apps/operator's resend renderer. Imported for the same reason the two welcome
+// renderers are: it is pure — no Db, no clock, no env at module scope — and it
+// is the second place the welcome's words are assembled. The FIRST check in
+// this file that reaches into the operator app, and it is here because the
+// alternative is that the two renderings drift with nothing able to notice.
+import { planWelcomeResend } from '../apps/operator/app/welcome-resend.ts';
 // CREW REQUESTS (issue #152). The urgency arithmetic and the two envelopes the
 // manager reads. Pure — `today` arrives as a string — which is what lets this
 // file pin the rule that replaces "the model decides how urgent this sounds",
@@ -175,6 +245,7 @@ import {
   REPORT_KEYWORDS,
   consentCommand,
   detailCommand,
+  keywordText,
   languageCommand,
   menuCommand,
   reportCommand,
@@ -1725,30 +1796,66 @@ for (const def of defs) {
   eq(`${label} — supplies two example values`, body.example.body_text[0]?.length, 2);
 
   // Buttons are asymmetric ON PURPOSE and the asymmetry is load-bearing.
-  // capo_task_checkin is answered by tapping; capo_daily_briefing is answered
-  // with free text (PT/ES/EN/STOP). Declaring a button component on a send
-  // whose approved template has none earns a 132000 on every send, so a stray
-  // BUTTONS block here would take the whole 07:00 briefing down.
+  // capo_task_checkin is answered by tapping, capo_welcome_v2 offers one
+  // "Say hi"; capo_daily_briefing is answered with free text (PT/ES/EN/STOP).
+  // Declaring a button component on a send whose approved template has none
+  // earns a 132000 on every send, so a stray BUTTONS block here would take the
+  // whole 07:00 briefing down — and the reverse is worse than it looks: Meta
+  // accepts a send that OMITS the component for a template that declares one
+  // and echoes the button's own LABEL back as the payload, so the tap comes
+  // back unparseable.
+  //
+  // An ALLOWLIST rather than a single name, grown deliberately: adding a
+  // template here is a decision, and the default for anything not named stays
+  // "no buttons".
+  const BUTTONED_TEMPLATES = ['capo_task_checkin', 'capo_welcome_v2'];
   const buttonComponent = def.components.find(c => c.type === 'BUTTONS') as
     | { buttons: { type: string; text: string }[] }
     | undefined;
-  if (def.name !== 'capo_task_checkin') {
+  if (!BUTTONED_TEMPLATES.includes(def.name)) {
     check(`${label} — declares no buttons`, buttonComponent === undefined);
     continue;
   }
 
   const buttons = buttonComponent!.buttons;
+  check(`${label} — every button is a quick reply`, buttons.every(b => b.type === 'QUICK_REPLY'));
+  for (const b of buttons) {
+    check(`${label} — "${b.text}" is 1..25 chars`, b.text.length >= 1 && b.text.length <= 25, `${b.text.length}`);
+    // Meta refuses a quick-reply label carrying an emoji, a variable, a newline
+    // or any formatted character — error_subcode 2388060 at SUBMISSION time,
+    // which is the one failure this repo cannot see until somebody runs
+    // `pnpm whatsapp-template create` and reads Spanish error prose. It cost
+    // capo_welcome_v2 the waving hand it was written with.
+    check(`${label} — "${b.text}" carries no emoji`, !/\p{Extended_Pictographic}/u.test(b.text), b.text);
+    check(`${label} — "${b.text}" is one plain line`, !/[\n\t]|\{\{/.test(b.text), b.text);
+  }
+
+  if (def.name === 'capo_welcome_v2') {
+    // ONE button, and it must stay one. The check-in's two buttons are an
+    // ANSWER whose ORDER is a contract; this one carries a single payload with
+    // no id, so there is nothing to invert — a second button here would
+    // silently acquire that contract without the comments that police it.
+    eq(`${label} — exactly one button`, buttons.length, 1);
+    // Meta caps a quick-reply label at 25 and an interactive reply-button
+    // TITLE at 20, and this same label rides both envelopes (the approved
+    // template and the free-form twin's reply button). Held to the tighter of
+    // the two, so the free-form copy is never the truncated one.
+    check(
+      `${label} — the label fits an interactive reply button too`,
+      buttons[0].text.length <= 20,
+      `${buttons[0].text.length}`,
+    );
+    eq(`${label} — the label is the catalog's`, buttons[0].text, getCatalog(locale!).reminders.welcomeButton);
+    continue;
+  }
+
   eq(`${label} — exactly two buttons`, buttons.length, 2);
-  check(`${label} — both are quick replies`, buttons.every(b => b.type === 'QUICK_REPLY'));
   // The labels must be the catalog's, in done-then-notDone order — the same
   // order /api/cron/checkin mints payloads in.
   const t = getCatalog(locale!).whatsapp;
   eq(`${label} — button 0 is the done label`, buttons[0].text, t.checkinDoneButton);
   eq(`${label} — button 1 is the not-done label`, buttons[1].text, t.checkinNotDoneButton);
   check(`${label} — labels differ`, buttons[0].text !== buttons[1].text);
-  for (const b of buttons) {
-    check(`${label} — "${b.text}" is 1..25 chars`, b.text.length >= 1 && b.text.length <= 25, `${b.text.length}`);
-  }
 }
 
 // ── outbound planning ───────────────────────────────────────────────────────
@@ -1958,8 +2065,11 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
 //      default wrong reinstates the complaint with no error anywhere.
 //  15. The guided list is the THIRD tappable shape on one webhook and the
 //      SECOND under `type: 'interactive'`. Nothing about the handler layout
-//      keeps them apart — only the fact that the three id prefixes are pairwise
-//      non-overlapping, so each of the six directions is asserted below.
+//      keeps them apart — only the fact that the id prefixes are pairwise
+//      non-overlapping, so each of those six directions is asserted below.
+//      There are now FIVE shapes: capo:hi (the welcome's "Say hi") is asserted
+//      in the same block, and capo:photos: (0047) further down beside the photo
+//      inbox, together with the directions between those two.
 //  16. Three keyword tables now sit in front of the worker agent, and they must
 //      stay disjoint. The one that must never move is `es`: a bare "ES" has to
 //      keep resolving to Spanish with ZERO model calls, and a collision would
@@ -1969,7 +2079,11 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
 //      figure — Meta's own page and every third-party summary disagree — because
 //      being wrong upward is a 400 at 07:00 and a crew that hears nothing.
 
-// ── the three id codecs, pairwise ───────────────────────────────────────────
+// ── the id codecs, pairwise ─────────────────────────────────────────────────
+// The three original shapes and the welcome's capo:hi are asserted here; the
+// fifth, capo:photos: (0047), is asserted against all of them in its own block
+// below rather than here, so the photo inbox's checks stay in one place.
+// Between the two blocks all FIVE codecs are covered in every direction.
 {
   const menuTask = workerMenuRowId({ kind: 'task', taskId: uuid });
   const menuManager = workerMenuRowId({ kind: 'manager' });
@@ -2001,6 +2115,63 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   eq('the manager row is not a check-in payload', parseCheckinPayload(menuManager), null);
   eq('a menu row is not a proposal id', parseProposalButtonId(menuTask), null);
   eq('the manager row is not a proposal id', parseProposalButtonId(menuManager), null);
+
+  // ── the FOURTH codec: the welcome's "Say hi" (issue #45 follow-up) ────────
+  // It arrives under BOTH `type: 'button'` (the template envelope) and
+  // `type: 'interactive'` (the free-form twin's reply button), so it has to be
+  // disjoint from three shapes rather than two — and one of those, the check-in,
+  // shares its envelope field exactly.
+  const hi = hiPayload();
+  check('the hi payload round-trips', isHiPayload(hi));
+  check('and is case-insensitive, like the other three', isHiPayload('CAPO:HI'));
+  // It carries NO id, for workerMenuRowId('manager')'s reason: nothing can be
+  // looked up from it, so nothing can leak through it.
+  check('the hi payload carries no uuid', !hi.includes(uuid), hi);
+  check('and nothing else parses as it', !isHiPayload(''));
+  check('a foreign prefix is not a hi', !isHiPayload('evil:hi'));
+  // A PREFIX match would accept every other codec, since all four start
+  // 'capo:'. Exact whole-string is what makes the six directions below hold.
+  check('a longer string starting with it is not a hi', !isHiPayload(`${hi}:${uuid}`));
+
+  eq('a hi is not a check-in payload', parseCheckinPayload(hi), null);
+  eq('a hi is not a proposal id', parseProposalButtonId(hi), null);
+  eq('a hi is not a menu row', parseWorkerMenuRowId(hi), null);
+  check('a check-in payload is not a hi', !isHiPayload(checkin));
+  check('a proposal id is not a hi', !isHiPayload(approve));
+  check('a menu task row is not a hi', !isHiPayload(menuTask));
+  check('the menu manager row is not a hi', !isHiPayload(menuManager));
+
+  // ── THE TWO ENVELOPES, which is the claim the whole button rests on ──────
+  // The welcome goes out as an approved TEMPLATE (the tap returns
+  // `type: 'button'` with `button.payload`) and, inside the free 24-hour
+  // window, as an interactive reply-buttons message (the tap returns
+  // `type: 'interactive'` with `interactive.button_reply.id`). isHiTap is the
+  // whole of what maps those two shapes onto one fact, and the failure of
+  // EITHER half is silent: the other envelope goes on working, so the button
+  // simply stops answering for one population of recipients.
+  check('a template quick reply is a hi tap', isHiTap({ type: 'button', button: { payload: hi } }));
+  check(
+    'an interactive reply button is the same hi tap',
+    isHiTap({ type: 'interactive', interactive: { button_reply: { id: hi } } }),
+  );
+  check('and case does not matter on either', isHiTap({ type: 'button', button: { payload: 'CAPO:HI' } }));
+  // The envelope FIELD is part of the shape: a payload on the wrong field is
+  // not a hi, or a check-in tap could be read as one by a future edit that
+  // stopped looking at `type`.
+  check('a payload on the interactive field is not a button tap', !isHiTap({ type: 'button', interactive: { button_reply: { id: hi } } }));
+  check('an id on the button field is not an interactive tap', !isHiTap({ type: 'interactive', button: { payload: hi } }));
+  // Everything else must fall through, or a hello would swallow a real message.
+  check('a text message is not a hi tap', !isHiTap({ type: 'text' }));
+  check('an empty envelope is not a hi tap', !isHiTap({}));
+  check('a check-in tap is not a hi tap', !isHiTap({ type: 'button', button: { payload: checkin } }));
+  check(
+    'a menu tap is not a hi tap',
+    !isHiTap({ type: 'interactive', interactive: { button_reply: { id: menuTask } } }),
+  );
+  check(
+    "a manager's approval tap is not a hi tap",
+    !isHiTap({ type: 'interactive', interactive: { button_reply: { id: approve } } }),
+  );
 }
 
 // ── the keyword tables in front of the agent ────────────────────────────────
@@ -2538,7 +2709,7 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   // explicitly approved falls to the OLD name, which all three locales have.
   eq('pt_PT sends the v2 template', briefingTemplateFor('pt_PT'), 'capo_daily_briefing_v2');
   eq('en_US sends the v2 template', briefingTemplateFor('en_US'), 'capo_daily_briefing_v2');
-  eq('es_ES stays on the old template until Meta approves', briefingTemplateFor('es_ES'), 'capo_daily_briefing');
+  eq('es_ES moved to v2 once Meta approved it (2026-09-03)', briefingTemplateFor('es_ES'), 'capo_daily_briefing_v2');
   eq('an unknown locale falls back to the old template', briefingTemplateFor('fr_FR'), 'capo_daily_briefing');
   for (const language of BRIEFING_V2_APPROVED_LANGUAGES) {
     check(`approved code ${language} is one this repo submits`, TEMPLATE_LANGUAGES.includes(language), language);
@@ -2777,11 +2948,47 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   eq('a crew member is addressed as a worker', worker.audience, 'worker');
   eq('a profile is addressed as a manager', manager.audience, 'manager');
 
+  // WHO ADDED THEM. The account owner's name opens the crew sentence, and it is
+  // read off the SAME ordered profiles list the ledger uses rather than a
+  // second query. `.order('created_at')` is ascending, so the newest NAMED
+  // profile wins — 'Sócio' here, who joined after Federico.
+  eq('the welcome names the most recently created manager', audience.managerName, 'Sócio');
+  eq(
+    'a company with no named profile answers null rather than a placeholder',
+    (
+      await loadPendingWelcomes(
+        fakeBriefingDb({ workers: [], profiles: [{ id: 'p9', full_name: '   ', language: 'pt-PT', phone: null, whatsapp_opt_in_at: null }], notification_log: [] }),
+        { id: 'co2', name: 'Sem Nome', language: 'pt-PT' },
+        today,
+      )
+    ).managerName,
+    null,
+  );
+
   for (const locale of LOCALES) {
     const t2 = getCatalog(locale).reminders;
     const target = { ...worker, locale };
-    const [name, middle] = renderWelcome(target, 'Construções Silva');
-    const [, managerMiddle] = renderWelcome({ ...manager, locale }, 'Construções Silva');
+    const [name, middle] = renderWelcome(target, 'Construções Silva', 'João');
+    const [, managerMiddle] = renderWelcome({ ...manager, locale }, 'Construções Silva', 'João');
+    const [, anonymous] = renderWelcome(target, 'Construções Silva', null);
+
+    // ── the opening clause (the immediate-welcome work) ───────────────────
+    // It is what makes the first message land as a real thing a real person
+    // did, rather than as software introducing itself, so it must come FIRST:
+    // that is the sentence a crew member reads in the notification preview.
+    check(`${locale} — the crew welcome names who added them`, middle.includes('João'), middle);
+    check(`${locale} — and does so before anything else`, middle.indexOf('João') < 40, middle);
+    // The null is a REAL case (no profile yet, or a blank full_name) and the
+    // clause is OMITTED rather than filled with a placeholder naming nobody.
+    check(`${locale} — with no manager on file the clause simply goes`, !anonymous.includes('João'), anonymous);
+    check(`${locale} — and the company is still named`, anonymous.includes('Construções Silva'), anonymous);
+    check(`${locale} — and nothing leaks`, !/undefined|null|,\s*,/.test(anonymous), anonymous);
+    eq(`${locale} — the anonymous sentence still needs no flattening`, toTemplateParam(anonymous), anonymous);
+    // A pasted paragraph in a manager's full_name must not blow {{2}} apart
+    // either — it is manager-authored free text on exactly the same road as
+    // the company name.
+    const [, messyManager] = renderWelcome(target, 'Construções Silva', 'João\nSilva\tPereira dos Santos e Filhos, Lda, encarregado geral');
+    eq(`${locale} — a multi-line manager name is flattened`, toTemplateParam(messyManager), messyManager);
 
     // (c) Template parameters survive Meta's rules untouched. If toTemplateParam
     // has to CHANGE either of them, the copy contains something Meta would have
@@ -2807,7 +3014,7 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
     // re-derivation, so a change to either side fails here.
     const def = allTemplates().find(d => d.name === 'capo_welcome' && d.language === t2.templateLanguage)!;
     const body = (def.components.find(c => c.type === 'BODY') as { text: string }).text;
-    const freeForm = renderWelcomeFreeForm(target, 'Construções Silva');
+    const freeForm = renderWelcomeFreeForm(target, 'Construções Silva', 'João');
     eq(
       `${locale} — the free-form welcome is the template body, rejoined`,
       freeForm.replace(/\n+/g, ' '),
@@ -2819,10 +3026,132 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
     check(`${locale} — and leaks no undefined`, !freeForm.includes('undefined'), freeForm);
   }
 
+  // ── capo_welcome_v2 is capo_welcome plus a button, and nothing else ──────
+  // The body was already right, so v2 re-uses it byte for byte. Asserting the
+  // equality is what stops a change to the welcome's wording landing on one
+  // name and not the other — which would mean two crew members in the same
+  // company reading two different introductions depending on which locale Meta
+  // had got round to approving.
+  for (const language of TEMPLATE_LANGUAGES) {
+    const v1 = allTemplates().find(d => d.name === 'capo_welcome' && d.language === language)!;
+    const v2 = allTemplates().find(d => d.name === 'capo_welcome_v2' && d.language === language)!;
+    eq(
+      `${language} — capo_welcome_v2's body is capo_welcome's, byte for byte`,
+      (v2.components.find(c => c.type === 'BODY') as { text: string }).text,
+      (v1.components.find(c => c.type === 'BODY') as { text: string }).text,
+    );
+  }
+
+  // ── the approval gate (briefing-template.ts's shape, and its reasoning) ──
+  // Meta approves per name+language pair, so naming an unapproved template is a
+  // 132001 refusal and a person who hears nothing. The gate and the BUTTON must
+  // move together: a button component against capo_welcome (which declares
+  // none) is a 132000 on every send, and no button component against
+  // capo_welcome_v2 makes Meta echo the LABEL back as the payload, so the tap
+  // parses as nothing. One call returns both, which is what makes that
+  // impossible to get half right.
+  for (const language of TEMPLATE_LANGUAGES) {
+    const chosen = welcomeTemplateFor(language);
+    eq(
+      `${language} — the chosen welcome template matches the approval set`,
+      chosen.name,
+      WELCOME_V2_APPROVED_LANGUAGES.has(language) ? 'capo_welcome_v2' : 'capo_welcome',
+    );
+    eq(`${language} — the button rides v2 and only v2`, chosen.hasButton, chosen.name === 'capo_welcome_v2');
+  }
+  eq('an unknown locale code falls back to the approved-everywhere template', welcomeTemplateFor('de_DE').name, 'capo_welcome');
+  check('and carries no button with it', !welcomeTemplateFor('de_DE').hasButton);
+
   // A pasted paragraph in the company name must not blow the parameter apart.
   const [, messy] = renderWelcome({ ...worker, locale: 'pt-PT' }, 'Obras\nSilva\t& Filhos, Lda, a maior empresa de construção civil de toda a região norte de Portugal');
   eq('a multi-line company name is flattened before it reaches Meta', toTemplateParam(messy), messy);
   check('and clamped rather than allowed to run on', messy.includes('…'), messy);
+
+  // ── THE OPERATOR'S RESEND MUST SAY THE SAME THING ───────────────────────
+  // apps/operator's "resend a failed welcome" button renders the message a
+  // second time, because apps may not import each other's modules. Its own
+  // comment claims it is "built from the same catalog keys renderWelcome uses",
+  // and this is the only thing that can keep that claim true: the population it
+  // serves is, by definition, people whose FIRST welcome failed, so a drift
+  // here means the coldest wording reaching the people who have had the worst
+  // experience of Capo so far.
+  //
+  // WHICH manager is named is NOT duplicated — pickAccountOwnerName in
+  // @capo/db is one rule with two callers, and it is pinned below.
+  for (const locale of LOCALES) {
+    const t3 = getCatalog(locale).reminders;
+    for (const audience of ['worker', 'manager'] as const) {
+      const [name, middle] = renderWelcome(
+        { ...worker, audience, name: 'Miguel', locale },
+        'Construções Silva',
+        'João',
+      );
+      const plan = planWelcomeResend({
+        audience,
+        personName: 'Miguel',
+        companyName: 'Construções Silva',
+        managerName: 'João',
+        locale,
+      });
+      eq(`${locale} ${audience} — the resend's {{1}} is the sweep's`, plan.bodyParams[0], name);
+      eq(`${locale} ${audience} — the resend's {{2}} is the sweep's`, plan.bodyParams[1], middle);
+      eq(`${locale} ${audience} — and it goes out in this person's language`, plan.languageCode, t3.templateLanguage);
+    }
+    // The null case has to travel too: a resend for a company with no readable
+    // owner name omits the clause rather than rendering a placeholder.
+    const [, anonymousResend] = planWelcomeResend({
+      audience: 'worker',
+      personName: 'Miguel',
+      companyName: 'Construções Silva',
+      managerName: null,
+      locale,
+    }).bodyParams;
+    const [, anonymousSweep] = renderWelcome({ ...worker, locale }, 'Construções Silva', null);
+    eq(`${locale} — and the no-manager wording matches too`, anonymousResend, anonymousSweep);
+    // ⚠ The resend stays on the BUTTON-LESS template on purpose: giving it
+    // capo_welcome_v2 would put a second copy of the approval gate in the
+    // operator app, whose failure mode is a 132000 on every resend.
+    eq(
+      `${locale} — a resend uses the button-less template`,
+      planWelcomeResend({ audience: 'worker', personName: 'Miguel', companyName: 'X', managerName: null, locale })
+        .templateName,
+      'capo_welcome',
+    );
+  }
+
+  // ── THE EMPTY-DAY ANSWER MUST NOT SAY THE SAME THING TWICE ──────────────
+  // A crew member who taps "Olá!" with nothing scheduled reads two sentences:
+  // reminders.workerNothing ("Nada agendado para hoje.") from the shared
+  // briefing renderer, then whatsapp.hiWorkerMorning. This is the FIRST thing
+  // Capo ever writes to them, and it shipped repeating itself in the first
+  // three lines — exactly the machine tell voice-check exists to remove, and
+  // invisible to voice-check because neither sentence is wrong on its own.
+  for (const locale of LOCALES) {
+    const nothing = getCatalog(locale).reminders.workerNothing;
+    const morning = getCatalog(locale).whatsapp.hiWorkerMorning;
+    check(`${locale} — the 07:00 line does not repeat "nothing scheduled"`, !morning.includes(nothing), morning);
+    check(`${locale} — nor the other way round`, !nothing.includes(morning), nothing);
+    // What it IS for: saying when the next message arrives, so an empty first
+    // answer does not read as "this thing does nothing".
+    check(`${locale} — and it names the hour the day arrives`, /7/.test(morning), morning);
+  }
+
+  // ── WHO GETS NAMED: one rule, two apps (packages/db/src/account-owner.ts) ──
+  // Ordered created_at ASCENDING, so the newest NAMED row wins. Every branch is
+  // asserted because the two failures are opposite and both silent: the wrong
+  // colleague's name, or a placeholder where a name should be.
+  eq(
+    'the newest named profile is the one credited',
+    pickAccountOwnerName([{ full_name: 'Velho' }, { full_name: 'Novo' }]),
+    'Novo',
+  );
+  eq(
+    'a newer profile with no name does not blank out an older one',
+    pickAccountOwnerName([{ full_name: 'Federico' }, { full_name: null }, { full_name: '   ' }]),
+    'Federico',
+  );
+  eq('no profiles at all is null, not a placeholder', pickAccountOwnerName([]), null);
+  eq('and neither is a company whose only names are blank', pickAccountOwnerName([{ full_name: ' ' }]), null);
 
   // The thread note (issue #47's boundary, one more source). Crew names only,
   // and they are text the MANAGER typed.
@@ -3119,6 +3448,643 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   check('30 February is refused rather than rolled into March', !neededByIsSane('2026-02-30', now));
   check('a non-date is refused', !neededByIsSane('amanhã', now));
   check('a timestamp is refused — the column is a DAY', !neededByIsSane('2026-09-01T08:00:00Z', now));
+}
+
+
+// ── a crew member's voice note (W4) ─────────────────────────────────────────
+//
+// Until W4 an inbound `audio` message satisfied none of the gates in
+// handleWorkerReply and fell to `workerAck`, the line written for a sticker.
+// Crew on site talk far more than they type, so the channel's own audience was
+// paying for a cost decision made about a path nobody had built yet.
+//
+// What is pinned here is the pure half: which messages are audio, what the
+// size cap is, and when a transcript is not worth a model turn. The download
+// and the Gemini call are not exercised - they need Meta and a model.
+{
+  check('a push-to-talk voice note is audio', isWorkerAudioMessage({ type: 'audio', audio: { id: 'm1', voice: true } }));
+  // An uploaded m4a is accepted too, exactly as the manager path accepts one:
+  // the two are indistinguishable to everything downstream, and refusing
+  // somebody's own recording of themselves talking would be user-hostile.
+  check('an uploaded audio file is audio too', isWorkerAudioMessage({ type: 'audio', audio: { id: 'm2', voice: false } }));
+  // Meta can send an audio message with no media id. There is nothing to
+  // download, so it must NOT reach the agent gate - it falls to workerAck.
+  check('audio with no media id is not audio', !isWorkerAudioMessage({ type: 'audio' }));
+  check('text is not audio', !isWorkerAudioMessage({ type: 'text' }));
+  check('an image is not audio', !isWorkerAudioMessage({ type: 'image' }));
+  check('a sticker is not audio, and still gets the ack', !isWorkerAudioMessage({ type: 'sticker' }));
+  check('a document is not audio', !isWorkerAudioMessage({ type: 'document' }));
+
+  // ONE cap, shared with the manager path rather than copied. Two numbers would
+  // eventually disagree, and the symptom would be a crew member's voice note
+  // refused at a size a manager's is accepted at, with nothing saying why.
+  eq('the worker audio cap IS the manager audio cap', WORKER_AUDIO_MAX_BYTES, MAX_AUDIO_BYTES);
+  check('and it sits under Meta\'s 16 MiB inbound ceiling', WORKER_AUDIO_MAX_BYTES < 16 * 1024 * 1024);
+
+  // The emptiness rule. Gemini answers silence with an empty string, but a
+  // noisy site recording can come back as one stray character, and both mean
+  // the same thing to the person who recorded it.
+  eq('an empty transcript is unusable', usableTranscript(''), null);
+  eq('whitespace only is unusable', usableTranscript('   \n  '), null);
+  eq('null is unusable', usableTranscript(null), null);
+  eq('undefined is unusable', usableTranscript(undefined), null);
+  eq('a single character is unusable', usableTranscript('a'), null);
+  eq('punctuation alone is unusable', usableTranscript('...'), null);
+  eq('a lone question mark is unusable', usableTranscript('?'), null);
+  // A real short answer must survive: "ok" and "sim" are whole messages on a
+  // building site, and refusing them would be the ack bug again in miniature.
+  eq('"ok" is a real message', usableTranscript('ok'), 'ok');
+  eq('"sim" is a real message', usableTranscript(' sim '), 'sim');
+  eq('a sentence is trimmed, not altered', usableTranscript('  acabei a pintura  '), 'acabei a pintura');
+  eq('the floor is two characters', MIN_WORKER_TRANSCRIPT_CHARS, 2);
+
+  // ── ⚠ THE CONSEQUENCE, PINNED AT THE SEAM THAT CAUSES IT ──────────────────
+  // Every deterministic keyword table is now reached through ONE function,
+  // `keywordText`, and these assertions are over that function rather than over
+  // the tables. That is the difference between testing the decision and merely
+  // restating it: a future change that routed a transcript into the keyword
+  // tables would have to make `keywordText` return something for a non-text
+  // message, and the next three lines fail the moment it does.
+  eq('a voice note yields NO keyword text', keywordText({ type: 'audio' }), undefined);
+  eq('nor does a photo', keywordText({ type: 'image' }), undefined);
+  eq('nor does a template button tap', keywordText({ type: 'button' }), undefined);
+  eq('typed text does', keywordText({ type: 'text', text: { body: 'stop' } }), 'stop');
+
+  // And the tables themselves are unchanged: a TYPED stop/menu/ES still
+  // resolves with zero model calls, which is the half of the trade that must
+  // never regress.
+  check('the written STOP is still the unsubscribe', OPT_OUT_KEYWORDS.has('stop'));
+  check('the written MENU is still the menu', MENU_KEYWORDS.has('menu'));
+  check('the written ES is still the language switch', languageCommand('es') === 'es-ES');
+  // The five commands read `keywordText`'s answer, so a voice note reaching
+  // them is exactly as impossible as the four assertions above make it.
+  eq('a spoken "stop" resolves to no consent command', consentCommand(keywordText({ type: 'audio' })), null);
+  eq('a spoken "menu" resolves to no menu command', menuCommand(keywordText({ type: 'audio' })), false);
+  eq('a spoken "ES" resolves to no language command', languageCommand(keywordText({ type: 'audio' })), null);
+  eq('a spoken "ok" resolves to no detail command', detailCommand(keywordText({ type: 'audio' })), false);
+  eq('a spoken "bug" resolves to no report command', reportCommand(keywordText({ type: 'audio' })), null);
+}
+
+// ── the worker path transcribes with NO company vocabulary ──────────────────
+//
+// The manager paths steer Gemini with up to 50 crew names, 50 obra names and 40
+// learned terms for the tenant. That is their own data and it is the single
+// biggest lever on accuracy. The WORKER path may not have it: the crew prompt
+// is built around naming no other crew member, no other task and nothing about
+// the company's shape, and the audio there is chosen by whoever holds the
+// phone. A company-wide name list in the transcription instruction would put
+// that roster one prompt line away from an attacker-chosen payload.
+//
+// Asserting that `none` RETURNS an empty vocabulary would pass even if the
+// fetch still ran. What is asserted instead is that the database is never
+// asked, which is the property that actually matters.
+{
+  eq('the worker path asks for NO vocabulary', WORKER_VOCABULARY_SCOPE, 'none');
+
+  let touched: string[] = [];
+  const spyDb = {
+    from(table: string) {
+      touched.push(table);
+      const chain: Record<string, unknown> = {};
+      for (const m of ['select', 'eq', 'order', 'limit']) chain[m] = () => chain;
+      (chain as { then: unknown }).then = (resolve: (v: unknown) => void) => resolve({ data: [], error: null });
+      return chain;
+    },
+  } as unknown as Parameters<typeof resolveTranscriptionVocabulary>[0];
+
+  const none = await resolveTranscriptionVocabulary(spyDb, 'company-1', 'none');
+  eq('scope "none" reads NOTHING from the database', touched.length, 0);
+  check(
+    'and yields an empty vocabulary',
+    none.workerNames.length === 0 && none.jobNames.length === 0 && none.learnedTerms.length === 0,
+  );
+
+  // The positive control. Without it, a `resolveTranscriptionVocabulary` that
+  // had been broken into reading nothing at all would pass the check above and
+  // silently cost the MANAGER path its accuracy.
+  touched = [];
+  await resolveTranscriptionVocabulary(spyDb, 'company-1', 'company');
+  check(
+    'scope "company" still reads the three vocabulary sources',
+    touched.includes('workers') && touched.includes('jobs') && touched.includes('transcription_vocab'),
+    touched.join(', '),
+  );
+
+  // And the instruction built from an empty vocabulary carries no name lines at
+  // all - not an empty "Nomes prováveis:" heading with nothing after it.
+  for (const locale of LOCALES) {
+    const instruction = buildTranscriptionInstruction(locale, none);
+    check(
+      `${locale}: an empty vocabulary produces no name hints in the instruction`,
+      !/prov[áa]ve(is|les)|Likely (worker|job) names|Termos|Términos|Terms and names/u.test(instruction),
+    );
+    check(`${locale}: while the language and glossary lines survive`, instruction.length > 100);
+  }
+}
+
+// ── the photo inbox (0047) ──────────────────────────────────────────────────
+// The bug: a crew member sent a photo, Capo asked which task it was of, and by
+// the time they answered the bytes were gone — they lived for exactly one turn,
+// because a task photo's object key contains the task id. On 3 September that
+// produced "I tried 3 times now. Is not working" and five days with no
+// task_photos row.
+//
+// Three things here are worth a check rather than a comment: this tappable
+// codec (nothing about the handler layout keeps the five payload shapes apart,
+// only that their prefixes do not overlap), the two path builders (segment 1 is the
+// tenant boundary the storage policies read, and the inbox prefix has to be
+// unmistakable), and the expiry (enforced by the reader, because nothing sweeps
+// the table).
+{
+  const more = photoBatchPayload('more');
+  const done = photoBatchPayload('done');
+
+  eq('a "more photos" tap round-trips', parsePhotoBatchPayload(more), 'more');
+  eq('a "that is everything" tap round-trips', parsePhotoBatchPayload(done), 'done');
+  eq('and it is case-insensitive, as Meta echoes what we sent', parsePhotoBatchPayload('CAPO:PHOTOS:DONE'), 'done');
+  eq('an unknown answer is rejected', parsePhotoBatchPayload('capo:photos:maybe'), null);
+  eq('a foreign prefix is rejected', parsePhotoBatchPayload(`evil:photos:done`), null);
+  eq('an empty payload is rejected', parsePhotoBatchPayload(''), null);
+  // It carries NO id, the same decision capo:wm:manager makes: which photos it
+  // settles comes from the tapper's phone-derived worker id, never the payload.
+  check('a photo batch payload contains no uuid', !done.includes(uuid), done);
+
+  // SIX MORE DIRECTIONS. Three of the five shapes arrive under
+  // `type: 'interactive'`, and two of those three read the SAME member of the
+  // envelope (`button_reply.id`) — the approval card and this one. Nothing but
+  // the prefixes keeps a manager's approval from being read as a crew member's
+  // photo tap, so every direction is asserted.
+  const menuTask4 = workerMenuRowId({ kind: 'task', taskId: uuid });
+  const menuManager4 = workerMenuRowId({ kind: 'manager' });
+  const checkin4 = checkinPayload('done', uuid);
+  const approve4 = proposalButtonId('approve', uuid);
+
+  eq('an approval id is not a photo tap', parsePhotoBatchPayload(approve4), null);
+  eq('a check-in payload is not a photo tap', parsePhotoBatchPayload(checkin4), null);
+  eq('a menu task row is not a photo tap', parsePhotoBatchPayload(menuTask4), null);
+  eq('the manager row is not a photo tap', parsePhotoBatchPayload(menuManager4), null);
+  eq('a photo tap is not an approval id', parseProposalButtonId(done), null);
+  eq('a photo tap is not a check-in payload', parseCheckinPayload(done), null);
+  eq('a photo tap is not a menu row', parseWorkerMenuRowId(done), null);
+
+  // ── AND THE FIFTH SHAPE, which landed in the same integration ────────────
+  // The welcome's "Say hi" (capo:hi) is asserted against the three OLDER
+  // codecs in its own block above, and this codec against the same three here.
+  // These four directions are the pair the two blocks would otherwise leave
+  // uncovered, and it is the pair that matters most: capo:hi and capo:photos:
+  // share this envelope field EXACTLY — both arrive as
+  // `interactive.button_reply.id` — so nothing but the prefixes keeps a hello
+  // from being read as "that's everything, attach them".
+  const hi5 = hiPayload();
+  eq('a hi is not a photo tap', parsePhotoBatchPayload(hi5), null);
+  check('a photo tap is not a hi', !isHiPayload(done));
+  check('nor is the other photo tap', !isHiPayload(more));
+  check(
+    'and a photo tap reads as a hi tap in neither envelope',
+    !isHiTap({ type: 'interactive', interactive: { button_reply: { id: done } } }) &&
+      !isHiTap({ type: 'button', button: { payload: done } }),
+  );
+}
+
+// ── the two object keys ─────────────────────────────────────────────────────
+// Segment 1 is the company on BOTH, which is the whole reason 0047 needed no
+// new storage policy: 0023's policies compare (storage.foldername(name))[1]
+// against private.current_company_id() and read nothing else. Segment 2 of the
+// inbox key is the literal word `inbox`, which is not a uuid, so a staged
+// object can never land inside a task's folder.
+{
+  const company = '11111111-1111-1111-1111-111111111111';
+  const worker = '22222222-2222-2222-2222-222222222222';
+  const task = '33333333-3333-3333-3333-333333333333';
+  const inbox = taskPhotoInboxPath(company, worker, 'abc', 'image/jpeg');
+  const attached = taskPhotoPath(company, task, 'abc', 'image/jpeg');
+
+  eq('a staged photo lives under the company then inbox then the worker', inbox, `${company}/inbox/${worker}/abc.jpg`);
+  eq('an attached photo lives under the company then the task', attached, `${company}/${task}/abc.jpg`);
+  eq('both keys start with the company, which IS the storage boundary', inbox.split('/')[0], attached.split('/')[0]);
+  // The CHECK constraints in 0047 re-derive both of these in SQL. A staged key
+  // that satisfied task_photos_path_scoped would mean a photo could be written
+  // as evidence without ever being attached to anything.
+  check('a staged key never satisfies the task_photos path shape', !inbox.startsWith(`${company}/${task}/`), inbox);
+  eq('the inbox segment is a literal word, never a uuid', inbox.split('/')[1], 'inbox');
+}
+
+// ── the expiry, enforced by the reader ──────────────────────────────────────
+// Nothing sweeps worker_photo_inbox, so `expires_at` is only ever true because
+// the reader asks. Fail CLOSED on anything unreadable: the cost in this
+// direction is that a photo has to be sent again, and in the other it is a
+// photo of yesterday's work filed as proof of today's.
+{
+  const now = Date.parse('2026-09-03T12:00:00Z');
+  eq('the window is a full day', PHOTO_INBOX_TTL_MS, 24 * 60 * 60 * 1000);
+  // Deliberately LONGER than the check-in request's TTL, and the two are not
+  // the same kind of thing: that one bounds what an unlabelled photo may be
+  // BELIEVED to be about, this one bounds only how long we keep offering
+  // somebody their own photo back.
+  check(
+    'and it is longer than the check-in request it outlives',
+    PHOTO_INBOX_TTL_MS > PHOTO_REQUEST_TTL_MS,
+    `${PHOTO_INBOX_TTL_MS} vs ${PHOTO_REQUEST_TTL_MS}`,
+  );
+  check('a photo staged now is live now', photoInboxLive(photoInboxExpiry(now), now));
+  check(
+    'a photo staged at 08:00 is still live when they explain it at 17:00',
+    photoInboxLive(photoInboxExpiry(Date.parse('2026-09-03T08:00:00Z')), Date.parse('2026-09-03T17:00:00Z')),
+  );
+  check(
+    'and dead by the next working morning',
+    !photoInboxLive(photoInboxExpiry(Date.parse('2026-09-03T08:00:00Z')), Date.parse('2026-09-04T09:00:00Z')),
+  );
+  // The honest edge, pinned rather than glossed: a photo taken at 08:00 IS
+  // still waiting at the next day's 07:00 briefing, because 24 hours from 08:00
+  // is 08:00. That is safe here in a way it would not be for a check-in photo
+  // request: nothing guesses what this photo is of. The crew member names the
+  // task themselves, and the model is shown the time each photo arrived.
+  check(
+    'a photo from yesterday morning survives to this morning, and that is deliberate',
+    photoInboxLive(photoInboxExpiry(Date.parse('2026-09-03T08:00:00Z')), Date.parse('2026-09-04T07:00:00Z')),
+  );
+  check('one minute short of a day is live', photoInboxLive(photoInboxExpiry(now), now + PHOTO_INBOX_TTL_MS - 60_000));
+  check('one minute past it is not', !photoInboxLive(photoInboxExpiry(now), now + PHOTO_INBOX_TTL_MS + 60_000));
+  check('an expired photo is dead', !photoInboxLive('2026-09-03T11:59:59Z', now));
+  check('a missing expiry reads as expired', !photoInboxLive(null, now));
+  check('and so does an unparseable one', !photoInboxLive('soon', now));
+  check('the prompt block is capped', MAX_INBOX_PHOTOS > 0 && MAX_INBOX_PHOTOS <= 40, String(MAX_INBOX_PHOTOS));
+}
+
+// ── only photos that arrived AFTER the request opened (fix round 1) ─────────
+// The sequence that makes this necessary is ordinary, not adversarial: a photo
+// at 15:00 of some other job (buttons go out, no request open), a 16:00
+// check-in tap opening a request for tasks A and B, and the crew member
+// scrolling up to tap the 15:00 message's "É tudo". Without the filter that
+// 15:00 photo becomes proof of task A: evidence, wrong, and undeletable.
+{
+  const opened = '2026-09-03T16:00:00Z';
+  const older = { id: 'a', receivedAt: '2026-09-03T15:00:00Z' };
+  const newer = { id: 'b', receivedAt: '2026-09-03T16:30:00Z' };
+  const exact = { id: 'c', receivedAt: opened };
+
+  eq('a photo from before the request is refused', photosSinceRequest([older], opened).length, 0);
+  eq('a photo from after it is taken', photosSinceRequest([newer], opened).map(p => p.id).join(), 'b');
+  // The bare-photo path stages and attaches in one request, so its photo's
+  // timestamp can equal the request's to the millisecond. Exclusive would drop
+  // the one photo this whole path exists to file.
+  eq('a photo from the same instant is taken', photosSinceRequest([exact], opened).map(p => p.id).join(), 'c');
+  eq('a mixed batch keeps only the newer half', photosSinceRequest([older, newer], opened).map(p => p.id).join(), 'b');
+  // Empty means the caller falls through, so the older photos stay in the inbox
+  // for the agent path rather than being attached to the wrong job OR lost.
+  eq('an entirely older batch yields nothing to attach', photosSinceRequest([older], opened).length, 0);
+  eq('an unparseable request timestamp excludes everything', photosSinceRequest([newer], 'soon').length, 0);
+  eq('a missing one does too', photosSinceRequest([newer], null).length, 0);
+  eq('and so does an unparseable photo timestamp', photosSinceRequest([{ id: 'd', receivedAt: 'x' }], opened).length, 0);
+}
+
+// ── the copy that answers a bare photo ──────────────────────────────────────
+// Meta clamps nothing: a button title over 20 characters is a 400, and the
+// sender clamps rather than throws precisely because a translator lengthening a
+// label must degrade to a truncated word. Asserting the untruncated length here
+// is what keeps the clamp from ever being reached.
+for (const locale of LOCALES) {
+  const t = getCatalog(locale).whatsapp;
+  check(`${locale}: the "more photos" button fits`, t.photoBatchMoreButton.length <= 20, t.photoBatchMoreButton);
+  check(`${locale}: the "that is everything" button fits`, t.photoBatchDoneButton.length <= 20, t.photoBatchDoneButton);
+  // The count is the running total of what is WAITING, not what arrived in this
+  // message, so somebody sending four in a row watches it climb. A receipt that
+  // said "1" four times is the message that produced "I tried 3 times now".
+  check(`${locale}: the receipt names the count when there is more than one`, t.photoBatchAsk(3).includes('3'), t.photoBatchAsk(3));
+  check(`${locale}: and reads naturally for the first one`, t.photoBatchAsk(1).length > 0, t.photoBatchAsk(1));
+  // It must NOT claim anything was recorded: nothing has been filed at this
+  // point, and a photo waiting is a photo waiting.
+  for (const key of ['photoBatchAsk', 'photoBatchMoreAck', 'photoBatchNone'] as const) {
+    const body = key === 'photoBatchAsk' ? t.photoBatchAsk(2) : t[key];
+    check(`${locale}: ${key} is one short line`, body.length > 0 && body.length <= 160, body);
+  }
+}
+// ── the immediate assignment note (issue W7) ────────────────────────────────
+//
+// "When we assign a new task to a worker we need to send it immediately, only
+// in working hours." Before this, a task given to somebody at nine in the
+// morning reached them at 07:00 the NEXT day, and nothing told the manager the
+// person had not been told.
+//
+// Four things are pinned here, and each of them is a defect with no build-time
+// signal:
+//   * The message must say WHY it arrived. Reusing the 07:00 greeting would
+//     open an afternoon message with "Bom dia".
+//   * The new task must be MARKED. The whole day is sent, so an unmarked one
+//     makes the reader hunt for the change.
+//   * The marker must be a PREFIX. `taskHeadline` renders "Pintar tecto (Casa
+//     de Paco)", so a suffix produces two unrelated parentheses in a row.
+//   * The paid template must not go out to a locale Meta has not approved:
+//     that is a 132001 per recipient, which reads as a broken send rather than
+//     as a missing approval.
+{
+  const NEW_TASK = '11111111-1111-4111-8111-111111111111';
+  const OLD_TASK = '22222222-2222-4222-8222-222222222222';
+
+  function assignmentTask(id: string, title: string): BriefingTask {
+    return {
+      id,
+      title,
+      job_name: 'Casa de Paco',
+      overdue: false,
+      days_overdue: 0,
+      description: null,
+      materials: [],
+      job_address: null,
+      waiting_on: [],
+      awaiting_review: false,
+      due_date: null,
+      role: 'lead',
+    };
+  }
+
+  function assignmentBriefing(locale: Locale): WorkerBriefing {
+    return {
+      workerId: uuid,
+      name: 'Miguel',
+      recipient: { kind: 'phone', waId },
+      locale,
+      hasChosenLanguage: false,
+      tasks: [assignmentTask(NEW_TASK, 'Pintar tecto'), assignmentTask(OLD_TASK, 'Canalização')],
+      lastInboundAt: new Date().toISOString(),
+    };
+  }
+
+  for (const locale of LOCALES) {
+    const t = getCatalog(locale).reminders;
+    const body = renderAssignmentMessage(assignmentBriefing(locale), new Set([NEW_TASK]));
+
+    check(
+      `${locale}: the note opens by saying a task was just assigned`,
+      body.startsWith(t.assignmentGreeting({ name: 'Miguel', count: 1 })),
+      body.slice(0, 80),
+    );
+    // NOT the morning greeting. This message goes out at any hour of the
+    // working day, and "Bom dia" at 15:00 is the tell that a renderer was
+    // reused without being read.
+    check(
+      `${locale}: and NOT with the 07:00 greeting`,
+      !body.includes(t.freeFormGreeting('Miguel')),
+      body.slice(0, 80),
+    );
+    // The rest of the day is still there, unmarked, from the SAME renderer the
+    // 07:00 briefing uses.
+    check(`${locale}: the whole day is carried, not just the new task`, body.includes('Canalização'), body);
+    check(`${locale}: the new task is marked`, body.includes(t.taskNewlyAssigned('Pintar tecto')), body);
+    check(
+      `${locale}: and the task they already knew about is NOT`,
+      !body.includes(t.taskNewlyAssigned('Canalização')),
+      body,
+    );
+    // A PREFIX. "Pintar tecto (nova) (Casa de Paco)" is what a suffix produces.
+    check(
+      `${locale}: the marker sits in front of the title, not between it and the obra`,
+      body.includes(`${t.taskNewlyAssigned('Pintar tecto')} `) || body.includes(t.taskWithJob(t.taskNewlyAssigned('Pintar tecto'), 'Casa de Paco')),
+      body,
+    );
+    check(`${locale}: the obra survives the marking`, body.includes('Casa de Paco'), body);
+
+    // The paid template's {{2}}: only what is new, and one flat line — Meta
+    // rejects a newline in a body parameter with 132000.
+    const param = renderAssignmentTemplateParam([assignmentTask(NEW_TASK, 'Pintar tecto')], locale);
+    check(`${locale}: the template parameter names the new task`, param.includes('Pintar tecto'), param);
+    check(`${locale}: and carries no newline`, !param.includes('\n'), JSON.stringify(param));
+    check(
+      `${locale}: and does NOT carry the rest of the day`,
+      !param.includes('Canalização'),
+      param,
+    );
+  }
+
+  // The day link rides this message exactly as it rides the 07:00 one.
+  const LINK = 'https://www.construcapo.com/dia?t=abc123';
+  const linked = renderAssignmentMessage(assignmentBriefing('pt-PT'), new Set([NEW_TASK]), {
+    dayLinkUrl: LINK,
+  });
+  check('the crew day link rides the assignment note', linked.includes(LINK), linked.slice(-160));
+
+  // ── the two gates ─────────────────────────────────────────────────────────
+  // Quiet hours. The full window is asserted in scripts/scheduler-check.mts,
+  // beside the other Lisbon-hour gates; what is pinned HERE is that the SEND
+  // path consults one at all — a manager doing admin at midnight must not wake
+  // their crew.
+  check('nothing is announced at 03:00', !withinAssignmentHours(3));
+  check('nothing is announced at 23:00', !withinAssignmentHours(23));
+  check('an assignment at midday is announced', withinAssignmentHours(12));
+
+  // ── the approval switch ───────────────────────────────────────────────────
+  // What stands between an unapproved template and a 132001 for every
+  // out-of-window crew member. Asserted as a MEMBERSHIP RULE rather than
+  // against the set it wraps — comparing the function to its own source cannot
+  // fail, which is the trap BRIEFING_V2_APPROVED_LANGUAGES' own block avoids.
+  //
+  // Every entry must be a REAL Meta locale code we ship, or a typo would read
+  // as "approved for nobody" and be invisible.
+  for (const language of TASK_ASSIGNED_APPROVED_LANGUAGES) {
+    check(
+      `${language} is a locale this product actually has`,
+      TEMPLATE_LANGUAGES.includes(language),
+      language,
+    );
+    check(`and ${language} is therefore sendable`, taskAssignedTemplateApproved(language));
+  }
+  // Anything NOT in the set falls to "do not send", including the three shipped
+  // locales while they are still awaiting review, and any code this file has
+  // never heard of.
+  for (const language of TEMPLATE_LANGUAGES) {
+    if (TASK_ASSIGNED_APPROVED_LANGUAGES.has(language)) continue;
+    check(
+      `capo_task_assigned in ${language} is NOT sent while unapproved`,
+      !taskAssignedTemplateApproved(language),
+    );
+  }
+  check(
+    'an unknown locale code is never treated as approved',
+    !taskAssignedTemplateApproved('fr_FR'),
+  );
+  // The hyphenated app locale is NOT the Meta code. Putting 'pt-PT' in the set
+  // would silently approve nobody — the switch is keyed on templateLanguage.
+  check(
+    'the app locale form is never mistaken for the Meta code',
+    !taskAssignedTemplateApproved('pt-PT'),
+  );
+
+  // ── the plural opener (the coalescing window's own copy defect) ───────────
+  // The deferral folds several assignments into ONE message, so "uma tarefa
+  // nova" is wrong in exactly the case that mechanism creates. The count comes
+  // from what was MARKED, never from the size of the queued id set.
+  {
+    const both = renderAssignmentMessage(
+      assignmentBriefing('pt-PT'),
+      new Set([NEW_TASK, OLD_TASK]),
+    );
+    const t = getCatalog('pt-PT').reminders;
+    check(
+      'two tasks in one message open in the plural',
+      both.startsWith(t.assignmentGreeting({ name: 'Miguel', count: 2 })),
+      both.slice(0, 80),
+    );
+    // A queued task that has left this person's board is not marked, so it must
+    // not be counted either — otherwise the opener says "2 tarefas novas" above
+    // a day that shows one.
+    const ghost = renderAssignmentMessage(
+      assignmentBriefing('pt-PT'),
+      new Set([NEW_TASK, 'ffffffff-ffff-4fff-8fff-ffffffffffff']),
+    );
+    check(
+      'a task no longer on the board is not counted in the opener',
+      ghost.startsWith(t.assignmentGreeting({ name: 'Miguel', count: 1 })),
+      ghost.slice(0, 80),
+    );
+  }
+}
+
+// ── the assignment drain's decisions, and its send ORDER (issue W7) ─────────
+//
+// The defects these pin all send a real crew member something untrue or
+// duplicated, and none of them is visible to a type checker:
+//   * Two drains overlapping by seconds both sending a whole-day message. The
+//     free-form path writes nothing to notification_log — that is the PAID
+//     ledger — so the queue row itself is the only lock there is.
+//   * A crew member reassigned away between the queue and the drain reading
+//     "your boss just gave you a new task", followed by the empty-day line.
+//   * An evening assignment of tomorrow's work going out the next morning, an
+//     hour after the 07:00 briefing already said it.
+{
+  // ── the per-person decision, and the ORDER of its reasons ─────────────────
+  eq(
+    'a crew member who may not be messaged is a final answer',
+    decideDelivery({ messageable: false, newTaskCount: 1, recentlyEngaged: false }).kind,
+    'skip',
+  );
+  // ⚠ ORDER. A permanent skip must outrank a deferral, or somebody who can
+  // never be messaged sits in the queue being reconsidered every fifteen
+  // minutes for ever.
+  eq(
+    'and it outranks the coalescing deferral',
+    decideDelivery({ messageable: false, newTaskCount: 1, recentlyEngaged: true }).kind,
+    'skip',
+  );
+  {
+    const d = decideDelivery({ messageable: true, newTaskCount: 0, recentlyEngaged: false });
+    eq('a task no longer theirs sends nothing', d.kind, 'skip');
+    eq(
+      '…and says so on the row',
+      d.kind === 'skip' ? d.outcome : null,
+      'reassigned',
+    );
+  }
+  eq(
+    'a reassignment also outranks the deferral',
+    decideDelivery({ messageable: true, newTaskCount: 0, recentlyEngaged: true }).kind,
+    'skip',
+  );
+  eq(
+    'somebody messaged moments ago is deferred, not skipped',
+    decideDelivery({ messageable: true, newTaskCount: 1, recentlyEngaged: true }).kind,
+    'defer',
+  );
+  eq(
+    'and the ordinary case sends',
+    decideDelivery({ messageable: true, newTaskCount: 2, recentlyEngaged: false }).kind,
+    'send',
+  );
+
+  // ── what counts as "already messaged" ─────────────────────────────────────
+  // `sending` is the whole point: a drain that has CLAIMED but not yet heard
+  // back from Meta has already committed. Reading only the finished outcomes
+  // left the guard blind in exactly the two-seconds-apart case it exists for.
+  check('a claim in flight counts as already messaged', ENGAGED_OUTCOMES.has('sending'));
+  check('so does a finished free-form send', ENGAGED_OUTCOMES.has('sent_free_form'));
+  check('and a paid template', ENGAGED_OUTCOMES.has('sent_template'));
+  // Everything that reached nobody must NOT suppress the next attempt.
+  for (const quiet of ['not_today', 'stale', 'not_messageable', 'reassigned', 'template_unapproved', 'send_failed', 'not_billable', 'outside_hours'] as const) {
+    check(`"${quiet}" does not suppress a later message`, !ENGAGED_OUTCOMES.has(quiet));
+  }
+
+  // ── yesterday's leftovers ─────────────────────────────────────────────────
+  // An out-of-hours notice is deliberately left queued. Without this test the
+  // commonest manager habit there is — planning tomorrow at nine in the evening
+  // — produces a "new task" message the next morning, an hour after the 07:00
+  // briefing already carried it.
+  check('a notice queued today is live', !noticeIsStale('2026-09-03', '2026-09-03'));
+  check('one queued last night is stale', noticeIsStale('2026-09-02', '2026-09-03'));
+  check('one queued for tomorrow is stale too', noticeIsStale('2026-09-04', '2026-09-03'));
+  // Fails toward silence: an absent or unreadable column sends nothing, and the
+  // task is still on the board for the morning.
+  check('a missing queued_date reads as stale', noticeIsStale(null, '2026-09-03'));
+  check('an unreadable one reads as stale', noticeIsStale(undefined, '2026-09-03'));
+
+  // ── CLAIM, THEN SEND ──────────────────────────────────────────────────────
+  {
+    const order: string[] = [];
+    const result = await claimThenSend({
+      ids: ['a', 'b'],
+      claim: async ids => {
+        order.push(`claim:${ids.join(',')}`);
+        return ['a', 'b'];
+      },
+      send: async won => {
+        order.push(`send:${won.join(',')}`);
+        return 'ok';
+      },
+    });
+    eq('the claim happens FIRST', order[0], 'claim:a,b');
+    eq('and the send SECOND', order[1], 'send:a,b');
+    eq('nothing else happens', order.length, 2);
+    check('and the send is reported', result.sent);
+    eq('with the won ids', result.won.join(','), 'a,b');
+  }
+  {
+    // The losing drain. Another drain claimed the rows two seconds ago; this
+    // one must not message anybody, and must not stamp rows it does not own.
+    const order: string[] = [];
+    const result = await claimThenSend({
+      ids: ['a'],
+      claim: async () => {
+        order.push('claim');
+        return [];
+      },
+      send: async () => {
+        order.push('send');
+        return 'ok';
+      },
+    });
+    check('a drain that wins nothing does not send', !order.includes('send'), order.join('|'));
+    check('and reports that it sent nothing', !result.sent);
+    eq('and claims nothing', result.won.length, 0);
+  }
+  {
+    // A PARTIAL win: the other drain took one row. Only what was won may be
+    // sent about, or two drains both announce the same task as new.
+    const seen: string[][] = [];
+    await claimThenSend({
+      ids: ['a', 'b'],
+      claim: async () => ['b'],
+      send: async won => {
+        seen.push([...won]);
+        return 'ok';
+      },
+    });
+    eq('a partial win sends only what it won', JSON.stringify(seen), '[["b"]]');
+  }
+  {
+    const order: string[] = [];
+    const result = await claimThenSend({
+      ids: [],
+      claim: async () => {
+        order.push('claim');
+        return [];
+      },
+      send: async () => {
+        order.push('send');
+        return 'ok';
+      },
+    });
+    check('an empty batch touches nothing at all', order.length === 0, order.join('|'));
+    check('and sends nothing', !result.sent);
+  }
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

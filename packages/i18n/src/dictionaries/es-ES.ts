@@ -116,6 +116,7 @@ const dict: Catalog = {
     retry: 'Intentar otra vez',
     dismiss: 'Descartar',
     emptyThread: 'Habla con el Capo — él se encarga de las obras, las tareas y el equipo.',
+    emptyThreadOnboarding: 'Saluda al Capo para empezar a configurar la empresa.',
     proposalTitle: 'Propuesta del Capo',
     pendingProposals: 'Propuestas por decidir',
     approve: 'Aprobar',
@@ -205,6 +206,10 @@ const dict: Catalog = {
     kind: {
       review_pending: subject => `“${subject}” está pendiente de tu control.`,
       worker_request: subject => `${subject} ha pedido algo para la obra.`,
+      review_no_photo: (subject, quote) =>
+        quote
+          ? `“${subject}” se dio por terminada sin foto. Dijo: “${quote}”`
+          : `“${subject}” se dio por terminada sin foto.`,
     },
     noSubject: 'Una tarea',
     noteLabel: 'Lo que han escrito:',
@@ -434,6 +439,8 @@ const dict: Catalog = {
       failed: 'No se pudo resolver el control',
       proofNone: 'Sin fotos adjuntas.',
       proofPhotos: n => (n === 1 ? '1 foto adjunta.' : `${n} fotos adjuntas.`),
+      proofWaived: 'Sin foto. Capo la pidió dos veces y sigue haciendo falta una.',
+      proofWaivedBadge: 'Sin foto',
     },
     taskDetail: {
       fallbackTitle: 'Tarea',
@@ -575,7 +582,8 @@ const dict: Catalog = {
       createAccount: 'Crear cuenta',
       errors: {
         credenciais: 'Email o contraseña incorrectos. Compruébalo e inténtalo de nuevo.',
-        'link-invalido': 'El enlace ha caducado o ya se ha usado. Pide uno nuevo.',
+        'link-invalido':
+          'El enlace ha caducado o ya se ha usado. Si ya confirmaste el email, entra con tu contraseña. Si no, pide un enlace nuevo.',
       },
     },
     signup: {
@@ -588,7 +596,6 @@ const dict: Catalog = {
       signIn: 'Entra aquí',
       errors: {
         dados: 'Introduce un email válido y una contraseña de al menos 8 caracteres.',
-        fechado: 'Los registros abren pronto — pide una invitación.',
       },
     },
     confirmEmail: {
@@ -621,6 +628,34 @@ const dict: Catalog = {
       errors: {
         curta: 'La contraseña tiene que tener al menos 8 caracteres.',
         guardar: 'No se ha podido guardar. Pide un nuevo enlace de recuperación.',
+      },
+    },
+    emails: {
+      languageLabel: 'Español',
+      confirm: {
+        subject: 'Confirma tu email · Capo',
+        preview: 'Falta un paso para que tu cuenta esté lista.',
+        heading: 'Confirma tu email',
+        body: 'Has creado una cuenta en Capo. Falta un paso: pulsa el botón para confirmar que este email es tuyo. Después tu cuenta queda lista.',
+        button: 'Confirmar email',
+        fallback:
+          'El enlace solo se puede usar una vez. Si el botón no abre, copia y pega esta dirección en el navegador:',
+        otherLine:
+          'Has creado una cuenta en Capo. Pulsa el botón de arriba para confirmar tu email y dejar tu cuenta lista.',
+        footer:
+          'Recibes este email porque alguien creó una cuenta en Capo con esta dirección. Si no fuiste tú, ignora este mensaje: no pasa nada.',
+      },
+      reset: {
+        subject: 'Recupera tu contraseña · Capo',
+        preview: 'Elige una contraseña nueva con el enlace de dentro.',
+        heading: 'Recuperar contraseña',
+        body: 'Has pedido restablecer la contraseña de tu cuenta de Capo. Pulsa el botón para elegir una nueva.',
+        button: 'Definir nueva contraseña',
+        fallback:
+          'Por seguridad, el enlace caduca poco después de enviarse y solo se puede usar una vez. Si el botón no abre, copia y pega esta dirección en el navegador:',
+        otherLine:
+          'Has pedido restablecer la contraseña de tu cuenta de Capo. Pulsa el botón de arriba para elegir una nueva.',
+        footer: 'Si no pediste este cambio, ignora este email: tu contraseña queda como está.',
       },
     },
   },
@@ -921,6 +956,21 @@ const dict: Catalog = {
       'Dime qué está fallando en la aplicación o en mis mensajes — tu próximo mensaje queda registrado para el equipo de Capo.',
     reportAck: 'Recibido, gracias. Queda registrado para que el equipo de Capo le eche un vistazo.',
     reportFailed: 'No he podido registrar tu aviso ahora. Inténtalo otra vez en un rato.',
+    workerAudioFailed: 'No he podido escuchar el audio. Escríbemelo mejor.',
+    photoBatchAsk: count =>
+      count === 1
+        ? 'Recibida la foto. ¿Quieres mandar alguna más o ya está?'
+        : `Ya tengo ${count} fotos tuyas. ¿Alguna más o ya está?`,
+    photoBatchMoreButton: 'Más fotos',
+    photoBatchDoneButton: 'Ya está',
+    photoBatchMoreAck: 'Vale, mándala.',
+    photoBatchNone: 'No tengo fotos tuyas esperando. Manda la foto y dime de qué tarea es.',
+    hiWorkerGreeting: name => `¡Hola ${name}! 👋`,
+    hiWorkerWriteAnyTime:
+      'Escríbeme por aquí siempre que lo necesites, en português, español o English.',
+    hiWorkerMorning: 'Cada mañana, a las 7h, te mando aquí tu día.',
+    hiManager: appUrl =>
+      `¡Hola! Habla conmigo por aquí cuando quieras. Las obras y las tareas están en la aplicación: ${appUrl}`,
   },
 
   dia: {
@@ -999,8 +1049,12 @@ const dict: Catalog = {
     detailOverdue: title => `${title} — retrasada`,
     languageHint: 'Responde PT, ES o EN para cambiar de idioma',
     dayLinkCta: '🔗 Mira tu lista completa aquí:',
-    welcomeWorker: company =>
-      `${company} ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.`,
+    welcomeWorker: ({ company, manager }) => {
+      const added = manager
+        ? `Tu encargado en ${company}, ${manager}, acaba de añadirte a Capo.`
+        : `${company} acaba de añadirte a Capo.`;
+      return `${added} Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.`;
+    },
     welcomeManager: company =>
       `Tu cuenta de ${company} ya está lista: recibes aquí el resumen de cada mañana y puedes hablar conmigo por WhatsApp igual que en la aplicación.`,
     welcomeGreeting: name => `Hola ${name}, soy Capo, el asistente de obra.`,
@@ -1009,6 +1063,10 @@ const dict: Catalog = {
       const who = names ? `: ${names}` : '';
       return `Me he presentado por WhatsApp a ${notified} ${notified === 1 ? 'persona nueva' : 'personas nuevas'} del equipo${who}.`;
     },
+    welcomeButton: '¡Hola!',
+    assignmentGreeting: ({ name, count }) =>
+      `Hola ${name}. Tu jefe acaba de darte ${count === 1 ? 'una tarea nueva' : `${count} tareas nuevas`} para hoy.`,
+    taskNewlyAssigned: title => `Nueva: ${title}`,
   },
 
   phone: {

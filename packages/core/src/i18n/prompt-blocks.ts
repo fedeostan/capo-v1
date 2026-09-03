@@ -10,6 +10,25 @@
 // words can drift. Importing the catalog here to fix five words would drag the
 // entire UI dictionary into the agent — not worth it.
 
+/** One line of the onboarding checklist: how it stands, and what is there. */
+export interface OnboardingItem {
+  status: string;
+  detail: string;
+}
+
+/**
+ * The live state of the initial setup, as the model is shown it. `allDone` is
+ * not derived from the four items here on purpose: the caller owns the rule for
+ * what counts as complete, and the block's closing instruction changes with it.
+ */
+export interface OnboardingChecklist {
+  about: OnboardingItem;
+  jobs: OnboardingItem;
+  crew: OnboardingItem;
+  tasks: OnboardingItem;
+  allDone: boolean;
+}
+
 export interface PromptBlocks {
   /** Heading for the knowledge-base index block. */
   knowledgeHeading: string;
@@ -28,12 +47,41 @@ export interface PromptBlocks {
   snapshotActiveWorkers: string;
   snapshotOpenTasks: string;
   snapshotPendingProposals: string;
+  /**
+   * Label for the address of the manager's own dashboard. A live fact like the
+   * rest of this block, and for a blunt reason: the agent runs in a package
+   * that reads no environment at all, so before this line existed there was no
+   * URL anywhere in its context and any link it produced would have been
+   * invented.
+   */
+  snapshotApp: string;
 
   /** Onboarding steering. */
   firstUse: string;
   incompleteSetup(gaps: string[]): string;
   gapNoJobs: string;
   gapNoWorkers: string;
+
+  /**
+   * The driving block shown while `companies.onboarded_at` is null (issue: a
+   * new manager's onboarding stopped halfway). It REPLACES
+   * `firstUse`/`incompleteSetup` for as long as the company is unfinished:
+   * those two are a nudge, this is a checklist the model is told to keep
+   * working through until every line is done.
+   *
+   * Each item arrives already rendered as a status word plus a detail string,
+   * so there is one template per locale rather than four, and the single
+   * definition of what "done" means for each item stays with the caller.
+   */
+  onboarding(checklist: OnboardingChecklist): string;
+  /** Checklist item statuses. */
+  onboardingDone: string;
+  onboardingMissing: string;
+  /** Item details, rendered from the live counts by the caller. */
+  onboardingAbout(value: string | null): string;
+  onboardingJobs(count: number, withClient: number, withAddress: number): string;
+  onboardingCrew(count: number, withPhone: number, withConsent: number): string;
+  onboardingTasks(count: number): string;
 
   /** Durable memory block. */
   memoryHeading: string;
@@ -45,4 +93,22 @@ export interface PromptBlocks {
   /** Transcript speaker labels used by the summarizer. */
   speakers: { user: string; assistant: string; event: string };
   emptyMessage: string;
+
+  // ── the crew member's own identity (worker prompt only) ────────────────────
+  // Read this against the deliberate absences listed in agent/worker-context.ts.
+  // A worker's own name, trade, company and manager are NOT company shape and
+  // NOT another person's business: they are the four facts the person holding
+  // the phone already knows about themselves, and Capo was the only party in
+  // the conversation that did not. Nothing here names another crew member, and
+  // manager names are typed by managers themselves.
+  workerIdentityHeading: string;
+  workerIdentityName: string;
+  workerIdentityTrade: string;
+  workerIdentityCompany: string;
+  /** Label for the manager list. Written to read correctly for one or several. */
+  workerIdentityManagers: string;
+  /** Label for the language THIS crew member is being written to in. */
+  workerIdentityLanguage: string;
+  /** One line telling the model these facts are answerable, not private. */
+  workerIdentityNote: string;
 }

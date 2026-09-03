@@ -28,12 +28,13 @@
 export type BriefingTemplateName = 'capo_daily_briefing' | 'capo_daily_briefing_v2';
 
 /** Meta locale codes (`reminders.templateLanguage`) whose v2 is APPROVED. */
-export const BRIEFING_V2_APPROVED_LANGUAGES: ReadonlySet<string> = new Set(['pt_PT', 'en_US']);
+export const BRIEFING_V2_APPROVED_LANGUAGES: ReadonlySet<string> = new Set(['pt_PT', 'es_ES', 'en_US']);
 
 /**
  * The template name for one recipient. Keyed on the Meta locale code because
- * that is the unit Meta approves. Anything not explicitly approved — es_ES
- * today, and any code this file has never heard of — falls to the OLD
+ * that is the unit Meta approves (es_ES joined pt_PT/en_US on 2026-09-03).
+ * Anything not explicitly approved, and any code this file has never heard
+ * of, falls to the OLD
  * template, which has been approved in all three locales since #49.
  */
 export function briefingTemplateFor(templateLanguage: string): BriefingTemplateName {

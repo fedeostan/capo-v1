@@ -116,6 +116,7 @@ const dict: Catalog = {
     retry: 'Try again',
     dismiss: 'Dismiss',
     emptyThread: 'Talk to Capo — he handles the jobs, the tasks, and the crew.',
+    emptyThreadOnboarding: 'Say hello to Capo to start setting the company up.',
     proposalTitle: 'Capo proposes',
     pendingProposals: 'Waiting on you',
     approve: 'Approve',
@@ -205,6 +206,10 @@ const dict: Catalog = {
     kind: {
       review_pending: subject => `“${subject}” is waiting for your review.`,
       worker_request: subject => `${subject} asked for something on site.`,
+      review_no_photo: (subject, quote) =>
+        quote
+          ? `“${subject}” was declared finished with no photo. They said: “${quote}”`
+          : `“${subject}” was declared finished with no photo.`,
     },
     noSubject: 'A task',
     noteLabel: 'What they wrote:',
@@ -434,6 +439,8 @@ const dict: Catalog = {
       failed: 'Could not resolve the review',
       proofNone: 'No photos attached.',
       proofPhotos: n => (n === 1 ? '1 photo attached.' : `${n} photos attached.`),
+      proofWaived: 'No photo. Capo asked twice, and one is still needed.',
+      proofWaivedBadge: 'No photo',
     },
     taskDetail: {
       fallbackTitle: 'Task',
@@ -575,7 +582,8 @@ const dict: Catalog = {
       createAccount: 'Create account',
       errors: {
         credenciais: 'Wrong email or password. Check them and try again.',
-        'link-invalido': 'That link expired or was already used. Request a new one.',
+        'link-invalido':
+          'That link expired or was already used. If your email is already confirmed, sign in with your password. If not, request a new one.',
       },
     },
     signup: {
@@ -588,7 +596,6 @@ const dict: Catalog = {
       signIn: 'Sign in here',
       errors: {
         dados: 'Enter a valid email and a password of at least 8 characters.',
-        fechado: 'Sign-ups open soon — ask for an invite.',
       },
     },
     confirmEmail: {
@@ -621,6 +628,33 @@ const dict: Catalog = {
       errors: {
         curta: 'The password must be at least 8 characters.',
         guardar: "Couldn't save that. Request a new reset link.",
+      },
+    },
+    emails: {
+      languageLabel: 'English',
+      confirm: {
+        subject: 'Confirm your email · Capo',
+        preview: 'One step left before your account is ready.',
+        heading: 'Confirm your email',
+        body: 'You created a Capo account. One step is left: tap the button to confirm this email is yours. After that your account is ready.',
+        button: 'Confirm email',
+        fallback:
+          'The link can only be used once. If the button does not open, copy and paste this address into your browser:',
+        otherLine:
+          'You created a Capo account. Tap the button above to confirm your email and finish setting up.',
+        footer:
+          'You are getting this email because someone created a Capo account with this address. If it was not you, ignore this message: nothing happens.',
+      },
+      reset: {
+        subject: 'Reset your password · Capo',
+        preview: 'Choose a new password with the link inside.',
+        heading: 'Reset password',
+        body: 'You asked to reset the password on your Capo account. Tap the button to choose a new one.',
+        button: 'Set a new password',
+        fallback:
+          'For safety, the link expires soon after it is sent and can only be used once. If the button does not open, copy and paste this address into your browser:',
+        otherLine: 'You asked to reset your Capo password. Tap the button above to choose a new one.',
+        footer: 'If you did not ask for this change, ignore this email: your password stays as it is.',
       },
     },
   },
@@ -920,6 +954,20 @@ const dict: Catalog = {
       "Tell me what's wrong with the app or my messages — your next message gets logged for the Capo team.",
     reportAck: 'Got it, thanks. Logged for the Capo team to look at.',
     reportFailed: "I couldn't log your report just now. Please try again in a bit.",
+    workerAudioFailed: "I couldn't hear that voice note. Write it to me instead.",
+    photoBatchAsk: count =>
+      count === 1
+        ? 'Got the photo. Any more, or is that everything?'
+        : `I've got ${count} photos from you now. Any more, or is that everything?`,
+    photoBatchMoreButton: 'More photos',
+    photoBatchDoneButton: "That's everything",
+    photoBatchMoreAck: 'Go ahead, send it.',
+    photoBatchNone: "I haven't got any photos waiting from you. Send it and tell me which job it's of.",
+    hiWorkerGreeting: name => `Hi ${name}! 👋`,
+    hiWorkerWriteAnyTime: 'Write to me here whenever you need to, in português, español or English.',
+    hiWorkerMorning: 'Every morning at 7am I send you your day here.',
+    hiManager: appUrl =>
+      `Hi! Talk to me here whenever you need to. Your sites and tasks are in the app: ${appUrl}`,
   },
 
   dia: {
@@ -998,8 +1046,12 @@ const dict: Catalog = {
     detailOverdue: title => `${title} — overdue`,
     languageHint: 'Reply PT, ES or EN to change language',
     dayLinkCta: '🔗 See your full list here:',
-    welcomeWorker: company =>
-      `${company} added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.`,
+    welcomeWorker: ({ company, manager }) => {
+      const added = manager
+        ? `Your manager at ${company}, ${manager}, has just added you to Capo.`
+        : `${company} has just added you to Capo.`;
+      return `${added} Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.`;
+    },
     welcomeManager: company =>
       `Your ${company} account is ready: you get each morning's summary here, and you can talk to me on WhatsApp just as you do in the app.`,
     welcomeGreeting: name => `Hi ${name}, I am Capo, your site assistant.`,
@@ -1008,6 +1060,10 @@ const dict: Catalog = {
       const who = names ? `: ${names}` : '';
       return `I introduced myself on WhatsApp to ${notified} new ${notified === 1 ? 'person' : 'people'} on the team${who}.`;
     },
+    welcomeButton: 'Say hi',
+    assignmentGreeting: ({ name, count }) =>
+      `Hi ${name}. Your boss just gave you ${count === 1 ? 'a new task' : `${count} new tasks`} for today.`,
+    taskNewlyAssigned: title => `New: ${title}`,
   },
 
   phone: {

@@ -439,7 +439,8 @@ export function parseCheckinPayload(
 
 // ── worker menu row ids (issue #49) ─────────────────────────────────────────
 // The THIRD tappable shape in this file, and the one most likely to be confused
-// with the other two. Read the three together once:
+// with the other two. Read them together once (a fourth joined them in 0047,
+// listed below with the photo batch buttons):
 //
 //   approval card   `interactive.button_reply.id`  `capo:approve|reject:<uuid>`  MANAGER
 //   check-in        `button.payload`               `capo:checkin:done|not_done:` WORKER
@@ -479,6 +480,95 @@ export function parseWorkerMenuRowId(id: string): WorkerMenuRow | null {
   if (id.toLowerCase() === WORKER_MENU_MANAGER) return { kind: 'manager' };
   const match = WORKER_MENU_TASK.exec(id);
   return match ? { kind: 'task', taskId: match[1] } : null;
+}
+
+// ── the tappable payloads, all five of them ─────────────────────────────────
+// The photo batch (0047) and the welcome's "Say hi" (issue #45 follow-up) were
+// built in parallel and landed together, so read all five in one table. Two of
+// them are new: the photo batch is the THIRD under `type: 'interactive'`, and
+// "Say hi" is the first that arrives under BOTH envelopes.
+//
+//   approval card   `interactive.button_reply.id`  `capo:approve|reject:<uuid>`  MANAGER
+//   check-in        `button.payload`               `capo:checkin:done|not_done:` WORKER
+//   worker menu     `interactive.list_reply.id`    `capo:wm:…`                   WORKER
+//   photo batch     `interactive.button_reply.id`  `capo:photos:more|done`       WORKER
+//   say hi          `button.payload` (template)    `capo:hi`                     BOTH
+//                   `interactive.button_reply.id` (free-form twin)
+//
+// What keeps them apart is not the handler layout: it is that all five
+// prefixes are pairwise non-overlapping, so no parser can accept another's
+// value. scripts/whatsapp-check.mts asserts every direction, and a SIXTH codec
+// must extend those assertions rather than assume them.
+//
+// This one carries NO id at all, unlike the three above it, and that is the
+// same decision `capo:wm:manager` makes: "these are all the photos" is not
+// about any particular row. The photos it settles are whatever is waiting in
+// that crew member's inbox at the moment they tap, resolved from their
+// phone-derived worker id and never from anything in the payload. An id here
+// would be a handle somebody could tamper with for no benefit at all.
+const PHOTO_BATCH = /^capo:photos:(more|done)$/i;
+
+export type PhotoBatchAnswer = 'more' | 'done';
+
+export function photoBatchPayload(answer: PhotoBatchAnswer): string {
+  return `capo:photos:${answer}`;
+}
+
+export function parsePhotoBatchPayload(id: string): PhotoBatchAnswer | null {
+  const match = PHOTO_BATCH.exec(id);
+  return match ? (match[1].toLowerCase() as PhotoBatchAnswer) : null;
+}
+
+// ── the welcome's "Say hi" payload (issue #45 follow-up) ────────────────────
+// The welcome goes out in two envelopes — the approved template capo_welcome_v2
+// and, for anybody already inside their 24-hour window, an interactive
+// reply-button message — so the SAME tap comes back on two different fields.
+// One payload for both is what keeps "the person tapped hello" a single fact
+// with a single handler; splitting it per envelope would give the two halves of
+// one message two answers that could drift.
+//
+// It carries NO id, for workerMenuRowId('manager')'s reason: "hello" is not
+// about any particular row, and giving it one would invite a handler that
+// looked the row up and leaked whether it existed. Who tapped is already known
+// from sender resolution, which is the only identity on this path that is not
+// attacker-supplied.
+//
+// Disjoint from the other four by construction: it is an exact whole-string
+// match with no third segment, so no parser here can accept another's value.
+// scripts/whatsapp-check.mts asserts every direction.
+const HI_PAYLOAD = 'capo:hi';
+
+export function hiPayload(): string {
+  return HI_PAYLOAD;
+}
+
+export function isHiPayload(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.toLowerCase() === HI_PAYLOAD;
+}
+
+/**
+ * Did this inbound message carry the welcome's one button, in EITHER envelope?
+ *
+ * This two-line mapping is the load-bearing half of the feature, and it lives
+ * here rather than in the webhook for the reason parseProposalButtonId and
+ * isBsuid do: it is the only place `scripts/whatsapp-check.mts` can pin it with
+ * no credentials and no network. The claim the whole button rests on is that
+ * the same tap comes back on `button.payload` from the approved template and on
+ * `interactive.button_reply.id` from the free-form twin — and the failure of
+ * the second half is silent, because the template path would go on working.
+ *
+ * Structurally typed, deliberately: the webhook's own message type lives in the
+ * route and importing it here would invert the dependency for nothing. Both
+ * fields are optional on the wire and both can be absent.
+ */
+export function isHiTap(message: {
+  type?: string;
+  button?: { payload?: string };
+  interactive?: { button_reply?: { id?: string } };
+}): boolean {
+  if (message.type === 'button') return isHiPayload(message.button?.payload);
+  if (message.type === 'interactive') return isHiPayload(message.interactive?.button_reply?.id);
+  return false;
 }
 
 // ── business-scoped user ids ────────────────────────────────────────────────
@@ -1186,11 +1276,17 @@ async function sendText(
 
 // No header (plain-text only on Meta's side, and it would just duplicate the
 // card's first line) and no footer.
+//
+// Returns the provider message id for sendWhatsAppList's reason, which became a
+// real one when the welcome's free-form envelope moved onto this shape: Meta's
+// delivery and read callbacks are matched against notification_log by
+// `provider_message_id`, so a proactive send that threw the id away could never
+// be stamped delivered, read or failed. The sink's own sends still ignore it.
 async function sendInteractive(
   message: Extract<WhatsAppOutbound, { kind: 'interactive' }>,
   config: WhatsAppSendConfig,
-): Promise<void> {
-  await post(
+): Promise<{ providerMessageId: string | null }> {
+  return await post(
     {
       type: 'interactive',
       interactive: {
@@ -1198,6 +1294,57 @@ async function sendInteractive(
         body: { text: message.body },
         action: { buttons: message.buttons.map(button => ({ type: 'reply', reply: button })) },
       },
+    },
+    config,
+  );
+}
+
+/**
+ * Send a reply-buttons message that is NOT an approval card.
+ *
+ * The card path builds its own through `planAssistantMessages`, because a card
+ * is the rendering of a proposal and its text is a persisted artifact, and the
+ * sink's contract is "deliver an assistant STREAM". This is for the
+ * deterministic ones, which have no stream at all: "more photos, or is that
+ * everything?" (0047) and the welcome's free-form twin (issue #45 follow-up),
+ * both a sentence we already hold plus a button, decided before anything ran.
+ * Same envelope, no proposal anywhere near it.
+ *
+ * FREE, and free by SHAPE rather than by policy: an interactive message is a
+ * session message, so Meta bills nothing for it. The flip side is the same as
+ * plain text: outside the 24 hours the recipient's own inbound message opened,
+ * it is REFUSED (131047) rather than charged. Every caller must therefore be
+ * answering something the person just sent, or hold a template or a silence to
+ * fall back to.
+ *
+ * Both limits are CLAMPED rather than trusted, exactly as the card path clamps
+ * them: a translator lengthening a button label must degrade to a truncated
+ * word, never to a failed delivery. Meta allows at most three buttons; passing
+ * more is a caller bug and throws, because a button silently dropped is a
+ * choice the person can never make.
+ *
+ * Returns the provider message id, exactly as sendWhatsAppText and
+ * sendWhatsAppTemplate do and for the same reason: a PROACTIVE send records it
+ * in notification_log, and Meta's delivery/read callbacks are matched back to
+ * that row by `provider_message_id` alone. A send that dropped the id would look
+ * successful and then be permanently un-stampable. Callers that send inside a
+ * conversation (the photo batch ask) ignore the value.
+ */
+export async function sendWhatsAppButtons(
+  message: { body: string; buttons: { id: string; title: string }[] },
+  config: WhatsAppSendConfig,
+): Promise<{ providerMessageId: string | null }> {
+  if (message.buttons.length < 1 || message.buttons.length > 3) {
+    throw new Error(`interactive buttons need 1..3 buttons, got ${message.buttons.length}`);
+  }
+  return await sendInteractive(
+    {
+      kind: 'interactive',
+      body: message.body.slice(0, MAX_INTERACTIVE_BODY),
+      buttons: message.buttons.map(button => ({
+        id: button.id,
+        title: button.title.slice(0, MAX_BUTTON_TITLE),
+      })),
     },
     config,
   );

@@ -67,7 +67,15 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
   );
 }
 
-export default function InstallGuide({ locale }: { locale: Locale }) {
+export default function InstallGuide({
+  locale,
+  openHref,
+}: {
+  locale: Locale;
+  /** Where "open Capo" goes. Decided by the server: straight off signup it is
+   *  the setup conversation, otherwise Home. */
+  openHref: string;
+}) {
   const t = getCatalog(locale);
   const platform = useDetectedPlatform();
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -101,7 +109,7 @@ export default function InstallGuide({ locale }: { locale: Locale }) {
         <p className="rounded-lg bg-success-quiet px-3 py-2 text-callout text-success">
           {t.install.alreadyInstalled}
         </p>
-        <ButtonLink href="/" variant="primary" fullWidth>
+        <ButtonLink href={openHref} variant="primary" fullWidth>
           {t.install.open}
         </ButtonLink>
       </div>
@@ -120,7 +128,7 @@ export default function InstallGuide({ locale }: { locale: Locale }) {
         <GenericSteps t={t} />
       ) : null}
 
-      <Link href="/" className="block text-center text-callout text-fg-muted underline">
+      <Link href={openHref} className="block text-center text-callout text-fg-muted underline">
         {t.install.skip}
       </Link>
     </div>

@@ -159,6 +159,11 @@ export interface Catalog {
     retry: string;
     dismiss: string;
     emptyThread: string;
+    /** Shown instead of `emptyThread` while the company is still being set up
+     *  (companies.onboarded_at is null). An empty screen is the worst moment to
+     *  describe what Capo can do in general: what this manager needs is one
+     *  instruction, which is to say hello so the setup can start. */
+    emptyThreadOnboarding: string;
     proposalTitle: string;
     pendingProposals: string;
     approve: string;
@@ -244,7 +249,41 @@ export interface Catalog {
      *  translated. Keyed by the `kind` check constraint in
      *  0023_notifications.sql, so widening that constraint without adding
      *  copy in all three dictionaries is a tsc error. */
-    kind: Record<'review_pending' | 'worker_request', (subject: string) => string>;
+    kind: Record<
+      /** A crew member (or the manager) declared a task finished, with proof. */
+      | 'review_pending'
+      | 'worker_request'
+      /** ── A CLAIM WITH NO PHOTO (0049) ──────────────────────────────────
+       *  A crew member said a task was finished, Capo asked for a photo
+       *  TWICE, and they said they could not send one. Their reason is the
+       *  row's `body` and is quoted underneath, attributed, exactly as any
+       *  other worker-authored text.
+       *
+       *  Its own kind rather than a flag on 'review_pending', and the
+       *  reason is the push: a push renders from THIS record
+       *  (apps/web/app/notifications/push.ts), so one entry here reaches
+       *  the lock screen and the inbox and they cannot say different
+       *  things about the same claim.
+       *
+       *  ⚠ THIS IS A FACT, NOT AN ACCUSATION, like proofNone below. The
+       *  person could not photograph the work and said so. The sentence
+       *  says what happened; it does not imply anybody was cutting a
+       *  corner. */
+      | 'review_no_photo',
+      /**
+       * `subject` is the row's own title (a task name, or a crew member's name
+       * on a request) — data, interpolated and never translated.
+       *
+       * `quote` is the row's `body` when the SURFACE can only carry one line.
+       * The inbox calls this with ONE argument and renders the quote itself,
+       * attributed, beneath the sentence; the Web Push dispatcher has a single
+       * body slot and no room for a second block, so it passes the quote in
+       * here already trimmed to PUSH_QUOTE_MAX_CHARS. One entry, both surfaces,
+       * so a lock screen and an inbox row cannot describe one claim
+       * differently. An entry with nothing worth quoting simply ignores it.
+       */
+      (subject: string, quote?: string | null) => string
+    >;
     /** Stand-in when the row carries no title — an unnamed task. */
     noSubject: string;
     /** Label above the worker's quoted note. Sits ABOVE it and is never
@@ -564,6 +603,21 @@ export interface Catalog {
        *  things about the same row. */
       proofNone: string;
       proofPhotos(n: number): string;
+      /** ── THE CLAIM WAS FILED WITH NO PHOTO ON PURPOSE (0049) ────────────
+       *  Replaces proofNone when `task_reviews.photo_waived` is set: the crew
+       *  member was asked twice and said they could not send one. Unlike
+       *  proofNone this one IS rendered in the danger tone, and the difference
+       *  is real rather than decorative — proofNone is "nothing has arrived
+       *  yet", which is ordinary and often temporary, while this is "there
+       *  will not be one", settled at the moment the claim was filed. It is
+       *  what tells the manager to go and look.
+       *
+       *  Their reason is quoted beneath it, attributed, and must never be
+       *  merged into this sentence. Say a photo is still wanted; do not say
+       *  they refused. */
+      proofWaived: string;
+      /** The badge beside it. Read as a SHAPE, so two or three words at most. */
+      proofWaivedBadge: string;
     };
     taskDetail: {
       /** Page title when the task cannot be named (metadata runs before the row loads). */
@@ -902,7 +956,7 @@ export interface Catalog {
       emailNote: string;
       haveAccount: string;
       signIn: string;
-      errors: Record<'dados' | 'fechado', string>;
+      errors: Record<'dados', string>;
     };
     /**
      * The /confirmar-email screen (issue #99). ONE screen with TWO entrances,
@@ -943,6 +997,47 @@ export interface Catalog {
       title: string;
       label: string;
       errors: Record<'curta' | 'guardar', string>;
+    };
+    /**
+     * The two account emails Capo sends itself, through Resend (issue W1).
+     *
+     * They used to be Go templates pasted into the Supabase dashboard, which
+     * could not know the reader's language and so stacked all three in every
+     * message. The app DOES know it (the same locale cookie the public pages
+     * already read), so the reader's language is rendered fully and the other
+     * two get one line each under a divider. `otherLine` is that one line.
+     *
+     * Rendered by apps/web/lib/emails/{confirm,reset}.ts, the only consumers.
+     * Keep every string here free of HTML: the renderers escape these before
+     * putting them in the markup, so a tag written here would arrive in
+     * somebody's inbox as literal text.
+     */
+    emails: {
+      /** Names this language in itself, for the divider labels. */
+      languageLabel: string;
+      confirm: {
+        subject: string;
+        /** Shown beside the subject in the inbox list, never in the open email. */
+        preview: string;
+        heading: string;
+        body: string;
+        button: string;
+        /** Introduces the copy-and-paste URL under the button. */
+        fallback: string;
+        /** The whole email in one sentence, for readers of the other two languages. */
+        otherLine: string;
+        footer: string;
+      };
+      reset: {
+        subject: string;
+        preview: string;
+        heading: string;
+        body: string;
+        button: string;
+        fallback: string;
+        otherLine: string;
+        footer: string;
+      };
     };
   };
 
@@ -1464,6 +1559,83 @@ export interface Catalog {
     /** Filing failed (the likeliest cause: migration 0042 not yet applied).
      *  Honest, asks to try again — never pretends it was registered. */
     reportFailed: string;
+
+    /**
+     * A crew member's VOICE NOTE could not be turned into text (W4) - the
+     * download failed, the transcription failed, or it came back empty or too
+     * short to be anything but noise.
+     *
+     * One line for all three causes, deliberately: the crew member can do
+     * exactly one thing about any of them, and an error surface that varies
+     * with the cause tells whoever is probing it which half broke. It must
+     * offer the way out (write it instead) rather than only report the
+     * failure, because the person is standing there holding the phone that
+     * recorded it.
+     */
+    workerAudioFailed: string;
+    // ── "more photos, or is that everything?" (0047) ─────────────────────────
+    // A crew member who sends a photo with no caption used to get a model turn
+    // that asked which task it was for, and by the time they answered the photo
+    // was gone. Now every photo is kept, and this is the deterministic reply
+    // that goes out instead: a receipt with a running count and two buttons.
+    // Zero model calls, and free by SHAPE rather than by policy, because an
+    // interactive message is a session message and their own photo opened the
+    // window a second ago.
+
+    /**
+     * The receipt with the count. `count` is every photo of theirs still
+     * waiting for a task, not just this one, so somebody sending four in a row
+     * watches the number climb and knows all four landed.
+     *
+     * ⚠ It must NOT say the work is recorded, claimed or done. Nothing has been
+     * filed at this point: a photo waiting is a photo waiting.
+     */
+    photoBatchAsk(count: number): string;
+    /** "More photos" — max 20 characters, clamped by the sender if longer. */
+    photoBatchMoreButton: string;
+    /** "That's everything" — max 20 characters, clamped by the sender. */
+    photoBatchDoneButton: string;
+    /** After "more photos": one line, nothing else. They are holding a phone
+     *  in one hand on a building site. */
+    photoBatchMoreAck: string;
+    /** They tapped "that's everything" and nothing is waiting: the photos were
+     *  already attached, or they expired. Says what to do rather than what went
+     *  wrong, and never accuses them of not sending anything. */
+    photoBatchNone: string;
+
+    // ── the welcome's "Say hi" tap (issue #45 follow-up) ────────────────────
+    // The welcome now carries ONE quick-reply button, so the first thing a
+    // crew member ever does with Capo can be a tap rather than a decision
+    // about what to type. The answer below is deterministic: no model runs on
+    // this path at all, for the reason every other tap gives — it is free,
+    // instant, and already right.
+    //
+    // The tap itself opens Meta's 24-hour window, which is what makes all of
+    // these legal as ordinary free text.
+
+    /** The opening of the answer to a crew member's tap. Their own name, and
+     *  NOT "good morning" — the welcome may go out at any hour between 08:00
+     *  and 21:59, so the briefing's own greeting would be wrong half the time. */
+    hiWorkerGreeting(name: string): string;
+    /** One line telling a crew member they can just write, in their own
+     *  language. It is the only instruction in the answer: everything else is
+     *  their actual work. */
+    hiWorkerWriteAnyTime: string;
+    /**
+     * Added AFTER `reminders.workerNothing` when the crew member has nothing on
+     * today. Says when the next message arrives, so an empty first answer does
+     * not read as "this thing does nothing".
+     *
+     * ⚠ It must NOT repeat that there is nothing scheduled. `workerNothing`
+     * has already said so one line above ("Nada agendado para hoje."), and
+     * saying it twice in the first three lines Capo ever writes is precisely
+     * the machine tell the voice work exists to remove. This string is the
+     * 07:00 promise and nothing else.
+     */
+    hiWorkerMorning: string;
+    /** A MANAGER tapped the same button. One line, and a pointer to the app —
+     *  their work lives on a screen, not in a task list. */
+    hiManager(appUrl: string): string;
   };
 
   /**
@@ -1787,15 +1959,27 @@ export interface Catalog {
     // runs of four spaces, or Meta rejects the whole send with a 132000.
 
     /**
-     * {{2}} for a CREW MEMBER: their manager put their number in, this is what
-     * they will now get, and how to change the language it arrives in.
+     * {{2}} for a CREW MEMBER: who added them, what they will now get, and how
+     * to change the language it arrives in.
+     *
+     * ⚠ `manager` IS NULLABLE AND THE NULL IS A REAL CASE. It is the name on
+     * the company's own account, and a company can have none readable (no
+     * profile yet, a blank full_name). The clause is then OMITTED rather than
+     * filled with a placeholder: "the person who added you" names nobody, and
+     * a first message that gestures at an unnamed authority is worse than one
+     * that simply says the company added you.
+     *
+     * The manager's name is what makes this message land as a real thing a
+     * real person did, rather than as software introducing itself. That is the
+     * whole reason the clause exists, so keep it FIRST — it is the sentence a
+     * crew member reads in the WhatsApp notification preview.
      *
      * The language sentence is unconditional here and conditional in the daily
      * briefing, and that asymmetry is deliberate: a welcome is by definition
      * first contact, so this is the one message where "reply PT, ES or EN" is
      * certainly new information rather than daily noise.
      */
-    welcomeWorker(company: string): string;
+    welcomeWorker(args: { company: string; manager: string | null }): string;
     /**
      * {{2}} for a MANAGER: their account is live, and this message is itself
      * the proof that the number they typed on /perfil actually reaches them.
@@ -1824,6 +2008,64 @@ export interface Catalog {
      * welcome on their own phone and does not need Capo telling them about it.
      */
     welcomeEvent(args: { notified: number; names: string }): string;
+
+    /**
+     * The welcome's ONE quick-reply button label ("Olá!").
+     *
+     * ⚠ NO EMOJI, AND THAT IS META'S RULE RATHER THAN A TASTE. A quick-reply
+     * label containing an emoji, a variable, a newline or any formatted
+     * character is refused at SUBMISSION with error_subcode 2388060 ("los
+     * botones no pueden contener variables, nuevas líneas, emojis ni caracteres
+     * con formato"), which is how this label lost the waving hand it was
+     * written with. Adding one back does not fail at build time, it fails the
+     * next time somebody submits a template.
+     *
+     * ⚠ IT IS APPROVED COPY, NOT APP COPY. It rides the Meta template
+     * capo_welcome_v2, whose buttons are frozen at approval exactly as its body
+     * is, so changing this string changes NOTHING live until the template is
+     * re-submitted and re-reviewed by hand. It is in the catalog anyway for one
+     * reason: the free-form twin renders the same button as an interactive
+     * reply button, where it IS ours, and two copies of one label would drift.
+     *
+     * Meta caps a quick-reply label at 25 characters and an interactive reply
+     * button title at 20; scripts/whatsapp-check.mts holds it to the tighter of
+     * the two. Keep it to a greeting: the payload is `capo:hi` and the answer
+     * is a hello, so a label promising anything more would be a promise the
+     * handler does not keep.
+     */
+    welcomeButton: string;
+    // ── "you were just given a task" (issue W7) ──────────────────────────────
+    // A task assigned at 09:00 used to reach the person doing it at 07:00 the
+    // NEXT morning. These two keys are the message that closes that gap.
+
+    /**
+     * The free-form opener, REPLACING `freeFormGreeting` on this path only.
+     *
+     * It has to say the thing that is new, and `freeFormGreeting` cannot: it
+     * says "Bom dia", which is a lie at 15:00 and says nothing about why a
+     * message just arrived. Everything after this line is the ordinary
+     * free-form briefing, so the crew member reads the reason and then their
+     * whole day in one message rather than a task with no context.
+     *
+     * Newlines are fine — this is free-form text, never a template parameter.
+     *
+     * `count` is how many tasks were just handed over, and it is not always 1:
+     * a manager assigning several in a row has the follow-ups folded into ONE
+     * message by the coalescing window, so a hard-coded "uma tarefa nova"
+     * would be wrong in exactly the case that mechanism creates.
+     */
+    assignmentGreeting(args: { name: string; count: number }): string;
+    /**
+     * The marker on the task that was JUST assigned, inside a day that also
+     * contains work the person already knew about.
+     *
+     * ⚠ A PREFIX, not a suffix, and that is forced rather than chosen. The
+     * headline is built as `taskWithJob(title, job)` — "Pintar tecto (Casa de
+     * Paco)" — so a marker appended to the title renders as
+     * "Pintar tecto (nova) (Casa de Paco)", two parentheses in a row about two
+     * unrelated things. In front, it reads as a label on the line.
+     */
+    taskNewlyAssigned(title: string): string;
   };
 
   /**

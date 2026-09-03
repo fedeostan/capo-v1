@@ -1,10 +1,12 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { after } from 'next/server';
 import { requireAuth } from '@capo/db/session';
 import { assertNotBlocked } from '@/lib/billing';
 import { logEvent } from '@/lib/log';
 import { isUuid } from '@/app/(app)/tarefas/filters';
+import { drainAssignmentNotices } from '@/app/notifications/task-assigned';
 
 // Changing who does a task, straight from the task detail screen.
 //
@@ -50,6 +52,12 @@ export async function assignTask(taskId: string, workerId: string | null): Promi
   if (error) throw new Error(`dashboard.task_assigned failed: ${error.message}`);
 
   logEvent('dashboard.task_assigned', { companyId, taskId, workerId });
+
+  // ── the crew hears about a new task now, not tomorrow at 07:00 (W7) ───────
+  // The database trigger has already queued the notice; this only drains it,
+  // after the response is on its way. One line, and it never throws — telling
+  // the crew member must never cost the manager their tap.
+  after(() => drainAssignmentNotices({ companyId }));
 
   // Reassignment changes who the 07:00 briefing names, the crew load on
   // /perfil, and the assignee shown on every board row for this task — the
@@ -105,6 +113,12 @@ export async function setCollaborators(taskId: string, workerIds: string[]): Pro
   if (error) throw new Error(`dashboard.task_collaborators failed: ${error.message}`);
 
   logEvent('dashboard.task_collaborators', { companyId, taskId, count: wanted.length });
+
+  // ── the crew hears about a new task now, not tomorrow at 07:00 (W7) ───────
+  // The database trigger has already queued the notice; this only drains it,
+  // after the response is on its way. One line, and it never throws — telling
+  // the crew member must never cost the manager their tap.
+  after(() => drainAssignmentNotices({ companyId }));
 
   // The same surfaces a reassignment touches, and for the same reasons: who is
   // briefed at 07:00, the crew load on /perfil, and this task's own screen.

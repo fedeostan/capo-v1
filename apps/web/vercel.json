@@ -5,6 +5,7 @@
     { "path": "/api/cron/checkin", "schedule": "0 * * * *" },
     { "path": "/api/cron/push", "schedule": "*/10 * * * *" },
     { "path": "/api/cron/welcome", "schedule": "*/15 * * * *" },
-    { "path": "/api/cron/consolidate", "schedule": "0 * * * *" }
+    { "path": "/api/cron/consolidate", "schedule": "0 * * * *" },
+    { "path": "/api/cron/task-assigned", "schedule": "*/15 * * * *" }
   ]
 }

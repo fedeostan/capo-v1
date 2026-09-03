@@ -3,6 +3,9 @@ import { getApiAuth } from '@capo/db/session';
 import { resolveProposal } from '@capo/core/capabilities/propose';
 import { runTranslationBatch } from '@capo/core/translation';
 import { assertNotBlocked, BillingBlockedError } from '@/lib/billing';
+import { siteUrl } from '@/lib/site-url';
+import { drainAssignmentNotices } from '@/app/notifications/task-assigned';
+import { welcomeAnyoneNew } from '@/lib/welcome-trigger';
 
 // Raised for one proposal only: apply_company_translation queues a batch, and
 // the after() hook below works it once the response has already gone out. Every
@@ -35,10 +38,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   try {
-    const resolution = await resolveProposal(auth.db, id, decision, {
-      user: auth.locale,
-      company: auth.companyLocale,
-    });
+    const resolution = await resolveProposal(
+      auth.db,
+      id,
+      decision,
+      { user: auth.locale, company: auth.companyLocale },
+      siteUrl(),
+    );
 
     // apply_company_translation only snapshots and queues — it does no model
     // work, because resolveProposal must stay fast for every other action.
@@ -59,6 +65,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           console.error('translation batch failed:', e instanceof Error ? e.message : e);
         }
       });
+    }
+
+    // ── the crew hears about a new task now, not tomorrow at 07:00 (W7) ────
+    // An approved card is one of the seven doors a task gains an assignee
+    // through — apply_plan can assign a whole obra in one tap. The queue row
+    // is already written by the trigger; this only drains it. One line, and it
+    // never throws.
+    after(() => drainAssignmentNotices({ companyId: auth.companyId }));
+
+    // An APPROVED card is the other way a crew member gets added and consented
+    // for — add_worker and update_worker are both guarded tools, so under the
+    // default always-ask posture every one of them arrives here rather than
+    // executing in the turn itself.
+    //
+    // Deliberately NOT gated on which action the card carried. Decoding the
+    // payload here would be a second reader of a shape this route goes out of
+    // its way not to know, and the sweep answers "who may be messaged and has
+    // never been introduced?" — so a card that changed nothing relevant costs
+    // one indexed read and welcomes nobody. Rejections reach here too, equally
+    // harmlessly.
+    if (resolution.outcome === 'approved') {
+      after(() => welcomeAnyoneNew(auth.companyId, 'proposal'));
     }
 
     return Response.json(resolution);

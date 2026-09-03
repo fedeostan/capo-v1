@@ -32,6 +32,9 @@ export async function POST(req: Request) {
       // iOS Safari sends audio/mp4, Chrome audio/webm — pass through whatever
       // the browser recorded; Gemini decodes the container itself.
       mediaType: audio.type || 'audio/webm',
+      // The manager's own company's crew and obra names. Their own data, and
+      // the single biggest lever on accuracy - see VocabularyScope.
+      vocabulary: 'company',
     });
     return Response.json({ text });
   } catch (err) {

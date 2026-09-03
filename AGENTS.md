@@ -431,6 +431,110 @@ Structural invariants (do not regress):
     decision (2026-08-14) is that Stripe computes no IVA and collects no NIF;
     invoicing happens outside Stripe. Adding IVA later means a NEW price object,
     leaving existing subscribers alone. It is never an edit to this one.
+- **Capo sends its own account emails, and it builds its own confirmation
+  link** (`apps/web/lib/auth-email.ts`, `apps/web/lib/emails/`, migration
+  `0045`, W1). Signup confirmation, the resend and password recovery used to be
+  `auth.signUp` / `auth.resend` / `resetPasswordForEmail`, with GoTrue mailing a
+  Go template pasted into its dashboard. The paste was never done, so the
+  DEFAULT template kept going out, and it routes the click through Supabase's
+  own `/auth/v1/verify`: the token is consumed, the account IS confirmed, and
+  the browser arrives at `/auth/confirm` with no `token_hash`. The app then told
+  a person whose account had just been confirmed that their link had expired,
+  while their password worked. Six things:
+  - **`generateLink` mints, Resend delivers, and the split is the whole fix.**
+    `auth.admin.generateLink()` on the SERVICE-ROLE client creates or finds the
+    user and returns a token without sending anything; the message goes out over
+    Resend's HTTP API with plain `fetch` (no `resend` npm package) from
+    `Capo <ola@construcapo.com>`. GoTrue is still the only authority on
+    identity; only the envelope moved. **Use `properties.hashed_token`, never
+    `properties.action_link`** — `action_link` IS the `/auth/v1/verify` URL that
+    caused the bug.
+  - **The link shape is fixed**:
+    `${siteUrl()}/auth/confirm?token_hash=<hashed_token>&type=<signup|magiclink|recovery>&next=</onboarding|/nova-password>`.
+    The resend is a MAGIC LINK rather than a second signup token because there
+    is no password at that point; verifying a magiclink token sets
+    `email_confirmed_at`, which is the entire job. That was confirmed against
+    the live project before it was written, not assumed.
+  - **`/auth/confirm` also accepts `?code=`**, and that is load-bearing rather
+    than tidy-up: it is what keeps the legacy fallback's links working. Do not
+    delete it while that fallback exists.
+  - **The no-key fallback is deliberate and is the ONLY place in `apps/` allowed
+    to call `auth.signUp` / `auth.resend` / `resetPasswordForEmail`.** With
+    neither `RESEND_API_KEY` nor `RESEND_SMTP_KEY` set, `sendAuthEmail` makes
+    the exact pre-W1 call with the same `emailRedirectTo` and logs
+    `auth_email.legacy_mailer` — because a deploy landing before the key would
+    otherwise mean NO account emails at all: no signups, no password resets.
+    `sendThroughLegacyMailer` is marked for deletion once the key is on Vercel;
+    the built-in mailer must not be reintroduced anywhere else.
+  - **`auth_email_sends` (0045) is the throttle, and it exists because GoTrue's
+    rate limits left with GoTrue's mailer.** `/registar` and `/recuperar` are
+    unauthenticated forms that cause mail to be delivered to an arbitrary
+    address. **TWO bounds, and both are needed.** Per address,
+    `AUTH_EMAIL_MAX_PER_WINDOW` (3) per hour, counted across ALL THREE kinds
+    together — a limit spendable three times over by alternating doors is not a
+    limit. Globally, `AUTH_EMAIL_MAX_GLOBAL_PER_WINDOW` (60) per hour across
+    every address, because the per-address half bounds what one victim receives
+    and NOT what our sending domain does: without it `/registar` could still
+    mail unlimited distinct strangers, and `victim+1@`/`victim+2@` are distinct
+    addresses to us but one inbox to Gmail. Deny-all posture
+    (`notification_log`'s): RLS on, zero policies, every grant revoked, service
+    role only. It carries NO `company_id`, so the RLS matrix's per-tenant sweep
+    does not reach it and correctly should not. The row is inserted AFTER
+    delivery accepts, never before.
+  - **The throttle check runs BEFORE `sendAuthEmail` picks Resend or the legacy
+    mailer, and that order is load-bearing.** It used to sit only on the Resend
+    branch, which meant that for as long as `RESEND_API_KEY` is unset (the live
+    production state as of this writing) `/registar` and `/recuperar` had no
+    application-level rate limit at all — the two unauthenticated,
+    arbitrary-address doors this table exists to bound. `sendThroughLegacyMailer`
+    now calls `recordSend` on every one of its three successes too, so the
+    counters this check reads actually grow on that path; without it, moving
+    the check earlier would refuse nothing, because the count would sit at zero
+    forever.
+  - **The throttle read FAILS CLOSED, with exactly one exception: a MISSING
+    TABLE.** 0045 ships before it is applied, so "table absent" must still send
+    or nobody could confirm an email between the deploy and the migration
+    (`auth_email.throttle_unavailable`). Every other failure — a revoked grant,
+    a network error, a broken service-role key — means the table exists and we
+    cannot read it, so we do not know what already went out, and sending anyway
+    would delete the throttle at exactly the moment something is wrong
+    (`auth_email.throttle_failed`, answered `throttled`). ⚠ **A null count is a
+    FAILURE, not a zero**, and PostgREST will not say so: a `head: true` count
+    against a table that does not exist answers `204` with `count: null` and NO
+    error, which `?? 0` turns into a throttle that reports healthy while being
+    switched off. A real table answers `count: 0`. That null is what identifies
+    the missing-table case; verified against the live project, and the same
+    family of trap as the RLS matrix's `readIsDenied`.
+  - **NOTHING the caller learns may distinguish one address from another.**
+    `sendAuthEmail` returns `sent | throttled | skipped` and every value leads to
+    the same screen: `skipped` is exactly the answer for "this address already
+    has a confirmed account" and for "there is no such account", which are the
+    two facts these flows are written not to leak. There was a fourth value,
+    `signups-disabled` (`/registar?erro=fechado`), and it is GONE along with its
+    copy in all three catalogs: on the Resend path accounts are created through
+    the admin API, which IGNORES the dashboard's "Allow new users to sign up"
+    toggle, so only the legacy fallback could ever produce it. **Closing signups
+    now needs a Capo-side flag checked before `sendAuthEmail`** — do not
+    reintroduce copy that describes a switch which no longer binds. The legacy
+    path still logs `auth_email.signups_disabled` and then answers like every
+    other non-send.
+  - **The resend path sends NOTHING to a CONFIRMED account.** A resend mints a
+    MAGIC LINK, and a magic link signs its holder in; GoTrue mints one happily
+    for a confirmed user, whereas the old `auth.resend({type:'signup'})` errored.
+    So this feature briefly let any visitor mail a working one-click login link
+    to any registered address: submit `/registar` with somebody else's email
+    (the pending-email cookie is set on every path, deliberately), then tap
+    "Reenviar". `confirmedAccountExists` gates it and logs
+    `auth_email.already_confirmed`. It **fails closed** — unknown means do not
+    send — and it matches the address EXACTLY, because GoTrue's admin `filter`
+    is a SUBSTRING search (`a@b.com` matches `xa@b.com`). supabase-js has no
+    lookup by email, which is why that one call is raw REST.
+  Copy lives in the catalogs under `auth.emails`, all three languages, and the
+  READER's language is rendered in full with the other two as one line each —
+  possible only because the app knows the visitor's locale, which a Go template
+  inside GoTrue never could. `pnpm email-check` (credential-free, in CI) pins
+  the link in both parts, the absence of template holes, and the presence of all
+  three languages.
 - **System-vs-user client split**: `getDb()` (service role) is system-only;
   `createUserClient()` (publishable key, RLS) is the client for everything on
   the tenant request path.
@@ -907,6 +1011,100 @@ Structural invariants (do not regress):
   07:00 gets their first briefing BEFORE their welcome. Fixing it means the
   morning send reading the welcome ledger, which couples it to a feature it has
   nothing to do with.
+- **The welcome now goes out AT ONCE, and the sweep is still the mechanism.**
+  `runWelcomeSweep(db, { companyId?, window })` in
+  `apps/web/app/notifications/welcome-sweep.ts` is the whole send, and the cron
+  route is a shell over it. Four request paths call it from `after()` for their
+  own company the moment a manager could have made somebody messageable: the
+  chat turn, the WhatsApp manager turn, `/perfil` saving consent or a phone, and
+  an approved card. Five things:
+  - **The trigger is an OPTIMISATION, exactly as the immediate `dispatchPushes`
+    call is.** It takes ONLY a company id and asks the sweep the same question
+    the cron asks; it never remembers an event, never queues and never writes
+    app state. Delete every call site and the product still welcomes everybody,
+    at 09:00 at the latest. That is what lets a sixth door be added with no hook
+    at all, and it is why `welcomeAnyoneNew` swallows every failure into one log
+    line.
+  - **The immediate gate is WIDER than the sweep's and the two must not be
+    collapsed** (`apps/web/lib/welcome-window.ts`): Lisbon 08:00-21:59 against
+    the sweep's 09:00-19:59. A manager adding somebody at 20:15 is standing next
+    to them; making that person wait for 09:00 tomorrow is the complaint the
+    feature answers. Outside the gate the trigger does NOTHING and logs
+    `welcome.outside_send_hour`; the cron picks the person up. `pnpm
+    scheduler-check` derives the containment property (every hour the sweep may
+    send in, the trigger may too) rather than pinning it.
+  - **Idempotency is UNCHANGED and is still 0033's partial unique index.** Four
+    call sites racing each other inside one request, and a trigger racing the
+    cron, all lose to `claimNotification`'s 23505. Nothing here is made safe by
+    remembering anything.
+  - **It runs on the SERVICE ROLE inside a tenant request**, which is the
+    system-vs-user split's documented shape for a system job a request starts
+    (`dispatchPushes` again): the welcome writes `notification_log`, which
+    tenants hold no grant on. The company id comes from the caller's
+    authenticated session AND is intersected with `billableCompanies`, so a
+    wrong id reaches nobody.
+  - **The crew welcome opens with WHO ADDED THEM**, from the most recently
+    created named profile, read off the profiles list `loadPendingWelcomes`
+    already orders. NULL is a real answer (no profile yet, a blank `full_name`)
+    and the clause is then OMITTED, never filled with a placeholder naming
+    nobody. It lives in `{{2}}`, so it needs no Meta re-approval.
+    **The rule is `pickAccountOwnerName` in `@capo/db`, not in either app**
+    (`posture.ts`'s slot and reasoning): the operator's "resend a failed
+    welcome" button renders this message a SECOND time and apps may not import
+    each other, so without one shared home the two would drift — and the people
+    who would read the colder wording are exactly the people whose first
+    welcome failed. It is pure and takes a created_at-ASCENDING list, which is
+    what lets the sweep answer it from the profiles it already fetched.
+    `pnpm whatsapp-check` asserts the two renderings are byte-identical, which
+    is the ONE assertion in that file that reaches into apps/operator.
+- **The welcome ends in a "Say hi" button, and `capo:hi` is the FOURTH tappable
+  payload.** `capo_welcome_v2` is `capo_welcome`'s body byte for byte plus ONE
+  quick reply; the free-form twin sends the same button as an interactive
+  reply-buttons message. Five things:
+  - **The template NAME and the BUTTON are decided together**, by one call to
+    `welcomeTemplateFor` (`apps/web/lib/welcome-template.ts`,
+    `BRIEFING_V2_APPROVED_LANGUAGES`' shape and reasoning). A button component
+    against a template that declares none is a 132000 on every send; NO button
+    component against one that does makes Meta accept the send and echo the
+    button's own LABEL back as the payload, so the tap parses as nothing.
+    `WELCOME_V2_APPROVED_LANGUAGES` holds every locale Meta has approved by hand
+    (all three since 2026-09-03); an unapproved one keeps sending the
+    button-less `capo_welcome`, and that fallback must stay for the language
+    added to `@capo/i18n` ahead of its template.
+  - **A quick-reply LABEL may hold no emoji**, no variable, no newline and no
+    formatted character. Meta refuses the submission with `error_subcode`
+    2388060, which is how this button lost the waving hand it was written with.
+    Nothing in a build catches it, so `pnpm whatsapp-check` pins it for every
+    buttoned template.
+  - **`capo:hi` arrives on TWO envelope fields** — `button.payload` from the
+    template and `interactive.button_reply.id` from the twin — and is one
+    payload for both, because "the person said hello" is one fact. It carries no
+    id, for `workerMenuRowId('manager')`'s reason, and is an exact whole-string
+    match so no other parser can accept it. It is consulted FIRST on both sender
+    paths: below the other handlers, every hello would log
+    `whatsapp.unknown_checkin_payload` or `whatsapp.unknown_button`, which are
+    the two lines that are supposed to mean a template lost its buttons.
+    **`isHiTap` lives beside the payload in `channels/whatsapp.ts`**, not in the
+    route, for `parseProposalButtonId`'s reason: it is the only place
+    `pnpm whatsapp-check` can pin BOTH envelopes with no credentials, and the
+    free-form half's failure is otherwise silent because the template half goes
+    on working.
+  - **A proactive send records its `provider_message_id`, whatever the
+    envelope.** `sendWhatsAppButtons` returns it exactly as
+    `sendWhatsAppText`/`sendWhatsAppTemplate`/`sendWhatsAppList` do, because
+    `recordDeliveryStatuses` matches Meta's delivered/read/failed callbacks
+    against `notification_log` by that column alone. A send that dropped it
+    would look successful and be permanently un-stampable.
+  - **The answer is deterministic, with zero model calls**
+    (`apps/web/app/notifications/welcome-hi.ts`), and it renders the crew
+    member's tasks through the SAME `loadWorkerBriefing` / `renderWorkerFreeForm`
+    the 07:00 message uses. `WorkerFreeFormOptions.opening` exists only because
+    that renderer's greeting is a GOOD MORNING and this tap can land at 20:00 —
+    a second renderer would let the two surfaces describe one task differently.
+  - **A failure is never answered with a template.** The tap opened the free
+    window, so 131047 is logged and swallowed and the fallback is the greeting
+    alone: a paid recovery send for a greeting is not worth it, and silence
+    after a button we asked them to press is the thing to avoid.
 - **Sender identity is the PHONE, with the BSUID as a fallback — in that order,
   and the order is the safety property.** WhatsApp usernames mean Meta omits
   `from` entirely for anyone who has adopted one and sends only `from_user_id`,
@@ -1144,13 +1342,85 @@ Structural invariants (do not regress):
   function's signature demands, so the escalation to "manufacture an approval
   card for the manager to tap" is closed by the type checker.
 
-  `declare_task_done` requires `photo_ids` with `.min(1)` **at the schema
-  level**, never by prompt instruction: a prompt rule is negotiable by anyone
-  who can write text, and that is exactly who is on the other end. It writes
-  photos BEFORE filing the claim, because a claim with no proof is the state
-  the requirement exists to prevent, while proof with no claim is merely untidy.
-  Photos are **never shown to a model** — the agent learns only how many
-  arrived.
+  **`declare_task_done` still refuses a completion with no proof, but it now
+  has ONE way out, and the way out is counted in the database** (migration
+  `0049`, the no-photo waiver). This REPLACES the older promise that
+  `photo_ids` carries `.min(1)` at the schema level. The requirement was right
+  and it had no exit at all: "there is no light" in a basement at seven in the
+  evening got "that is the rule no matter what", twice, and the crew member
+  stopped telling anybody anything. Six things:
+  - **The rule moved from the SCHEMA into `execute`, never into a prompt.**
+    `photo_ids` is `.min(0)`; the refusal now reads
+    `task_photo_waiver_attempts` rows, which the model cannot write. Capo asks
+    for a photo on the first and second inbound message that declares this task
+    finished without one, and only the THIRD may waive. A prompt rule would be
+    negotiable by exactly the person on the other end.
+  - **The unit of counting is META'S INBOUND MESSAGE ID, and that is the whole
+    safety property.** `WorkerContext.inboundMessageId` is required (a `tsc`
+    error if a call site forgets it), and every tool call inside one turn
+    carries the same value — so three calls in one turn are ONE ask and the
+    model cannot talk its way to the third. Reaching it costs three separate
+    messages from a real phone. `decidePhotoWaiver`
+    (`capabilities/worker/photo-waiver.ts`) is pure and `pnpm waiver-check`
+    (credential-free, in CI) pins every branch, the same-turn repeat included.
+  - **The decision turns on the photo ids the call NAMED, never on what is
+    sitting in the inbox.** `ctx.pendingPhotos` is every unattached photo that
+    person has sent in the last day, of any job or none, so keying on it made
+    the waiver unreachable for every other task until a stray photo aged out —
+    and the refusal it produced pushed the model toward filing Tuesday's wall as
+    proof of tonight's basement, which `task_photos` has no DELETE policy to
+    undo. The refusals MAY say how many photos are unattached and that the crew
+    member can be asked which job those show; they must NEVER tell the model to
+    pass them for the task being declared. A call that names ids which resolve
+    to nothing (stale or invented) is refused and spends NO ask.
+  - **Asks belong to a CLAIM CYCLE, not to the task for ever.**
+    `loadClaimCycleStart` takes `declared_at` from the task's most recent
+    `task_reviews` row of ANY status, and attempts older than it do not count.
+    A crew member asked on Monday who returns on Wednesday with the same
+    unreported job has still been asked once — this is not a TTL — but a claim
+    the manager REJECTED starts the next report from nothing. Without it the
+    second claim on a task could be waived on its first message, and the manager
+    would read a second "sem foto" claim about different work with no evidence
+    Capo had asked. **`attempt_no` must NOT restart per cycle**: 0049's unique
+    index spans the whole (conversation, task) pair, so the next value is one
+    past the highest on file. Restarting is a refused insert, a count that never
+    advances, and a job that can never be reported again.
+  - **It fails CLOSED in every direction.** A blank message id never waives, a
+    reason of whitespace is no reason, an unparseable cycle boundary or row
+    timestamp counts nothing, and an unreadable attempts table (0049 unapplied)
+    reads as "never asked" — so before the migration lands the product is
+    exactly what it is today, stricter rather than looser.
+  - **A waived claim is LOUDER, not quieter.** `task_reviews.photo_waived` and
+    its own notification kind `review_no_photo`, so the inbox and the Web Push
+    both say what happened; a danger-tone "Sem foto" badge on the board's
+    review control, on the task detail screen, in the inbox row and on Home's
+    decision card, with the crew member's own reason quoted underneath. It is
+    **the one exception to "the push carries no photo information"** (#52) and
+    the exception is earned: there, "no photo" is a transient fact seconds old;
+    here it is settled, because they were asked twice and said there will not be
+    one.
+    The push carries the REASON too, and that is why the catalog's
+    `notifications.kind` entries take an optional SECOND argument. A lock screen
+    has one body slot and no room for the inbox's separate attributed block, so
+    the dispatcher passes the quote INTO the same catalog entry, trimmed by
+    `truncateForPush` to `PUSH_QUOTE_MAX_CHARS` (90) — an untrimmed quote is cut
+    by whichever phone the manager holds, in a different place each time.
+    `truncateForPush` only ever SHORTENS: it runs on worker-authored text the
+    manager reads as a quote with that person's name on it, so it never
+    rewrites, capitalises or punctuates. Pinned by `pnpm push-check`.
+  - **`photoWaived` and `photoCount === 0` are read TOGETHER and mean different
+    things.** The count still comes from `countTaskPhotos` at read time and a
+    photo sent later still attaches — `task_board.is_open` is a denylist, so a
+    `pending_review` task is still open and nothing on the photo path reads its
+    status. Once a photo arrives, the count wins.
+  - **A waived claim writes `tasks.completion_proof = null`**, which is UNKNOWN.
+    Never `'skipped'`: that is the manager declining proof through the
+    completion sheet and only they write it (`markTaskProofUnknown`, beside
+    `markTaskProofPhotos`).
+  It still writes photos BEFORE filing the claim, because a claim with no proof
+  is the state the requirement exists to prevent, while proof with no claim is
+  merely untidy. Photos are **never shown to a model** — the agent learns only
+  how many arrived.
   Known limit, stated rather than hidden: photos live for ONE turn **on this
   path**, because a task photo's object key contains the task id and the task is
   not known until the tool names it. "Photo, then a separate message saying
@@ -1433,6 +1703,95 @@ Structural invariants (do not regress):
     and note only the sheet ever writes `'skipped'`.
     It is **not** what the board and inbox read: those count `task_photos` at
     read time, because a photo can arrive after the claim.
+- **EVERY inbound crew photo is STAGED before anything decides what it is of,
+  and the one-turn limit is gone** (`worker_photo_inbox`, migration `0047`).
+  This REPLACES the promise recorded above and in `runWorkerTurn` that photos
+  live for exactly one turn. A crew member sent a photo, Capo asked which task
+  it was for, and the bytes were already gone by the time they answered; three
+  photos sent as three messages kept only the last. On 3 September that
+  produced "I tried 3 times now. Is not working" and five days with no
+  `task_photos` row. Seven things:
+  - **It stages the BYTES, which is the whole difference from
+    `checkin_photo_requests` (0034).** That table stages the EXPECTATION and
+    must never gain a blob column; it only works because a tap knows the task
+    BEFORE the photo arrives. Nothing knows the task when somebody just sends a
+    photo, so the only way to stop losing it is to keep it somewhere that is not
+    a task folder yet. Both tables are needed and they answer different
+    questions.
+  - **`{company_id}/inbox/{worker_id}/…` in the SAME `task-photos` bucket, and
+    that needed NO storage policy change.** 0023's two policies on
+    `storage.objects` compare `(storage.foldername(name))[1]` against
+    `private.current_company_id()` and read nothing else, so segment 1 is still
+    the boundary. Segment 2 is the literal word `inbox`, which is not a uuid and
+    therefore cannot collide with a task folder. Build both keys only through
+    `taskPhotoPath` / `taskPhotoInboxPath` in `packages/core/src/media/photos.ts`.
+  - **A staged photo is NOT evidence.** There is no `task_photos` row until it
+    is ATTACHED, at which point the object is MOVED to the task key and the row
+    is written by `attachInboxPhotos` beside `storeWorkerTaskPhoto` — one file,
+    because `source: 'worker'` is an ATTRIBUTION 0023 makes unforgeable at the
+    grant layer and two writers of that claim would eventually disagree.
+    `task_photos_path_scoped` is untouched and still binds every row it ever
+    bound.
+  - **Deny-all for tenants, `checkin_photo_requests`' posture.** A tenant able
+    to INSERT one could stage an object as though the crew had sent it; able to
+    UPDATE one, they could re-point a colleague's waiting photo. The route runs
+    on the service role, so the `company_id` + `worker_id` filters in
+    `loadInboxPhotos` and `attachInboxPhotos` ARE the boundary, both
+    phone-derived. `scripts/rls-isolation-matrix.mjs` attacks read, insert,
+    update, delete, the cross-company FK trigger, and carries a service-role
+    positive control.
+  - **A bare photo with no open check-in request now gets BUTTONS, not a model
+    turn.** "Recebi a foto (2). Mais fotos ou é tudo?", `capo:photos:more` /
+    `capo:photos:done` — the FOURTH tappable codec and the THIRD under
+    `type: 'interactive'`, two of which now read the same `button_reply.id`.
+    Nothing but the non-overlapping prefixes keeps them apart; `pnpm
+    whatsapp-check` asserts every direction and a fifth codec must extend those
+    assertions rather than assume them. The payload carries NO id: which photos
+    "é tudo" settles comes from the tapper's phone-derived worker id.
+    A CAPTIONED photo is still excluded from the deterministic branch and still
+    falls through to the agent, for #52's own reason.
+  - **The TTL is 24 hours, enforced by the READER, and NOTHING sweeps the
+    table or the objects behind it.** Longer than 0034's three hours on purpose:
+    that one bounds what an unlabelled photo may be BELIEVED to be about, this
+    one bounds only how long Capo keeps offering somebody their own photo back.
+    The consequence is stated rather than hidden: an expired staged OBJECT stays
+    in the bucket for ever until somebody writes a sweep. A photo taken at 08:00
+    is still waiting at the next day's 07:00 briefing, which is safe here only
+    because the crew member NAMES the task themselves and the model is shown
+    each photo's arrival time.
+  - **`storeWorkerTaskPhoto` used to swallow four different failures into one
+    silent `null`**, and one of its two callers logged nothing at all, so a
+    systemic Storage failure produced zero rows and zero events. Every failure
+    on both writers now logs `task_photo.store_failed` with the `stage` it
+    failed at. Grep that event before concluding the crew sends no photos.
+  - **A STAGING FAILURE FALLS BACK TO THE PRE-0047 PATH, and that is the whole
+    deploy-order safety story.** While 0047 is unapplied every query on the
+    table answers 42P01, and on this project a migration has sat merged and
+    unapplied for three weeks (0038) while the app half was live. So
+    `stageInboundPhoto` hands the DOWNLOADED BYTES back with its failure, and
+    every branch does what it did before: the check-in photo path writes them
+    straight to the task through `storeWorkerTaskPhoto`, and the agent turn
+    carries them as `WorkerContext.unstagedPhotos` for `declare_task_done`.
+    **No photo the pre-0047 product would have kept is lost**; what is lost in
+    that window is only the photo outliving its turn and the buttons. Both
+    writers end at ONE row-insert helper, so the `source: 'worker'` attribution
+    is asserted in exactly one place whichever of them ran.
+  - **"É tudo" attaches only photos received AFTER the check-in request
+    opened** (`photosSinceRequest`, `apps/web/lib/checkin-photo.ts`). A photo
+    taken at 15:00 of another job, with a 16:00 request open, must never become
+    proof of that request's task: #52's own rule is that wrong evidence is worse
+    than none, and 0023 has no DELETE policy anywhere. An entirely older batch
+    makes the branch fall through, so those photos stay in the inbox for the
+    agent path rather than being attached wrongly OR lost.
+  - **The bytes are deny-all in the TABLE but readable in STORAGE by their own
+    company.** 0023's SELECT policy on `storage.objects` keys on segment 1
+    alone, so a tenant can list `{company_id}/inbox/…`. That is deliberate (they
+    are that company's own crew's photos) and it is why the deny-all above is
+    about the ROW, which is the thing that would let somebody re-point a
+    colleague's next photo.
+  Known and NOT done: nothing sweeps expired objects, `caption` is recorded and
+  read by nobody, and a crew member who sends photos for two different jobs in
+  one batch has to say so in words.
 - **`notifications` (0024) is the in-app inbox, and is NOT
   `notification_log` (0016).** They share a stem and nothing else.
   `notification_log` is the OUTBOUND ledger — one row per paid WhatsApp
@@ -1508,6 +1867,75 @@ Structural invariants (do not regress):
   headline, and the dispatcher renders it from the recipient's own
   `profiles.language` using the SAME catalog entry the inbox uses, so the two
   surfaces cannot say different things.
+- **Being onboarded is a COLUMN, never a count** (`companies.onboarded_at`,
+  migration `0046`). Capo used to work out whether a manager was still being set
+  up by counting rows, and the count switched the whole onboarding block off the
+  moment one obra and one worker existed: a manager who had answered two
+  questions was told "done" and left with an empty company. Seven things:
+  - **THREE STATES, and the third is a deploy-ordering rule.** A string is the
+    moment the setup was declared finished; an explicit SQL NULL means it is
+    still running, and is the ONLY state that turns the checklist on; an ABSENT
+    column (`select('*')` on a database where 0046 has not been applied) reads
+    as ALREADY ONBOARDED. `CompanySnapshot.onboardedAt` is therefore
+    `string | null | undefined` and the loader uses `'onboarded_at' in row`,
+    never `??`. Collapsing absent into null is the obvious way to write it and
+    is the bug: with the code live and the migration pending it drops EVERY
+    established customer into a setup conversation whose two tools cannot run,
+    which is exactly the harm the backfill exists to prevent, arriving through
+    another door (0038 sat merged and unapplied for three weeks on this repo).
+    Both tools answer a 42703 with a plain "not available yet" sentence rather
+    than a driver error the model would retry, and `pnpm onboarding-check` pins
+    absent and null side by side.
+  - **The dashboard URL is WITHHELD from the prompt while `onboarded_at` is
+    null.** `finish_onboarding` RETURNS it, which is what makes "share it only
+    once the setup succeeded" a property of the mechanism rather than of the
+    model's goodwill. The `snapshotApp` line renders only for a company that is
+    not mid-setup (and not at all when the snapshot read failed: not knowing is
+    a reason to say nothing). Left in from turn one, the plausible failure is
+    the original bug in a new shape: Capo offers the link, the manager leaves
+    for the dashboard, and the company is never finished being set up.
+    `pnpm cache-check` asserts the string reaches neither half.
+  - **The backfill was mandatory**, exactly as `0026`'s `pushed_at` and `0033`'s
+    welcome ledger were: every company with at least one job AND one worker is
+    stamped `now()` by the migration itself. Without it the first deploy tells
+    every existing customer, in their next message, that Capo is about to set
+    their company up from scratch.
+  - **The checklist is REBUILT from the counts every turn and lives in the
+    UNCACHED half.** It is per-tenant and changes several times during a single
+    setup conversation, so above the breakpoint it would fragment the cached
+    prefix per company and rewrite it on every answer. `pnpm cache-check`
+    asserts it stays below the line.
+  - **`missingOnboardingItems` is the ONE definition of "set up"**, and both the
+    prompt block and `finish_onboarding` read it. Two copies would be a
+    conversation that says the setup is finished and a tool that refuses to
+    agree. `finish_onboarding` RE-READS the snapshot rather than trusting the
+    block rendered at the top of the turn, because the turn itself may have
+    created the last task.
+  - **Both tools are UNGUARDED and that is deliberate.** `set_company_about`
+    stores one sentence the manager just said about his own business;
+    `finish_onboarding` stamps a timestamp on his own company row and stops a
+    checklist appearing. Neither creates anything, schedules anything or
+    messages anybody. Under the product default posture (`always_ask`, 0031)
+    guarding them would meet a brand new manager with an approval card asking
+    him to confirm the sentence he had just typed, before he has any idea what
+    an approval card is.
+  - **`appUrl` is REQUIRED on `ToolContext`, `HandleInboundOptions`,
+    `buildSystemPrompt` and `resolveProposal`**, for the same reason
+    `confirmPosture` is. `packages/core` reads no environment by contract, so an
+    optional field with a fallback resolves to a link to localhost or to an
+    empty string: a dead link handed to a manager on the last step of signup,
+    which nothing in a build could notice. `WorkerContext` must never gain it —
+    a crew member has no dashboard.
+  - **The tenant's UPDATE grant on `companies` grew to `(name, about,
+    onboarded_at)` and to nothing else.** 0011 revoked the table-wide grant
+    precisely so `subscription_status` has exactly one writer, the Stripe
+    webhook; that stays true. What a tenant can now do is declare their own
+    company set up early, which costs them a checklist and nobody else anything.
+  `firstUse` is left in the prompt catalogs unreferenced on purpose, so
+  reverting this feature is a code change rather than a translation job.
+  Known and NOT done: nothing ever un-stamps a company, and no screen shows the
+  manager where he is in the checklist. The conversation is the only surface.
+
 - **The live facts outrank the frozen prose, and the prompt says so** (issue
   #62). Capo's context holds two kinds of thing: blocks rebuilt from the
   database on every turn (the date, the company snapshot, the knowledge index,
@@ -2099,11 +2527,196 @@ Structural invariants (do not regress):
   operator question and this needs no tenant read surface. **Vercel hosting is
   absent and cannot be added** — it is one flat platform bill with no per-tenant
   meter, so any per-company hosting figure would be invented.
+- **A task assigned for TODAY reaches the crew member now, and the door is a
+  DATABASE TRIGGER** (`task_assignment_notices`, migration `0048`, issue W7).
+  Before it, the only moment Capo ever spoke to a crew member first was 07:00,
+  so a task given to somebody at nine in the morning reached them the following
+  morning, and nothing told the manager they had not been told. Seven things:
+  - **The trigger is the door because there are SEVEN of them.** `create_task`,
+    `update_task`, `apply_plan`, `apply_reschedule`, the `assignTask` and
+    `setCollaborators` web actions, and `set_task_collaborators` from the agent.
+    A hook on each is a hook somebody forgets in a commit about something else,
+    and the symptom is one crew member who silently stops being told about their
+    work. Two triggers, on `tasks` and on `task_assignees` — the latter filtered
+    to `role = 'collaborator'`, because 0035 MIRRORS the lead into that table and
+    without the filter every assignment would queue twice.
+  - **The trigger QUEUES; it never DECIDES.** It knows nothing about calendars.
+    "What is on today" has one definition, in `task_board`, and a copy of it
+    inside a trigger would be a second opinion whose symptom is Capo messaging
+    somebody about next week's work. The drain
+    (`apps/web/app/notifications/task-assigned.ts`) reads the view and answers
+    two questions: `briefableToday` (the same allowlist both daily sends use)
+    and `window_start = today`, which is the one question the daily sends never
+    ask — `active_today` is true on EVERY day of a multi-day task.
+  - **`queued_date` is the dedup key, and it is a LISBON DAY.** One person hears
+    about one task at most once a day, however many times it is reassigned. The
+    other candidate — a partial unique where `notified_at is null` — lets a task
+    taken off somebody and given back the same afternoon announce itself twice.
+  - **Deny-all for tenants**, like `notification_log` and `worker_day_links`:
+    RLS on, zero policies, every grant revoked. A row here causes a WhatsApp
+    message in Capo's voice to a real crew member, so a tenant who could write
+    one could message another company's crew, and one who could update one could
+    silence their own.
+  - **Free inside the window, PAID and capped outside it.** Inside the crew
+    member's own 24 hours it is free text carrying the WHOLE day, rendered by
+    `renderWorkerFreeForm` with the new task marked — one renderer, shared with
+    07:00, because two would eventually describe a task differently. Outside, it
+    is `capo_task_assigned`, claimed in `notification_log` under kind
+    `task_assigned`, so that table's unique key caps it at ONE per crew member
+    per day: a second assignment the same afternoon deliberately sends nothing,
+    because the first template already asked for a reply and a reply opens the
+    free window. **`TASK_ASSIGNED_APPROVED_LANGUAGES` holds `pt_PT`, `es_ES` and
+    `en_US`, verified against the live WABA on 2026-09-03** (template ids
+    1859688468524905, 1603821794728431, 28806849452245917 respectively): the
+    template was submitted 3 Sep 2026 and all three locales came back APPROVED
+    the same day. A locale is only ever removed from the set by hand, once
+    `whatsapp-template status` shows it is no longer APPROVED, and removing one
+    falls back to silence for that locale — an out-of-window crew member gets
+    nothing extra and tomorrow's briefing still carries the task. ⚠
+    `whatsapp-template` needs `WHATSAPP_WABA_ID=715247827972608` with the token
+    in `.env.local`, or its discovery step refuses and nothing is submitted.
+    Runbook §6d.
+  - **The QUEUE ROW is the lock on the free path.** Nothing free may go in
+    `notification_log`, so rows are CLAIMED before the Graph call — one atomic
+    `update ... set notified_at = now(), outcome = 'sending' where id in (...)
+    and notified_at is null returning id` — and only what came back is sent
+    about. `ENGAGED_OUTCOMES` counts `'sending'` as "already messaged", which is
+    what makes the coalescing window work in the two-seconds-apart case rather
+    than only across whole drains. `claimThenSend` in
+    `apps/web/lib/task-assigned-plan.ts` takes both sides injected, so `pnpm
+    whatsapp-check` asserts the ORDER — which no type checker can see.
+  - **The trigger fires on an ASSIGNEE CHANGE or an INSERT, and nothing else.**
+    Not on status: `resolve_task_review(..., 'rejected')` moves a task from
+    `pending_review` back to `in_progress` (0018), and queueing there tells the
+    crew member whose completion claim was just rejected that they have a NEW
+    task. Not on `start_date` either: `apply_reschedule` re-dates an existing
+    task, and the copy this queue produces says "new".
+  - **A notice queued on an earlier Lisbon day is `stale` and is NEVER sent**
+    (`noticeIsStale`). Evening admin planning tomorrow's work is the common
+    case: the notice survives the night because the out-of-hours branch does not
+    consume rows, and at 08:00 the task now does start today, so without this it
+    goes out an hour after the 07:00 briefing already said it.
+  - **A task no longer on that person's board is `reassigned`, and sends
+    nothing.** `renderWorkerFreeForm` short-circuits on an empty day, so the
+    message would otherwise read "your boss just gave you a new task", followed
+    by the nothing-today line.
+  - **Working hours are Lisbon 08..18 inclusive** (`withinAssignmentHours`,
+    `apps/web/lib/task-assigned-window.ts`, pinned by `pnpm scheduler-check`).
+    Deliberately NOT `withinSendWindow`: this models a working DAY, not a send
+    aimed at an hour and absorbing cron drift. An out-of-hours notice is the one
+    branch besides the coalescing deferral that is NOT stamped decided —
+    `notified_at` stays null, the next in-hours drain finds the task no longer
+    starts today, and it is dropped as `not_today`, which is right because the
+    07:00 briefing carries it.
+  - **Six in-request `after()` calls plus a `*/15` cron, and the cron is the
+    MECHANISM.** `apps/web/app/(app)/tarefas/[id]/assign-actions.ts` (×2 — assign
+    and setCollaborators), `apps/web/app/api/chat/route.ts` (×1),
+    `apps/web/app/api/whatsapp/route.ts` (×2 — card approval and manager turn),
+    `apps/web/app/api/proposals/[id]/route.ts` (×1). Same relationship
+    `/api/cron/push` has with its producers: the six calls make the message
+    arrive in seconds, the sweep makes a forgotten seventh door cost lateness
+    rather than silence. It has NO hour gate of its own
+    — the quiet-hours rule belongs to the drain and stating it twice would let
+    the two drift. The drain never throws, at any level, and opens its own
+    service-role client like `dispatchPushes` so every call site stays one line.
+  Known and NOT done: a manager assigning several tasks one at a time gets ONE
+  message for the first and the rest are deferred by `COALESCE_WINDOW_MS` into
+  the next cron tick — so the follow-ups are up to fifteen minutes late by
+  design. Nothing sweeps `task_assignment_notices`; drained rows stay as the
+  record of who was told what.
 - Views may only be extended with `create or replace view` **appending**
   columns (Postgres forbids reorder/retype). Code reading a view that a
   pending migration extends should `select('*')` and treat the new fields as
   optional, so a deploy landing before its migration degrades instead of
   erroring — see `0013` and the comment in `agenda.ts`.
+- **The crew agent knows WHO IT IS TALKING TO, and that is not a loosening of
+  the worker prompt's deliberate absences** (`loadWorkerIdentity` /
+  `buildIdentityBlock` in `packages/core/src/agent/worker-context.ts`). A crew
+  member asked "who am I?" and Capo answered that it could not give out
+  personal information — which was not a guardrail working, it was the model
+  correctly reporting it had been told nothing. Four things:
+  - **The line is "facts about the person holding the phone", never "facts
+    about the company".** The block carries their own name, their own trade,
+    the company's name, at most THREE manager names and the language they are
+    being written to in. The absences listed at the top of `worker-context.ts`
+    are unchanged: no memories, no proposals, no company snapshot, no
+    conversation summary, and above all no other crew member's name, number or
+    work. Widening it past those five fields is a decision, not a tidy-up.
+  - **Manager names come from `profiles.full_name`**, which managers type about
+    themselves — the same reasoning that lets #47's thread notes carry
+    `workers.name`. Never a phone number and never an email.
+  - **It is loaded in ONE place, `handleWorkerInbound`, and it fails soft.**
+    Three small reads behind one `try`; any failure returns null and the block
+    is simply absent, which is byte-for-byte the pre-W4 prompt. The WhatsApp
+    route gained no query.
+  - **It sits BELOW the cache breakpoint and must stay there.** Every field is
+    per-WORKER, so above the line it would write one cache entry per crew
+    member and read none — the trap `loadManagerName` had to avoid on the
+    manager side (#62). `pnpm cache-check` asserts the cached half is IDENTICAL
+    for two different crew members, which is the assertion that catches a
+    migration upward.
+- **A crew member's VOICE NOTE is transcribed and answered** (`apps/web/lib/
+  worker-audio.ts`, W4). This REVERSES PRD 4's written-down decision that
+  worker audio falls to the generic `workerAck`. The cost argument was sound
+  and the trade was not: crew on site talk far more than they type, so the
+  channel's own audience was the one paying for it, and what they got back was
+  the line written for a sticker. Five things:
+  - **A transcript is worker-authored text and nothing more.** It lands in
+    `worker_messages` exactly as a typed message would, and NOWHERE else —
+    never `messages`, a summary, a memory or a proposal (0027).
+  - **THE TRANSCRIPTION HAPPENS BELOW THE DAILY BUDGET, and that is why
+    `inbound.transcribe` is a CALLBACK rather than a string.** The caller cannot
+    know whether this crew member has any allowance left without the two counted
+    queries inside `handleWorkerInbound`, so a route that transcribed first and
+    passed the text would pay for a media download plus a Gemini call on every
+    voice note from an exhausted worker, for ever, while `worker-core.ts` went
+    on claiming "an exhausted worker costs two counted queries and nothing
+    else". Handing in the RECIPE instead of the RESULT is what keeps that
+    sentence true. Never call `transcribeWorkerAudio` from the route.
+  - **A FAILED transcription consumes one unit of budget**, by persisting
+    `UNINTELLIGIBLE_AUDIO_TEXT` — our own copy, PHOTO_ONLY_TEXT's shape — in
+    place of the transcript. `readWorkerBudget` counts `role='user'` rows, so a
+    failure that wrote nothing would be free to repeat for ever on the one path
+    where somebody hostile chooses both the payload and how often it arrives.
+    The Gemini call was made; one unit is the honest price.
+  - **⚠ THE KEYWORD TABLES DO NOT RUN ON IT.** All five (STOP/START, the report
+    keyword, PT/ES/EN, MENU, OK) are reached through ONE seam, `keywordText` in
+    `apps/web/lib/worker-keywords.ts`, which answers `undefined` for anything
+    that is not typed text — so a SPOKEN "stop" reaches the agent instead of
+    unsubscribing, and an armed problem report (`problem_report_requests`) is
+    not consumed by a voice note either. That is the correct side of the trade
+    — those tables exist so a MODEL can never intercept a tap, and a transcript
+    is already model output — but it is a decision, and the written STOP remains
+    the unsubscribe Meta requires. `pnpm whatsapp-check` asserts it AT THAT
+    SEAM: a change that let a transcript through would have to make
+    `keywordText` return something for a non-text message, and the check fails
+    the moment it does.
+  - **ONE size cap, shared with the manager path.** `WORKER_AUDIO_MAX_BYTES` IS
+    `MAX_AUDIO_BYTES`; two numbers would drift into a voice note refused at a
+    size a manager's is accepted at, with nothing saying why.
+  - **⚠ THE WORKER PATH TRANSCRIBES WITH NO COMPANY VOCABULARY.**
+    `TranscribeAudioInput.vocabulary` is a REQUIRED `'company' | 'none'`, never
+    optional and never defaulted, because the convenient value is the unsafe one
+    here. `'company'` injects up to 50 crew names, 50 obra names and 40 learned
+    terms into the transcription instruction — right for a manager, whose own
+    data it is, and the single biggest lever on accuracy. On the crew path the
+    audio is chosen by whoever holds the phone, and the worker prompt is built
+    around naming no other crew member, no other task and nothing of the
+    company's shape (`worker-context.ts`); a roster one prompt line away from an
+    attacker-chosen payload would move that boundary into a sentence. The cost
+    is a worse transcript, never a leak. `whatsapp-check` asserts scope `none`
+    reads NOTHING from the database, with a positive control on `'company'`.
+  - **The spend is filed against `{ kind: 'worker', workerId }` on surface
+    `worker_chat`**, through `transcribeAudio`'s optional `usage` override.
+    Actor and surface travel together in ONE object on purpose: setting the
+    actor and forgetting the surface would file a crew member's spend under the
+    manager's dictation line with no error anywhere. `transcribeAudio` must
+    never gain a worker id on `profileId`.
+  - **One failure line for all three causes** (download, transcription, empty
+    or too-short transcript). A crew member can do exactly one thing about any
+    of them, and an error surface that varies with the cause tells whoever is
+    probing it which half broke. `whatsapp.worker_audio_failed` carries the
+    reason; grep it before concluding nobody sends voice notes.
 
 ## Local tooling
 

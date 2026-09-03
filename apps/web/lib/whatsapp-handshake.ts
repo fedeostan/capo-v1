@@ -33,8 +33,8 @@ const WA_ME = 'https://wa.me';
  *
  * @param businessNumber Capo's own number in E.164 (`+351911097383`). Spaces,
  *   dashes, dots and brackets are tolerated because a human may paste it into
- *   an env var; the leading '+' is mandatory, matching `normalizePhone` in the
- *   onboarding and profile actions.
+ *   an env var; the leading '+' is mandatory, matching `composeE164` /
+ *   `canonicalizeE164` in `packages/core/src/channels/phone.ts`.
  * @param text What WhatsApp pre-fills into the composer. The manager can edit
  *   it before sending — this is an opening offer, not a submission.
  */

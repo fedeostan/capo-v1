@@ -6,6 +6,7 @@
 // a preview-and-confirm screen.
 import { getDb } from '@capo/db/client';
 import type { Tables } from '@capo/db/types';
+import { pickAccountOwnerName } from '@capo/db/account-owner';
 import { hasWhatsAppConsent, type WhatsAppRecipient } from '@capo/core/channels/whatsapp';
 // The ONE sanctioned reader of task_board's two appended collaborator arrays.
 // Imported from @capo/core — a shared package, not apps/web — for the reason
@@ -1417,6 +1418,22 @@ export async function loadWelcomeResendContext(
   const { data: company } = await db.from('companies').select('*').eq('id', companyId).maybeSingle();
   if (!company) return null;
 
+  // Who the welcome credits. The ORDER is load-bearing and is the same one
+  // loadPendingWelcomes uses: pickAccountOwnerName reads the LAST named row and
+  // cannot tell an unordered list from an ordered one. The rule lives in
+  // @capo/db so a resend cannot introduce Capo differently from the sweep.
+  //
+  // A failed read is NOT fatal here, unlike the ledger read below: the honest
+  // degraded answer is "no manager name on file", which omits one clause from a
+  // message the operator is about to read in full and approve by hand. The
+  // ledger has no such safe reading, which is why it throws.
+  const { data: owners } = await db
+    .from('profiles')
+    .select('full_name')
+    .eq('company_id', companyId)
+    .order('created_at');
+  const managerName = pickAccountOwnerName(owners ?? []);
+
   const person =
     audience === 'worker'
       ? await db.from('workers').select('*').eq('company_id', companyId).eq('id', personId).maybeSingle()
@@ -1459,7 +1476,7 @@ export async function loadWelcomeResendContext(
     locale,
     ledger: ledger ?? [],
     verdict: decideOperatorResend(ledger ?? []),
-    plan: planWelcomeResend({ audience, personName, companyName: company.name, locale }),
+    plan: planWelcomeResend({ audience, personName, companyName: company.name, managerName, locale }),
     today,
   };
 }

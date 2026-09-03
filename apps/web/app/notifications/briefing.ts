@@ -202,12 +202,17 @@ const BRIEFABLE = new Set(['pending', 'in_progress']);
 /**
  * The rows a morning briefing fans out: on today, in a status worth briefing.
  *
- * ONE definition, shared by loadCompanyBriefing (the 07:00 cron) and
- * loadWorkerBriefing (the OK-reply path, issue #108). Two copies of this
- * filter would eventually disagree, and the symptom would be a knock claiming
- * three tasks whose "detail" then lists two.
+ * ONE definition, shared by loadCompanyBriefing (the 07:00 cron),
+ * loadWorkerBriefing (the OK-reply path, issue #108) and the assignment drain
+ * (issue W7). Two copies of this filter would eventually disagree, and the
+ * symptom would be a knock claiming three tasks whose "detail" then lists two.
+ *
+ * Exported for the drain, which needs the same allowlist plus one extra
+ * question the other two never ask ("does this task START today?"). It asks
+ * that against `task_board.window_start`, the view's own column — never by
+ * re-deriving it from dates here.
  */
-function briefableToday<T extends { active_today?: boolean | null; status?: string | null }>(
+export function briefableToday<T extends { active_today?: boolean | null; status?: string | null }>(
   rows: T[],
 ): T[] {
   return rows.filter(r => r.active_today === true && BRIEFABLE.has(r.status ?? ''));
@@ -854,6 +859,35 @@ export interface WorkerFreeFormOptions {
    * missing table or a revoked grant costs the line and never the briefing.
    */
   dayLinkUrl?: string;
+  /**
+   * An opener used INSTEAD of the default "Bom dia, Miguel." greeting block.
+   *
+   * ── WHY THIS EXISTS, AND WHY IT IS NOT A SECOND RENDERER ───────────────────
+   * The default greeting is a GOOD MORNING, which is correct for the two
+   * callers it originally had: the 07:00 briefing and the OK/DETALHE reply to
+   * it. Two callers now arrive at an arbitrary hour and for a different reason,
+   * so "bom dia" would be wrong for most of the day:
+   *
+   * - the assignment note (apps/web/app/notifications/task-assigned.ts), which
+   *   sends the SAME day in the same shape because a manager just put somebody
+   *   on a task;
+   * - the welcome's "Say hi" tap (apps/web/app/notifications/welcome-hi.ts),
+   *   which can land any time between 08:00 and 21:59.
+   *
+   * Building a second renderer for either was the alternative and is the thing
+   * to avoid: a crew member reading their tasks in the morning message and the
+   * same tasks after a tap must read the SAME sentences, or they have no way to
+   * tell which one is right. That is the failure `taskHeadline` and
+   * `taskDetailLines` already exist to prevent. Only the opening differs, so
+   * only the opening is a parameter.
+   *
+   * It is a BLOCK, not a word: it may hold more than one line, and the two
+   * lines the hi-tap passes ("Olá Miguel! 👋" and "write to me any time") are
+   * exactly the case that shape exists for.
+   *
+   * Absent means exactly what this function rendered before the option existed.
+   */
+  opening?: string;
 }
 
 export function renderWorkerFreeForm(
@@ -861,7 +895,7 @@ export function renderWorkerFreeForm(
   options: WorkerFreeFormOptions = {},
 ): string {
   const t = getCatalog(briefing.locale).reminders;
-  const greeting = t.freeFormGreeting(briefing.name);
+  const greeting = options.opening ?? t.freeFormGreeting(briefing.name);
   /**
    * Two lines, because that is how a link reads on a phone: a sentence saying
    * what is behind it, then the bare URL on its own line so WhatsApp renders it

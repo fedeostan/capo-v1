@@ -107,7 +107,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { readFileSync } from 'node:fs';
-import { randomBytes, randomInt } from 'node:crypto';
+import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -601,6 +601,39 @@ async function seedTenant(label) {
     `checkin_photo_request(${label})`,
   );
 
+  // 0047: a photo this crew member has sent that no task has claimed yet.
+  // Seeded so the deny-all read below cannot pass for want of rows, and so the
+  // UPDATE attack has something real to aim at. A row here is not evidence of
+  // anything, but a tenant able to WRITE one could stage an object as though
+  // the crew had sent it, or re-point a colleague's waiting photo at a task of
+  // their choosing — and a task photo cannot be deleted (0023 has no DELETE
+  // policy anywhere). The path has to satisfy worker_photo_inbox_path_scoped.
+  const inboxPhoto = await must(
+    admin.from('worker_photo_inbox').insert({
+      company_id: companyId, worker_id: worker.id,
+      storage_path: `${companyId}/inbox/${worker.id}/${randomUUID()}.jpg`,
+      mime: 'image/jpeg', byte_size: 1234,
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    }).select().single(),
+    `worker_photo_inbox(${label})`,
+  );
+
+  // 0049: Capo has already asked this crew member once for a photo of task2.
+  // Seeded so the deny-all read below cannot pass for want of rows, and so the
+  // UPDATE and DELETE attacks have something real to aim at. What a WRITE here
+  // would buy is the whole no-photo rule: a tenant able to insert two rows
+  // could let the very next claim skip both asks, and one able to delete them
+  // could make Capo ask for ever.
+  const waiverAttempt = await must(
+    admin.from('task_photo_waiver_attempts').insert({
+      company_id: companyId, worker_id: worker.id, task_id: task2.id,
+      conversation_id: workerConversation.id,
+      attempt_no: 1,
+      inbound_message_id: `wamid.SEED.${label}.${run}`,
+    }).select().single(),
+    `task_photo_waiver_attempt(${label})`,
+  );
+
   // 0039 (issue #114): the bearer token behind the crew day page. Seeded so the
   // deny-all read below cannot pass for want of rows, and so the UPDATE and
   // DELETE attacks have something real to aim at. `dayLinkToken` is carried out
@@ -618,6 +651,28 @@ async function seedTenant(label) {
     `worker_day_link(${label})`,
   );
 
+  // 0048 (issue W7): the assignment-notice queue. Deny-all with every grant
+  // revoked, like the two tables above — and seeded for the same reason: a
+  // deny-all read that passes because the table is EMPTY has proved nothing.
+  //
+  // A row here is not a record of a message, it is an INSTRUCTION to send one:
+  // the drain reads it on the service role and puts a WhatsApp message in
+  // Capo's voice on a real crew member's phone. So the write attacks matter as
+  // much as the read.
+  //
+  // `queued_date` is set explicitly rather than left to lisbon_today(), because
+  // the trigger this migration installs has very likely ALREADY written a row
+  // for (task1, worker) dated today — the seed above assigns task1 — and the
+  // unique key is (task_id, worker_id, queued_date). A fixed past date cannot
+  // collide with it.
+  const assignmentNotice = await must(
+    admin.from('task_assignment_notices').insert({
+      company_id: companyId, task_id: task1.id, worker_id: worker.id,
+      queued_date: '2026-01-05',
+    }).select().single(),
+    `task_assignment_notice(${label})`,
+  );
+
   const client = createClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: false },
   });
@@ -630,6 +685,8 @@ async function seedTenant(label) {
     workerBsuid: worker.whatsapp_user_id, jobId: job.id, taskIds: [task1.id, task2.id],
     conversationId: conversation.id, batchId: batch.id, originalTitle, reviewId,
     photoPath, checkinAskId: checkinAsk.id, photoRequestId: photoRequest.id,
+    inboxPhotoId: inboxPhoto.id, inboxPhotoPath: inboxPhoto.storage_path,
+    waiverAttemptId: waiverAttempt.id,
     problemReportId: problemReport.id, reportRequestId: reportRequest.id,
     workerRequestId: workerRequest.id,
     colleagueId, ownNotificationId, colleagueNotificationId,
@@ -637,6 +694,7 @@ async function seedTenant(label) {
     pushEndpoint, colleaguePushEndpoint,
     workerConversationId: workerConversation.id, workerMessageId: workerMessage.id, workerSecret,
     dayLinkToken,
+    assignmentNoticeId: assignmentNotice.id,
   };
 }
 
@@ -718,6 +776,10 @@ async function cleanupTenant(t) {
   await companyEq(admin.from('proposals').delete());
   await admin.from('conversation_summaries').delete().eq('conversation_id', t.conversationId);
   await admin.from('messages').delete().eq('conversation_id', t.conversationId);
+  // BEFORE worker_conversations, tasks and workers: task_photo_waiver_attempts
+  // (0049) holds a plain FK to all three and none of them cascades, so a row
+  // left behind would strand the whole company on the deletes below.
+  await companyEq(admin.from('task_photo_waiver_attempts').delete());
   // Before workers and before worker_checkins: worker_messages.checkin_id and
   // worker_conversations.worker_id are both FKs.
   await companyEq(admin.from('worker_messages').delete());
@@ -731,7 +793,15 @@ async function cleanupTenant(t) {
   // task_id is `on delete set null`, so the row would survive a task delete —
   // but worker_id is a plain FK and would strand the company.
   await companyEq(admin.from('worker_requests').delete());
+  // BEFORE tasks and before workers: worker_photo_inbox holds a FK to each
+  // (0047), and attached_task_id does not cascade — an attached photo left
+  // behind would strand the whole company on the tasks delete below.
+  await companyEq(admin.from('worker_photo_inbox').delete());
   await admin.from('task_dependencies').delete().in('task_id', t.taskIds);
+  // Before tasks and before workers: task_assignment_notices holds a FK to each
+  // (0048). The task FK cascades, the worker FK deliberately does not, so an
+  // explicit delete here is what keeps the order honest rather than lucky.
+  await companyEq(admin.from('task_assignment_notices').delete());
   await companyEq(admin.from('tasks').delete());
   await companyEq(admin.from('memories').delete());
   await companyEq(admin.from('memory_consolidations').delete());
@@ -931,6 +1001,30 @@ async function runMatrix(self, other) {
     check(`${L}: checkin_photo_requests deny-all (bonus)`, ...readIsDenied(data, error));
   }
 
+  // worker_photo_inbox (0047) — a photo a crew member has sent that no task has
+  // claimed yet. Deny-all with every grant revoked, checkin_photo_requests'
+  // posture, and for a related reason: the row is not evidence of anything, so
+  // there is no tenant question it answers. What a READ would give an attacker
+  // is the object key of a photo staged inside another company's folder, which
+  // is exactly the string 0023's storage policies compare against. Both
+  // tenants' rows exist by the time this runs, so a policy exposing every
+  // company would show TWO here.
+  {
+    const { data, error } = await db.from('worker_photo_inbox').select('id');
+    check(`${L}: worker_photo_inbox deny-all (bonus)`, ...readIsDenied(data, error));
+  }
+
+  // task_photo_waiver_attempts (0049) — how many separate messages a crew
+  // member has spent saying a task is finished with no photo. Deny-all with
+  // every grant revoked, checkin_photo_requests' posture, and for the same
+  // reason: the row is not a business fact, it is Capo's private note that it
+  // has already asked. Both tenants' rows exist by the time this runs, so a
+  // policy exposing every company would show TWO here.
+  {
+    const { data, error } = await db.from('task_photo_waiver_attempts').select('id');
+    check(`${L}: task_photo_waiver_attempts deny-all (bonus)`, ...readIsDenied(data, error));
+  }
+
   // worker_day_links (0039, issue #114) — the fifth deny-all relation, and the
   // only one whose rows ARE credentials rather than describing them. A token
   // read out of this table is a working read of that crew member's live work
@@ -940,6 +1034,17 @@ async function runMatrix(self, other) {
   {
     const { data, error } = await db.from('worker_day_links').select('token');
     check(`${L}: worker_day_links deny-all (bonus)`, ...readIsDenied(data, error));
+  }
+
+  // task_assignment_notices (0048, issue W7) — the sixth deny-all relation, and
+  // the only one whose rows are an INSTRUCTION rather than a record: the drain
+  // turns one into a WhatsApp message, in Capo's voice, on a crew member's
+  // phone. Reading one tells an attacker who was just put on what; both
+  // tenants' seeded rows exist by the time this runs, so a policy exposing
+  // every company would show TWO here.
+  {
+    const { data, error } = await db.from('task_assignment_notices').select('id');
+    check(`${L}: task_assignment_notices deny-all (bonus)`, ...readIsDenied(data, error));
   }
 
   // problem_reports (0042, issue #120) — write-only for tenants, like ai_usage
@@ -1336,6 +1441,233 @@ async function runAdversarial(attacker, victim) {
       'adversarial: tenant DELETE of its own check-in photo request blocked',
       error != null,
       error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
+
+  // ── 0047 worker_photo_inbox ──────────────────────────────────────────────
+  // The row that says "this crew member has a photo waiting, and here is where
+  // its bytes are". Deny-all under RLS with every grant revoked, so these are
+  // grant-layer checks and all three are aimed at the ATTACKER'S OWN company on
+  // purpose: a cross-tenant variant would be refused for the wrong reason.
+  //
+  // What a write here would buy, and why it is worth three checks plus a
+  // control. INSERT: stage an object of the attacker's choosing as though a
+  // crew member had sent it, so it can later be attached as `source: 'worker'`
+  // proof — the same forgery class 0023's column-scoped grant exists to refuse.
+  // UPDATE: re-point a colleague's waiting photo, or mark one attached so it
+  // stops being offered. DELETE: erase somebody's photo before they can use it,
+  // which is the quiet way to make a completion claim impossible.
+  {
+    const { error } = await db.from('worker_photo_inbox').insert({
+      company_id: attacker.companyId,
+      worker_id: attacker.workerId,
+      storage_path: `${attacker.companyId}/inbox/${attacker.workerId}/forged.jpg`,
+      mime: 'image/jpeg',
+      byte_size: 100,
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    check(
+      'adversarial: tenant staging a photo in the worker inbox blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a tenant can forge crew proof!',
+    );
+    if (!error) {
+      await admin.from('worker_photo_inbox').delete()
+        .eq('storage_path', `${attacker.companyId}/inbox/${attacker.workerId}/forged.jpg`);
+    }
+  }
+  {
+    const { error } = await db
+      .from('worker_photo_inbox')
+      .update({ attached_task_id: attacker.taskIds[1] })
+      .eq('id', attacker.inboxPhotoId);
+    check(
+      'adversarial: tenant re-pointing a waiting crew photo blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — update grant leaked',
+    );
+  }
+  {
+    const { error } = await db
+      .from('worker_photo_inbox')
+      .delete()
+      .eq('id', attacker.inboxPhotoId);
+    check(
+      'adversarial: tenant DELETE of a waiting crew photo blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
+  {
+    // THE POSITIVE CONTROL. Every check above asserts a REFUSAL, and a table
+    // nobody could write at all would pass all three while quietly losing every
+    // photo the crew sends. The webhook writes on the SERVICE ROLE, so that is
+    // the actor this control uses, and it is the only one that can read the row
+    // back.
+    const { data, error } = await admin
+      .from('worker_photo_inbox')
+      .select('id, storage_path')
+      .eq('id', attacker.inboxPhotoId)
+      .maybeSingle();
+    check(
+      'positive control: the service role still stages and reads a crew photo',
+      !error && data?.storage_path === attacker.inboxPhotoPath,
+      error ? error.message : (data?.storage_path ?? 'no row'),
+    );
+  }
+  {
+    // The cross-company FK guard (0047's trigger). A row whose company_id is
+    // honest and whose worker_id belongs to somebody else satisfies every
+    // policy on the table, so only the trigger refuses it. Service role, because
+    // that is the actor the trigger exists to bind: RLS does not cover it at
+    // all.
+    const { error } = await admin.from('worker_photo_inbox').insert({
+      company_id: attacker.companyId,
+      worker_id: victim.workerId,
+      storage_path: `${attacker.companyId}/inbox/${victim.workerId}/${randomUUID()}.jpg`,
+      mime: 'image/jpeg',
+      byte_size: 100,
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    check(
+      'adversarial: a crew photo naming another company\'s worker blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — cross-company FK guard missing!',
+    );
+  }
+
+  // ── 0049 task_photo_waiver_attempts + open_task_review's new argument ────
+  // The counter behind "Capo asked twice". A crew member who genuinely cannot
+  // photograph the work says so and the claim is filed anyway, flagged to the
+  // manager as having no photo. Everything below exists because that rule is
+  // only worth anything if the count cannot be forged.
+  //
+  // Deny-all with every grant revoked (0034's and 0047's posture), so these are
+  // grant-layer checks aimed at the ATTACKER'S OWN company on purpose — a
+  // cross-tenant variant would be refused for the wrong reason.
+  //
+  // What each write would buy. INSERT: file two attempts of your own choosing
+  // and the very next completion claim skips both asks, so the photo
+  // requirement is gone for that task with nothing anywhere erroring. UPDATE:
+  // re-point an attempt at another task, or renumber it. DELETE: erase the
+  // asks, so Capo asks for ever and the crew member can never record the job at
+  // all — the quiet direction, and the one nobody would report as a bug.
+  {
+    const { error } = await db.from('task_photo_waiver_attempts').insert({
+      company_id: attacker.companyId,
+      worker_id: attacker.workerId,
+      task_id: attacker.taskIds[1],
+      conversation_id: attacker.workerConversationId,
+      attempt_no: 2,
+      inbound_message_id: `wamid.FORGED.${run}`,
+    });
+    check(
+      'adversarial: tenant forging a photo-waiver attempt blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a tenant can waive the photo rule!',
+    );
+    if (!error) {
+      await admin.from('task_photo_waiver_attempts').delete()
+        .eq('inbound_message_id', `wamid.FORGED.${run}`);
+    }
+  }
+  {
+    const { error } = await db
+      .from('task_photo_waiver_attempts')
+      .update({ attempt_no: 9 })
+      .eq('id', attacker.waiverAttemptId);
+    check(
+      'adversarial: tenant rewriting a photo-waiver attempt blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — update grant leaked',
+    );
+  }
+  {
+    const { error } = await db
+      .from('task_photo_waiver_attempts')
+      .delete()
+      .eq('id', attacker.waiverAttemptId);
+    check(
+      'adversarial: tenant DELETE of a photo-waiver attempt blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
+  {
+    // THE POSITIVE CONTROL. Every check above asserts a REFUSAL, and a table
+    // nobody could write at all would pass all three while making the waiver
+    // unreachable for ever — which is the state 0049 exists to end. The worker
+    // agent writes on the SERVICE ROLE, so that is the actor, and it is the
+    // only one that can read the row back.
+    const { data, error } = await admin
+      .from('task_photo_waiver_attempts')
+      .select('id, attempt_no')
+      .eq('id', attacker.waiverAttemptId)
+      .maybeSingle();
+    check(
+      'positive control: the service role still records and reads an ask',
+      !error && data?.attempt_no === 1,
+      error ? error.message : `attempt_no ${data?.attempt_no ?? 'none'}`,
+    );
+  }
+  {
+    // The cross-company FK guard (0049's trigger). A row whose company_id is
+    // honest and whose worker_id belongs to somebody else satisfies every
+    // policy on the table, so only the trigger refuses it. Service role,
+    // because that is the actor the trigger exists to bind.
+    const { error } = await admin.from('task_photo_waiver_attempts').insert({
+      company_id: attacker.companyId,
+      worker_id: victim.workerId,
+      task_id: attacker.taskIds[1],
+      conversation_id: attacker.workerConversationId,
+      attempt_no: 7,
+      inbound_message_id: `wamid.CROSSFK.${run}`,
+    });
+    check(
+      'adversarial: a waiver attempt naming another company\'s worker blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — cross-company FK guard missing!',
+    );
+    if (!error) {
+      await admin.from('task_photo_waiver_attempts').delete()
+        .eq('inbound_message_id', `wamid.CROSSFK.${run}`);
+    }
+  }
+  {
+    // open_task_review's FOURTH argument (0049). The function was DROPPED and
+    // recreated to add it, which is exactly the kind of change that can lose a
+    // guard by accident, so the cross-tenant attack of attack 9 is repeated
+    // here THROUGH the new argument. taskIds[1] for attack 9's reason: task1
+    // already carries the seeded review.
+    const foreignTask = victim.taskIds[1];
+    const { error } = await db.rpc('open_task_review', {
+      p_task: foreignTask,
+      p_worker: null,
+      p_note: 'cross-tenant waived claim',
+      p_photo_waived: true,
+    });
+    const { data: after } = await admin.from('tasks').select('status').eq('id', foreignTask).single();
+    check(
+      'adversarial: open a WAIVED review on a foreign task blocked',
+      error != null && after?.status === 'pending',
+      error ? `rejected (${error.code ?? 'err'}), victim task still ${after?.status}` : 'ACCEPTED — 0049 lost the guard',
+    );
+  }
+  {
+    // The tenant CAN read the flag on their own review, and that is not a
+    // refusal check — it is the manager's whole surface for this feature. A
+    // policy or grant that hid `photo_waived` would leave the board saying
+    // "sem fotos anexadas" about a claim somebody was asked for twice, which
+    // reads as ordinary rather than as the thing to go and look at.
+    const { data, error } = await db
+      .from('task_reviews')
+      .select('id, photo_waived')
+      .eq('id', attacker.reviewId)
+      .maybeSingle();
+    check(
+      'positive control: a manager reads photo_waived on their own review',
+      !error && data?.photo_waived === false,
+      error ? error.message : `photo_waived ${String(data?.photo_waived)}`,
     );
   }
 
@@ -1832,6 +2164,127 @@ async function runAdversarial(attacker, victim) {
       'adversarial: cross-company crew day token blocked by the FK trigger',
       error != null,
       error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a token can name another tenant\'s worker!',
+    );
+  }
+
+  // ── 0048 task_assignment_notices (issue W7) ──────────────────────────────
+  // The assignment-notice queue. Deny-all with every grant revoked, so these
+  // are grant-layer checks — and what they protect is the ability to make Capo
+  // SPEAK. Every other deny-all table here records something that happened; a
+  // row in this one is an instruction that has not been carried out yet.
+  //
+  // Five attacks, each buying something different:
+  //   READ   a foreign notice — who was just put on which job, in another
+  //          company, with the timing of that manager's own working day.
+  //   INSERT a notice of the attacker's choosing — the drain would then send a
+  //          WhatsApp message in Capo's voice about a task the attacker picked.
+  //   UPDATE stamping notified_at on their own crew's rows — the SILENCING
+  //          attack: the queue drains, nobody is told, and the outcome column
+  //          says a decision was made.
+  //   DELETE the row — the same silencing, with no trail at all.
+  //   FK     a row whose company_id is honest and whose worker_id belongs to
+  //          another tenant, on the SERVICE ROLE, which is the only writer
+  //          there actually is.
+  //
+  // The read is aimed CROSS-TENANT and the three writes at the attacker's OWN
+  // company, for the reason the checkin_photo_requests block gives: a
+  // cross-tenant write would be refused for the wrong reason (the FK trigger
+  // rather than the grant), and would pass while the grant leaked.
+  //
+  // WRITTEN BUT NOT YET RUN. 0048 was unapplied when these were added, so this
+  // block is unverified against a live database. Two shapes are both legitimate
+  // passes and readIsDenied accepts either: a table with a SELECT grant and no
+  // policy answers `0 rows, no error`, while one that also revokes every grant
+  // — which 0048 does — answers 42501 before RLS is consulted. It deliberately
+  // rejects 42P01: a table the migration never created must not read as secure.
+  {
+    const { data, error } = await db
+      .from('task_assignment_notices')
+      .select('company_id, worker_id, task_id')
+      .eq('id', victim.assignmentNoticeId);
+    check(
+      "adversarial: reading another tenant's assignment notice blocked",
+      ...readIsDenied(data, error),
+    );
+  }
+  {
+    const { error } = await db.from('task_assignment_notices').insert({
+      company_id: attacker.companyId,
+      task_id: attacker.taskIds[0],
+      worker_id: attacker.workerId,
+      queued_date: '2026-01-08',
+    });
+    check(
+      'adversarial: tenant queueing its own assignment notice blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a tenant can make Capo send a message!',
+    );
+    if (!error) {
+      await admin
+        .from('task_assignment_notices')
+        .delete()
+        .eq('company_id', attacker.companyId)
+        .eq('queued_date', '2026-01-08');
+    }
+  }
+  {
+    const { error } = await db
+      .from('task_assignment_notices')
+      .update({ notified_at: new Date().toISOString(), outcome: 'sent_free_form' })
+      .eq('id', attacker.assignmentNoticeId);
+    check(
+      'adversarial: tenant silencing its own assignment notice blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — a tenant can mark the crew as told',
+    );
+  }
+  {
+    const { error } = await db
+      .from('task_assignment_notices')
+      .delete()
+      .eq('id', attacker.assignmentNoticeId);
+    check(
+      'adversarial: tenant DELETE of its own assignment notice blocked',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : 'ACCEPTED — delete grant leaked',
+    );
+  }
+  {
+    const { error } = await admin.from('task_assignment_notices').insert({
+      company_id: attacker.companyId,
+      task_id: attacker.taskIds[0],
+      worker_id: victim.workerId,
+      queued_date: '2026-01-09',
+    });
+    check(
+      'adversarial: cross-company assignment notice blocked by the FK trigger',
+      error != null,
+      error ? `rejected (${error.code ?? 'err'})` : "ACCEPTED — a notice can name another tenant's worker!",
+    );
+    if (!error) {
+      await admin
+        .from('task_assignment_notices')
+        .delete()
+        .eq('company_id', attacker.companyId)
+        .eq('queued_date', '2026-01-09');
+    }
+  }
+  // THE POSITIVE CONTROL, and this file needs it more here than almost
+  // anywhere: every assertion above is a REFUSAL, so a table that had been
+  // dropped, or one nobody could write at all, would pass all five while the
+  // feature was completely dead. The service role is the only actor that may
+  // touch this queue, and the drain is useless if it cannot read it back —
+  // with notified_at still null, which is what "still queued" means.
+  {
+    const { data, error } = await admin
+      .from('task_assignment_notices')
+      .select('id, notified_at')
+      .eq('id', attacker.assignmentNoticeId)
+      .maybeSingle();
+    check(
+      'control: the service role still reads the assignment queue',
+      !error && data?.id === attacker.assignmentNoticeId && data?.notified_at === null,
+      error ? `error=${error.code ?? error.message}` : `row=${JSON.stringify(data)}`,
     );
   }
 
@@ -3209,6 +3662,28 @@ async function runOrphanAttack(orphan, victim) {
       'adversarial: orphan (no profiles row) open_task_review blocked',
       error != null && after?.status === 'pending',
       error ? `rejected (${error.code ?? 'err'}), victim task still ${after?.status}` : 'ACCEPTED — boundary broken',
+    );
+  }
+
+  // Attack 28b (0049): the same claim through open_task_review's FOURTH
+  // argument. The function was dropped and recreated to add it, and this actor
+  // is the one the guard's shape exists for: `private.current_company_id()` is
+  // NULL for a confirmed account with no profiles row, which is what made the
+  // pre-0019 `<>` form fail OPEN. Repeated here so a rebuild of the function
+  // cannot quietly reintroduce it.
+  {
+    const foreignTask = victim.taskIds[1];
+    const { error } = await db.rpc('open_task_review', {
+      p_task: foreignTask,
+      p_worker: null,
+      p_note: 'orphan waived claim, no profiles row',
+      p_photo_waived: true,
+    });
+    const { data: after } = await admin.from('tasks').select('status').eq('id', foreignTask).single();
+    check(
+      'adversarial: orphan (no profiles row) WAIVED open_task_review blocked',
+      error != null && after?.status === 'pending',
+      error ? `rejected (${error.code ?? 'err'}), victim task still ${after?.status}` : 'ACCEPTED — 0049 lost the guard',
     );
   }
 

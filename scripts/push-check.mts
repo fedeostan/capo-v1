@@ -17,6 +17,8 @@ import {
   isValidPushEndpoint,
   pushTargetUrl,
   PUSH_MAX_ATTEMPTS,
+  PUSH_QUOTE_MAX_CHARS,
+  truncateForPush,
 } from '@capo/core/channels/push-rules';
 
 let failures = 0;
@@ -82,6 +84,70 @@ eq(
   buildPushPayload({ notificationId: 'n3', appName: 'Capo', headline: '   ', taskId: 't1' }),
   null,
 );
+
+// ── truncateForPush (0049) ─────────────────────────────────────────────────
+// The lock screen is the one surface with a single body slot, so a waived
+// claim's reason is quoted INSIDE the sentence there rather than beneath it.
+// That makes this function the only thing standing between a crew member's own
+// words and a push payload, and it runs on text somebody else chose.
+//
+// Two failure directions. Too long and the alert is cut by whichever phone the
+// manager happens to hold, in a different place each time — the worst kind of
+// truncation, because nobody can tell how much is missing. Too clever and we
+// start rewriting what a person wrote, which the manager then reads as a quote
+// with that person's name on it.
+check('nothing to quote is null, not empty quotes', truncateForPush(null) === null);
+check('undefined is null', truncateForPush(undefined) === null);
+check('an empty string is null', truncateForPush('') === null);
+check('whitespace only is null', truncateForPush('   \n  ') === null);
+check('a short reason survives whole', truncateForPush('não há luz') === 'não há luz');
+check(
+  'surrounding whitespace is trimmed, the words are not touched',
+  truncateForPush('  não há luz  ') === 'não há luz',
+);
+check(
+  'newlines collapse to single spaces (a push body has no line breaks)',
+  truncateForPush('não há luz\n\ne o telemóvel morreu') === 'não há luz e o telemóvel morreu',
+);
+{
+  // A reason exactly at the budget is NOT truncated: the boundary is inclusive,
+  // so the commonest long-but-legal sentence keeps its last word.
+  const exact = 'a'.repeat(PUSH_QUOTE_MAX_CHARS);
+  check('a reason exactly at the cap is untouched', truncateForPush(exact) === exact);
+}
+{
+  const over = 'a'.repeat(PUSH_QUOTE_MAX_CHARS + 40);
+  const out = truncateForPush(over) ?? '';
+  check('an over-long reason is cut', out.length <= PUSH_QUOTE_MAX_CHARS, `${out.length} chars`);
+  check('and ends in an ellipsis the manager can see', out.endsWith('…'));
+}
+{
+  // Generated rather than hand-listed: EVERY length must respect the cap, and
+  // the word-boundary backtrack must never produce something longer than the
+  // hard cut it started from.
+  let overrun = 0;
+  for (let n = 1; n <= PUSH_QUOTE_MAX_CHARS * 2; n += 1) {
+    const words = 'lorem ipsum dolor sit amet consectetur adipiscing elit sed do '.repeat(10).slice(0, n);
+    const out = truncateForPush(words);
+    if (out !== null && out.length > PUSH_QUOTE_MAX_CHARS) overrun += 1;
+  }
+  check('no input length can exceed the cap', overrun === 0, `${overrun} overruns`);
+}
+{
+  // A long sentence is cut on a word, not mid-word, when there is a space late
+  // enough to be worth using.
+  const out = truncateForPush(`${'palavra '.repeat(20)}fim`) ?? '';
+  check('a long sentence is cut on a word boundary', !out.replace('…', '').endsWith('palavr'));
+  check('and still fits', out.length <= PUSH_QUOTE_MAX_CHARS);
+}
+{
+  // One enormous unbroken token has no usable space, so it is cut hard rather
+  // than returned whole. The alternative — giving up on truncating — is the
+  // overrun this function exists to prevent.
+  const out = truncateForPush('x'.repeat(300)) ?? '';
+  check('a single unbroken token is still cut', out.length <= PUSH_QUOTE_MAX_CHARS);
+}
+check('the quote budget is 90 characters', PUSH_QUOTE_MAX_CHARS === 90);
 
 // ── isValidPushEndpoint ────────────────────────────────────────────────────
 // The SSRF guard on what apps/web/app/api/push/route.ts will later POST to.

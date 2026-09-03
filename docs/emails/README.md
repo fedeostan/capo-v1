@@ -1,104 +1,103 @@
-# The emails Capo sends (issue #113)
+# The emails Capo sends
 
-This folder is the **source of truth** for Capo's email templates. Supabase's
-dashboard holds a pasted *copy* of two of them; if the copy and this folder
-ever disagree, this folder wins — fix the dashboard, not the file.
+**Sending moved into the app.** The two account emails are no longer pasted
+into anybody's dashboard: Capo renders them itself and hands them to Resend.
+This folder no longer holds them.
 
-| File | What it is | Status |
+| Email | Where it lives now |
+|---|---|
+| Confirm signup (also the resend on `/confirmar-email`) | `apps/web/lib/emails/confirm.ts` |
+| Reset password (from `/recuperar`) | `apps/web/lib/emails/reset.ts` |
+| Shared card layout, colours, plain-text twin | `apps/web/lib/emails/shell.ts` |
+| The copy, in all three languages | `packages/i18n` → `auth.emails` |
+| Who sends, when, and the throttle | `apps/web/lib/auth-email.ts` |
+| The gate that keeps it honest | `scripts/email-check.mts` (`pnpm email-check`, in CI) |
+
+| Still here | What it is | Status |
 |---|---|---|
-| `confirm-email.html` / `.txt` | "Confirm signup" — sent on signup and by the resend button on `/confirmar-email` | Ready to paste into Supabase |
-| `password-reset.html` / `.txt` | "Reset password" — sent from `/recuperar` | Ready to paste into Supabase |
-| `trial-ending.html` / `.txt` | "Trial ending soon" | **DRAFT — wired to nothing.** Needs a scheduled job and a product decision before anything sends it. Not a Supabase template. |
+| `trial-ending.html` / `.txt` | "Trial ending soon" | **DRAFT, wired to nothing.** Needs a scheduled job and a product decision before anything sends it. Never was a Supabase template. |
 
-Deliberately **not** in `@capo/i18n`: the catalogs there hold copy the app
-renders at runtime. Nothing in the app renders these strings — they are pasted
-into Supabase's dashboard, whose Go templates cannot import from this repo —
-so catalog entries would be dead weight that drifts. The files here are the
-single copy instead.
+## Why it moved (issue #113, then W1)
 
-## Decisions baked into these templates
+#113 wrote two careful templates and a procedure for pasting them into
+Supabase's dashboard. The procedure was never carried out, and while it sat
+undone the DEFAULT Supabase template kept going out. That default routes the
+click through Supabase's own `/auth/v1/verify`, which consumes the token,
+confirms the account, and *then* forwards to `/auth/confirm` with no
+`token_hash` — so the app answered **"O link expirou ou já foi usado"** to
+people whose accounts had just been confirmed perfectly well. Their password
+worked. The app said the link was dead.
 
-**One template, three languages stacked.** Supabase Auth sends ONE template
-per email type, and its template variables (`{{ .TokenHash }}`, `{{ .SiteURL }}`,
-…) carry no locale — at send time the template cannot know whether the reader
-speaks Portuguese, Spanish or English (`profiles.language` does not even exist
-yet at signup). So each email carries Portuguese first and fullest, then a
-one-sentence Spanish section and a one-sentence English section below a
-divider. The alternative — per-language templates — needs sending to move out
-of Supabase Auth entirely (e.g. an auth hook calling Resend's API), which is a
-bigger piece of work and a follow-up, not this pass.
-
-**The link shape is load-bearing, not cosmetic.** The app's confirm route
-(`apps/web/app/auth/confirm/route.ts`) verifies `{token_hash, type}` from the
-query string and then redirects to `next`. Supabase's default template
-variable `{{ .ConfirmationURL }}` does **not** produce that shape — it routes
-the click through Supabase's own `/auth/v1/verify` endpoint, which lands on
-our route without a `token_hash`, and the app answers "O link expirou ou já
-foi usado". The links in these templates must stay exactly:
+That bug was only ever possible because a third party got to rewrite our link
+in between. Capo builds the link itself now, so it cannot come back
+(`/auth/confirm` also now validates its `next` destination against its own
+origin before redirecting there — see `apps/web/lib/safe-next.ts` — which
+closes a separate, unrelated redirect issue in the same route):
 
 ```
-Confirm:  {{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup&next=/onboarding
-Reset:    {{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/nova-password
+{siteUrl}/auth/confirm?token_hash={hashed_token}&type={signup|magiclink|recovery}&next={/onboarding|/nova-password}
 ```
 
-`type` and `next` here mirror what the app itself passes as `emailRedirectTo`
-in `registar/actions.ts`, `confirmar-email/actions.ts` and
-`recuperar/actions.ts`. `{{ .SiteURL }}` is Supabase's **Site URL** setting
-(Authentication → URL Configuration) — it must name
-`https://www.construcapo.com` or every link in every email points at the
-wrong host. That is step 1 of the paste procedure for a reason.
+The token still comes from Supabase — `auth.admin.generateLink()` mints one
+without sending anything — so GoTrue remains the only authority on identity.
+All that moved is the envelope. Use `properties.hashed_token`, never
+`properties.action_link`: `action_link` **is** the `/auth/v1/verify` URL that
+caused the bug.
 
-**Colours are hardcoded hex from `packages/ui/src/tokens.css`** (light theme
-values — email clients cannot read CSS variables). Each `.html` file lists the
-hex → token mapping in its header comment. No dark-mode styles: dark mode in
-email is unreliable across clients and was explicitly left out of this pass.
-Tables + inline styles throughout, one column, max-width 480px, one full-width
-button with a ≥48px tap target — managers read these on a phone.
+## What the move bought
 
-**No images.** The wordmark is text. Images are blocked by default in many
-mail clients, and a blocked logo as the first impression is worse than no logo.
+**The reader's language comes first.** A Go template running inside GoTrue
+cannot know who is reading it (`profiles.language` does not exist yet at
+signup), so #113's templates stacked all three languages in every message. The
+app knows: the public pages already resolve a locale from the LanguageSwitch
+cookie, then `Accept-Language`. So the reader's language is rendered fully and
+the other two get one line each under a divider. Nobody loses a language.
 
-## Paste procedure (Supabase dashboard)
+**A plain-text part.** Supabase's dashboard takes one HTML body and has no
+text field, which is why #113's `.txt` files were a copy reference that nothing
+could send. Resend takes both parts, so they are sent now — built by
+`shell.ts` from the same catalog strings, which is what stops the two halves
+drifting.
 
-Do these in order. Until step 4 is done, Supabase's built-in sender keeps
-working — nothing here half-configures anything.
+**A throttle we control.** GoTrue's rate limits went with GoTrue's mailer, and
+`/registar` and `/recuperar` are unauthenticated forms that cause mail to be
+delivered to an arbitrary address. Migration `0045` adds `auth_email_sends`;
+at most three account emails per address per hour, counted across all three
+kinds together. See `AUTH_EMAIL_MAX_PER_WINDOW`.
 
-1. **Authentication → URL Configuration.** Site URL =
-   `https://www.construcapo.com`. Additional Redirect URLs must include
-   `https://www.construcapo.com/auth/confirm` and
-   `https://www.construcapo.com/auth/callback`. (Long-flagged in
-   `docs/human-todo.md` §2.3 — the templates depend on it via `{{ .SiteURL }}`.)
-2. **Authentication → Emails → Templates → "Confirm signup".** Subject:
-   `Confirma o teu email · Capo`. Message body: the entire contents of
-   `confirm-email.html`.
-3. **Same place → "Reset password".** Subject:
-   `Recupera a tua palavra-passe · Capo`. Message body: the entire contents of
-   `password-reset.html`.
-4. **Authentication → Emails → SMTP Settings** (on some dashboard versions:
-   Project Settings → Authentication → SMTP). Enable custom SMTP with:
-   - Sender email: `ola@construcapo.com`
-   - Sender name: `Capo`
-   - Host: `smtp.resend.com`
-   - Port: `465`
-   - Username: `resend`
-   - Password: the Resend API key — it lives as `RESEND_SMTP_KEY` in
-     `apps/web/.env.local` on Federico's machine. **Never commit it, never
-     paste it anywhere but this dashboard field.**
-5. **Test:** sign up with a throwaway address on `/registar`, receive the
-   confirm email, click through to `/onboarding`. Then `/recuperar` for the
-   reset email. Supabase's own rate limits stop applying once custom SMTP is
-   on (Authentication → Rate Limits, raise if needed).
+## Design decisions carried over unchanged from #113
 
-Notes:
+**Colours are hardcoded light-theme hex from `packages/ui/src/tokens.css`** —
+email clients cannot read CSS variables. The hex-to-token mapping is in
+`shell.ts`'s header. No dark-mode styles: dark mode in email is unreliable
+across clients and was deliberately left out.
 
-- The dashboard takes **one HTML body per template — there is no plain-text
-  field.** The `.txt` files are the canonical copy reference and are ready for
-  the day sending moves to Resend's API (which does take both parts). Known
-  gap, stated rather than hidden.
-- Resend's **click and open tracking must stay OFF** for this domain (they are
-  off today). Click tracking rewrites every link through a Resend redirect —
-  for an auth link that means a stranger-looking URL and another point of
-  failure in the one email a person needs to get into the product.
-- The Resend API key is scoped to *sending only, this domain only* — if it
-  leaks it cannot read data or manage the Resend account, only send mail as
-  construcapo.com (still worth rotating immediately if that happens).
+**Tables plus inline styles**, one column, max-width 480px, one full-width
+button with a tap target of at least 48px. Managers read these on a phone.
+
+**No images.** The wordmark is text. Images are blocked by default in many mail
+clients, and a blocked logo as somebody's first impression is worse than no
+logo.
+
+## Operator notes
+
+- **`RESEND_API_KEY` must be set on the Vercel project.** Until it is,
+  `sendAuthEmail` falls back to the old Supabase mailer and logs
+  `auth_email.legacy_mailer` — the app keeps working, but the emails are the
+  generic ones again. The fallback function is marked for deletion in
+  `apps/web/lib/auth-email.ts`. Locally the same key is read from
+  `apps/web/.env.local` under its older name `RESEND_SMTP_KEY`.
+- **Nothing needs pasting into Supabase's dashboard any more.** The "Confirm
+  signup" and "Reset password" template fields and the custom-SMTP settings are
+  no longer read by any code path. Leaving them configured is harmless.
+- **Supabase's Site URL still matters**, for the redirect allow-list rather
+  than for the template: `generateLink`'s `redirectTo` must be an allowed
+  redirect URL. Authentication → URL Configuration must include
+  `https://www.construcapo.com/auth/confirm` and `.../auth/callback`.
+- **Resend's click and open tracking must stay OFF** for this domain. Click
+  tracking rewrites every link through a Resend redirect, which for an auth
+  link means a stranger-looking URL and another point of failure in the one
+  email a person needs to get into the product.
+- **The Resend key is scoped to sending only, this domain only.** If it leaks
+  it cannot read data or manage the account, only send mail as
+  construcapo.com. Still worth rotating immediately.
