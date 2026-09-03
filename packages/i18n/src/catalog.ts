@@ -1825,4 +1825,25 @@ export interface Catalog {
      */
     welcomeEvent(args: { notified: number; names: string }): string;
   };
+
+  /**
+   * The phone-number field, wherever a number is typed (issue: the Argentine 9).
+   *
+   * A phone number in Capo is an identity, not a display string: WhatsApp
+   * matches an inbound sender against it exactly. So the field asks for one
+   * thing only, the national number, and the country picker beside it decides
+   * the rest. The copy must never invite anybody to type a country code.
+   *
+   * `countries` is keyed on the ISO codes in packages/core/src/channels/phone.ts
+   * (PHONE_COUNTRIES). Adding a country there without a name here is a tsc
+   * error, which is the point.
+   */
+  phone: {
+    /** Accessible name for the country dropdown. It has no visible label: the
+     *  field's own label sits above the pair. */
+    country: string;
+    /** Under the field. Says the one thing people get wrong. */
+    hint: string;
+    countries: Record<'PT' | 'ES' | 'AR' | 'BR' | 'US', string>;
+  };
 }

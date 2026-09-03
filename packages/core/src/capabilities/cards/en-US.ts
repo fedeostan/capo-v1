@@ -92,6 +92,8 @@ export const cards: CardStrings = {
     trade: v => `trade → ${v}`,
     phone: v => `phone → ${v}`,
     language: v => `message language → ${v}`,
+    whatsappOptIn: "starts getting Capo's messages on WhatsApp",
+    whatsappOptOut: "stops getting Capo's messages on WhatsApp",
   },
 
   translateCompany: p => {

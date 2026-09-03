@@ -6,6 +6,7 @@ import { Field, Input } from '@capo/ui/field';
 import { getCatalog } from '@capo/i18n/catalog';
 import { LOCALES } from '@capo/i18n/locale';
 import { metadataTitle, publicCatalog } from '@/lib/i18n';
+import { PhoneField } from '@/app/_ui/phone-field';
 import { completeOnboarding } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -63,19 +64,20 @@ export default async function OnboardingPage({
             />
           )}
         </Field>
-        <Field id="onboarding-telemovel" label={t.onboarding.phone} hint={t.onboarding.phoneHint}>
-          {a11y => (
-            <Input
-              {...a11y}
-              type="tel"
-              name="telemovel"
-              required
-              autoComplete="tel"
-              inputMode="tel"
-              placeholder={t.onboarding.phonePlaceholder}
-            />
-          )}
-        </Field>
+        {/* Country picker + national number. The hint the field carries by
+            default is "just the number, no country code"; the reassurance about
+            what this number is FOR is the more useful sentence on the very
+            first screen, so it wins here. */}
+        <PhoneField
+          id="onboarding-telemovel"
+          name="telemovel"
+          label={t.onboarding.phone}
+          locale={locale}
+          hint={t.onboarding.phoneHint}
+          required
+          autoComplete="tel"
+          placeholder={t.onboarding.phonePlaceholder}
+        />
 
         {/* Radio pills rather than a <select>: three options, mobile-first, and
             no JS needed for the choice to submit. Pre-selected to whatever the

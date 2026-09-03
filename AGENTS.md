@@ -202,6 +202,13 @@ and say what the alternative would be — he is the one who decides.
   Credential-free, in CI (`pnpm activity-check`). It covers the render half
   only; the three database reads in `loadActivity` need credentials and are
   outside the gate by construction.
+- `scripts/phone-check.mts` — the ONE phone normalizer
+  (`packages/core/src/channels/phone.ts`): the country picker's arithmetic, the
+  Argentine 9, the legacy `15`, the trunk zero, the split/compose round trip,
+  idempotency, and the refusal of junk. It exists because this is the quietest
+  failure in the product: a number stored in a shape WhatsApp does not use
+  raises nothing anywhere, it just means that person is never reached and never
+  recognised. Credential-free, in CI (`pnpm phone-check`).
 - `scripts/voice-check.mts` — the static half of Capo's tone. Keeps every
   MODEL-FACING file (personas, policies, prompt blocks) at ZERO long dashes in
   its string literals, and ratchets the user-facing copy catalogs downward from
@@ -489,6 +496,20 @@ Structural invariants (do not regress):
   through its five-number allow-list, and the production number has no
   allow-list, so this is now the only gate. Existing rows were deliberately not
   backfilled.
+
+  **Recording consent for an EXISTING crew member has to RENDER, and until #157
+  it did not.** `update_worker` accepts `whatsapp_opt_in`, and under
+  `always_ask` (the default, so every manager) a guarded write becomes an
+  approval card that must be drawn before it can be approved. The renderer's
+  change list did not know the field, so a consent-only update produced an empty
+  list and threw "empty change": the one sentence that turns a crew member from
+  unreachable into reachable was the one sentence that failed. Two rules follow.
+  The branch tests `!= null`, never truthiness, because `false` is the
+  WITHDRAWAL and is usually the whole card. And it uses TWO strings
+  (`workerChange.whatsappOptIn` / `whatsappOptOut`), never one with a value
+  interpolated: granting permission and taking it back are different events and
+  a card must not blur them. `pnpm guard-check` renders both, in all three
+  languages, and still asserts that an update naming NO field is refused.
 - **Cron schedules must fire at `:00`, never `:30`.** Vercel's cron dispatch
   drifts — 33 to 49 minutes, reproducibly, on this project — and both send routes
   gate on the Lisbon hour. A `:30` entry crosses the hour boundary and is
@@ -949,6 +970,45 @@ Structural invariants (do not regress):
     rule rejects the shape, the same rule is a CHECK constraint on both columns,
     and `parent_user_id` is parsed and dropped wherever it appears. Storing one
     would look like an identity while belonging to nobody in particular.
+- **A phone number is an IDENTITY, stored exactly as WhatsApp writes it, and
+  there is ONE normalizer** (`packages/core/src/channels/phone.ts`, `pnpm
+  phone-check`). Outbound, `toSendTarget()` strips the `+` and hands the rest to
+  Meta as the wa_id; inbound, the webhook matches `+<wa_id>` against
+  `profiles.phone` / `workers.phone` as an EXACT STRING. So a number in a shape
+  WhatsApp does not use is not slightly wrong: that person receives nothing and
+  is heard by nobody, with no error, no log line and no failed row, while every
+  screen goes on showing the number as if it were fine. On 2026-08-12 the
+  manager's own number was re-saved on `/perfil` without the Argentine 9 and
+  inbound WhatsApp went totally silent. Five things:
+  - **Argentina carries a 9 that nobody in Argentina writes.** WhatsApp knows an
+    Argentine mobile as `+54 9 <area> <subscriber>`; people write
+    `+54 11 7887 6189`, or locally `011 15 7887 6189` where the 0 is the trunk
+    prefix and the `15` is the legacy mobile marker the 9 replaced. All three
+    must land on `+5491178876189`, and `argentineNational()` is the only place
+    that arithmetic exists.
+  - **The two duplicated `normalizePhone` copies are GONE.** Both web forms and
+    both crew chat tools now go through this file: the forms through
+    `composeE164(iso, national)`, `add_worker`/`update_worker` through
+    `canonicalizeE164` run AFTER zod. A second copy of this rule would drift,
+    and the symptom of a drift is silence rather than an error.
+  - **`splitE164` shows Argentina WITHOUT the 9**, because the 9 is not part of
+    the number anybody there knows and seeing it invites a manager to "fix" it.
+    Composing puts it back; the round trip is pinned. Getting this wrong is
+    worse than getting `composeE164` wrong: it corrupts a number that was
+    already correct, the moment somebody opens the form to change their NAME.
+  - **Both functions PASS THROUGH what they cannot explain, never mangle it.**
+    A country outside the five in `PHONE_COUNTRIES` typed in full with its `+`
+    is stored verbatim (the picker must not become a wall), a `+54` number of an
+    unexplainable length is left alone, and `canonicalizeE164` is idempotent.
+    The accepted cost, stated rather than hidden: an Argentine LANDLINE would
+    have a 9 inserted it does not want. WhatsApp is a mobile channel and that
+    trade was made deliberately.
+  - **The country picker is a native `<select>` with no client JavaScript**
+    (`apps/web/app/_ui/phone-field.tsx`, no `'use client'`, no hooks), so the
+    server-rendered onboarding form still posts before hydration. It submits two
+    plain fields, `country` + the existing phone field name; a post with no
+    `country` (older cached HTML) falls back to `defaultCountryFor(locale)`,
+    which is the pre-picker behaviour.
 - **Worker text NEVER reaches the MANAGER's agent context** (migration `0027`,
   issue #22). This REPLACES the older and stronger promise that a worker's text
   never reached a model at all. It does now: crew members talk to a second,

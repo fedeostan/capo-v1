@@ -640,7 +640,7 @@ const dict: Catalog = {
     submit: 'Empezar',
     errors: {
       dados: 'Rellena el nombre de la empresa y tu nombre.',
-      telemovel: 'Número no válido. Usa el formato 612 345 678 o +34 612 345 678.',
+      telemovel: 'Número no válido. Elige el país y escribe solo el número, por ejemplo 612 345 678.',
       'telemovel-usado': 'Ese número ya está asociado a otra cuenta.',
       guardar: 'No se ha podido guardar. Inténtalo de nuevo.',
     },
@@ -680,7 +680,7 @@ const dict: Catalog = {
     errors: {
       companyName: 'El nombre de la empresa tiene que tener entre 1 y 120 caracteres.',
       fullName: 'El nombre tiene que tener entre 1 y 120 caracteres.',
-      phone: 'Número no válido. Usa el formato +34612345678.',
+      phone: 'Número no válido. Elige el país y escribe solo el número, por ejemplo 612 345 678.',
       phoneTaken: 'Ese número ya está asociado a otra cuenta.',
       save: 'No se ha podido guardar. Inténtalo otra vez.',
     },
@@ -1008,6 +1008,18 @@ const dict: Catalog = {
     welcomeEvent: ({ notified, names }) => {
       const who = names ? `: ${names}` : '';
       return `Me he presentado por WhatsApp a ${notified} ${notified === 1 ? 'persona nueva' : 'personas nuevas'} del equipo${who}.`;
+    },
+  },
+
+  phone: {
+    country: 'País',
+    hint: 'Solo el número, sin el prefijo.',
+    countries: {
+      PT: 'Portugal',
+      ES: 'España',
+      AR: 'Argentina',
+      BR: 'Brasil',
+      US: 'Estados Unidos',
     },
   },
 };

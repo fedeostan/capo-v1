@@ -50,6 +50,7 @@ import type { Db } from '@capo/db/client';
 import { CONFIRM_POSTURES, coerceConfirmPosture, DEFAULT_CONFIRM_POSTURE } from '@capo/db/posture';
 import { decideGuard, matchesManagerInstruction, runGuarded } from '@capo/core/capabilities/guard';
 import { getProposableTool, proposalArgsKey } from '@capo/core/capabilities/propose';
+import { RenderError, renderProposal } from '@capo/core/capabilities/render';
 import type { CapoTool, ToolContext } from '@capo/core/capabilities/types';
 // The evidence pool is BUILT here, not in the guard. Since #47 the system
 // writes into `messages` several times a day, so what toThread lets into
@@ -464,6 +465,88 @@ for (const posture of CONFIRM_POSTURES) {
   );
   eq('a non-pending twin does not block a new card', afterResolve.status, 'proposed');
   eq('and it was stored as a fourth row', inserted.length, 4);
+}
+
+// ── the card a consent-only update_worker draws (issue #157) ────────────────
+// Every guarded write under always_ask, which is the default and therefore
+// every manager, has to be RENDERED into a card before it can be approved. A
+// field the renderer does not know about produces an empty change list and
+// throws "empty change" at the manager, and until #157 whatsapp_opt_in was such
+// a field.
+//
+// That made the single sentence that turns a crew member from unreachable into
+// reachable the one sentence that failed: consent is the gate on every
+// proactive send (hasWhatsAppConsent fails closed), so without it that person
+// gets no 07:00 message, no check-in and no welcome, for ever.
+//
+// The renderer is asserted here rather than in a file of its own because this
+// is the gate that already owns "what happens between the manager speaking and
+// the write landing". It runs the REAL renderProposal against a fake Db, in all
+// three languages, so a missing translation is caught as a failure rather than
+// as an undefined printed onto a card.
+{
+  const cardDb = {
+    from(table: string) {
+      if (table !== 'workers') throw new Error(`guard-check: unexpected table ${table}`);
+      const builder = {
+        select: () => builder,
+        eq: () => builder,
+        maybeSingle: async () => ({ data: { name: 'Zé' }, error: null }),
+      };
+      return builder;
+    },
+  } as unknown as Db;
+
+  const companyId = '11111111-1111-1111-1111-111111111111';
+  const workerId = '44444444-4444-4444-4444-444444444444';
+  const card = (args: Record<string, unknown>, locale: 'pt-PT' | 'es-ES' | 'en-US') =>
+    renderProposal(cardDb, companyId, 'update_worker', args, locale);
+
+  for (const locale of ['pt-PT', 'es-ES', 'en-US'] as const) {
+    let granted = '';
+    let withdrawn = '';
+    let threw: unknown = null;
+    try {
+      granted = await card({ worker_id: workerId, whatsapp_opt_in: true }, locale);
+      withdrawn = await card({ worker_id: workerId, whatsapp_opt_in: false }, locale);
+    } catch (e) {
+      threw = e;
+    }
+    check(`${locale}: a consent-only update_worker RENDERS rather than throwing`, threw === null, String(threw));
+    check(`${locale}: the granted card names the worker`, granted.includes('Zé'), granted);
+    check(`${locale}: withdrawing consent renders too`, withdrawn.length > 0, withdrawn);
+    check(
+      `${locale}: granting and withdrawing do NOT read as the same card`,
+      granted.length > 0 && withdrawn.length > 0 && granted !== withdrawn,
+      `${granted} / ${withdrawn}`,
+    );
+    check(
+      `${locale}: neither card leaks an undefined from a missing translation`,
+      !/undefined/.test(granted) && !/undefined/.test(withdrawn),
+      `${granted} / ${withdrawn}`,
+    );
+  }
+
+  // The refusal that must SURVIVE the fix: an update naming no field at all is
+  // still nothing to approve, and drawing a card for it would be worse than the
+  // error. `false` is a change; absent is not.
+  let emptyThrew: unknown = null;
+  try {
+    await card({ worker_id: workerId }, 'pt-PT');
+  } catch (e) {
+    emptyThrew = e;
+  }
+  check('an update_worker naming no field at all is still refused', emptyThrew instanceof RenderError);
+
+  // And the Argentine 9, on the card itself. The card is the manager's last
+  // chance to spot a wrong number, so it has to show the number that will
+  // actually be stored, not the one the model typed.
+  const argentine = await card({ worker_id: workerId, phone: '+541178876189' }, 'pt-PT');
+  check(
+    'a phone change renders the number as it will be STORED, with the Argentine 9',
+    argentine.includes('+5491178876189'),
+    argentine,
+  );
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LOCALES } from '@capo/i18n/locale';
+import { canonicalizeE164 } from '../channels/phone';
 import { hasWhatsAppConsent } from '../channels/whatsapp';
 import { everyoneOnTask } from './collaborators';
 import type { CapoTool } from './types';
@@ -12,7 +13,7 @@ const e164Phone = z
   .string()
   .regex(/^\+[1-9]\d{7,14}$/)
   .describe(
-    'Phone in E.164 international format, e.g. +351912345678. If the manager gives a local number, ask them to confirm the full international format — never guess the country prefix.',
+    'Phone in E.164 international format, e.g. +351912345678. If the manager gives a local number, ask them to confirm the full international format, and never guess the country prefix. Argentine mobiles are stored the way WhatsApp writes them, with a 9 after the country code (+5491178876189); if the manager dictates one without it, write it as they said it and Capo will add the 9 when it saves.',
   );
 
 // The consent attestation, exposed to the model as a boolean because that is
@@ -99,7 +100,11 @@ export const addWorker: CapoTool<z.infer<typeof addWorkerInput>> = {
         company_id: ctx.companyId,
         name: input.name,
         trade: input.trade ?? null,
-        phone: input.phone ?? null,
+        // The ONE normalizer, run AFTER zod so the model's string has already
+        // been checked for shape. Its whole job here is the Argentine 9: a
+        // number stored without it is not rejected by anything, it is simply
+        // never delivered and never recognised. See channels/phone.ts.
+        phone: input.phone ? canonicalizeE164(input.phone) : null,
         ...consentPatch(input.whatsapp_opt_in),
       })
       .select()
@@ -140,6 +145,10 @@ export const updateWorker: CapoTool<z.infer<typeof updateWorkerInput>> = {
     // pulled OUT of the spread — passing it through would send Postgres a column
     // that does not exist and fail the whole update.
     const { worker_id, whatsapp_opt_in, ...fields } = input;
+    // Same normalizer as add_worker, and for the same reason. `phone` is
+    // optional, so it is only put back when it was actually sent: writing
+    // `phone: null` into the spread would erase a number nobody asked to erase.
+    if (fields.phone) fields.phone = canonicalizeE164(fields.phone);
     const { data, error } = await ctx.db
       .from('workers')
       .update({ ...fields, ...consentPatch(whatsapp_opt_in) })
