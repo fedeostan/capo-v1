@@ -1084,13 +1084,52 @@ Structural invariants (do not regress):
   function's signature demands, so the escalation to "manufacture an approval
   card for the manager to tap" is closed by the type checker.
 
-  `declare_task_done` requires `photo_ids` with `.min(1)` **at the schema
-  level**, never by prompt instruction: a prompt rule is negotiable by anyone
-  who can write text, and that is exactly who is on the other end. It writes
-  photos BEFORE filing the claim, because a claim with no proof is the state
-  the requirement exists to prevent, while proof with no claim is merely untidy.
-  Photos are **never shown to a model** — the agent learns only how many
-  arrived.
+  **`declare_task_done` still refuses a completion with no proof, but it now
+  has ONE way out, and the way out is counted in the database** (migration
+  `0049`, the no-photo waiver). This REPLACES the older promise that
+  `photo_ids` carries `.min(1)` at the schema level. The requirement was right
+  and it had no exit at all: "there is no light" in a basement at seven in the
+  evening got "that is the rule no matter what", twice, and the crew member
+  stopped telling anybody anything. Six things:
+  - **The rule moved from the SCHEMA into `execute`, never into a prompt.**
+    `photo_ids` is `.min(0)`; the refusal now reads
+    `task_photo_waiver_attempts` rows, which the model cannot write. Capo asks
+    for a photo on the first and second inbound message that declares this task
+    finished without one, and only the THIRD may waive. A prompt rule would be
+    negotiable by exactly the person on the other end.
+  - **The unit of counting is META'S INBOUND MESSAGE ID, and that is the whole
+    safety property.** `WorkerContext.inboundMessageId` is required (a `tsc`
+    error if a call site forgets it), and every tool call inside one turn
+    carries the same value — so three calls in one turn are ONE ask and the
+    model cannot talk its way to the third. Reaching it costs three separate
+    messages from a real phone. `decidePhotoWaiver`
+    (`capabilities/worker/photo-waiver.ts`) is pure and `pnpm waiver-check`
+    (credential-free, in CI) pins every branch, the same-turn repeat included.
+  - **It fails CLOSED in every direction.** A blank message id never waives, a
+    reason of whitespace is no reason, and an unreadable attempts table (0049
+    unapplied) reads as "never asked" — so before the migration lands the
+    product is exactly what it is today, stricter rather than looser.
+  - **A waived claim is LOUDER, not quieter.** `task_reviews.photo_waived` and
+    its own notification kind `review_no_photo`, so the inbox and the Web Push
+    both say what happened; a danger-tone "Sem foto" badge on the board's
+    review control, on the task detail screen and on Home's decision card, with
+    the crew member's own reason quoted underneath. It is **the one exception
+    to "the push carries no photo information"** (#52) and the exception is
+    earned: there, "no photo" is a transient fact seconds old; here it is
+    settled, because they were asked twice and said there will not be one.
+  - **`photoWaived` and `photoCount === 0` are read TOGETHER and mean different
+    things.** The count still comes from `countTaskPhotos` at read time and a
+    photo sent later still attaches — `task_board.is_open` is a denylist, so a
+    `pending_review` task is still open and nothing on the photo path reads its
+    status. Once a photo arrives, the count wins.
+  - **A waived claim writes `tasks.completion_proof = null`**, which is UNKNOWN.
+    Never `'skipped'`: that is the manager declining proof through the
+    completion sheet and only they write it (`markTaskProofUnknown`, beside
+    `markTaskProofPhotos`).
+  It still writes photos BEFORE filing the claim, because a claim with no proof
+  is the state the requirement exists to prevent, while proof with no claim is
+  merely untidy. Photos are **never shown to a model** — the agent learns only
+  how many arrived.
   Known limit, stated rather than hidden: photos live for ONE turn **on this
   path**, because a task photo's object key contains the task id and the task is
   not known until the tool names it. "Photo, then a separate message saying
