@@ -26,7 +26,10 @@
 // Pure and dependency-free so `pnpm whatsapp-check` can assert the switch.
 
 /** Meta locale codes (`reminders.templateLanguage`) whose template is APPROVED. */
-export const TASK_ASSIGNED_APPROVED_LANGUAGES: ReadonlySet<string> = new Set<string>();
+// Verified against the live WABA on 2026-09-03: capo_task_assigned is APPROVED
+// in pt_PT, es_ES and en_US (template ids 1859688468524905, 1603821794728431,
+// 28806849452245917). Remove a code here to fall back to silence for that locale.
+export const TASK_ASSIGNED_APPROVED_LANGUAGES: ReadonlySet<string> = new Set(['pt_PT', 'es_ES', 'en_US']);
 
 /** May we send the paid assignment template to a recipient on this locale? */
 export function taskAssignedTemplateApproved(templateLanguage: string): boolean {
