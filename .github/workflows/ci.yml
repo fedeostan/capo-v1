@@ -131,3 +131,13 @@ jobs:
       # invisible. Credential-free, so it runs on every PR.
       - name: Activity feed check
         run: pnpm activity-check
+
+      # The initial setup conversation (migration 0046). It exists because the
+      # failure it guards is completely silent: a manager was greeted, given one
+      # obra, told "done", and left with an empty company, and nothing anywhere
+      # recorded that anything had gone wrong. This pins the checklist for every
+      # state of a half-built company, in all three languages, and pins that the
+      # tool which declares the setup finished reads the same rule the prompt
+      # does. Credential-free, so it runs on every PR.
+      - name: Onboarding check
+        run: pnpm onboarding-check

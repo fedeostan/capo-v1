@@ -23,6 +23,7 @@
     "agent-smoke": "tsx scripts/agent-smoke.mts",
     "knowledge-ingest": "tsx scripts/knowledge-ingest.mts",
     "activity-check": "tsx scripts/activity-check.mts",
+    "onboarding-check": "tsx scripts/onboarding-check.mts",
     "migration-check": "tsx scripts/migration-drift.mts"
   },
   "devDependencies": {

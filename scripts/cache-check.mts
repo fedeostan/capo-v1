@@ -112,7 +112,13 @@ function stubDb(fixtures: Record<string, unknown>): Db {
 }
 
 const db = stubDb({
-  companies: { data: { name: 'Construções Silva' }, error: null },
+  // `onboarded_at` set: an established tenant, so the manager prompt carries the
+  // ordinary blocks. The onboarding CHECKLIST fixture is the separate stub
+  // below, because its whole point is that it appears under the breakpoint.
+  companies: {
+    data: { name: 'Construções Silva', onboarded_at: '2026-01-01T00:00:00Z', about: 'Remodelações' },
+    error: null,
+  },
   // The manager's own name (issue #62). A per-PROFILE fact, so it belongs
   // strictly below the breakpoint: above it, the cached prefix would stop being
   // shared between two managers of the same company and would be rewritten on
@@ -179,6 +185,10 @@ const VOLATILE_MARKERS = [
   'Construções Silva',
   'Aníbal Gatsby',
   'Prefere obras a norte',
+  // The dashboard address (migration 0046). It comes from the DEPLOYMENT, not
+  // from the code: a preview build and production would warm different cached
+  // prefixes if it sat above the line.
+  'https://www.construcapo.com',
   // A per-PROFILE memory (issue #48). Below the line for the same reason the
   // manager's name is: above it, each manager of one company would warm a
   // separate cached prefix, and every memory written at 03:00 would invalidate
@@ -192,6 +202,7 @@ for (const locale of LOCALES) {
     db,
     companyId: 'company-1',
     userId: 'profile-1',
+    appUrl: 'https://www.construcapo.com',
     summary: 'Resumo anterior da conversa.',
     locales,
   });
@@ -237,6 +248,44 @@ for (const locale of LOCALES) {
   );
 }
 
+// The onboarding checklist (migration 0046) is per-TENANT and rebuilt from the
+// tenant's own counts on every turn, so it belongs strictly below the
+// breakpoint — the same argument as the snapshot it is derived from. Above the
+// line it would fragment the cached prefix per company AND rewrite it every
+// time somebody added a worker, which during onboarding is every few messages.
+{
+  const fresh = stubDb({
+    companies: { data: { name: 'Casa Nova Lda', onboarded_at: null, about: null }, error: null },
+    profiles: { data: { full_name: 'Aníbal Gatsby' }, error: null },
+    jobs: { count: 0, error: null, data: [] },
+    workers: { count: 0, error: null, data: [] },
+    tasks: { count: 0, error: null },
+    proposals: { count: 0, error: null },
+  });
+  const msgs = await buildSystemPrompt({
+    db: fresh,
+    companyId: 'company-1',
+    userId: 'profile-1',
+    appUrl: 'https://www.construcapo.com',
+    summary: null,
+    locales: { user: 'pt-PT', company: 'pt-PT' },
+  });
+  const cached = msgs[0]?.content ?? '';
+  const uncached = msgs[1]?.content ?? '';
+  check(
+    'the onboarding checklist appears when onboarded_at is null',
+    uncached.includes('# Configuração inicial em curso'),
+  );
+  check(
+    'and it stays BELOW the cache breakpoint',
+    !cached.includes('# Configuração inicial em curso'),
+  );
+  check(
+    'the cached half is still exactly persona ⊕ policy ⊕ language directive',
+    cached === joinBlocks(managerStableBlocks({ user: 'pt-PT', company: 'pt-PT' })),
+  );
+}
+
 // The two live-fact reads fail INDEPENDENTLY (issue #62). If a transient
 // failure on the company counts also silenced the manager's name, the model
 // would fall straight back to reading a name out of the frozen summary — the
@@ -250,6 +299,7 @@ for (const locale of LOCALES) {
     db: degraded,
     companyId: 'company-1',
     userId: 'profile-1',
+    appUrl: 'https://www.construcapo.com',
     summary: null,
     locales: { user: 'pt-PT', company: 'pt-PT' },
   });
@@ -415,6 +465,7 @@ for (const locale of LOCALES) {
         db,
         companyId: 'company-1',
         userId: 'profile-1',
+        appUrl: 'https://www.construcapo.com',
         summary: null,
         locales,
       }),
