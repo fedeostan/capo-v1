@@ -576,7 +576,8 @@ const dict: Catalog = {
       createAccount: 'Criar conta',
       errors: {
         credenciais: 'Email ou palavra-passe incorretos. Confirma e tenta de novo.',
-        'link-invalido': 'O link expirou ou já foi usado. Pede um novo.',
+        'link-invalido':
+          'O link expirou ou já foi usado. Se já confirmaste o email, entra com a tua palavra-passe. Se não, pede um link novo.',
       },
     },
     signup: {
@@ -622,6 +623,34 @@ const dict: Catalog = {
       errors: {
         curta: 'A palavra-passe tem de ter pelo menos 8 caracteres.',
         guardar: 'Não foi possível guardar. Pede um novo link de recuperação.',
+      },
+    },
+    emails: {
+      languageLabel: 'Português',
+      confirm: {
+        subject: 'Confirma o teu email · Capo',
+        preview: 'Falta um passo para a tua conta ficar pronta.',
+        heading: 'Confirma o teu email',
+        body: 'Criaste uma conta na Capo. Falta um passo: carrega no botão para confirmares que este email é teu. Depois disso a tua conta fica pronta.',
+        button: 'Confirmar email',
+        fallback:
+          'O link só pode ser usado uma vez. Se o botão não abrir, copia e cola este endereço no navegador:',
+        otherLine:
+          'Criaste uma conta na Capo. Carrega no botão acima para confirmares o teu email e deixares a conta pronta.',
+        footer:
+          'Recebeste este email porque alguém criou uma conta na Capo com este endereço. Se não foste tu, ignora esta mensagem: não acontece nada.',
+      },
+      reset: {
+        subject: 'Recupera a tua palavra-passe · Capo',
+        preview: 'Escolhe uma palavra-passe nova com o link aqui dentro.',
+        heading: 'Recuperar palavra-passe',
+        body: 'Pediste para repor a palavra-passe da tua conta Capo. Carrega no botão para escolheres uma nova.',
+        button: 'Definir nova palavra-passe',
+        fallback:
+          'Por segurança, o link expira pouco tempo depois de ser enviado e só pode ser usado uma vez. Se o botão não abrir, copia e cola este endereço no navegador:',
+        otherLine:
+          'Pediste para repor a palavra-passe da tua conta Capo. Carrega no botão acima para escolheres uma nova.',
+        footer: 'Se não pediste esta mudança, ignora este email: a tua palavra-passe fica como está.',
       },
     },
   },

@@ -575,7 +575,8 @@ const dict: Catalog = {
       createAccount: 'Crear cuenta',
       errors: {
         credenciais: 'Email o contraseña incorrectos. Compruébalo e inténtalo de nuevo.',
-        'link-invalido': 'El enlace ha caducado o ya se ha usado. Pide uno nuevo.',
+        'link-invalido':
+          'El enlace ha caducado o ya se ha usado. Si ya confirmaste el email, entra con tu contraseña. Si no, pide un enlace nuevo.',
       },
     },
     signup: {
@@ -621,6 +622,34 @@ const dict: Catalog = {
       errors: {
         curta: 'La contraseña tiene que tener al menos 8 caracteres.',
         guardar: 'No se ha podido guardar. Pide un nuevo enlace de recuperación.',
+      },
+    },
+    emails: {
+      languageLabel: 'Español',
+      confirm: {
+        subject: 'Confirma tu email · Capo',
+        preview: 'Falta un paso para que tu cuenta esté lista.',
+        heading: 'Confirma tu email',
+        body: 'Has creado una cuenta en Capo. Falta un paso: pulsa el botón para confirmar que este email es tuyo. Después tu cuenta queda lista.',
+        button: 'Confirmar email',
+        fallback:
+          'El enlace solo se puede usar una vez. Si el botón no abre, copia y pega esta dirección en el navegador:',
+        otherLine:
+          'Has creado una cuenta en Capo. Pulsa el botón de arriba para confirmar tu email y dejar tu cuenta lista.',
+        footer:
+          'Recibes este email porque alguien creó una cuenta en Capo con esta dirección. Si no fuiste tú, ignora este mensaje: no pasa nada.',
+      },
+      reset: {
+        subject: 'Recupera tu contraseña · Capo',
+        preview: 'Elige una contraseña nueva con el enlace de dentro.',
+        heading: 'Recuperar contraseña',
+        body: 'Has pedido restablecer la contraseña de tu cuenta de Capo. Pulsa el botón para elegir una nueva.',
+        button: 'Definir nueva contraseña',
+        fallback:
+          'Por seguridad, el enlace caduca poco después de enviarse y solo se puede usar una vez. Si el botón no abre, copia y pega esta dirección en el navegador:',
+        otherLine:
+          'Has pedido restablecer la contraseña de tu cuenta de Capo. Pulsa el botón de arriba para elegir una nueva.',
+        footer: 'Si no pediste este cambio, ignora este email: tu contraseña queda como está.',
       },
     },
   },
