@@ -926,6 +926,7 @@ const dict: Catalog = {
       'Diz-me o que está mal na aplicação ou nas minhas mensagens — a tua próxima mensagem fica registada para a equipa do Capo.',
     reportAck: 'Recebido, obrigado. Ficou registado para a equipa do Capo dar uma olhada.',
     reportFailed: 'Não consegui registar o teu reporte agora. Tenta outra vez daqui a pouco.',
+    workerAudioFailed: 'Não consegui ouvir o áudio. Escreve-me em vez disso.',
   },
 
   dia: {

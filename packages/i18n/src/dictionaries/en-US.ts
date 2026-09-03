@@ -920,6 +920,7 @@ const dict: Catalog = {
       "Tell me what's wrong with the app or my messages — your next message gets logged for the Capo team.",
     reportAck: 'Got it, thanks. Logged for the Capo team to look at.',
     reportFailed: "I couldn't log your report just now. Please try again in a bit.",
+    workerAudioFailed: "I couldn't hear that voice note. Write it to me instead.",
   },
 
   dia: {

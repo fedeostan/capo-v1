@@ -2,7 +2,7 @@ import { generateText } from 'ai';
 import type { Db } from '@capo/db/client';
 import type { Locale } from '@capo/i18n/locale';
 import { getModel } from './models';
-import { managerOrSystem } from './usage';
+import { managerOrSystem, type UsageActor, type UsageSurface } from './usage';
 
 // Speech → text, shared by the web mic button and inbound WhatsApp voice notes.
 //
@@ -119,15 +119,30 @@ export interface TranscribeAudioInput {
    *  "audio/ogg; codecs=opus" and MUST be stripped to "audio/ogg" first. */
   mediaType: string;
   /**
-   * profiles.id of whoever spoke, for the token ledger (issue #53). Both
-   * callers are manager paths — the web mic button and a manager's inbound
-   * WhatsApp voice note — and a crew member never reaches here, because the
-   * worker loop takes text and images only.
+   * profiles.id of whoever spoke, for the token ledger (issue #53). Two of the
+   * three callers are manager paths: the web mic button and a manager's inbound
+   * WhatsApp voice note.
+   *
+   * The third is a CREW MEMBER's voice note, which has no profile at all and
+   * passes `usage` below instead. It must never fill this field in, and it
+   * structurally cannot say something untrue by doing so: a worker id is not a
+   * profile id and `UsageActor` has no shape that carries both.
    *
    * Nullable rather than required so a future caller without a session records
    * the spend against the company instead of being unable to record it at all.
    */
   profileId?: string | null;
+  /**
+   * Overrides the manager/system attribution derived from `profileId`, for the
+   * one caller that is neither: a CREW MEMBER's voice note (W4).
+   *
+   * Both halves travel together in one optional object on purpose. `UsageActor`
+   * is a union precisely so "a worker turn billed to a profile" is not
+   * expressible (./usage.ts), and two independent optional fields would let a
+   * caller set the actor and forget the surface, filing a crew member's spend
+   * under a manager's line on the dashboard with no error anywhere.
+   */
+  usage?: { actor: UsageActor; surface: UsageSurface };
 }
 
 /** Returns the trimmed transcript, or '' when there was no discernible speech. */
@@ -139,8 +154,8 @@ export async function transcribeAudio(input: TranscribeAudioInput): Promise<stri
     model: getModel('transcription', {
       db: input.db,
       companyId: input.companyId,
-      surface: 'transcription',
-      actor: managerOrSystem(input.profileId),
+      surface: input.usage?.surface ?? 'transcription',
+      actor: input.usage?.actor ?? managerOrSystem(input.profileId),
     }),
     messages: [
       {

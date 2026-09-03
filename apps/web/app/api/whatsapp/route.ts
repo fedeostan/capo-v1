@@ -50,6 +50,7 @@ import { dayLinkUrl, mintDayLinks } from '../../../lib/day-link';
 import { logEvent } from '../../../lib/log';
 import { handleProblemReportMessage } from '../../../lib/problem-report-flow';
 import { consentCommand, detailCommand, languageCommand, menuCommand } from '../../../lib/worker-keywords';
+import { isWorkerAudioMessage, transcribeWorkerAudio } from '../../../lib/worker-audio';
 import {
   buildWorkerMenu,
   findWorkerTask,
@@ -1713,7 +1714,39 @@ async function runWorkerTurn(
     await sendWhatsAppText(t.workerPhotoFailed, sendConfig).catch(() => {});
   }
 
-  const text = message.type === 'image' ? (message.image?.caption ?? '') : (message.text?.body ?? '');
+  let text = message.type === 'image' ? (message.image?.caption ?? '') : (message.text?.body ?? '');
+  let transcribed = false;
+
+  // ── the voice note (W4) ────────────────────────────────────────────────────
+  // Turned into the text they would have typed, then handled as if it had been.
+  // Everything below this point is unchanged by it: the transcript is persisted
+  // to `worker_messages` like any typed message, and nowhere else.
+  if (isWorkerAudioMessage(message)) {
+    const heard = await transcribeWorkerAudio({
+      db,
+      companyId: worker.company_id,
+      workerId: worker.id,
+      locale,
+      mediaId: message.audio!.id,
+      accessToken,
+    });
+    if (!heard.ok) {
+      logEvent('whatsapp.worker_audio_failed', {
+        companyId: worker.company_id,
+        workerId: worker.id,
+        messageId: message.id,
+        reason: heard.reason,
+        // Never the transcript and never the audio - only our own error string.
+        error: heard.error,
+      });
+      // Silence after a voice note reads as "Capo is broken", which is the whole
+      // bug. One line for all three causes, and it names the way out.
+      await sendWhatsAppText(t.workerAudioFailed, sendConfig).catch(() => {});
+      return;
+    }
+    text = heard.text;
+    transcribed = true;
+  }
 
   // A photo that failed to download, with no caption to go with it, leaves
   // nothing for the model to answer. The worker has already been asked to send
@@ -1736,7 +1769,7 @@ async function runWorkerTurn(
       companyId: worker.company_id,
       workerId: worker.id,
       locale,
-      inbound: { channel: 'whatsapp', text },
+      inbound: { channel: 'whatsapp', text, transcribed },
       photos,
       sink,
     });
@@ -1759,6 +1792,8 @@ async function runWorkerTurn(
       workerId: worker.id,
       messageId: message.id,
       photos: photos.length,
+      // Whether this turn started life as a voice note. Never the transcript.
+      transcribed,
     });
   } catch (err) {
     // See the declaration above: swallow a late rejection from a send that was
@@ -1975,8 +2010,14 @@ async function handleWorkerReply(
   // reads nothing a worker wrote; a read receipt carries only a message id.
   const hasText = message.type === 'text' && !!message.text?.body?.trim();
   const hasPhoto = message.type === 'image' && !!message.image?.id;
+  // A voice note (W4). It joins the other two here rather than beside the agent
+  // gate for the same reason they are computed here: one expression, one place.
+  // It is the SLOWEST of the three by some distance - a download and a
+  // transcription happen before the agent even starts - so the typing indicator
+  // matters most on this one.
+  const hasAudio = isWorkerAudioMessage(message);
   await acknowledgeInbound(message.id, sendConfig, {
-    typing: hasText || hasPhoto,
+    typing: hasText || hasPhoto || hasAudio,
     companyId: worker.company_id,
   });
 
@@ -2154,14 +2195,27 @@ async function handleWorkerReply(
   // language keyword are free, instant and already right, so a model must never
   // be able to get at them first.
   //
-  // Text and photos only. A voice note from a worker is deliberately NOT
-  // transcribed here — that would add a second model call to every message and
-  // double what the daily budget buys, for a path this PRD does not cover. It
-  // falls to the ack below, as it always has.
+  // Text, photos and VOICE NOTES. The third one reverses PRD 4's explicit
+  // decision to let a worker's audio fall to the generic ack below, and the
+  // reason it reverses is not that the cost argument was wrong: it is that crew
+  // on site talk far more than they type, so "one extra model call" was being
+  // paid for by the people the channel exists for. See apps/web/lib/worker-audio.ts.
   //
-  // hasText/hasPhoto are computed once, up beside the read receipt — see the
-  // note there for why they are not recomputed here.
-  if (hasText || hasPhoto) {
+  // The transcription happens INSIDE runWorkerTurn, below withProgressNote, so
+  // the "still on it" note covers the download and the transcription too - the
+  // turn that most needs the reassurance is exactly the one that spends ten
+  // seconds before the model starts.
+  //
+  // ⚠ A TRANSCRIPT DOES NOT REACH THE KEYWORD TABLES ABOVE. All five of them
+  // read `message.type === 'text'`, so a spoken "stop", "ajuda" or "ES" lands
+  // here and is answered by the agent instead. That is the correct side of the
+  // trade: those tables exist so a model can never intercept a tap, and a
+  // transcript is already model output. The written STOP is still the
+  // unsubscribe, and it is the one Meta requires and the one every message names.
+  //
+  // hasText/hasPhoto/hasAudio are computed once, up beside the read receipt — see
+  // the note there for why they are not recomputed here.
+  if (hasText || hasPhoto || hasAudio) {
     // Same single-shot progress note as the manager path, in the crew member's
     // own language, and free for the same reason: their message opened the
     // window seconds ago. A worker turn is usually quick, but a photo download
@@ -2559,8 +2613,10 @@ export async function POST(request: NextRequest) {
               db,
               companyId,
               // Whose token spend this is (issue #53). This branch is the
-              // MANAGER's voice note: the worker path never reaches here, because
-              // the restricted loop takes text and images only.
+              // MANAGER's voice note. A crew member's voice note is transcribed
+              // too since W4, but on the worker path and through
+              // apps/web/lib/worker-audio.ts, which files the spend against the
+              // worker instead - it never reaches this call.
               profileId: userId,
               locale: locales.user,
               audio: media.bytes,

@@ -148,6 +148,16 @@ import {
   decideWelcomeRetry,
   WELCOME_MAX_ATTEMPTS,
 } from '../apps/web/lib/welcome-retry.ts';
+// A crew member's VOICE NOTE (W4). Pure: the predicate, the size cap and the
+// transcript-emptiness rule take no clock, no network and no Db, which is what
+// lets them be pinned here. `transcribeWorkerAudio` itself is not called.
+import {
+  isWorkerAudioMessage,
+  MIN_WORKER_TRANSCRIPT_CHARS,
+  usableTranscript,
+  WORKER_AUDIO_MAX_BYTES,
+} from '../apps/web/lib/worker-audio.ts';
+import { MAX_AUDIO_BYTES } from '@capo/core/transcription';
 // CREW REQUESTS (issue #152). The urgency arithmetic and the two envelopes the
 // manager reads. Pure — `today` arrives as a string — which is what lets this
 // file pin the rule that replaces "the model decides how urgent this sounds",
@@ -3119,6 +3129,69 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   check('30 February is refused rather than rolled into March', !neededByIsSane('2026-02-30', now));
   check('a non-date is refused', !neededByIsSane('amanhã', now));
   check('a timestamp is refused — the column is a DAY', !neededByIsSane('2026-09-01T08:00:00Z', now));
+}
+
+
+// ── a crew member's voice note (W4) ─────────────────────────────────────────
+//
+// Until W4 an inbound `audio` message satisfied none of the gates in
+// handleWorkerReply and fell to `workerAck`, the line written for a sticker.
+// Crew on site talk far more than they type, so the channel's own audience was
+// paying for a cost decision made about a path nobody had built yet.
+//
+// What is pinned here is the pure half: which messages are audio, what the
+// size cap is, and when a transcript is not worth a model turn. The download
+// and the Gemini call are not exercised - they need Meta and a model.
+{
+  check('a push-to-talk voice note is audio', isWorkerAudioMessage({ type: 'audio', audio: { id: 'm1', voice: true } }));
+  // An uploaded m4a is accepted too, exactly as the manager path accepts one:
+  // the two are indistinguishable to everything downstream, and refusing
+  // somebody's own recording of themselves talking would be user-hostile.
+  check('an uploaded audio file is audio too', isWorkerAudioMessage({ type: 'audio', audio: { id: 'm2', voice: false } }));
+  // Meta can send an audio message with no media id. There is nothing to
+  // download, so it must NOT reach the agent gate - it falls to workerAck.
+  check('audio with no media id is not audio', !isWorkerAudioMessage({ type: 'audio' }));
+  check('text is not audio', !isWorkerAudioMessage({ type: 'text' }));
+  check('an image is not audio', !isWorkerAudioMessage({ type: 'image' }));
+  check('a sticker is not audio, and still gets the ack', !isWorkerAudioMessage({ type: 'sticker' }));
+  check('a document is not audio', !isWorkerAudioMessage({ type: 'document' }));
+
+  // ONE cap, shared with the manager path rather than copied. Two numbers would
+  // eventually disagree, and the symptom would be a crew member's voice note
+  // refused at a size a manager's is accepted at, with nothing saying why.
+  eq('the worker audio cap IS the manager audio cap', WORKER_AUDIO_MAX_BYTES, MAX_AUDIO_BYTES);
+  check('and it sits under Meta\'s 16 MiB inbound ceiling', WORKER_AUDIO_MAX_BYTES < 16 * 1024 * 1024);
+
+  // The emptiness rule. Gemini answers silence with an empty string, but a
+  // noisy site recording can come back as one stray character, and both mean
+  // the same thing to the person who recorded it.
+  eq('an empty transcript is unusable', usableTranscript(''), null);
+  eq('whitespace only is unusable', usableTranscript('   \n  '), null);
+  eq('null is unusable', usableTranscript(null), null);
+  eq('undefined is unusable', usableTranscript(undefined), null);
+  eq('a single character is unusable', usableTranscript('a'), null);
+  eq('punctuation alone is unusable', usableTranscript('...'), null);
+  eq('a lone question mark is unusable', usableTranscript('?'), null);
+  // A real short answer must survive: "ok" and "sim" are whole messages on a
+  // building site, and refusing them would be the ack bug again in miniature.
+  eq('"ok" is a real message', usableTranscript('ok'), 'ok');
+  eq('"sim" is a real message', usableTranscript(' sim '), 'sim');
+  eq('a sentence is trimmed, not altered', usableTranscript('  acabei a pintura  '), 'acabei a pintura');
+  eq('the floor is two characters', MIN_WORKER_TRANSCRIPT_CHARS, 2);
+
+  // ⚠ THE CONSEQUENCE, WRITTEN DOWN. A transcript never reaches the five
+  // deterministic keyword tables: all of them read `message.type === 'text'`
+  // and an audio message is not text, so a SPOKEN "stop" is answered by the
+  // agent rather than unsubscribing. That is the correct side of the trade -
+  // those tables exist so a model can never intercept a tap, and a transcript
+  // is already model output - but it must stay a decision rather than a
+  // surprise, so the words it applies to are named here.
+  check('the written STOP is still the unsubscribe', OPT_OUT_KEYWORDS.has('stop'));
+  check('the written MENU is still the menu', MENU_KEYWORDS.has('menu'));
+  check('the written ES is still the language switch', languageCommand('es') === 'es-ES');
+  // A voice note carries no `text` body at all, which is the mechanism: every
+  // one of those three tables is reached through `message.type === 'text'`.
+  check('a voice note has no text body for a keyword table to read', isWorkerAudioMessage({ type: 'audio', audio: { id: 'm3' } }));
 }
 
 // ── report ──────────────────────────────────────────────────────────────────
