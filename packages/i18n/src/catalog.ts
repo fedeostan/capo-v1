@@ -265,7 +265,19 @@ export interface Catalog {
        *  says what happened; it does not imply anybody was cutting a
        *  corner. */
       | 'review_no_photo',
-      (subject: string) => string
+      /**
+       * `subject` is the row's own title (a task name, or a crew member's name
+       * on a request) — data, interpolated and never translated.
+       *
+       * `quote` is the row's `body` when the SURFACE can only carry one line.
+       * The inbox calls this with ONE argument and renders the quote itself,
+       * attributed, beneath the sentence; the Web Push dispatcher has a single
+       * body slot and no room for a second block, so it passes the quote in
+       * here already trimmed to PUSH_QUOTE_MAX_CHARS. One entry, both surfaces,
+       * so a lock screen and an inbox row cannot describe one claim
+       * differently. An entry with nothing worth quoting simply ignores it.
+       */
+      (subject: string, quote?: string | null) => string
     >;
     /** Stand-in when the row carries no title — an unnamed task. */
     noSubject: string;

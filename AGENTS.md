@@ -1105,18 +1105,51 @@ Structural invariants (do not regress):
     messages from a real phone. `decidePhotoWaiver`
     (`capabilities/worker/photo-waiver.ts`) is pure and `pnpm waiver-check`
     (credential-free, in CI) pins every branch, the same-turn repeat included.
+  - **The decision turns on the photo ids the call NAMED, never on what is
+    sitting in the inbox.** `ctx.pendingPhotos` is every unattached photo that
+    person has sent in the last day, of any job or none, so keying on it made
+    the waiver unreachable for every other task until a stray photo aged out —
+    and the refusal it produced pushed the model toward filing Tuesday's wall as
+    proof of tonight's basement, which `task_photos` has no DELETE policy to
+    undo. The refusals MAY say how many photos are unattached and that the crew
+    member can be asked which job those show; they must NEVER tell the model to
+    pass them for the task being declared. A call that names ids which resolve
+    to nothing (stale or invented) is refused and spends NO ask.
+  - **Asks belong to a CLAIM CYCLE, not to the task for ever.**
+    `loadClaimCycleStart` takes `declared_at` from the task's most recent
+    `task_reviews` row of ANY status, and attempts older than it do not count.
+    A crew member asked on Monday who returns on Wednesday with the same
+    unreported job has still been asked once — this is not a TTL — but a claim
+    the manager REJECTED starts the next report from nothing. Without it the
+    second claim on a task could be waived on its first message, and the manager
+    would read a second "sem foto" claim about different work with no evidence
+    Capo had asked. **`attempt_no` must NOT restart per cycle**: 0049's unique
+    index spans the whole (conversation, task) pair, so the next value is one
+    past the highest on file. Restarting is a refused insert, a count that never
+    advances, and a job that can never be reported again.
   - **It fails CLOSED in every direction.** A blank message id never waives, a
-    reason of whitespace is no reason, and an unreadable attempts table (0049
-    unapplied) reads as "never asked" — so before the migration lands the
-    product is exactly what it is today, stricter rather than looser.
+    reason of whitespace is no reason, an unparseable cycle boundary or row
+    timestamp counts nothing, and an unreadable attempts table (0049 unapplied)
+    reads as "never asked" — so before the migration lands the product is
+    exactly what it is today, stricter rather than looser.
   - **A waived claim is LOUDER, not quieter.** `task_reviews.photo_waived` and
     its own notification kind `review_no_photo`, so the inbox and the Web Push
     both say what happened; a danger-tone "Sem foto" badge on the board's
-    review control, on the task detail screen and on Home's decision card, with
-    the crew member's own reason quoted underneath. It is **the one exception
-    to "the push carries no photo information"** (#52) and the exception is
-    earned: there, "no photo" is a transient fact seconds old; here it is
-    settled, because they were asked twice and said there will not be one.
+    review control, on the task detail screen, in the inbox row and on Home's
+    decision card, with the crew member's own reason quoted underneath. It is
+    **the one exception to "the push carries no photo information"** (#52) and
+    the exception is earned: there, "no photo" is a transient fact seconds old;
+    here it is settled, because they were asked twice and said there will not be
+    one.
+    The push carries the REASON too, and that is why the catalog's
+    `notifications.kind` entries take an optional SECOND argument. A lock screen
+    has one body slot and no room for the inbox's separate attributed block, so
+    the dispatcher passes the quote INTO the same catalog entry, trimmed by
+    `truncateForPush` to `PUSH_QUOTE_MAX_CHARS` (90) — an untrimmed quote is cut
+    by whichever phone the manager holds, in a different place each time.
+    `truncateForPush` only ever SHORTENS: it runs on worker-authored text the
+    manager reads as a quote with that person's name on it, so it never
+    rewrites, capitalises or punctuates. Pinned by `pnpm push-check`.
   - **`photoWaived` and `photoCount === 0` are read TOGETHER and mean different
     things.** The count still comes from `countTaskPhotos` at read time and a
     photo sent later still attaches — `task_board.is_open` is a denylist, so a

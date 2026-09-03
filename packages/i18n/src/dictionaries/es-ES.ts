@@ -205,7 +205,10 @@ const dict: Catalog = {
     kind: {
       review_pending: subject => `“${subject}” está pendiente de tu control.`,
       worker_request: subject => `${subject} ha pedido algo para la obra.`,
-      review_no_photo: subject => `“${subject}” se dio por terminada sin foto.`,
+      review_no_photo: (subject, quote) =>
+        quote
+          ? `“${subject}” se dio por terminada sin foto. Dijo: “${quote}”`
+          : `“${subject}” se dio por terminada sin foto.`,
     },
     noSubject: 'Una tarea',
     noteLabel: 'Lo que han escrito:',
