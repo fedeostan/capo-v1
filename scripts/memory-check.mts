@@ -22,6 +22,14 @@
 //   4. AN OVER-LENGTH ROW REACHING THE DATABASE. 0037's CHECK would reject it,
 //      and on a background job a rejected insert is an exception, not a
 //      retryable tool error.
+//   5. TOOL-RESULT CONTENT REACHING THE NIGHT AGENT AT ALL. This one is about
+//      the INPUT rather than the output. A stored assistant row is a whole
+//      `UIMessage`, so it carries the turn's tool calls and their results, and
+//      a manager tool such as `crew_requests` returns a CREW MEMBER's own words
+//      by design. Fine for one live turn, which is the feature; not fine as the
+//      seed of a permanent memory, which is AGENTS.md's #22 boundary broken for
+//      ever instead of once. `transcriptText` is the allowlist that stops it and
+//      the block at the bottom of this file is what keeps it stopped.
 //
 // Credential-free and model-free, like its siblings. The visibility filter and
 // the READ-side cap are asserted in `pnpm cache-check`, beside the prompt they
@@ -34,6 +42,7 @@ import {
   filterCandidates,
   mentionsForbiddenName,
   normalizeMemory,
+  transcriptText,
   type ConsolidationCandidate,
 } from '@capo/core/memory/consolidate';
 import { MEMORY_CONTENT_MAX_CHARS, type MemoryRow } from '@capo/core/memory/prompt';
@@ -171,6 +180,99 @@ eq('a blank name in the list is ignored', mentionsForbiddenName('qualquer coisa'
 }
 
 eq('no candidates writes nothing', filterCandidates([], [stored('x')], NAMES).accepted.length, 0);
+
+// ── the consolidation input boundary (issue #22, extended) ──────────────────
+// What the night agent is allowed to READ out of a stored message. Everything
+// above this line guards the model's output; this guards its input, and it is
+// the half that decides whether a crew member's typed words can become a
+// permanent note about the manager's business.
+//
+// The fixture is the real shape: an assistant row persisted wholesale by
+// `persistAssistantMessage`, holding Capo's own sentence plus the `crew_requests`
+// tool part that produced it. `CREW_PROSE` is the crew member's verbatim text as
+// the tool returns it. Nothing in the transcript may contain it.
+const CREW_PROSE = 'preciso de mais tinta branca para a obra do Paco';
+
+const assistantRowWithToolResult = {
+  parts: [
+    { type: 'step-start' },
+    {
+      type: 'tool-crew_requests',
+      toolCallId: 'call_1',
+      state: 'output-available',
+      input: { days: 7 },
+      output: { requests: [{ worker: 'Miguel', text: CREW_PROSE, needed_by: '2026-09-10' }] },
+    },
+    { type: 'text', text: 'O Miguel pediu material para sexta.' },
+  ],
+};
+
+{
+  const text = transcriptText(assistantRowWithToolResult);
+  check(
+    'a tool result never reaches the consolidation transcript',
+    !text.includes(CREW_PROSE),
+    'crew prose returned by crew_requests would become a permanent memory',
+  );
+  check(
+    'and neither does the tool name nor the raw fields around it',
+    !text.includes('crew_requests') && !text.includes('needed_by') && !text.includes('2026-09-10'),
+    `got ${JSON.stringify(text)}`,
+  );
+  // Deliberately NOT asserted: that the crew member's NAME is absent. Capo
+  // naming a worker in its own sentence is legitimate and always has been -
+  // `workers.name` is typed by the manager, not by the crew, which is the same
+  // distinction #47 draws around thread events and the reason
+  // `mentionsForbiddenName` forbids the manager's and the company's names and
+  // never a worker's. What must not survive is the worker's own TYPED WORDS.
+
+  eq(
+    "Capo's own spoken text is still read",
+    text,
+    'O Miguel pediu material para sexta.',
+  );
+}
+
+{
+  // The allowlist is ONE type. Every other part shape a `UIMessage` can carry is
+  // dropped, including the two that also happen to have a `text` field
+  // (`reasoning`, `reasoning-file`) and the free-form provider `data-*` parts.
+  // Listed individually rather than as one blob so a failure names the shape
+  // that got through.
+  const cases: Array<[string, unknown]> = [
+    ['a dynamic-tool result', { type: 'dynamic-tool', toolName: 'x', output: { note: CREW_PROSE } }],
+    ['a reasoning block', { type: 'reasoning', text: CREW_PROSE }],
+    ['a provider data part', { type: 'data-request', data: { text: CREW_PROSE } }],
+    ['a file part', { type: 'file', mediaType: 'text/plain', url: `data:text/plain,${CREW_PROSE}` }],
+    ['a source-url part', { type: 'source-url', sourceId: '1', url: CREW_PROSE }],
+  ];
+  for (const [label, part] of cases) {
+    check(`${label} is excluded`, !transcriptText({ parts: [part] }).includes(CREW_PROSE));
+  }
+}
+
+{
+  // Degrading rather than throwing on shapes the column can legally hold. The
+  // night agent runs unattended at 03:00 against rows written by every version
+  // of this app that has ever shipped; a malformed row must cost one line of
+  // transcript, never the company's whole run.
+  eq('a null content reads as empty', transcriptText(null), '');
+  eq('a content with no parts reads as empty', transcriptText({}), '');
+  eq('a non-array parts reads as empty', transcriptText({ parts: 'nope' }), '');
+  eq('a null part is skipped', transcriptText({ parts: [null, { type: 'text', text: 'ok' }] }), 'ok');
+  eq('a text part with no text is skipped', transcriptText({ parts: [{ type: 'text' }] }), '');
+  eq(
+    'a non-string text is skipped rather than stringified',
+    transcriptText({ parts: [{ type: 'text', text: { toString: () => CREW_PROSE } }] }),
+    '',
+  );
+  eq(
+    'several text parts are joined in order',
+    transcriptText({ parts: [{ type: 'text', text: 'um' }, { type: 'text', text: 'dois' }] }),
+    'um\ndois',
+  );
+}
+
 
 // ── report ──────────────────────────────────────────────────────────────────
 console.log(lines.join('\n'));

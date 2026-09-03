@@ -65,6 +65,23 @@ export async function maybeSummarize(
   if (toSummarize.length === 0) return;
 
   const t = promptBlocks[locale];
+  // On `rowText` here, and why it is not `transcriptText`.
+  //
+  // This is the OTHER reader of `messages` whose output is effectively
+  // permanent: every pass merges the previous summary forward, so a sentence
+  // written once is re-copied indefinitely (see the dial note above, and #62).
+  // The same tool-result exposure therefore applies in principle — a stored
+  // assistant row carries the turn's `tool-*` parts, and a manager tool may
+  // return a crew member's own words. It does not bite today, because
+  // `rowText` allowlists `type === 'text'` and a tool part has no `text` field.
+  //
+  // What is NOT true here is that the exclusion is owned by this file:
+  // `rowText` is shared with the live window and with `turn-failure.ts`, so a
+  // reasonable-looking widening there would reach this transcript silently.
+  // `consolidate.ts` broke that coupling for the memory pass and gated it in
+  // `pnpm memory-check`; doing the same for summaries is a deliberate, separate
+  // change rather than a drive-by, and this comment is here so the next person
+  // knows the question was asked and left open rather than missed.
   const transcript = toSummarize
     .map(row => {
       const day = row.created_at.slice(0, 10);
