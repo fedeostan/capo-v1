@@ -2044,6 +2044,62 @@ Structural invariants (do not regress):
   pending migration extends should `select('*')` and treat the new fields as
   optional, so a deploy landing before its migration degrades instead of
   erroring — see `0013` and the comment in `agenda.ts`.
+- **The crew agent knows WHO IT IS TALKING TO, and that is not a loosening of
+  the worker prompt's deliberate absences** (`loadWorkerIdentity` /
+  `buildIdentityBlock` in `packages/core/src/agent/worker-context.ts`). A crew
+  member asked "who am I?" and Capo answered that it could not give out
+  personal information — which was not a guardrail working, it was the model
+  correctly reporting it had been told nothing. Four things:
+  - **The line is "facts about the person holding the phone", never "facts
+    about the company".** The block carries their own name, their own trade,
+    the company's name, at most THREE manager names and the language they are
+    being written to in. The absences listed at the top of `worker-context.ts`
+    are unchanged: no memories, no proposals, no company snapshot, no
+    conversation summary, and above all no other crew member's name, number or
+    work. Widening it past those five fields is a decision, not a tidy-up.
+  - **Manager names come from `profiles.full_name`**, which managers type about
+    themselves — the same reasoning that lets #47's thread notes carry
+    `workers.name`. Never a phone number and never an email.
+  - **It is loaded in ONE place, `handleWorkerInbound`, and it fails soft.**
+    Three small reads behind one `try`; any failure returns null and the block
+    is simply absent, which is byte-for-byte the pre-W4 prompt. The WhatsApp
+    route gained no query.
+  - **It sits BELOW the cache breakpoint and must stay there.** Every field is
+    per-WORKER, so above the line it would write one cache entry per crew
+    member and read none — the trap `loadManagerName` had to avoid on the
+    manager side (#62). `pnpm cache-check` asserts the cached half is IDENTICAL
+    for two different crew members, which is the assertion that catches a
+    migration upward.
+- **A crew member's VOICE NOTE is transcribed and answered** (`apps/web/lib/
+  worker-audio.ts`, W4). This REVERSES PRD 4's written-down decision that
+  worker audio falls to the generic `workerAck`. The cost argument was sound
+  and the trade was not: crew on site talk far more than they type, so the
+  channel's own audience was the one paying for it, and what they got back was
+  the line written for a sticker. Five things:
+  - **A transcript is worker-authored text and nothing more.** It lands in
+    `worker_messages` exactly as a typed message would, and NOWHERE else —
+    never `messages`, a summary, a memory or a proposal (0027).
+  - **⚠ THE KEYWORD TABLES DO NOT RUN ON IT.** All five (STOP/START, the report
+    keyword, PT/ES/EN, MENU, OK) are reached through `message.type === 'text'`,
+    so a SPOKEN "stop" reaches the agent instead of unsubscribing. That is the
+    correct side of the trade — those tables exist so a MODEL can never
+    intercept a tap, and a transcript is already model output — but it is a
+    decision, and the written STOP remains the unsubscribe Meta requires.
+    `pnpm whatsapp-check` pins it.
+  - **ONE size cap, shared with the manager path.** `WORKER_AUDIO_MAX_BYTES` IS
+    `MAX_AUDIO_BYTES`; two numbers would drift into a voice note refused at a
+    size a manager's is accepted at, with nothing saying why.
+  - **The spend is filed against `{ kind: 'worker', workerId }` on surface
+    `worker_chat`**, through `transcribeAudio`'s optional `usage` override.
+    Actor and surface travel together in ONE object on purpose: setting the
+    actor and forgetting the surface would file a crew member's spend under the
+    manager's dictation line with no error anywhere. `transcribeAudio` must
+    never gain a worker id on `profileId`.
+  - **One failure line for all three causes** (download, transcription, empty
+    or too-short transcript). A crew member can do exactly one thing about any
+    of them, and an error surface that varies with the cause tells whoever is
+    probing it which half broke. `whatsapp.worker_audio_failed` carries the
+    reason; grep it before concluding nobody sends voice notes.
 
 ## Local tooling
 
