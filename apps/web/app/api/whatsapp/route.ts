@@ -17,6 +17,7 @@ import {
   readSender,
   routeWebhookChanges,
   senderLabel,
+  isHiTap,
   sendWhatsAppList,
   sendWhatsAppText,
   whatsappSink,
@@ -76,6 +77,8 @@ import {
 import { readThreadLocale, recordThreadEvent } from '../../notifications/thread';
 import { pingManagersAboutRequests } from '../../notifications/worker-request-ping';
 import { drainAssignmentNotices } from '../../notifications/task-assigned';
+import { welcomeAnyoneNew } from '../../../lib/welcome-trigger';
+import { answerManagerHi, answerWorkerHi } from '../../notifications/welcome-hi';
 
 // WhatsApp manager channel — Meta Cloud API webhook (see
 // docs/whatsapp-cloud-api-runbook.md for the one-time Meta setup).
@@ -2165,6 +2168,18 @@ async function handleWorkerReply(
     if (!message.image?.caption?.trim()) return true;
   }
 
+  // The welcome's "Say hi" tap. ABOVE the two taps below, and that position is
+  // the whole reason it is here rather than beside them: it arrives under BOTH
+  // `type: 'button'` and `type: 'interactive'` (the template and the free-form
+  // twin carry the same payload in different envelope fields), so leaving it
+  // below would make every hello log `whatsapp.unknown_checkin_payload` —
+  // which is supposed to mean the check-in template lost its button component.
+  // See notifications/welcome-hi.ts.
+  if (isHiTap(message)) {
+    await answerWorkerHi(db, worker, current, sendConfig);
+    return true;
+  }
+
   // The check-in answer. Sits here — inside the WORKER path — and not
   // beside the manager's `interactive` branch below, because a check-in tap
   // comes from a workers.phone sender: sender resolution diverts it here and
@@ -2591,6 +2606,24 @@ export async function POST(request: NextRequest) {
       recipient: sender.replyTo,
     };
 
+    // ── The welcome's "Say hi" tap ─────────────────────────────────────────
+    // A manager is welcomed too, with the same button. Above the approval
+    // branch because a hello arriving as `interactive` would otherwise be read
+    // as an unparseable proposal id and logged as `whatsapp.unknown_button`,
+    // and above the triage because a hello arriving as `button` (the template
+    // envelope) would be dropped as an unsupported type.
+    //
+    // Answered here rather than through handleInbound: it is a tap on something
+    // we sent, and the answer is one sentence we already hold. See
+    // notifications/welcome-hi.ts.
+    if (isHiTap(message)) {
+      after(async () => {
+        await acknowledgeInbound(message.id, sendConfig, { typing: false, companyId });
+        await answerManagerHi(companyId, locales.user, sendConfig);
+      });
+      continue;
+    }
+
     // ── Approval card button tap ────────────────────────────────────────────
     // Must sit ABOVE the unsupported-type triage below, which would otherwise
     // swallow it, and BELOW sender resolution, because companyId is the input
@@ -2910,13 +2943,25 @@ export async function POST(request: NextRequest) {
           }),
       });
 
+      // Two follow-ups, and they are INDEPENDENT of each other: each is
+      // wrapped so a throw in one can never cost the other its run. Both
+      // already swallow and log their own failures, so neither catch is
+      // expected to fire; it is here because they now share one after().
+
       // ── the crew hears about a new task now, not tomorrow at 07:00 (W7) ──
       // AFTER the turn, because the manager's "põe o Miguel na pintura de
       // hoje" only becomes a queued notice once the write has happened. One
       // line, and it never throws: announcing an assignment must never cost
       // the manager their answer. The fifteen-minute cron is the safety net
       // if this line is ever lost.
-      await drainAssignmentNotices({ companyId });
+      await drainAssignmentNotices({ companyId }).catch(() => {});
+
+      // A manager turn on WhatsApp can add a crew member and record their
+      // consent in one sentence, exactly as the web chat can. One line, after
+      // the turn, and it cannot throw — see lib/welcome-trigger.ts. It takes
+      // only the company id: the sweep re-derives who is owed a welcome, so
+      // nothing here has to know what the turn did.
+      await welcomeAnyoneNew(companyId, 'whatsapp').catch(() => {});
     });
   }
 

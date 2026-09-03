@@ -118,6 +118,40 @@ PASS  the welcome window opens only after the briefing window has closed — wel
 PASS  /api/cron/welcome is scheduled exactly once — got 1, want 1
 PASS  /api/cron/welcome sweeps every 15 minutes — got */15 * * * *, want */15 * * * *
 PASS  the welcome window is wide enough that cron drift cannot close it — 11 hours
+PASS  the assignment note may not go out before 08 — got false, want false
+PASS  an assignment at 08 is announced
+PASS  and so is one at 18
+PASS  but not one at 19
+PASS  and certainly not one at 03
+PASS  nor at 23
+PASS  the assignment window opens after the briefing hour — assignment starts at 8, briefing targets 7
+PASS  the assignment window closes before the latest legal send hour — assignment ends at 18, MAX_SEND_HOUR is 21
+PASS  the assignment window is wide enough that cron drift cannot close it — 11 hours
+PASS  /api/cron/task-assigned is scheduled exactly once — got 1, want 1
+PASS  /api/cron/task-assigned sweeps every 15 minutes — got */15 * * * *, want */15 * * * *
+PASS  the immediate welcome window ends at Lisbon 21 — got 21, want 21
+PASS  an immediate welcome may go out at 08, an hour before the sweep opens
+PASS  and at 21, two hours after the sweep closes
+PASS  no immediate welcome at 22:00
+PASS  no immediate welcome at 03:00
+PASS  the immediate window opens after the briefing has been SENT, not merely scheduled — immediate starts at 8, the briefing targets 7
+PASS  and overlaps the briefing window by at most its drift tail — immediate 8, briefing window ends 8
+PASS  the immediate trigger may also send at Lisbon 9
+PASS  the immediate trigger may also send at Lisbon 10
+PASS  the immediate trigger may also send at Lisbon 11
+PASS  the immediate trigger may also send at Lisbon 12
+PASS  the immediate trigger may also send at Lisbon 13
+PASS  the immediate trigger may also send at Lisbon 14
+PASS  the immediate trigger may also send at Lisbon 15
+PASS  the immediate trigger may also send at Lisbon 16
+PASS  the immediate trigger may also send at Lisbon 17
+PASS  the immediate trigger may also send at Lisbon 18
+PASS  the immediate trigger may also send at Lisbon 19
+PASS  neither welcome window can wrap past midnight
+PASS  welcomeWindowFor gives the cron its own hours — got 9, want 9
+PASS  and the immediate path its own — got 8, want 8
+PASS  and the widths do not cross over — got 11, want 11
+PASS  either — got 14, want 14
 PASS  the nightly review window ends at Lisbon 04 — got 4, want 4
 PASS  the nightly review may run at its target hour
 PASS  the nightly review still runs two hours late
@@ -160,7 +194,7 @@ PASS  tasks without a trade are never trade-compared — got 0, want 0
 PASS  warnings render as header + one line each — got 3, want 3
 PASS  the header leads the section — got HEADER, want HEADER
 
-Scheduler check: 145/145 passed; failures: 0
+Scheduler check: 179/179 passed; failures: 0
 === whatsapp-check
 PASS  bold loses the doubled asterisk — got "*Casa de Paco*", want "*Casa de Paco*"
 PASS  two bold spans on one line — got "*a* e *b*", want "*a* e *b*"
@@ -1115,7 +1149,7 @@ Hoje tens 1 tarefa:
 PASS  a pre-migration row still briefs the assignee — got 1, want 1
 PASS  and briefs nobody else — got 0, want 0
 PASS  mismatched collaborator arrays name nobody rather than guessing — got 0, want 0
-PASS  a definition per managed template per locale — got 15, want 15
+PASS  a definition per managed template per locale — got 21, want 21
 PASS  capo_daily_briefing is defined in pt_PT
 PASS  capo_daily_briefing is defined in es_ES
 PASS  capo_daily_briefing is defined in en_US
@@ -1131,6 +1165,12 @@ PASS  capo_daily_briefing_v2 is defined in en_US
 PASS  capo_message_waiting is defined in pt_PT
 PASS  capo_message_waiting is defined in es_ES
 PASS  capo_message_waiting is defined in en_US
+PASS  capo_task_assigned is defined in pt_PT
+PASS  capo_task_assigned is defined in es_ES
+PASS  capo_task_assigned is defined in en_US
+PASS  capo_welcome_v2 is defined in pt_PT
+PASS  capo_welcome_v2 is defined in es_ES
+PASS  capo_welcome_v2 is defined in en_US
 PASS  capo_daily_briefing pt_PT — language matches a real locale
 PASS  capo_daily_briefing pt_PT — category — got "UTILITY", want "UTILITY"
 PASS  capo_daily_briefing pt_PT — parameter format — got "POSITIONAL", want "POSITIONAL"
@@ -1170,13 +1210,17 @@ PASS  capo_task_checkin pt_PT — has no {{3}} — got false, want false
 PASS  capo_task_checkin pt_PT — does not start with a parameter — Olá {{1}}, t
 PASS  capo_task_checkin pt_PT — does not end with a parameter —  terminaste?
 PASS  capo_task_checkin pt_PT — supplies two example values — got 2, want 2
+PASS  capo_task_checkin pt_PT — every button is a quick reply
+PASS  capo_task_checkin pt_PT — "Sim, terminei" is 1..25 chars — 13
+PASS  capo_task_checkin pt_PT — "Sim, terminei" carries no emoji — Sim, terminei
+PASS  capo_task_checkin pt_PT — "Sim, terminei" is one plain line — Sim, terminei
+PASS  capo_task_checkin pt_PT — "Ainda não" is 1..25 chars — 9
+PASS  capo_task_checkin pt_PT — "Ainda não" carries no emoji — Ainda não
+PASS  capo_task_checkin pt_PT — "Ainda não" is one plain line — Ainda não
 PASS  capo_task_checkin pt_PT — exactly two buttons — got 2, want 2
-PASS  capo_task_checkin pt_PT — both are quick replies
 PASS  capo_task_checkin pt_PT — button 0 is the done label — got "Sim, terminei", want "Sim, terminei"
 PASS  capo_task_checkin pt_PT — button 1 is the not-done label — got "Ainda não", want "Ainda não"
 PASS  capo_task_checkin pt_PT — labels differ
-PASS  capo_task_checkin pt_PT — "Sim, terminei" is 1..25 chars — 13
-PASS  capo_task_checkin pt_PT — "Ainda não" is 1..25 chars — 9
 PASS  capo_task_checkin es_ES — language matches a real locale
 PASS  capo_task_checkin es_ES — category — got "UTILITY", want "UTILITY"
 PASS  capo_task_checkin es_ES — parameter format — got "POSITIONAL", want "POSITIONAL"
@@ -1186,13 +1230,17 @@ PASS  capo_task_checkin es_ES — has no {{3}} — got false, want false
 PASS  capo_task_checkin es_ES — does not start with a parameter — Hola {{1}}, 
 PASS  capo_task_checkin es_ES — does not end with a parameter — s terminado?
 PASS  capo_task_checkin es_ES — supplies two example values — got 2, want 2
+PASS  capo_task_checkin es_ES — every button is a quick reply
+PASS  capo_task_checkin es_ES — "Sí, he terminado" is 1..25 chars — 16
+PASS  capo_task_checkin es_ES — "Sí, he terminado" carries no emoji — Sí, he terminado
+PASS  capo_task_checkin es_ES — "Sí, he terminado" is one plain line — Sí, he terminado
+PASS  capo_task_checkin es_ES — "Todavía no" is 1..25 chars — 10
+PASS  capo_task_checkin es_ES — "Todavía no" carries no emoji — Todavía no
+PASS  capo_task_checkin es_ES — "Todavía no" is one plain line — Todavía no
 PASS  capo_task_checkin es_ES — exactly two buttons — got 2, want 2
-PASS  capo_task_checkin es_ES — both are quick replies
 PASS  capo_task_checkin es_ES — button 0 is the done label — got "Sí, he terminado", want "Sí, he terminado"
 PASS  capo_task_checkin es_ES — button 1 is the not-done label — got "Todavía no", want "Todavía no"
 PASS  capo_task_checkin es_ES — labels differ
-PASS  capo_task_checkin es_ES — "Sí, he terminado" is 1..25 chars — 16
-PASS  capo_task_checkin es_ES — "Todavía no" is 1..25 chars — 10
 PASS  capo_task_checkin en_US — language matches a real locale
 PASS  capo_task_checkin en_US — category — got "UTILITY", want "UTILITY"
 PASS  capo_task_checkin en_US — parameter format — got "POSITIONAL", want "POSITIONAL"
@@ -1202,13 +1250,17 @@ PASS  capo_task_checkin en_US — has no {{3}} — got false, want false
 PASS  capo_task_checkin en_US — does not start with a parameter — Hi {{1}}. To
 PASS  capo_task_checkin en_US — does not end with a parameter — ll finished?
 PASS  capo_task_checkin en_US — supplies two example values — got 2, want 2
+PASS  capo_task_checkin en_US — every button is a quick reply
+PASS  capo_task_checkin en_US — "Yes, all done" is 1..25 chars — 13
+PASS  capo_task_checkin en_US — "Yes, all done" carries no emoji — Yes, all done
+PASS  capo_task_checkin en_US — "Yes, all done" is one plain line — Yes, all done
+PASS  capo_task_checkin en_US — "Not yet" is 1..25 chars — 7
+PASS  capo_task_checkin en_US — "Not yet" carries no emoji — Not yet
+PASS  capo_task_checkin en_US — "Not yet" is one plain line — Not yet
 PASS  capo_task_checkin en_US — exactly two buttons — got 2, want 2
-PASS  capo_task_checkin en_US — both are quick replies
 PASS  capo_task_checkin en_US — button 0 is the done label — got "Yes, all done", want "Yes, all done"
 PASS  capo_task_checkin en_US — button 1 is the not-done label — got "Not yet", want "Not yet"
 PASS  capo_task_checkin en_US — labels differ
-PASS  capo_task_checkin en_US — "Yes, all done" is 1..25 chars — 13
-PASS  capo_task_checkin en_US — "Not yet" is 1..25 chars — 7
 PASS  capo_welcome pt_PT — language matches a real locale
 PASS  capo_welcome pt_PT — category — got "UTILITY", want "UTILITY"
 PASS  capo_welcome pt_PT — parameter format — got "POSITIONAL", want "POSITIONAL"
@@ -1299,6 +1351,84 @@ PASS  capo_message_waiting en_US — does not start with a parameter — Hi {{1}
 PASS  capo_message_waiting en_US — does not end with a parameter — unsubscribe.
 PASS  capo_message_waiting en_US — supplies two example values — got 2, want 2
 PASS  capo_message_waiting en_US — declares no buttons
+PASS  capo_task_assigned pt_PT — language matches a real locale
+PASS  capo_task_assigned pt_PT — category — got "UTILITY", want "UTILITY"
+PASS  capo_task_assigned pt_PT — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_task_assigned pt_PT — has {{1}} exactly once — got 1, want 1
+PASS  capo_task_assigned pt_PT — has {{2}} exactly once — got 1, want 1
+PASS  capo_task_assigned pt_PT — has no {{3}} — got false, want false
+PASS  capo_task_assigned pt_PT — does not start with a parameter — Olá {{1}}, o
+PASS  capo_task_assigned pt_PT — does not end with a parameter —  de receber.
+PASS  capo_task_assigned pt_PT — supplies two example values — got 2, want 2
+PASS  capo_task_assigned pt_PT — declares no buttons
+PASS  capo_task_assigned es_ES — language matches a real locale
+PASS  capo_task_assigned es_ES — category — got "UTILITY", want "UTILITY"
+PASS  capo_task_assigned es_ES — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_task_assigned es_ES — has {{1}} exactly once — got 1, want 1
+PASS  capo_task_assigned es_ES — has {{2}} exactly once — got 1, want 1
+PASS  capo_task_assigned es_ES — has no {{3}} — got false, want false
+PASS  capo_task_assigned es_ES — does not start with a parameter — Hola {{1}}, 
+PASS  capo_task_assigned es_ES — does not end with a parameter —  de recibir.
+PASS  capo_task_assigned es_ES — supplies two example values — got 2, want 2
+PASS  capo_task_assigned es_ES — declares no buttons
+PASS  capo_task_assigned en_US — language matches a real locale
+PASS  capo_task_assigned en_US — category — got "UTILITY", want "UTILITY"
+PASS  capo_task_assigned en_US — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_task_assigned en_US — has {{1}} exactly once — got 1, want 1
+PASS  capo_task_assigned en_US — has {{2}} exactly once — got 1, want 1
+PASS  capo_task_assigned en_US — has no {{3}} — got false, want false
+PASS  capo_task_assigned en_US — does not start with a parameter — Hi {{1}}, yo
+PASS  capo_task_assigned en_US — does not end with a parameter — unsubscribe.
+PASS  capo_task_assigned en_US — supplies two example values — got 2, want 2
+PASS  capo_task_assigned en_US — declares no buttons
+PASS  capo_welcome_v2 pt_PT — language matches a real locale
+PASS  capo_welcome_v2 pt_PT — category — got "UTILITY", want "UTILITY"
+PASS  capo_welcome_v2 pt_PT — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_welcome_v2 pt_PT — has {{1}} exactly once — got 1, want 1
+PASS  capo_welcome_v2 pt_PT — has {{2}} exactly once — got 1, want 1
+PASS  capo_welcome_v2 pt_PT — has no {{3}} — got false, want false
+PASS  capo_welcome_v2 pt_PT — does not start with a parameter — Olá {{1}}, s
+PASS  capo_welcome_v2 pt_PT — does not end with a parameter —  de receber.
+PASS  capo_welcome_v2 pt_PT — supplies two example values — got 2, want 2
+PASS  capo_welcome_v2 pt_PT — every button is a quick reply
+PASS  capo_welcome_v2 pt_PT — "Olá!" is 1..25 chars — 4
+PASS  capo_welcome_v2 pt_PT — "Olá!" carries no emoji — Olá!
+PASS  capo_welcome_v2 pt_PT — "Olá!" is one plain line — Olá!
+PASS  capo_welcome_v2 pt_PT — exactly one button — got 1, want 1
+PASS  capo_welcome_v2 pt_PT — the label fits an interactive reply button too — 4
+PASS  capo_welcome_v2 pt_PT — the label is the catalog's — got "Olá!", want "Olá!"
+PASS  capo_welcome_v2 es_ES — language matches a real locale
+PASS  capo_welcome_v2 es_ES — category — got "UTILITY", want "UTILITY"
+PASS  capo_welcome_v2 es_ES — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_welcome_v2 es_ES — has {{1}} exactly once — got 1, want 1
+PASS  capo_welcome_v2 es_ES — has {{2}} exactly once — got 1, want 1
+PASS  capo_welcome_v2 es_ES — has no {{3}} — got false, want false
+PASS  capo_welcome_v2 es_ES — does not start with a parameter — Hola {{1}}, 
+PASS  capo_welcome_v2 es_ES — does not end with a parameter —  de recibir.
+PASS  capo_welcome_v2 es_ES — supplies two example values — got 2, want 2
+PASS  capo_welcome_v2 es_ES — every button is a quick reply
+PASS  capo_welcome_v2 es_ES — "¡Hola!" is 1..25 chars — 6
+PASS  capo_welcome_v2 es_ES — "¡Hola!" carries no emoji — ¡Hola!
+PASS  capo_welcome_v2 es_ES — "¡Hola!" is one plain line — ¡Hola!
+PASS  capo_welcome_v2 es_ES — exactly one button — got 1, want 1
+PASS  capo_welcome_v2 es_ES — the label fits an interactive reply button too — 6
+PASS  capo_welcome_v2 es_ES — the label is the catalog's — got "¡Hola!", want "¡Hola!"
+PASS  capo_welcome_v2 en_US — language matches a real locale
+PASS  capo_welcome_v2 en_US — category — got "UTILITY", want "UTILITY"
+PASS  capo_welcome_v2 en_US — parameter format — got "POSITIONAL", want "POSITIONAL"
+PASS  capo_welcome_v2 en_US — has {{1}} exactly once — got 1, want 1
+PASS  capo_welcome_v2 en_US — has {{2}} exactly once — got 1, want 1
+PASS  capo_welcome_v2 en_US — has no {{3}} — got false, want false
+PASS  capo_welcome_v2 en_US — does not start with a parameter — Hi {{1}}, I 
+PASS  capo_welcome_v2 en_US — does not end with a parameter — unsubscribe.
+PASS  capo_welcome_v2 en_US — supplies two example values — got 2, want 2
+PASS  capo_welcome_v2 en_US — every button is a quick reply
+PASS  capo_welcome_v2 en_US — "Say hi" is 1..25 chars — 6
+PASS  capo_welcome_v2 en_US — "Say hi" carries no emoji — Say hi
+PASS  capo_welcome_v2 en_US — "Say hi" is one plain line — Say hi
+PASS  capo_welcome_v2 en_US — exactly one button — got 1, want 1
+PASS  capo_welcome_v2 en_US — the label fits an interactive reply button too — 6
+PASS  capo_welcome_v2 en_US — the label is the catalog's — got "Say hi", want "Say hi"
 PASS  a card turn is exactly one message — got 1, want 1
 PASS  and that message is the card — got "interactive", want "interactive"
 PASS  the card body is the rendered text — got "Crear tarea: «x».", want "Crear tarea: «x»."
@@ -1350,6 +1480,29 @@ PASS  a menu row is not a check-in payload — got null, want null
 PASS  the manager row is not a check-in payload — got null, want null
 PASS  a menu row is not a proposal id — got null, want null
 PASS  the manager row is not a proposal id — got null, want null
+PASS  the hi payload round-trips
+PASS  and is case-insensitive, like the other three
+PASS  the hi payload carries no uuid — capo:hi
+PASS  and nothing else parses as it
+PASS  a foreign prefix is not a hi
+PASS  a longer string starting with it is not a hi
+PASS  a hi is not a check-in payload — got null, want null
+PASS  a hi is not a proposal id — got null, want null
+PASS  a hi is not a menu row — got null, want null
+PASS  a check-in payload is not a hi
+PASS  a proposal id is not a hi
+PASS  a menu task row is not a hi
+PASS  the menu manager row is not a hi
+PASS  a template quick reply is a hi tap
+PASS  an interactive reply button is the same hi tap
+PASS  and case does not matter on either
+PASS  a payload on the interactive field is not a button tap
+PASS  an id on the button field is not an interactive tap
+PASS  a text message is not a hi tap
+PASS  an empty envelope is not a hi tap
+PASS  a check-in tap is not a hi tap
+PASS  a menu tap is not a hi tap
+PASS  a manager's approval tap is not a hi tap
 PASS  language and opt-out keywords are disjoint
 PASS  language and opt-in keywords are disjoint
 PASS  language and menu keywords are disjoint
@@ -1811,62 +1964,133 @@ PASS  and the not-retried failures are too — got 3, want 3
 PASS  only truly blocking rows count as already welcomed — got 1, want 1
 PASS  a crew member is addressed as a worker — got "worker", want "worker"
 PASS  a profile is addressed as a manager — got "manager", want "manager"
+PASS  the welcome names the most recently created manager — got "Sócio", want "Sócio"
+PASS  a company with no named profile answers null rather than a placeholder — got null, want null
+PASS  pt-PT — the crew welcome names who added them — O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT — and does so before anything else — O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT — with no manager on file the clause simply goes — A Construções Silva acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT — and the company is still named — A Construções Silva acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT — and nothing leaks — A Construções Silva acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT — the anonymous sentence still needs no flattening — got "A Construções Silva acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.", want "A Construções Silva acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma."
+PASS  pt-PT — a multi-line manager name is flattened — got "O teu gerente na Construções Silva, João Silva Pereira dos Santos e Filhos,…, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.", want "O teu gerente na Construções Silva, João Silva Pereira dos Santos e Filhos,…, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma."
 PASS  pt-PT — the name parameter needs no flattening — got "Zé", want "Zé"
-PASS  pt-PT — the worker sentence needs no flattening — got "A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.", want "A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma."
+PASS  pt-PT — the worker sentence needs no flattening — got "O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.", want "O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma."
 PASS  pt-PT — the manager sentence needs no flattening — got "A tua conta da Construções Silva está pronta: recebes aqui o resumo de cada manhã e podes falar comigo por WhatsApp tal como falas na aplicação.", want "A tua conta da Construções Silva está pronta: recebes aqui o resumo de cada manhã e podes falar comigo por WhatsApp tal como falas na aplicação."
-PASS  pt-PT — worker and manager are told different things — A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.
-PASS  pt-PT — the welcome names the company — A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.
-PASS  pt-PT — the crew welcome offers PT/ES/EN — A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT — worker and manager are told different things — O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT — the welcome names the company — O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT — the crew welcome offers PT/ES/EN — O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.
 PASS  pt-PT — the manager welcome does not — A tua conta da Construções Silva está pronta: recebes aqui o resumo de cada manhã e podes falar comigo por WhatsApp tal como falas na aplicação.
-PASS  pt-PT — the free-form welcome is the template body, rejoined — got "Olá Zé, sou o Capo, o assistente de obra. A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma. Responde STOP para deixar de receber.", want "Olá Zé, sou o Capo, o assistente de obra. A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma. Responde STOP para deixar de receber."
+PASS  pt-PT — the free-form welcome is the template body, rejoined — got "Olá Zé, sou o Capo, o assistente de obra. O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma. Responde STOP para deixar de receber.", want "Olá Zé, sou o Capo, o assistente de obra. O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma. Responde STOP para deixar de receber."
 PASS  pt-PT — the free-form welcome still states the opt-out — Olá Zé, sou o Capo, o assistente de obra.
 
-A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.
+O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.
 
 Responde STOP para deixar de receber.
 PASS  pt-PT — and leaks no undefined — Olá Zé, sou o Capo, o assistente de obra.
 
-A Construções Silva pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.
+O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.
 
 Responde STOP para deixar de receber.
+PASS  es-ES — the crew welcome names who added them — Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.
+PASS  es-ES — and does so before anything else — Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.
+PASS  es-ES — with no manager on file the clause simply goes — Construções Silva acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.
+PASS  es-ES — and the company is still named — Construções Silva acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.
+PASS  es-ES — and nothing leaks — Construções Silva acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.
+PASS  es-ES — the anonymous sentence still needs no flattening — got "Construções Silva acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.", want "Construções Silva acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma."
+PASS  es-ES — a multi-line manager name is flattened — got "Tu encargado en Construções Silva, João Silva Pereira dos Santos e Filhos,…, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.", want "Tu encargado en Construções Silva, João Silva Pereira dos Santos e Filhos,…, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma."
 PASS  es-ES — the name parameter needs no flattening — got "Zé", want "Zé"
-PASS  es-ES — the worker sentence needs no flattening — got "Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.", want "Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma."
+PASS  es-ES — the worker sentence needs no flattening — got "Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.", want "Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma."
 PASS  es-ES — the manager sentence needs no flattening — got "Tu cuenta de Construções Silva ya está lista: recibes aquí el resumen de cada mañana y puedes hablar conmigo por WhatsApp igual que en la aplicación.", want "Tu cuenta de Construções Silva ya está lista: recibes aquí el resumen de cada mañana y puedes hablar conmigo por WhatsApp igual que en la aplicación."
-PASS  es-ES — worker and manager are told different things — Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.
-PASS  es-ES — the welcome names the company — Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.
-PASS  es-ES — the crew welcome offers PT/ES/EN — Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.
+PASS  es-ES — worker and manager are told different things — Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.
+PASS  es-ES — the welcome names the company — Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.
+PASS  es-ES — the crew welcome offers PT/ES/EN — Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.
 PASS  es-ES — the manager welcome does not — Tu cuenta de Construções Silva ya está lista: recibes aquí el resumen de cada mañana y puedes hablar conmigo por WhatsApp igual que en la aplicación.
-PASS  es-ES — the free-form welcome is the template body, rejoined — got "Hola Zé, soy Capo, el asistente de obra. Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma. Responde STOP para dejar de recibir.", want "Hola Zé, soy Capo, el asistente de obra. Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma. Responde STOP para dejar de recibir."
+PASS  es-ES — the free-form welcome is the template body, rejoined — got "Hola Zé, soy Capo, el asistente de obra. Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma. Responde STOP para dejar de recibir.", want "Hola Zé, soy Capo, el asistente de obra. Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma. Responde STOP para dejar de recibir."
 PASS  es-ES — the free-form welcome still states the opt-out — Hola Zé, soy Capo, el asistente de obra.
 
-Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.
+Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.
 
 Responde STOP para dejar de recibir.
 PASS  es-ES — and leaks no undefined — Hola Zé, soy Capo, el asistente de obra.
 
-Construções Silva ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.
+Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.
 
 Responde STOP para dejar de recibir.
+PASS  en-US — the crew welcome names who added them — Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.
+PASS  en-US — and does so before anything else — Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.
+PASS  en-US — with no manager on file the clause simply goes — Construções Silva has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.
+PASS  en-US — and the company is still named — Construções Silva has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.
+PASS  en-US — and nothing leaks — Construções Silva has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.
+PASS  en-US — the anonymous sentence still needs no flattening — got "Construções Silva has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.", want "Construções Silva has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language."
+PASS  en-US — a multi-line manager name is flattened — got "Your manager at Construções Silva, João Silva Pereira dos Santos e Filhos,…, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.", want "Your manager at Construções Silva, João Silva Pereira dos Santos e Filhos,…, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language."
 PASS  en-US — the name parameter needs no flattening — got "Zé", want "Zé"
-PASS  en-US — the worker sentence needs no flattening — got "Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.", want "Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language."
+PASS  en-US — the worker sentence needs no flattening — got "Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.", want "Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language."
 PASS  en-US — the manager sentence needs no flattening — got "Your Construções Silva account is ready: you get each morning's summary here, and you can talk to me on WhatsApp just as you do in the app.", want "Your Construções Silva account is ready: you get each morning's summary here, and you can talk to me on WhatsApp just as you do in the app."
-PASS  en-US — worker and manager are told different things — Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.
-PASS  en-US — the welcome names the company — Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.
-PASS  en-US — the crew welcome offers PT/ES/EN — Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.
+PASS  en-US — worker and manager are told different things — Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.
+PASS  en-US — the welcome names the company — Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.
+PASS  en-US — the crew welcome offers PT/ES/EN — Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.
 PASS  en-US — the manager welcome does not — Your Construções Silva account is ready: you get each morning's summary here, and you can talk to me on WhatsApp just as you do in the app.
-PASS  en-US — the free-form welcome is the template body, rejoined — got "Hi Zé, I am Capo, your site assistant. Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language. Reply STOP to unsubscribe.", want "Hi Zé, I am Capo, your site assistant. Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language. Reply STOP to unsubscribe."
+PASS  en-US — the free-form welcome is the template body, rejoined — got "Hi Zé, I am Capo, your site assistant. Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language. Reply STOP to unsubscribe.", want "Hi Zé, I am Capo, your site assistant. Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language. Reply STOP to unsubscribe."
 PASS  en-US — the free-form welcome still states the opt-out — Hi Zé, I am Capo, your site assistant.
 
-Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.
+Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.
 
 Reply STOP to unsubscribe.
 PASS  en-US — and leaks no undefined — Hi Zé, I am Capo, your site assistant.
 
-Construções Silva added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.
+Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.
 
 Reply STOP to unsubscribe.
-PASS  a multi-line company name is flattened before it reaches Meta — got "A Obras Silva & Filhos, Lda, a maior empresa de construção ci… pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.", want "A Obras Silva & Filhos, Lda, a maior empresa de construção ci… pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma."
-PASS  and clamped rather than allowed to run on — A Obras Silva & Filhos, Lda, a maior empresa de construção ci… pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt_PT — capo_welcome_v2's body is capo_welcome's, byte for byte — got "Olá {{1}}, sou o Capo, o assistente de obra. {{2}} Responde STOP para deixar de receber.", want "Olá {{1}}, sou o Capo, o assistente de obra. {{2}} Responde STOP para deixar de receber."
+PASS  es_ES — capo_welcome_v2's body is capo_welcome's, byte for byte — got "Hola {{1}}, soy Capo, el asistente de obra. {{2}} Responde STOP para dejar de recibir.", want "Hola {{1}}, soy Capo, el asistente de obra. {{2}} Responde STOP para dejar de recibir."
+PASS  en_US — capo_welcome_v2's body is capo_welcome's, byte for byte — got "Hi {{1}}, I am Capo, your site assistant. {{2}} Reply STOP to unsubscribe.", want "Hi {{1}}, I am Capo, your site assistant. {{2}} Reply STOP to unsubscribe."
+PASS  pt_PT — the chosen welcome template matches the approval set — got "capo_welcome_v2", want "capo_welcome_v2"
+PASS  pt_PT — the button rides v2 and only v2 — got true, want true
+PASS  es_ES — the chosen welcome template matches the approval set — got "capo_welcome_v2", want "capo_welcome_v2"
+PASS  es_ES — the button rides v2 and only v2 — got true, want true
+PASS  en_US — the chosen welcome template matches the approval set — got "capo_welcome_v2", want "capo_welcome_v2"
+PASS  en_US — the button rides v2 and only v2 — got true, want true
+PASS  an unknown locale code falls back to the approved-everywhere template — got "capo_welcome", want "capo_welcome"
+PASS  and carries no button with it
+PASS  a multi-line company name is flattened before it reaches Meta — got "A Obras Silva & Filhos, Lda, a maior empresa de construção ci… acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.", want "A Obras Silva & Filhos, Lda, a maior empresa de construção ci… acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma."
+PASS  and clamped rather than allowed to run on — A Obras Silva & Filhos, Lda, a maior empresa de construção ci… acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.
+PASS  pt-PT worker — the resend's {{1}} is the sweep's — got "Miguel", want "Miguel"
+PASS  pt-PT worker — the resend's {{2}} is the sweep's — got "O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.", want "O teu gerente na Construções Silva, João, acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma."
+PASS  pt-PT worker — and it goes out in this person's language — got "pt_PT", want "pt_PT"
+PASS  pt-PT manager — the resend's {{1}} is the sweep's — got "Miguel", want "Miguel"
+PASS  pt-PT manager — the resend's {{2}} is the sweep's — got "A tua conta da Construções Silva está pronta: recebes aqui o resumo de cada manhã e podes falar comigo por WhatsApp tal como falas na aplicação.", want "A tua conta da Construções Silva está pronta: recebes aqui o resumo de cada manhã e podes falar comigo por WhatsApp tal como falas na aplicação."
+PASS  pt-PT manager — and it goes out in this person's language — got "pt_PT", want "pt_PT"
+PASS  pt-PT — and the no-manager wording matches too — got "A Construções Silva acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.", want "A Construções Silva acabou de te adicionar ao Capo. Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma."
+PASS  pt-PT — a resend uses the button-less template — got "capo_welcome", want "capo_welcome"
+PASS  es-ES worker — the resend's {{1}} is the sweep's — got "Miguel", want "Miguel"
+PASS  es-ES worker — the resend's {{2}} is the sweep's — got "Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.", want "Tu encargado en Construções Silva, João, acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma."
+PASS  es-ES worker — and it goes out in this person's language — got "es_ES", want "es_ES"
+PASS  es-ES manager — the resend's {{1}} is the sweep's — got "Miguel", want "Miguel"
+PASS  es-ES manager — the resend's {{2}} is the sweep's — got "Tu cuenta de Construções Silva ya está lista: recibes aquí el resumen de cada mañana y puedes hablar conmigo por WhatsApp igual que en la aplicación.", want "Tu cuenta de Construções Silva ya está lista: recibes aquí el resumen de cada mañana y puedes hablar conmigo por WhatsApp igual que en la aplicación."
+PASS  es-ES manager — and it goes out in this person's language — got "es_ES", want "es_ES"
+PASS  es-ES — and the no-manager wording matches too — got "Construções Silva acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.", want "Construções Silva acaba de añadirte a Capo. Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma."
+PASS  es-ES — a resend uses the button-less template — got "capo_welcome", want "capo_welcome"
+PASS  en-US worker — the resend's {{1}} is the sweep's — got "Miguel", want "Miguel"
+PASS  en-US worker — the resend's {{2}} is the sweep's — got "Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.", want "Your manager at Construções Silva, João, has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language."
+PASS  en-US worker — and it goes out in this person's language — got "en_US", want "en_US"
+PASS  en-US manager — the resend's {{1}} is the sweep's — got "Miguel", want "Miguel"
+PASS  en-US manager — the resend's {{2}} is the sweep's — got "Your Construções Silva account is ready: you get each morning's summary here, and you can talk to me on WhatsApp just as you do in the app.", want "Your Construções Silva account is ready: you get each morning's summary here, and you can talk to me on WhatsApp just as you do in the app."
+PASS  en-US manager — and it goes out in this person's language — got "en_US", want "en_US"
+PASS  en-US — and the no-manager wording matches too — got "Construções Silva has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.", want "Construções Silva has just added you to Capo. Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language."
+PASS  en-US — a resend uses the button-less template — got "capo_welcome", want "capo_welcome"
+PASS  pt-PT — the 07:00 line does not repeat "nothing scheduled" — Todas as manhãs, às 7h, mando-te aqui o teu dia.
+PASS  pt-PT — nor the other way round — Nada agendado para hoje.
+PASS  pt-PT — and it names the hour the day arrives — Todas as manhãs, às 7h, mando-te aqui o teu dia.
+PASS  es-ES — the 07:00 line does not repeat "nothing scheduled" — Cada mañana, a las 7h, te mando aquí tu día.
+PASS  es-ES — nor the other way round — Nada previsto para hoy.
+PASS  es-ES — and it names the hour the day arrives — Cada mañana, a las 7h, te mando aquí tu día.
+PASS  en-US — the 07:00 line does not repeat "nothing scheduled" — Every morning at 7am I send you your day here.
+PASS  en-US — nor the other way round — Nothing scheduled for today.
+PASS  en-US — and it names the hour the day arrives — Every morning at 7am I send you your day here.
+PASS  the newest named profile is the one credited — got "Novo", want "Novo"
+PASS  a newer profile with no name does not blank out an older one — got "Federico", want "Federico"
+PASS  no profiles at all is null, not a placeholder — got null, want null
+PASS  and neither is a company whose only names are blank — got null, want null
 PASS  pt-PT — the welcome thread note names who was introduced — Apresentei-me a 2 pessoas novas da equipa no WhatsApp: Zé, Pepe.
 PASS  pt-PT — and leaks no undefined — Apresentei-me a 2 pessoas novas da equipa no WhatsApp: Zé, Pepe.
 PASS  es-ES — the welcome thread note names who was introduced — Me he presentado por WhatsApp a 2 personas nuevas del equipo: Zé, Pepe.
@@ -1994,8 +2218,260 @@ PASS  es-ES: an empty vocabulary produces no name hints in the instruction
 PASS  es-ES: while the language and glossary lines survive
 PASS  en-US: an empty vocabulary produces no name hints in the instruction
 PASS  en-US: while the language and glossary lines survive
+PASS  a "more photos" tap round-trips — got "more", want "more"
+PASS  a "that is everything" tap round-trips — got "done", want "done"
+PASS  and it is case-insensitive, as Meta echoes what we sent — got "done", want "done"
+PASS  an unknown answer is rejected — got null, want null
+PASS  a foreign prefix is rejected — got null, want null
+PASS  an empty payload is rejected — got null, want null
+PASS  a photo batch payload contains no uuid — capo:photos:done
+PASS  an approval id is not a photo tap — got null, want null
+PASS  a check-in payload is not a photo tap — got null, want null
+PASS  a menu task row is not a photo tap — got null, want null
+PASS  the manager row is not a photo tap — got null, want null
+PASS  a photo tap is not an approval id — got null, want null
+PASS  a photo tap is not a check-in payload — got null, want null
+PASS  a photo tap is not a menu row — got null, want null
+PASS  a hi is not a photo tap — got null, want null
+PASS  a photo tap is not a hi
+PASS  nor is the other photo tap
+PASS  and a photo tap reads as a hi tap in neither envelope
+PASS  a staged photo lives under the company then inbox then the worker — got "11111111-1111-1111-1111-111111111111/inbox/22222222-2222-2222-2222-222222222222/abc.jpg", want "11111111-1111-1111-1111-111111111111/inbox/22222222-2222-2222-2222-222222222222/abc.jpg"
+PASS  an attached photo lives under the company then the task — got "11111111-1111-1111-1111-111111111111/33333333-3333-3333-3333-333333333333/abc.jpg", want "11111111-1111-1111-1111-111111111111/33333333-3333-3333-3333-333333333333/abc.jpg"
+PASS  both keys start with the company, which IS the storage boundary — got "11111111-1111-1111-1111-111111111111", want "11111111-1111-1111-1111-111111111111"
+PASS  a staged key never satisfies the task_photos path shape — 11111111-1111-1111-1111-111111111111/inbox/22222222-2222-2222-2222-222222222222/abc.jpg
+PASS  the inbox segment is a literal word, never a uuid — got "inbox", want "inbox"
+PASS  the window is a full day — got 86400000, want 86400000
+PASS  and it is longer than the check-in request it outlives — 86400000 vs 10800000
+PASS  a photo staged now is live now
+PASS  a photo staged at 08:00 is still live when they explain it at 17:00
+PASS  and dead by the next working morning
+PASS  a photo from yesterday morning survives to this morning, and that is deliberate
+PASS  one minute short of a day is live
+PASS  one minute past it is not
+PASS  an expired photo is dead
+PASS  a missing expiry reads as expired
+PASS  and so does an unparseable one
+PASS  the prompt block is capped — 20
+PASS  a photo from before the request is refused — got 0, want 0
+PASS  a photo from after it is taken — got "b", want "b"
+PASS  a photo from the same instant is taken — got "c", want "c"
+PASS  a mixed batch keeps only the newer half — got "b", want "b"
+PASS  an entirely older batch yields nothing to attach — got 0, want 0
+PASS  an unparseable request timestamp excludes everything — got 0, want 0
+PASS  a missing one does too — got 0, want 0
+PASS  and so does an unparseable photo timestamp — got 0, want 0
+PASS  pt-PT: the "more photos" button fits — Mais fotos
+PASS  pt-PT: the "that is everything" button fits — É tudo
+PASS  pt-PT: the receipt names the count when there is more than one — Já tenho 3 fotos tuas. Mais alguma ou é tudo?
+PASS  pt-PT: and reads naturally for the first one — Recebi a foto. Queres mandar mais alguma ou é tudo?
+PASS  pt-PT: photoBatchAsk is one short line — Já tenho 2 fotos tuas. Mais alguma ou é tudo?
+PASS  pt-PT: photoBatchMoreAck is one short line — Boa, manda.
+PASS  pt-PT: photoBatchNone is one short line — Não tenho fotos tuas à espera. Manda a foto e diz-me de que tarefa é.
+PASS  es-ES: the "more photos" button fits — Más fotos
+PASS  es-ES: the "that is everything" button fits — Ya está
+PASS  es-ES: the receipt names the count when there is more than one — Ya tengo 3 fotos tuyas. ¿Alguna más o ya está?
+PASS  es-ES: and reads naturally for the first one — Recibida la foto. ¿Quieres mandar alguna más o ya está?
+PASS  es-ES: photoBatchAsk is one short line — Ya tengo 2 fotos tuyas. ¿Alguna más o ya está?
+PASS  es-ES: photoBatchMoreAck is one short line — Vale, mándala.
+PASS  es-ES: photoBatchNone is one short line — No tengo fotos tuyas esperando. Manda la foto y dime de qué tarea es.
+PASS  en-US: the "more photos" button fits — More photos
+PASS  en-US: the "that is everything" button fits — That's everything
+PASS  en-US: the receipt names the count when there is more than one — I've got 3 photos from you now. Any more, or is that everything?
+PASS  en-US: and reads naturally for the first one — Got the photo. Any more, or is that everything?
+PASS  en-US: photoBatchAsk is one short line — I've got 2 photos from you now. Any more, or is that everything?
+PASS  en-US: photoBatchMoreAck is one short line — Go ahead, send it.
+PASS  en-US: photoBatchNone is one short line — I haven't got any photos waiting from you. Send it and tell me which job it's of.
+PASS  pt-PT: the note opens by saying a task was just assigned — Olá Miguel. O teu chefe acabou de te dar uma tarefa nova para hoje.
 
-WhatsApp check: 1110/1110 passed; failures: 0
+Hoje tens 2
+PASS  pt-PT: and NOT with the 07:00 greeting — Olá Miguel. O teu chefe acabou de te dar uma tarefa nova para hoje.
+
+Hoje tens 2
+PASS  pt-PT: the whole day is carried, not just the new task — Olá Miguel. O teu chefe acabou de te dar uma tarefa nova para hoje.
+
+Hoje tens 2 tarefas:
+
+1. Nova: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  pt-PT: the new task is marked — Olá Miguel. O teu chefe acabou de te dar uma tarefa nova para hoje.
+
+Hoje tens 2 tarefas:
+
+1. Nova: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  pt-PT: and the task they already knew about is NOT — Olá Miguel. O teu chefe acabou de te dar uma tarefa nova para hoje.
+
+Hoje tens 2 tarefas:
+
+1. Nova: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  pt-PT: the marker sits in front of the title, not between it and the obra — Olá Miguel. O teu chefe acabou de te dar uma tarefa nova para hoje.
+
+Hoje tens 2 tarefas:
+
+1. Nova: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  pt-PT: the obra survives the marking — Olá Miguel. O teu chefe acabou de te dar uma tarefa nova para hoje.
+
+Hoje tens 2 tarefas:
+
+1. Nova: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  pt-PT: the template parameter names the new task — Pintar tecto (Casa de Paco)
+PASS  pt-PT: and carries no newline — "Pintar tecto (Casa de Paco)"
+PASS  pt-PT: and does NOT carry the rest of the day — Pintar tecto (Casa de Paco)
+PASS  es-ES: the note opens by saying a task was just assigned — Hola Miguel. Tu jefe acaba de darte una tarea nueva para hoy.
+
+Hoy tienes 2 tare
+PASS  es-ES: and NOT with the 07:00 greeting — Hola Miguel. Tu jefe acaba de darte una tarea nueva para hoy.
+
+Hoy tienes 2 tare
+PASS  es-ES: the whole day is carried, not just the new task — Hola Miguel. Tu jefe acaba de darte una tarea nueva para hoy.
+
+Hoy tienes 2 tareas:
+
+1. Nueva: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  es-ES: the new task is marked — Hola Miguel. Tu jefe acaba de darte una tarea nueva para hoy.
+
+Hoy tienes 2 tareas:
+
+1. Nueva: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  es-ES: and the task they already knew about is NOT — Hola Miguel. Tu jefe acaba de darte una tarea nueva para hoy.
+
+Hoy tienes 2 tareas:
+
+1. Nueva: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  es-ES: the marker sits in front of the title, not between it and the obra — Hola Miguel. Tu jefe acaba de darte una tarea nueva para hoy.
+
+Hoy tienes 2 tareas:
+
+1. Nueva: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  es-ES: the obra survives the marking — Hola Miguel. Tu jefe acaba de darte una tarea nueva para hoy.
+
+Hoy tienes 2 tareas:
+
+1. Nueva: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  es-ES: the template parameter names the new task — Pintar tecto (Casa de Paco)
+PASS  es-ES: and carries no newline — "Pintar tecto (Casa de Paco)"
+PASS  es-ES: and does NOT carry the rest of the day — Pintar tecto (Casa de Paco)
+PASS  en-US: the note opens by saying a task was just assigned — Hi Miguel. Your boss just gave you a new task for today.
+
+You have 2 tasks today
+PASS  en-US: and NOT with the 07:00 greeting — Hi Miguel. Your boss just gave you a new task for today.
+
+You have 2 tasks today
+PASS  en-US: the whole day is carried, not just the new task — Hi Miguel. Your boss just gave you a new task for today.
+
+You have 2 tasks today:
+
+1. New: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  en-US: the new task is marked — Hi Miguel. Your boss just gave you a new task for today.
+
+You have 2 tasks today:
+
+1. New: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  en-US: and the task they already knew about is NOT — Hi Miguel. Your boss just gave you a new task for today.
+
+You have 2 tasks today:
+
+1. New: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  en-US: the marker sits in front of the title, not between it and the obra — Hi Miguel. Your boss just gave you a new task for today.
+
+You have 2 tasks today:
+
+1. New: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  en-US: the obra survives the marking — Hi Miguel. Your boss just gave you a new task for today.
+
+You have 2 tasks today:
+
+1. New: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+PASS  en-US: the template parameter names the new task — Pintar tecto (Casa de Paco)
+PASS  en-US: and carries no newline — "Pintar tecto (Casa de Paco)"
+PASS  en-US: and does NOT carry the rest of the day — Pintar tecto (Casa de Paco)
+PASS  the crew day link rides the assignment note —  tens 2 tarefas:
+
+1. Nova: Pintar tecto (Casa de Paco)
+
+2. Canalização (Casa de Paco)
+
+🔗 Vê a tua lista completa aqui:
+https://www.construcapo.com/dia?t=abc123
+PASS  nothing is announced at 03:00
+PASS  nothing is announced at 23:00
+PASS  an assignment at midday is announced
+PASS  capo_task_assigned in pt_PT is NOT sent while unapproved
+PASS  capo_task_assigned in es_ES is NOT sent while unapproved
+PASS  capo_task_assigned in en_US is NOT sent while unapproved
+PASS  an unknown locale code is never treated as approved
+PASS  the app locale form is never mistaken for the Meta code
+PASS  two tasks in one message open in the plural — Olá Miguel. O teu chefe acabou de te dar 2 tarefas novas para hoje.
+
+Hoje tens 2
+PASS  a task no longer on the board is not counted in the opener — Olá Miguel. O teu chefe acabou de te dar uma tarefa nova para hoje.
+
+Hoje tens 2
+PASS  a crew member who may not be messaged is a final answer — got "skip", want "skip"
+PASS  and it outranks the coalescing deferral — got "skip", want "skip"
+PASS  a task no longer theirs sends nothing — got "skip", want "skip"
+PASS  …and says so on the row — got "reassigned", want "reassigned"
+PASS  a reassignment also outranks the deferral — got "skip", want "skip"
+PASS  somebody messaged moments ago is deferred, not skipped — got "defer", want "defer"
+PASS  and the ordinary case sends — got "send", want "send"
+PASS  a claim in flight counts as already messaged
+PASS  so does a finished free-form send
+PASS  and a paid template
+PASS  "not_today" does not suppress a later message
+PASS  "stale" does not suppress a later message
+PASS  "not_messageable" does not suppress a later message
+PASS  "reassigned" does not suppress a later message
+PASS  "template_unapproved" does not suppress a later message
+PASS  "send_failed" does not suppress a later message
+PASS  "not_billable" does not suppress a later message
+PASS  "outside_hours" does not suppress a later message
+PASS  a notice queued today is live
+PASS  one queued last night is stale
+PASS  one queued for tomorrow is stale too
+PASS  a missing queued_date reads as stale
+PASS  an unreadable one reads as stale
+PASS  the claim happens FIRST — got "claim:a,b", want "claim:a,b"
+PASS  and the send SECOND — got "send:a,b", want "send:a,b"
+PASS  nothing else happens — got 2, want 2
+PASS  and the send is reported
+PASS  with the won ids — got "a,b", want "a,b"
+PASS  a drain that wins nothing does not send — claim
+PASS  and reports that it sent nothing
+PASS  and claims nothing — got 0, want 0
+PASS  a partial win sends only what it won — got "[[\"b\"]]", want "[[\"b\"]]"
+PASS  an empty batch touches nothing at all
+PASS  and sends nothing
+
+WhatsApp check: 1439/1439 passed; failures: 0
 === cache-check
 ok   cachedInstructions returns exactly two system messages
 ok   the first half carries the breakpoint
@@ -2061,7 +2537,7 @@ ok   worker/pt-PT: breakpoint on the first
 ok   worker/pt-PT: none on the second
 ok   worker/pt-PT: the cached half is exactly persona ⊕ policy ⊕ language directive
 ok   worker/pt-PT: today's date and this crew member's tasks stay BELOW the breakpoint
-ok   worker/pt-PT: cached prefix clears Sonnet 5's 1024-token floor (~2798 tok, 13994 chars)
+ok   worker/pt-PT: cached prefix clears Sonnet 5's 1024-token floor (~2916 tok, 14580 chars)
 ok   worker/pt-PT: the crew member's own name and company sit BELOW the breakpoint
 ok   worker/pt-PT: and their manager's name is below it too
 ok   worker/pt-PT: nothing about this crew member reached the cached half
@@ -2074,7 +2550,7 @@ ok   worker/es-ES: breakpoint on the first
 ok   worker/es-ES: none on the second
 ok   worker/es-ES: the cached half is exactly persona ⊕ policy ⊕ language directive
 ok   worker/es-ES: today's date and this crew member's tasks stay BELOW the breakpoint
-ok   worker/es-ES: cached prefix clears Sonnet 5's 1024-token floor (~2804 tok, 14024 chars)
+ok   worker/es-ES: cached prefix clears Sonnet 5's 1024-token floor (~2922 tok, 14610 chars)
 ok   worker/es-ES: the crew member's own name and company sit BELOW the breakpoint
 ok   worker/es-ES: and their manager's name is below it too
 ok   worker/es-ES: nothing about this crew member reached the cached half
@@ -2087,7 +2563,7 @@ ok   worker/en-US: breakpoint on the first
 ok   worker/en-US: none on the second
 ok   worker/en-US: the cached half is exactly persona ⊕ policy ⊕ language directive
 ok   worker/en-US: today's date and this crew member's tasks stay BELOW the breakpoint
-ok   worker/en-US: cached prefix clears Sonnet 5's 1024-token floor (~2777 tok, 13889 chars)
+ok   worker/en-US: cached prefix clears Sonnet 5's 1024-token floor (~2895 tok, 14475 chars)
 ok   worker/en-US: the crew member's own name and company sit BELOW the breakpoint
 ok   worker/en-US: and their manager's name is below it too
 ok   worker/en-US: nothing about this crew member reached the cached half
@@ -2363,7 +2839,7 @@ PASS  :root.system --warn matches :root.dark — system #fbbf24 vs dark #fbbf24
 PASS  :root.system --warn-quiet matches :root.dark — system rgb(251 191 36 / 0.15) vs dark rgb(251 191 36 / 0.15)
 PASS  :root.system --warn-solid matches :root.dark — system #b45309 vs dark #b45309
 PASS  light: --brand-vivid is NOT safe behind --on-brand text — 3.56:1 — if this ever passes, use --brand instead
-PASS  scanned the source tree — 161 files
+PASS  scanned the source tree — 165 files
 PASS  ledger entry still needed: apps/operator/app/companies/page.tsx — this file is clean now — delete it from UNCONVERTED
 PASS  ledger entry still needed: apps/operator/app/conversations/[companyId]/page.tsx — this file is clean now — delete it from UNCONVERTED
 PASS  ledger entry still needed: apps/operator/app/conversations/page.tsx — this file is clean now — delete it from UNCONVERTED
@@ -2664,6 +3140,221 @@ PASS  336h left is never extended beyond the promised trial end — got 17879184
 PASS  8760h left is never extended beyond the promised trial end — got 1818244800
 
 ALL PASS
+=== email-check
+Email check
+
+  PASS  confirm (signup) / pt-PT: html carries the escaped link
+  PASS  confirm (signup) / pt-PT: html never carries a raw unescaped query separator
+  PASS  confirm (signup) / pt-PT: the text twin carries the same link, unescaped
+  PASS  confirm (signup) / pt-PT: html links to it twice (button and copy-paste fallback)
+  PASS  confirm (signup) / pt-PT: html has no leftover template hole
+  PASS  confirm (signup) / pt-PT: text has no leftover template hole
+  PASS  confirm (signup) / pt-PT: subject has no leftover template hole
+  PASS  confirm (signup) / pt-PT: subject is this locale's
+  PASS  confirm (signup) / pt-PT: html renders the reader's heading in full
+  PASS  confirm (signup) / pt-PT: html renders the reader's body in full
+  PASS  confirm (signup) / pt-PT: html renders the reader's button in full
+  PASS  confirm (signup) / pt-PT: html renders the reader's fallback in full
+  PASS  confirm (signup) / pt-PT: html renders the reader's footer in full
+  PASS  confirm (signup) / pt-PT: exactly two other languages
+  PASS  confirm (signup) / pt-PT: names es-ES in the divider
+  PASS  confirm (signup) / pt-PT: carries es-ES's one-line version
+  PASS  confirm (signup) / pt-PT: does not render es-ES's full body
+  PASS  confirm (signup) / pt-PT: names en-US in the divider
+  PASS  confirm (signup) / pt-PT: carries en-US's one-line version
+  PASS  confirm (signup) / pt-PT: does not render en-US's full body
+  PASS  confirm (signup) / pt-PT: subject is not empty
+  PASS  confirm (signup) / pt-PT: html is a complete document
+  PASS  confirm (signup) / pt-PT: text part carries no markup
+  PASS  confirm (signup) / es-ES: html carries the escaped link
+  PASS  confirm (signup) / es-ES: html never carries a raw unescaped query separator
+  PASS  confirm (signup) / es-ES: the text twin carries the same link, unescaped
+  PASS  confirm (signup) / es-ES: html links to it twice (button and copy-paste fallback)
+  PASS  confirm (signup) / es-ES: html has no leftover template hole
+  PASS  confirm (signup) / es-ES: text has no leftover template hole
+  PASS  confirm (signup) / es-ES: subject has no leftover template hole
+  PASS  confirm (signup) / es-ES: subject is this locale's
+  PASS  confirm (signup) / es-ES: html renders the reader's heading in full
+  PASS  confirm (signup) / es-ES: html renders the reader's body in full
+  PASS  confirm (signup) / es-ES: html renders the reader's button in full
+  PASS  confirm (signup) / es-ES: html renders the reader's fallback in full
+  PASS  confirm (signup) / es-ES: html renders the reader's footer in full
+  PASS  confirm (signup) / es-ES: exactly two other languages
+  PASS  confirm (signup) / es-ES: names pt-PT in the divider
+  PASS  confirm (signup) / es-ES: carries pt-PT's one-line version
+  PASS  confirm (signup) / es-ES: does not render pt-PT's full body
+  PASS  confirm (signup) / es-ES: names en-US in the divider
+  PASS  confirm (signup) / es-ES: carries en-US's one-line version
+  PASS  confirm (signup) / es-ES: does not render en-US's full body
+  PASS  confirm (signup) / es-ES: subject is not empty
+  PASS  confirm (signup) / es-ES: html is a complete document
+  PASS  confirm (signup) / es-ES: text part carries no markup
+  PASS  confirm (signup) / en-US: html carries the escaped link
+  PASS  confirm (signup) / en-US: html never carries a raw unescaped query separator
+  PASS  confirm (signup) / en-US: the text twin carries the same link, unescaped
+  PASS  confirm (signup) / en-US: html links to it twice (button and copy-paste fallback)
+  PASS  confirm (signup) / en-US: html has no leftover template hole
+  PASS  confirm (signup) / en-US: text has no leftover template hole
+  PASS  confirm (signup) / en-US: subject has no leftover template hole
+  PASS  confirm (signup) / en-US: subject is this locale's
+  PASS  confirm (signup) / en-US: html renders the reader's heading in full
+  PASS  confirm (signup) / en-US: html renders the reader's body in full
+  PASS  confirm (signup) / en-US: html renders the reader's button in full
+  PASS  confirm (signup) / en-US: html renders the reader's fallback in full
+  PASS  confirm (signup) / en-US: html renders the reader's footer in full
+  PASS  confirm (signup) / en-US: exactly two other languages
+  PASS  confirm (signup) / en-US: names pt-PT in the divider
+  PASS  confirm (signup) / en-US: carries pt-PT's one-line version
+  PASS  confirm (signup) / en-US: does not render pt-PT's full body
+  PASS  confirm (signup) / en-US: names es-ES in the divider
+  PASS  confirm (signup) / en-US: carries es-ES's one-line version
+  PASS  confirm (signup) / en-US: does not render es-ES's full body
+  PASS  confirm (signup) / en-US: subject is not empty
+  PASS  confirm (signup) / en-US: html is a complete document
+  PASS  confirm (signup) / en-US: text part carries no markup
+  PASS  confirm (resend) / pt-PT: html carries the escaped link
+  PASS  confirm (resend) / pt-PT: html never carries a raw unescaped query separator
+  PASS  confirm (resend) / pt-PT: the text twin carries the same link, unescaped
+  PASS  confirm (resend) / pt-PT: html links to it twice (button and copy-paste fallback)
+  PASS  confirm (resend) / pt-PT: html has no leftover template hole
+  PASS  confirm (resend) / pt-PT: text has no leftover template hole
+  PASS  confirm (resend) / pt-PT: subject has no leftover template hole
+  PASS  confirm (resend) / pt-PT: subject is this locale's
+  PASS  confirm (resend) / pt-PT: html renders the reader's heading in full
+  PASS  confirm (resend) / pt-PT: html renders the reader's body in full
+  PASS  confirm (resend) / pt-PT: html renders the reader's button in full
+  PASS  confirm (resend) / pt-PT: html renders the reader's fallback in full
+  PASS  confirm (resend) / pt-PT: html renders the reader's footer in full
+  PASS  confirm (resend) / pt-PT: exactly two other languages
+  PASS  confirm (resend) / pt-PT: names es-ES in the divider
+  PASS  confirm (resend) / pt-PT: carries es-ES's one-line version
+  PASS  confirm (resend) / pt-PT: does not render es-ES's full body
+  PASS  confirm (resend) / pt-PT: names en-US in the divider
+  PASS  confirm (resend) / pt-PT: carries en-US's one-line version
+  PASS  confirm (resend) / pt-PT: does not render en-US's full body
+  PASS  confirm (resend) / pt-PT: subject is not empty
+  PASS  confirm (resend) / pt-PT: html is a complete document
+  PASS  confirm (resend) / pt-PT: text part carries no markup
+  PASS  confirm (resend) / es-ES: html carries the escaped link
+  PASS  confirm (resend) / es-ES: html never carries a raw unescaped query separator
+  PASS  confirm (resend) / es-ES: the text twin carries the same link, unescaped
+  PASS  confirm (resend) / es-ES: html links to it twice (button and copy-paste fallback)
+  PASS  confirm (resend) / es-ES: html has no leftover template hole
+  PASS  confirm (resend) / es-ES: text has no leftover template hole
+  PASS  confirm (resend) / es-ES: subject has no leftover template hole
+  PASS  confirm (resend) / es-ES: subject is this locale's
+  PASS  confirm (resend) / es-ES: html renders the reader's heading in full
+  PASS  confirm (resend) / es-ES: html renders the reader's body in full
+  PASS  confirm (resend) / es-ES: html renders the reader's button in full
+  PASS  confirm (resend) / es-ES: html renders the reader's fallback in full
+  PASS  confirm (resend) / es-ES: html renders the reader's footer in full
+  PASS  confirm (resend) / es-ES: exactly two other languages
+  PASS  confirm (resend) / es-ES: names pt-PT in the divider
+  PASS  confirm (resend) / es-ES: carries pt-PT's one-line version
+  PASS  confirm (resend) / es-ES: does not render pt-PT's full body
+  PASS  confirm (resend) / es-ES: names en-US in the divider
+  PASS  confirm (resend) / es-ES: carries en-US's one-line version
+  PASS  confirm (resend) / es-ES: does not render en-US's full body
+  PASS  confirm (resend) / es-ES: subject is not empty
+  PASS  confirm (resend) / es-ES: html is a complete document
+  PASS  confirm (resend) / es-ES: text part carries no markup
+  PASS  confirm (resend) / en-US: html carries the escaped link
+  PASS  confirm (resend) / en-US: html never carries a raw unescaped query separator
+  PASS  confirm (resend) / en-US: the text twin carries the same link, unescaped
+  PASS  confirm (resend) / en-US: html links to it twice (button and copy-paste fallback)
+  PASS  confirm (resend) / en-US: html has no leftover template hole
+  PASS  confirm (resend) / en-US: text has no leftover template hole
+  PASS  confirm (resend) / en-US: subject has no leftover template hole
+  PASS  confirm (resend) / en-US: subject is this locale's
+  PASS  confirm (resend) / en-US: html renders the reader's heading in full
+  PASS  confirm (resend) / en-US: html renders the reader's body in full
+  PASS  confirm (resend) / en-US: html renders the reader's button in full
+  PASS  confirm (resend) / en-US: html renders the reader's fallback in full
+  PASS  confirm (resend) / en-US: html renders the reader's footer in full
+  PASS  confirm (resend) / en-US: exactly two other languages
+  PASS  confirm (resend) / en-US: names pt-PT in the divider
+  PASS  confirm (resend) / en-US: carries pt-PT's one-line version
+  PASS  confirm (resend) / en-US: does not render pt-PT's full body
+  PASS  confirm (resend) / en-US: names es-ES in the divider
+  PASS  confirm (resend) / en-US: carries es-ES's one-line version
+  PASS  confirm (resend) / en-US: does not render es-ES's full body
+  PASS  confirm (resend) / en-US: subject is not empty
+  PASS  confirm (resend) / en-US: html is a complete document
+  PASS  confirm (resend) / en-US: text part carries no markup
+  PASS  reset / pt-PT: html carries the escaped link
+  PASS  reset / pt-PT: html never carries a raw unescaped query separator
+  PASS  reset / pt-PT: the text twin carries the same link, unescaped
+  PASS  reset / pt-PT: html links to it twice (button and copy-paste fallback)
+  PASS  reset / pt-PT: html has no leftover template hole
+  PASS  reset / pt-PT: text has no leftover template hole
+  PASS  reset / pt-PT: subject has no leftover template hole
+  PASS  reset / pt-PT: subject is this locale's
+  PASS  reset / pt-PT: html renders the reader's heading in full
+  PASS  reset / pt-PT: html renders the reader's body in full
+  PASS  reset / pt-PT: html renders the reader's button in full
+  PASS  reset / pt-PT: html renders the reader's fallback in full
+  PASS  reset / pt-PT: html renders the reader's footer in full
+  PASS  reset / pt-PT: exactly two other languages
+  PASS  reset / pt-PT: names es-ES in the divider
+  PASS  reset / pt-PT: carries es-ES's one-line version
+  PASS  reset / pt-PT: does not render es-ES's full body
+  PASS  reset / pt-PT: names en-US in the divider
+  PASS  reset / pt-PT: carries en-US's one-line version
+  PASS  reset / pt-PT: does not render en-US's full body
+  PASS  reset / pt-PT: subject is not empty
+  PASS  reset / pt-PT: html is a complete document
+  PASS  reset / pt-PT: text part carries no markup
+  PASS  reset / es-ES: html carries the escaped link
+  PASS  reset / es-ES: html never carries a raw unescaped query separator
+  PASS  reset / es-ES: the text twin carries the same link, unescaped
+  PASS  reset / es-ES: html links to it twice (button and copy-paste fallback)
+  PASS  reset / es-ES: html has no leftover template hole
+  PASS  reset / es-ES: text has no leftover template hole
+  PASS  reset / es-ES: subject has no leftover template hole
+  PASS  reset / es-ES: subject is this locale's
+  PASS  reset / es-ES: html renders the reader's heading in full
+  PASS  reset / es-ES: html renders the reader's body in full
+  PASS  reset / es-ES: html renders the reader's button in full
+  PASS  reset / es-ES: html renders the reader's fallback in full
+  PASS  reset / es-ES: html renders the reader's footer in full
+  PASS  reset / es-ES: exactly two other languages
+  PASS  reset / es-ES: names pt-PT in the divider
+  PASS  reset / es-ES: carries pt-PT's one-line version
+  PASS  reset / es-ES: does not render pt-PT's full body
+  PASS  reset / es-ES: names en-US in the divider
+  PASS  reset / es-ES: carries en-US's one-line version
+  PASS  reset / es-ES: does not render en-US's full body
+  PASS  reset / es-ES: subject is not empty
+  PASS  reset / es-ES: html is a complete document
+  PASS  reset / es-ES: text part carries no markup
+  PASS  reset / en-US: html carries the escaped link
+  PASS  reset / en-US: html never carries a raw unescaped query separator
+  PASS  reset / en-US: the text twin carries the same link, unescaped
+  PASS  reset / en-US: html links to it twice (button and copy-paste fallback)
+  PASS  reset / en-US: html has no leftover template hole
+  PASS  reset / en-US: text has no leftover template hole
+  PASS  reset / en-US: subject has no leftover template hole
+  PASS  reset / en-US: subject is this locale's
+  PASS  reset / en-US: html renders the reader's heading in full
+  PASS  reset / en-US: html renders the reader's body in full
+  PASS  reset / en-US: html renders the reader's button in full
+  PASS  reset / en-US: html renders the reader's fallback in full
+  PASS  reset / en-US: html renders the reader's footer in full
+  PASS  reset / en-US: exactly two other languages
+  PASS  reset / en-US: names pt-PT in the divider
+  PASS  reset / en-US: carries pt-PT's one-line version
+  PASS  reset / en-US: does not render pt-PT's full body
+  PASS  reset / en-US: names es-ES in the divider
+  PASS  reset / en-US: carries es-ES's one-line version
+  PASS  reset / en-US: does not render es-ES's full body
+  PASS  reset / en-US: subject is not empty
+  PASS  reset / en-US: html is a complete document
+  PASS  reset / en-US: text part carries no markup
+  PASS  the three link shapes are distinct
+  PASS  a confirm render carries the link it was given, not a fixed one
+
+checked 209 assertions
+green
 === phone-check
 PASS  five countries are offered — got 5, want 5
 PASS  in the order the brief fixes: PT, ES, AR, BR, US — got "PT,ES,AR,BR,US", want "PT,ES,AR,BR,US"

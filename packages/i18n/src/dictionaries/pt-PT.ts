@@ -964,6 +964,12 @@ const dict: Catalog = {
     photoBatchDoneButton: 'É tudo',
     photoBatchMoreAck: 'Boa, manda.',
     photoBatchNone: 'Não tenho fotos tuas à espera. Manda a foto e diz-me de que tarefa é.',
+    hiWorkerGreeting: name => `Olá ${name}! 👋`,
+    hiWorkerWriteAnyTime:
+      'Escreve-me aqui sempre que precisares, em português, español ou English.',
+    hiWorkerMorning: 'Todas as manhãs, às 7h, mando-te aqui o teu dia.',
+    hiManager: appUrl =>
+      `Olá! Fala comigo por aqui sempre que precisares. As obras e as tarefas estão na aplicação: ${appUrl}`,
   },
 
   dia: {
@@ -1042,8 +1048,12 @@ const dict: Catalog = {
     detailOverdue: title => `${title} — atrasada`,
     languageHint: 'Responde PT, ES ou EN para mudares de idioma',
     dayLinkCta: '🔗 Vê a tua lista completa aqui:',
-    welcomeWorker: company =>
-      `A ${company} pôs o teu número no Capo: a partir de agora recebes aqui as tarefas de cada dia e podes responder-me com dúvidas. Escreve PT, ES ou EN para mudares de idioma.`,
+    welcomeWorker: ({ company, manager }) => {
+      const added = manager
+        ? `O teu gerente na ${company}, ${manager}, acabou de te adicionar ao Capo.`
+        : `A ${company} acabou de te adicionar ao Capo.`;
+      return `${added} Todas as manhãs mando-te aqui as tarefas do dia; quando acabares uma, manda-me uma foto; e se faltar material, pede-me. Escreve PT, ES ou EN para mudares de idioma.`;
+    },
     welcomeManager: company =>
       `A tua conta da ${company} está pronta: recebes aqui o resumo de cada manhã e podes falar comigo por WhatsApp tal como falas na aplicação.`,
     welcomeGreeting: name => `Olá ${name}, sou o Capo, o assistente de obra.`,
@@ -1052,6 +1062,7 @@ const dict: Catalog = {
       const who = names ? `: ${names}` : '';
       return `Apresentei-me a ${notified} ${notified === 1 ? 'pessoa nova' : 'pessoas novas'} da equipa no WhatsApp${who}.`;
     },
+    welcomeButton: 'Olá!',
     assignmentGreeting: ({ name, count }) =>
       `Olá ${name}. O teu chefe acabou de te dar ${count === 1 ? 'uma tarefa nova' : `${count} tarefas novas`} para hoje.`,
     taskNewlyAssigned: title => `Nova: ${title}`,

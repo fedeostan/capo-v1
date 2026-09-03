@@ -59,7 +59,7 @@ export function renderAssignmentMessage(
   return renderWorkerFreeForm(
     { ...briefing, tasks: marked },
     {
-      greeting: t.assignmentGreeting({ name: briefing.name, count: marks }),
+      opening: t.assignmentGreeting({ name: briefing.name, count: marks }),
       dayLinkUrl: options.dayLinkUrl,
     },
   );

@@ -1,4 +1,5 @@
 import type { Db } from '@capo/db/client';
+import { pickAccountOwnerName } from '@capo/db/account-owner';
 import type { WhatsAppRecipient } from '@capo/core/channels/whatsapp';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
@@ -83,6 +84,25 @@ export interface CompanyWelcomes {
   companyId: string;
   companyLocale: Locale;
   companyName: string;
+  /**
+   * The name of the person who owns this company's account, for the welcome's
+   * opening clause ("O teu gerente na Silva, Miguel, acabou de te adicionar").
+   *
+   * ── NULL IS A REAL ANSWER, NOT A MISSING ONE ─────────────────────────────
+   * A company can have no readable owner name: no profile row yet (the crew
+   * were seeded before anybody signed in), or a blank full_name. The clause is
+   * then OMITTED entirely rather than filled with "the person who added you",
+   * which names nobody and makes a first message sound like a form letter.
+   *
+   * ── WHICH PROFILE, WHEN THERE ARE SEVERAL ────────────────────────────────
+   * The MOST RECENTLY CREATED one with a name. Capo has no owner column: every
+   * profile in a company is a manager and any of them can add crew. The newest
+   * is the closest thing to "whoever is running this account now" that the
+   * schema can answer, and being wrong costs a crew member the wrong colleague's
+   * name in one sentence, never a wrong send or a wrong tenant. The profiles
+   * read is already ordered by created_at for the ledger, so this costs nothing.
+   */
+  managerName: string | null;
   /** Everyone who may be welcomed right now, crew first, then managers. */
   pending: WelcomeTarget[];
   /** Crew dropped for want of a recorded opt-in. The dominant reason, by far. */
@@ -244,10 +264,18 @@ export async function loadPendingWelcomes(
     });
   }
 
+  // Read off the SAME ordered profiles list the ledger used — never a second
+  // query, which could disagree with it. The rule itself lives in @capo/db
+  // because apps/operator's "resend a failed welcome" button has to reach the
+  // identical answer and apps may not import each other; see
+  // packages/db/src/account-owner.ts.
+  const managerName = pickAccountOwnerName(managers ?? []);
+
   return {
     companyId: company.id,
     companyName: company.name,
     companyLocale,
+    managerName,
     pending,
     excludedNoConsent,
     excludedUnreachable,
@@ -271,6 +299,24 @@ export async function loadPendingWelcomes(
 const MAX_COMPANY_NAME = 60;
 
 /**
+ * The RECIPIENT's own name, which is {{1}}.
+ *
+ * 40 characters, the cap this parameter has always had. It is a separate
+ * constant from MAX_MANAGER_NAME below even though the two numbers agree
+ * today: the person being greeted and the person being credited are different
+ * decisions, and sharing one constant would mean whoever widens one silently
+ * widens the other.
+ */
+const MAX_PERSON_NAME = 40;
+
+/**
+ * The MANAGER's name, which travels inside {{2}}. Manager-authored free text on
+ * exactly the same road as the company name, so it gets the same flattening and
+ * a ceiling of its own.
+ */
+const MAX_MANAGER_NAME = 40;
+
+/**
  * ── FEDERICO: this is the product-voice dial for the first thing Capo ever
  * says to somebody. ──
  *
@@ -284,11 +330,21 @@ const MAX_COMPANY_NAME = 60;
  * where a sentence in the frozen half went out to every worker every morning
  * for months with nothing in the code able to stop it.
  */
-export function renderWelcome(target: WelcomeTarget, companyName: string): [name: string, middle: string] {
+export function renderWelcome(
+  target: WelcomeTarget,
+  companyName: string,
+  /** Who owns the account, for the crew opening clause. Null omits it — see
+   *  CompanyWelcomes.managerName for why the null is a real case. */
+  managerName: string | null = null,
+): [name: string, middle: string] {
   const t = getCatalog(target.locale).reminders;
   const company = clamp(companyName, MAX_COMPANY_NAME);
-  const middle = target.audience === 'worker' ? t.welcomeWorker(company) : t.welcomeManager(company);
-  return [clamp(target.name, 40), middle];
+  // Trimmed to null rather than passed through: a profile whose full_name is
+  // whitespace must take the no-manager branch, not render "na Silva, ,".
+  const manager = managerName?.trim() ? clamp(managerName, MAX_MANAGER_NAME) : null;
+  const middle =
+    target.audience === 'worker' ? t.welcomeWorker({ company, manager }) : t.welcomeManager(company);
+  return [clamp(target.name, MAX_PERSON_NAME), middle];
 }
 
 /**
@@ -304,9 +360,13 @@ export function renderWelcome(target: WelcomeTarget, companyName: string): [name
  * The only difference is shape: free-form text may have newlines, so it gets
  * three short paragraphs instead of one run-on line.
  */
-export function renderWelcomeFreeForm(target: WelcomeTarget, companyName: string): string {
+export function renderWelcomeFreeForm(
+  target: WelcomeTarget,
+  companyName: string,
+  managerName: string | null = null,
+): string {
   const t = getCatalog(target.locale).reminders;
-  const [name, middle] = renderWelcome(target, companyName);
+  const [name, middle] = renderWelcome(target, companyName, managerName);
   return [t.welcomeGreeting(name), middle, t.welcomeStop].join('\n\n');
 }
 

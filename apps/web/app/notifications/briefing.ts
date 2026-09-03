@@ -860,20 +860,34 @@ export interface WorkerFreeFormOptions {
    */
   dayLinkUrl?: string;
   /**
-   * An opener to use INSTEAD of `freeFormGreeting` (issue W7).
+   * An opener used INSTEAD of the default "Bom dia, Miguel." greeting block.
    *
-   * The 07:00 briefing's greeting is "Bom dia" and everything below it is
-   * "here is your day", which is right at 07:00 and wrong at 15:00. The
-   * assignment note (apps/web/app/notifications/task-assigned.ts) sends the
-   * SAME day, in the same shape, at an arbitrary hour and for a different
-   * reason — so it replaces the one line that would be untrue and shares
-   * everything else. Rendering its own body instead would have given the crew
-   * a second, drifting description of what a task is, which is the failure
-   * `taskHeadline` and `taskDetailLines` already exist to prevent.
+   * ── WHY THIS EXISTS, AND WHY IT IS NOT A SECOND RENDERER ───────────────────
+   * The default greeting is a GOOD MORNING, which is correct for the two
+   * callers it originally had: the 07:00 briefing and the OK/DETALHE reply to
+   * it. Two callers now arrive at an arbitrary hour and for a different reason,
+   * so "bom dia" would be wrong for most of the day:
+   *
+   * - the assignment note (apps/web/app/notifications/task-assigned.ts), which
+   *   sends the SAME day in the same shape because a manager just put somebody
+   *   on a task;
+   * - the welcome's "Say hi" tap (apps/web/app/notifications/welcome-hi.ts),
+   *   which can land any time between 08:00 and 21:59.
+   *
+   * Building a second renderer for either was the alternative and is the thing
+   * to avoid: a crew member reading their tasks in the morning message and the
+   * same tasks after a tap must read the SAME sentences, or they have no way to
+   * tell which one is right. That is the failure `taskHeadline` and
+   * `taskDetailLines` already exist to prevent. Only the opening differs, so
+   * only the opening is a parameter.
+   *
+   * It is a BLOCK, not a word: it may hold more than one line, and the two
+   * lines the hi-tap passes ("Olá Miguel! 👋" and "write to me any time") are
+   * exactly the case that shape exists for.
    *
    * Absent means exactly what this function rendered before the option existed.
    */
-  greeting?: string;
+  opening?: string;
 }
 
 export function renderWorkerFreeForm(
@@ -881,7 +895,7 @@ export function renderWorkerFreeForm(
   options: WorkerFreeFormOptions = {},
 ): string {
   const t = getCatalog(briefing.locale).reminders;
-  const greeting = options.greeting ?? t.freeFormGreeting(briefing.name);
+  const greeting = options.opening ?? t.freeFormGreeting(briefing.name);
   /**
    * Two lines, because that is how a link reads on a phone: a sentence saying
    * what is behind it, then the bare URL on its own line so WhatsApp renders it

@@ -1,6 +1,7 @@
 'use server';
 
 import { cookies } from 'next/headers';
+import { after } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { asConfirmPosture } from '@capo/db/posture';
@@ -13,6 +14,7 @@ import { assertNotBlocked } from '@/lib/billing';
 import { localeCookieOptions, LOCALE_COOKIE } from '@/lib/i18n';
 import { asTheme, themeCookieOptions, THEME_COOKIE } from '@/lib/theme';
 import { logEvent } from '@/lib/log';
+import { welcomeAnyoneNew } from '@/lib/welcome-trigger';
 
 // Editing your own company name or contact details is a manager command, the
 // same category as tapping "Concluir" — a sanctioned non-chat write path.
@@ -74,6 +76,12 @@ export async function updateProfile(_prev: FormState, formData: FormData): Promi
   }
 
   logEvent('profile.updated', { companyId, userId });
+  // A manager who just typed their own number in may now be reachable for the
+  // first time. after() runs once the response is on its way, so a slow or
+  // failing sweep can neither delay this save nor fail it; the */15 cron is
+  // what makes this an optimisation rather than the mechanism. See
+  // lib/welcome-trigger.ts.
+  after(() => welcomeAnyoneNew(companyId, 'perfil.profile'));
   revalidatePath('/perfil/pessoal');
   return { ok: true };
 }
@@ -250,6 +258,12 @@ export async function setWhatsAppConsent(formData: FormData): Promise<void> {
   }
 
   logEvent('profile.whatsapp_consent_changed', { companyId, userId, consent });
+  // The single most likely moment in the whole product for somebody to become
+  // messageable: a manager ticking their own box. Registered BEFORE the
+  // redirect below, which throws. See lib/welcome-trigger.ts — and note that
+  // withdrawing consent reaches here too, harmlessly: the sweep asks who may
+  // be messaged, so a person who just opted OUT is simply not in the answer.
+  after(() => welcomeAnyoneNew(companyId, 'perfil.consent'));
   revalidatePath('/perfil/privacidade');
   redirect('/perfil/privacidade?guardado=whatsapp');
 }

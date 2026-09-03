@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./account-owner": "./src/account-owner.ts",
     "./client": "./src/client.ts",
     "./user-client": "./src/user-client.ts",
     "./posture": "./src/posture.ts",

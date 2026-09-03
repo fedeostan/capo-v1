@@ -200,13 +200,20 @@ export function capoTaskCheckin(): TemplateDefinition[] {
  * `welcomeWorker` and `welcomeManager` are both {{2}}, and changing either one
  * needs no approval at all.
  *
- * No BUTTONS component. A reply of any kind opens the free 24-hour window, and
- * the crew already have STOP, PT/ES/EN and MENU as whole-message keywords; a
- * quick-reply button would be a FOURTH tappable payload shape to keep disjoint
- * from the other three for no gain (AGENTS.md).
+ * No BUTTONS component ON THIS NAME, and that is now a compatibility fact
+ * rather than a decision: capo_welcome_v2 below is this template plus one
+ * quick-reply button, and every locale of it has to be approved by hand before
+ * anybody can be sent it. Until then this is what goes out, and a send that
+ * declared a button component against THIS name would earn a 132000 and
+ * welcome nobody at all. apps/web/lib/welcome-template.ts is the one place
+ * that decides which of the two a recipient gets.
  */
 const WELCOME_EXAMPLE_NAME = 'Miguel';
 const WELCOME_EXAMPLE_COMPANY = 'Construções Silva';
+// The manager's name is now the FIRST thing the crew sentence says, so the
+// sample has to carry one — a reviewer judging {{2}} without it would be
+// judging a sentence no crew member will read.
+const WELCOME_EXAMPLE_MANAGER = 'João';
 
 export function capoWelcome(): TemplateDefinition[] {
   return LOCALES.map(locale => {
@@ -225,7 +232,72 @@ export function capoWelcome(): TemplateDefinition[] {
           // it names the business, states what will arrive, and offers the
           // language choice, which is the whole case for the template being
           // UTILITY rather than MARKETING.
-          example: { body_text: [[WELCOME_EXAMPLE_NAME, t.welcomeWorker(WELCOME_EXAMPLE_COMPANY)]] },
+          example: { body_text: [[WELCOME_EXAMPLE_NAME, t.welcomeWorker({ company: WELCOME_EXAMPLE_COMPANY, manager: WELCOME_EXAMPLE_MANAGER })]] },
+        },
+      ],
+    };
+  });
+}
+
+/**
+ * capo_welcome_v2 — the welcome, with a way in (issue #45 follow-up).
+ *
+ * The SAME approved body as capo_welcome, byte for byte, plus ONE quick-reply
+ * button. That is the whole difference and it is deliberate: the body was
+ * already right, and a re-review of new copy would have delayed the button for
+ * no product reason. `pnpm whatsapp-check` asserts the two bodies are identical,
+ * so a change to the welcome's wording cannot land on one name and not the
+ * other.
+ *
+ * ── WHY A BUTTON AT ALL, HAVING ARGUED AGAINST ONE ─────────────────────────
+ * capo_welcome's own docstring used to say a quick reply would be "a FOURTH
+ * tappable payload shape to keep disjoint from the other three for no gain".
+ * The gain turned out to be the thing the welcome is for. A first message that
+ * ends in silence asks a crew member on a building site to decide what to type
+ * to a phone number they have never written to; the great majority decide
+ * nothing. A tap costs them one thumb, opens Meta's free 24-hour window, and
+ * lets Capo answer with their actual work — which is the only introduction
+ * that means anything. The disjointness cost is real and is paid in
+ * packages/core/src/channels/whatsapp.ts, where `capo:hi` is an exact
+ * whole-string match that no other parser can accept.
+ *
+ * ── ONE BUTTON, NOT TWO ────────────────────────────────────────────────────
+ * capo_task_checkin's two buttons are an ANSWER and their ORDER IS A CONTRACT.
+ * This one is not an answer to anything: there is a single payload, `capo:hi`,
+ * carrying no id, so there is no order to get wrong and nothing to invert. Do
+ * not add a second button here without giving it the same index-is-a-contract
+ * treatment the check-in has.
+ *
+ * ⚠ THE LABEL CARRIES NO EMOJI, AND THAT IS META'S RULE. It was written as
+ * "Olá 👋" and refused at submission with error_subcode 2388060: a quick-reply
+ * label may hold no emoji, no variable, no newline and no formatted character.
+ * Nothing in a build catches that — it fails the next time somebody runs
+ * `pnpm whatsapp-template create` and reads Spanish error prose — so
+ * scripts/whatsapp-check.mts now pins it for every buttoned template.
+ *
+ * ⚠ A NEW NAME rather than an edit, for capo_daily_briefing_v2's reason: Meta
+ * has no API to rewrite an approved name+language pair, and the send path must
+ * be able to fall back to the button-less template until every locale of this
+ * one is approved. That gate is WELCOME_V2_APPROVED_LANGUAGES in
+ * apps/web/lib/welcome-template.ts.
+ */
+export function capoWelcomeV2(): TemplateDefinition[] {
+  return LOCALES.map(locale => {
+    const t = getCatalog(locale).reminders;
+    return {
+      name: 'capo_welcome_v2',
+      language: t.templateLanguage,
+      category: 'UTILITY' as const,
+      parameter_format: 'POSITIONAL' as const,
+      components: [
+        {
+          type: 'BODY',
+          text: `${t.welcomeGreeting('{{1}}')} {{2}} ${t.welcomeStop}`,
+          example: { body_text: [[WELCOME_EXAMPLE_NAME, t.welcomeWorker({ company: WELCOME_EXAMPLE_COMPANY, manager: WELCOME_EXAMPLE_MANAGER })]] },
+        },
+        {
+          type: 'BUTTONS',
+          buttons: [{ type: 'QUICK_REPLY', text: t.welcomeButton }], // index 0 → 'capo:hi'
         },
       ],
     };
@@ -399,6 +471,7 @@ export function allTemplates(): TemplateDefinition[] {
     ...capoDailyBriefingV2(),
     ...capoMessageWaiting(),
     ...capoTaskAssigned(),
+    ...capoWelcomeV2(),
   ];
 }
 
@@ -410,6 +483,7 @@ export const MANAGED_TEMPLATE_NAMES = [
   'capo_daily_briefing_v2',
   'capo_message_waiting',
   'capo_task_assigned',
+  'capo_welcome_v2',
 ];
 
 /** The three locale codes every managed template must exist in. */

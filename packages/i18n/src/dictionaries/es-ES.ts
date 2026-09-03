@@ -959,6 +959,12 @@ const dict: Catalog = {
     photoBatchDoneButton: 'Ya está',
     photoBatchMoreAck: 'Vale, mándala.',
     photoBatchNone: 'No tengo fotos tuyas esperando. Manda la foto y dime de qué tarea es.',
+    hiWorkerGreeting: name => `¡Hola ${name}! 👋`,
+    hiWorkerWriteAnyTime:
+      'Escríbeme por aquí siempre que lo necesites, en português, español o English.',
+    hiWorkerMorning: 'Cada mañana, a las 7h, te mando aquí tu día.',
+    hiManager: appUrl =>
+      `¡Hola! Habla conmigo por aquí cuando quieras. Las obras y las tareas están en la aplicación: ${appUrl}`,
   },
 
   dia: {
@@ -1037,8 +1043,12 @@ const dict: Catalog = {
     detailOverdue: title => `${title} — retrasada`,
     languageHint: 'Responde PT, ES o EN para cambiar de idioma',
     dayLinkCta: '🔗 Mira tu lista completa aquí:',
-    welcomeWorker: company =>
-      `${company} ha puesto tu número en Capo: a partir de ahora recibes aquí las tareas de cada día y puedes responderme con dudas. Escribe PT, ES o EN para cambiar de idioma.`,
+    welcomeWorker: ({ company, manager }) => {
+      const added = manager
+        ? `Tu encargado en ${company}, ${manager}, acaba de añadirte a Capo.`
+        : `${company} acaba de añadirte a Capo.`;
+      return `${added} Cada mañana te mando aquí las tareas del día; cuando termines una, mándame una foto; y si falta material, pídemelo. Escribe PT, ES o EN para cambiar de idioma.`;
+    },
     welcomeManager: company =>
       `Tu cuenta de ${company} ya está lista: recibes aquí el resumen de cada mañana y puedes hablar conmigo por WhatsApp igual que en la aplicación.`,
     welcomeGreeting: name => `Hola ${name}, soy Capo, el asistente de obra.`,
@@ -1047,6 +1057,7 @@ const dict: Catalog = {
       const who = names ? `: ${names}` : '';
       return `Me he presentado por WhatsApp a ${notified} ${notified === 1 ? 'persona nueva' : 'personas nuevas'} del equipo${who}.`;
     },
+    welcomeButton: '¡Hola!',
     assignmentGreeting: ({ name, count }) =>
       `Hola ${name}. Tu jefe acaba de darte ${count === 1 ? 'una tarea nueva' : `${count} tareas nuevas`} para hoy.`,
     taskNewlyAssigned: title => `Nueva: ${title}`,

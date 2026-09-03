@@ -197,11 +197,13 @@ export async function askAboutMorePhotos(
     if (waiting === 0) return;
 
     await sendWhatsAppButtons(
-      t.photoBatchAsk(waiting),
-      [
-        { id: photoBatchPayload('more'), title: t.photoBatchMoreButton },
-        { id: photoBatchPayload('done'), title: t.photoBatchDoneButton },
-      ],
+      {
+        body: t.photoBatchAsk(waiting),
+        buttons: [
+          { id: photoBatchPayload('more'), title: t.photoBatchMoreButton },
+          { id: photoBatchPayload('done'), title: t.photoBatchDoneButton },
+        ],
+      },
       sendConfig,
     );
     logEvent('whatsapp.worker_photo_batch_asked', {

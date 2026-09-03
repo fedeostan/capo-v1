@@ -1553,6 +1553,40 @@ export interface Catalog {
      *  already attached, or they expired. Says what to do rather than what went
      *  wrong, and never accuses them of not sending anything. */
     photoBatchNone: string;
+
+    // ── the welcome's "Say hi" tap (issue #45 follow-up) ────────────────────
+    // The welcome now carries ONE quick-reply button, so the first thing a
+    // crew member ever does with Capo can be a tap rather than a decision
+    // about what to type. The answer below is deterministic: no model runs on
+    // this path at all, for the reason every other tap gives — it is free,
+    // instant, and already right.
+    //
+    // The tap itself opens Meta's 24-hour window, which is what makes all of
+    // these legal as ordinary free text.
+
+    /** The opening of the answer to a crew member's tap. Their own name, and
+     *  NOT "good morning" — the welcome may go out at any hour between 08:00
+     *  and 21:59, so the briefing's own greeting would be wrong half the time. */
+    hiWorkerGreeting(name: string): string;
+    /** One line telling a crew member they can just write, in their own
+     *  language. It is the only instruction in the answer: everything else is
+     *  their actual work. */
+    hiWorkerWriteAnyTime: string;
+    /**
+     * Added AFTER `reminders.workerNothing` when the crew member has nothing on
+     * today. Says when the next message arrives, so an empty first answer does
+     * not read as "this thing does nothing".
+     *
+     * ⚠ It must NOT repeat that there is nothing scheduled. `workerNothing`
+     * has already said so one line above ("Nada agendado para hoje."), and
+     * saying it twice in the first three lines Capo ever writes is precisely
+     * the machine tell the voice work exists to remove. This string is the
+     * 07:00 promise and nothing else.
+     */
+    hiWorkerMorning: string;
+    /** A MANAGER tapped the same button. One line, and a pointer to the app —
+     *  their work lives on a screen, not in a task list. */
+    hiManager(appUrl: string): string;
   };
 
   /**
@@ -1876,15 +1910,27 @@ export interface Catalog {
     // runs of four spaces, or Meta rejects the whole send with a 132000.
 
     /**
-     * {{2}} for a CREW MEMBER: their manager put their number in, this is what
-     * they will now get, and how to change the language it arrives in.
+     * {{2}} for a CREW MEMBER: who added them, what they will now get, and how
+     * to change the language it arrives in.
+     *
+     * ⚠ `manager` IS NULLABLE AND THE NULL IS A REAL CASE. It is the name on
+     * the company's own account, and a company can have none readable (no
+     * profile yet, a blank full_name). The clause is then OMITTED rather than
+     * filled with a placeholder: "the person who added you" names nobody, and
+     * a first message that gestures at an unnamed authority is worse than one
+     * that simply says the company added you.
+     *
+     * The manager's name is what makes this message land as a real thing a
+     * real person did, rather than as software introducing itself. That is the
+     * whole reason the clause exists, so keep it FIRST — it is the sentence a
+     * crew member reads in the WhatsApp notification preview.
      *
      * The language sentence is unconditional here and conditional in the daily
      * briefing, and that asymmetry is deliberate: a welcome is by definition
      * first contact, so this is the one message where "reply PT, ES or EN" is
      * certainly new information rather than daily noise.
      */
-    welcomeWorker(company: string): string;
+    welcomeWorker(args: { company: string; manager: string | null }): string;
     /**
      * {{2}} for a MANAGER: their account is live, and this message is itself
      * the proof that the number they typed on /perfil actually reaches them.
@@ -1914,6 +1960,31 @@ export interface Catalog {
      */
     welcomeEvent(args: { notified: number; names: string }): string;
 
+    /**
+     * The welcome's ONE quick-reply button label ("Olá!").
+     *
+     * ⚠ NO EMOJI, AND THAT IS META'S RULE RATHER THAN A TASTE. A quick-reply
+     * label containing an emoji, a variable, a newline or any formatted
+     * character is refused at SUBMISSION with error_subcode 2388060 ("los
+     * botones no pueden contener variables, nuevas líneas, emojis ni caracteres
+     * con formato"), which is how this label lost the waving hand it was
+     * written with. Adding one back does not fail at build time, it fails the
+     * next time somebody submits a template.
+     *
+     * ⚠ IT IS APPROVED COPY, NOT APP COPY. It rides the Meta template
+     * capo_welcome_v2, whose buttons are frozen at approval exactly as its body
+     * is, so changing this string changes NOTHING live until the template is
+     * re-submitted and re-reviewed by hand. It is in the catalog anyway for one
+     * reason: the free-form twin renders the same button as an interactive
+     * reply button, where it IS ours, and two copies of one label would drift.
+     *
+     * Meta caps a quick-reply label at 25 characters and an interactive reply
+     * button title at 20; scripts/whatsapp-check.mts holds it to the tighter of
+     * the two. Keep it to a greeting: the payload is `capo:hi` and the answer
+     * is a hello, so a label promising anything more would be a promise the
+     * handler does not keep.
+     */
+    welcomeButton: string;
     // ── "you were just given a task" (issue W7) ──────────────────────────────
     // A task assigned at 09:00 used to reach the person doing it at 07:00 the
     // NEXT morning. These two keys are the message that closes that gap.

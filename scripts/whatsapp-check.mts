@@ -97,6 +97,9 @@ import {
   toTemplateParam,
   toWhatsAppMarkdown,
   workerMenuRowId,
+  hiPayload,
+  isHiPayload,
+  isHiTap,
   WhatsAppSendError,
   withinFreeFormWindow,
   type ApprovalLabels,
@@ -196,6 +199,25 @@ import {
   MAX_AUDIO_BYTES,
   resolveTranscriptionVocabulary,
 } from '@capo/core/transcription';
+// Which Meta template the welcome goes out under, per locale, and whether that
+// name carries the "Say hi" button. Pure and dependency-free for exactly
+// briefing-template.ts's reason — and the two facts come back TOGETHER because
+// getting them out of step is a 132000 or an unparseable tap, neither of which
+// looks like a failure.
+import {
+  WELCOME_V2_APPROVED_LANGUAGES,
+  welcomeTemplateFor,
+} from '../apps/web/lib/welcome-template.ts';
+// The one rule that must give the SAME answer in two apps: which manager the
+// welcome credits. It lives in @capo/db because apps may not import each other
+// (i18n ← db ← core ← {web, operator}), and the drift it prevents is invisible.
+import { pickAccountOwnerName } from '@capo/db/account-owner';
+// apps/operator's resend renderer. Imported for the same reason the two welcome
+// renderers are: it is pure — no Db, no clock, no env at module scope — and it
+// is the second place the welcome's words are assembled. The FIRST check in
+// this file that reaches into the operator app, and it is here because the
+// alternative is that the two renderings drift with nothing able to notice.
+import { planWelcomeResend } from '../apps/operator/app/welcome-resend.ts';
 // CREW REQUESTS (issue #152). The urgency arithmetic and the two envelopes the
 // manager reads. Pure — `today` arrives as a string — which is what lets this
 // file pin the rule that replaces "the model decides how urgent this sounds",
@@ -1774,30 +1796,66 @@ for (const def of defs) {
   eq(`${label} — supplies two example values`, body.example.body_text[0]?.length, 2);
 
   // Buttons are asymmetric ON PURPOSE and the asymmetry is load-bearing.
-  // capo_task_checkin is answered by tapping; capo_daily_briefing is answered
-  // with free text (PT/ES/EN/STOP). Declaring a button component on a send
-  // whose approved template has none earns a 132000 on every send, so a stray
-  // BUTTONS block here would take the whole 07:00 briefing down.
+  // capo_task_checkin is answered by tapping, capo_welcome_v2 offers one
+  // "Say hi"; capo_daily_briefing is answered with free text (PT/ES/EN/STOP).
+  // Declaring a button component on a send whose approved template has none
+  // earns a 132000 on every send, so a stray BUTTONS block here would take the
+  // whole 07:00 briefing down — and the reverse is worse than it looks: Meta
+  // accepts a send that OMITS the component for a template that declares one
+  // and echoes the button's own LABEL back as the payload, so the tap comes
+  // back unparseable.
+  //
+  // An ALLOWLIST rather than a single name, grown deliberately: adding a
+  // template here is a decision, and the default for anything not named stays
+  // "no buttons".
+  const BUTTONED_TEMPLATES = ['capo_task_checkin', 'capo_welcome_v2'];
   const buttonComponent = def.components.find(c => c.type === 'BUTTONS') as
     | { buttons: { type: string; text: string }[] }
     | undefined;
-  if (def.name !== 'capo_task_checkin') {
+  if (!BUTTONED_TEMPLATES.includes(def.name)) {
     check(`${label} — declares no buttons`, buttonComponent === undefined);
     continue;
   }
 
   const buttons = buttonComponent!.buttons;
+  check(`${label} — every button is a quick reply`, buttons.every(b => b.type === 'QUICK_REPLY'));
+  for (const b of buttons) {
+    check(`${label} — "${b.text}" is 1..25 chars`, b.text.length >= 1 && b.text.length <= 25, `${b.text.length}`);
+    // Meta refuses a quick-reply label carrying an emoji, a variable, a newline
+    // or any formatted character — error_subcode 2388060 at SUBMISSION time,
+    // which is the one failure this repo cannot see until somebody runs
+    // `pnpm whatsapp-template create` and reads Spanish error prose. It cost
+    // capo_welcome_v2 the waving hand it was written with.
+    check(`${label} — "${b.text}" carries no emoji`, !/\p{Extended_Pictographic}/u.test(b.text), b.text);
+    check(`${label} — "${b.text}" is one plain line`, !/[\n\t]|\{\{/.test(b.text), b.text);
+  }
+
+  if (def.name === 'capo_welcome_v2') {
+    // ONE button, and it must stay one. The check-in's two buttons are an
+    // ANSWER whose ORDER is a contract; this one carries a single payload with
+    // no id, so there is nothing to invert — a second button here would
+    // silently acquire that contract without the comments that police it.
+    eq(`${label} — exactly one button`, buttons.length, 1);
+    // Meta caps a quick-reply label at 25 and an interactive reply-button
+    // TITLE at 20, and this same label rides both envelopes (the approved
+    // template and the free-form twin's reply button). Held to the tighter of
+    // the two, so the free-form copy is never the truncated one.
+    check(
+      `${label} — the label fits an interactive reply button too`,
+      buttons[0].text.length <= 20,
+      `${buttons[0].text.length}`,
+    );
+    eq(`${label} — the label is the catalog's`, buttons[0].text, getCatalog(locale!).reminders.welcomeButton);
+    continue;
+  }
+
   eq(`${label} — exactly two buttons`, buttons.length, 2);
-  check(`${label} — both are quick replies`, buttons.every(b => b.type === 'QUICK_REPLY'));
   // The labels must be the catalog's, in done-then-notDone order — the same
   // order /api/cron/checkin mints payloads in.
   const t = getCatalog(locale!).whatsapp;
   eq(`${label} — button 0 is the done label`, buttons[0].text, t.checkinDoneButton);
   eq(`${label} — button 1 is the not-done label`, buttons[1].text, t.checkinNotDoneButton);
   check(`${label} — labels differ`, buttons[0].text !== buttons[1].text);
-  for (const b of buttons) {
-    check(`${label} — "${b.text}" is 1..25 chars`, b.text.length >= 1 && b.text.length <= 25, `${b.text.length}`);
-  }
 }
 
 // ── outbound planning ───────────────────────────────────────────────────────
@@ -2007,10 +2065,11 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
 //      default wrong reinstates the complaint with no error anywhere.
 //  15. The guided list is the THIRD tappable shape on one webhook and the
 //      SECOND under `type: 'interactive'`. Nothing about the handler layout
-//      keeps them apart — only the fact that the three id prefixes are pairwise
-//      non-overlapping, so each of the six directions is asserted below. Since
-//      0047 there is a FOURTH shape (capo:photos:), and the seven directions it
-//      adds are asserted with it, further down beside the photo inbox.
+//      keeps them apart — only the fact that the id prefixes are pairwise
+//      non-overlapping, so each of those six directions is asserted below.
+//      There are now FIVE shapes: capo:hi (the welcome's "Say hi") is asserted
+//      in the same block, and capo:photos: (0047) further down beside the photo
+//      inbox, together with the directions between those two.
 //  16. Three keyword tables now sit in front of the worker agent, and they must
 //      stay disjoint. The one that must never move is `es`: a bare "ES" has to
 //      keep resolving to Spanish with ZERO model calls, and a collision would
@@ -2020,10 +2079,11 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
 //      figure — Meta's own page and every third-party summary disagree — because
 //      being wrong upward is a 400 at 07:00 and a crew that hears nothing.
 
-// ── the three id codecs, pairwise ───────────────────────────────────────────
-// The fourth, capo:photos: (0047), is asserted against all three of these in
-// its own block below rather than here, so the photo inbox's checks stay in one
-// place. Between the two blocks all four codecs are covered in every direction.
+// ── the id codecs, pairwise ─────────────────────────────────────────────────
+// The three original shapes and the welcome's capo:hi are asserted here; the
+// fifth, capo:photos: (0047), is asserted against all of them in its own block
+// below rather than here, so the photo inbox's checks stay in one place.
+// Between the two blocks all FIVE codecs are covered in every direction.
 {
   const menuTask = workerMenuRowId({ kind: 'task', taskId: uuid });
   const menuManager = workerMenuRowId({ kind: 'manager' });
@@ -2055,6 +2115,63 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   eq('the manager row is not a check-in payload', parseCheckinPayload(menuManager), null);
   eq('a menu row is not a proposal id', parseProposalButtonId(menuTask), null);
   eq('the manager row is not a proposal id', parseProposalButtonId(menuManager), null);
+
+  // ── the FOURTH codec: the welcome's "Say hi" (issue #45 follow-up) ────────
+  // It arrives under BOTH `type: 'button'` (the template envelope) and
+  // `type: 'interactive'` (the free-form twin's reply button), so it has to be
+  // disjoint from three shapes rather than two — and one of those, the check-in,
+  // shares its envelope field exactly.
+  const hi = hiPayload();
+  check('the hi payload round-trips', isHiPayload(hi));
+  check('and is case-insensitive, like the other three', isHiPayload('CAPO:HI'));
+  // It carries NO id, for workerMenuRowId('manager')'s reason: nothing can be
+  // looked up from it, so nothing can leak through it.
+  check('the hi payload carries no uuid', !hi.includes(uuid), hi);
+  check('and nothing else parses as it', !isHiPayload(''));
+  check('a foreign prefix is not a hi', !isHiPayload('evil:hi'));
+  // A PREFIX match would accept every other codec, since all four start
+  // 'capo:'. Exact whole-string is what makes the six directions below hold.
+  check('a longer string starting with it is not a hi', !isHiPayload(`${hi}:${uuid}`));
+
+  eq('a hi is not a check-in payload', parseCheckinPayload(hi), null);
+  eq('a hi is not a proposal id', parseProposalButtonId(hi), null);
+  eq('a hi is not a menu row', parseWorkerMenuRowId(hi), null);
+  check('a check-in payload is not a hi', !isHiPayload(checkin));
+  check('a proposal id is not a hi', !isHiPayload(approve));
+  check('a menu task row is not a hi', !isHiPayload(menuTask));
+  check('the menu manager row is not a hi', !isHiPayload(menuManager));
+
+  // ── THE TWO ENVELOPES, which is the claim the whole button rests on ──────
+  // The welcome goes out as an approved TEMPLATE (the tap returns
+  // `type: 'button'` with `button.payload`) and, inside the free 24-hour
+  // window, as an interactive reply-buttons message (the tap returns
+  // `type: 'interactive'` with `interactive.button_reply.id`). isHiTap is the
+  // whole of what maps those two shapes onto one fact, and the failure of
+  // EITHER half is silent: the other envelope goes on working, so the button
+  // simply stops answering for one population of recipients.
+  check('a template quick reply is a hi tap', isHiTap({ type: 'button', button: { payload: hi } }));
+  check(
+    'an interactive reply button is the same hi tap',
+    isHiTap({ type: 'interactive', interactive: { button_reply: { id: hi } } }),
+  );
+  check('and case does not matter on either', isHiTap({ type: 'button', button: { payload: 'CAPO:HI' } }));
+  // The envelope FIELD is part of the shape: a payload on the wrong field is
+  // not a hi, or a check-in tap could be read as one by a future edit that
+  // stopped looking at `type`.
+  check('a payload on the interactive field is not a button tap', !isHiTap({ type: 'button', interactive: { button_reply: { id: hi } } }));
+  check('an id on the button field is not an interactive tap', !isHiTap({ type: 'interactive', button: { payload: hi } }));
+  // Everything else must fall through, or a hello would swallow a real message.
+  check('a text message is not a hi tap', !isHiTap({ type: 'text' }));
+  check('an empty envelope is not a hi tap', !isHiTap({}));
+  check('a check-in tap is not a hi tap', !isHiTap({ type: 'button', button: { payload: checkin } }));
+  check(
+    'a menu tap is not a hi tap',
+    !isHiTap({ type: 'interactive', interactive: { button_reply: { id: menuTask } } }),
+  );
+  check(
+    "a manager's approval tap is not a hi tap",
+    !isHiTap({ type: 'interactive', interactive: { button_reply: { id: approve } } }),
+  );
 }
 
 // ── the keyword tables in front of the agent ────────────────────────────────
@@ -2831,11 +2948,47 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   eq('a crew member is addressed as a worker', worker.audience, 'worker');
   eq('a profile is addressed as a manager', manager.audience, 'manager');
 
+  // WHO ADDED THEM. The account owner's name opens the crew sentence, and it is
+  // read off the SAME ordered profiles list the ledger uses rather than a
+  // second query. `.order('created_at')` is ascending, so the newest NAMED
+  // profile wins — 'Sócio' here, who joined after Federico.
+  eq('the welcome names the most recently created manager', audience.managerName, 'Sócio');
+  eq(
+    'a company with no named profile answers null rather than a placeholder',
+    (
+      await loadPendingWelcomes(
+        fakeBriefingDb({ workers: [], profiles: [{ id: 'p9', full_name: '   ', language: 'pt-PT', phone: null, whatsapp_opt_in_at: null }], notification_log: [] }),
+        { id: 'co2', name: 'Sem Nome', language: 'pt-PT' },
+        today,
+      )
+    ).managerName,
+    null,
+  );
+
   for (const locale of LOCALES) {
     const t2 = getCatalog(locale).reminders;
     const target = { ...worker, locale };
-    const [name, middle] = renderWelcome(target, 'Construções Silva');
-    const [, managerMiddle] = renderWelcome({ ...manager, locale }, 'Construções Silva');
+    const [name, middle] = renderWelcome(target, 'Construções Silva', 'João');
+    const [, managerMiddle] = renderWelcome({ ...manager, locale }, 'Construções Silva', 'João');
+    const [, anonymous] = renderWelcome(target, 'Construções Silva', null);
+
+    // ── the opening clause (the immediate-welcome work) ───────────────────
+    // It is what makes the first message land as a real thing a real person
+    // did, rather than as software introducing itself, so it must come FIRST:
+    // that is the sentence a crew member reads in the notification preview.
+    check(`${locale} — the crew welcome names who added them`, middle.includes('João'), middle);
+    check(`${locale} — and does so before anything else`, middle.indexOf('João') < 40, middle);
+    // The null is a REAL case (no profile yet, or a blank full_name) and the
+    // clause is OMITTED rather than filled with a placeholder naming nobody.
+    check(`${locale} — with no manager on file the clause simply goes`, !anonymous.includes('João'), anonymous);
+    check(`${locale} — and the company is still named`, anonymous.includes('Construções Silva'), anonymous);
+    check(`${locale} — and nothing leaks`, !/undefined|null|,\s*,/.test(anonymous), anonymous);
+    eq(`${locale} — the anonymous sentence still needs no flattening`, toTemplateParam(anonymous), anonymous);
+    // A pasted paragraph in a manager's full_name must not blow {{2}} apart
+    // either — it is manager-authored free text on exactly the same road as
+    // the company name.
+    const [, messyManager] = renderWelcome(target, 'Construções Silva', 'João\nSilva\tPereira dos Santos e Filhos, Lda, encarregado geral');
+    eq(`${locale} — a multi-line manager name is flattened`, toTemplateParam(messyManager), messyManager);
 
     // (c) Template parameters survive Meta's rules untouched. If toTemplateParam
     // has to CHANGE either of them, the copy contains something Meta would have
@@ -2861,7 +3014,7 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
     // re-derivation, so a change to either side fails here.
     const def = allTemplates().find(d => d.name === 'capo_welcome' && d.language === t2.templateLanguage)!;
     const body = (def.components.find(c => c.type === 'BODY') as { text: string }).text;
-    const freeForm = renderWelcomeFreeForm(target, 'Construções Silva');
+    const freeForm = renderWelcomeFreeForm(target, 'Construções Silva', 'João');
     eq(
       `${locale} — the free-form welcome is the template body, rejoined`,
       freeForm.replace(/\n+/g, ' '),
@@ -2873,10 +3026,132 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
     check(`${locale} — and leaks no undefined`, !freeForm.includes('undefined'), freeForm);
   }
 
+  // ── capo_welcome_v2 is capo_welcome plus a button, and nothing else ──────
+  // The body was already right, so v2 re-uses it byte for byte. Asserting the
+  // equality is what stops a change to the welcome's wording landing on one
+  // name and not the other — which would mean two crew members in the same
+  // company reading two different introductions depending on which locale Meta
+  // had got round to approving.
+  for (const language of TEMPLATE_LANGUAGES) {
+    const v1 = allTemplates().find(d => d.name === 'capo_welcome' && d.language === language)!;
+    const v2 = allTemplates().find(d => d.name === 'capo_welcome_v2' && d.language === language)!;
+    eq(
+      `${language} — capo_welcome_v2's body is capo_welcome's, byte for byte`,
+      (v2.components.find(c => c.type === 'BODY') as { text: string }).text,
+      (v1.components.find(c => c.type === 'BODY') as { text: string }).text,
+    );
+  }
+
+  // ── the approval gate (briefing-template.ts's shape, and its reasoning) ──
+  // Meta approves per name+language pair, so naming an unapproved template is a
+  // 132001 refusal and a person who hears nothing. The gate and the BUTTON must
+  // move together: a button component against capo_welcome (which declares
+  // none) is a 132000 on every send, and no button component against
+  // capo_welcome_v2 makes Meta echo the LABEL back as the payload, so the tap
+  // parses as nothing. One call returns both, which is what makes that
+  // impossible to get half right.
+  for (const language of TEMPLATE_LANGUAGES) {
+    const chosen = welcomeTemplateFor(language);
+    eq(
+      `${language} — the chosen welcome template matches the approval set`,
+      chosen.name,
+      WELCOME_V2_APPROVED_LANGUAGES.has(language) ? 'capo_welcome_v2' : 'capo_welcome',
+    );
+    eq(`${language} — the button rides v2 and only v2`, chosen.hasButton, chosen.name === 'capo_welcome_v2');
+  }
+  eq('an unknown locale code falls back to the approved-everywhere template', welcomeTemplateFor('de_DE').name, 'capo_welcome');
+  check('and carries no button with it', !welcomeTemplateFor('de_DE').hasButton);
+
   // A pasted paragraph in the company name must not blow the parameter apart.
   const [, messy] = renderWelcome({ ...worker, locale: 'pt-PT' }, 'Obras\nSilva\t& Filhos, Lda, a maior empresa de construção civil de toda a região norte de Portugal');
   eq('a multi-line company name is flattened before it reaches Meta', toTemplateParam(messy), messy);
   check('and clamped rather than allowed to run on', messy.includes('…'), messy);
+
+  // ── THE OPERATOR'S RESEND MUST SAY THE SAME THING ───────────────────────
+  // apps/operator's "resend a failed welcome" button renders the message a
+  // second time, because apps may not import each other's modules. Its own
+  // comment claims it is "built from the same catalog keys renderWelcome uses",
+  // and this is the only thing that can keep that claim true: the population it
+  // serves is, by definition, people whose FIRST welcome failed, so a drift
+  // here means the coldest wording reaching the people who have had the worst
+  // experience of Capo so far.
+  //
+  // WHICH manager is named is NOT duplicated — pickAccountOwnerName in
+  // @capo/db is one rule with two callers, and it is pinned below.
+  for (const locale of LOCALES) {
+    const t3 = getCatalog(locale).reminders;
+    for (const audience of ['worker', 'manager'] as const) {
+      const [name, middle] = renderWelcome(
+        { ...worker, audience, name: 'Miguel', locale },
+        'Construções Silva',
+        'João',
+      );
+      const plan = planWelcomeResend({
+        audience,
+        personName: 'Miguel',
+        companyName: 'Construções Silva',
+        managerName: 'João',
+        locale,
+      });
+      eq(`${locale} ${audience} — the resend's {{1}} is the sweep's`, plan.bodyParams[0], name);
+      eq(`${locale} ${audience} — the resend's {{2}} is the sweep's`, plan.bodyParams[1], middle);
+      eq(`${locale} ${audience} — and it goes out in this person's language`, plan.languageCode, t3.templateLanguage);
+    }
+    // The null case has to travel too: a resend for a company with no readable
+    // owner name omits the clause rather than rendering a placeholder.
+    const [, anonymousResend] = planWelcomeResend({
+      audience: 'worker',
+      personName: 'Miguel',
+      companyName: 'Construções Silva',
+      managerName: null,
+      locale,
+    }).bodyParams;
+    const [, anonymousSweep] = renderWelcome({ ...worker, locale }, 'Construções Silva', null);
+    eq(`${locale} — and the no-manager wording matches too`, anonymousResend, anonymousSweep);
+    // ⚠ The resend stays on the BUTTON-LESS template on purpose: giving it
+    // capo_welcome_v2 would put a second copy of the approval gate in the
+    // operator app, whose failure mode is a 132000 on every resend.
+    eq(
+      `${locale} — a resend uses the button-less template`,
+      planWelcomeResend({ audience: 'worker', personName: 'Miguel', companyName: 'X', managerName: null, locale })
+        .templateName,
+      'capo_welcome',
+    );
+  }
+
+  // ── THE EMPTY-DAY ANSWER MUST NOT SAY THE SAME THING TWICE ──────────────
+  // A crew member who taps "Olá!" with nothing scheduled reads two sentences:
+  // reminders.workerNothing ("Nada agendado para hoje.") from the shared
+  // briefing renderer, then whatsapp.hiWorkerMorning. This is the FIRST thing
+  // Capo ever writes to them, and it shipped repeating itself in the first
+  // three lines — exactly the machine tell voice-check exists to remove, and
+  // invisible to voice-check because neither sentence is wrong on its own.
+  for (const locale of LOCALES) {
+    const nothing = getCatalog(locale).reminders.workerNothing;
+    const morning = getCatalog(locale).whatsapp.hiWorkerMorning;
+    check(`${locale} — the 07:00 line does not repeat "nothing scheduled"`, !morning.includes(nothing), morning);
+    check(`${locale} — nor the other way round`, !nothing.includes(morning), nothing);
+    // What it IS for: saying when the next message arrives, so an empty first
+    // answer does not read as "this thing does nothing".
+    check(`${locale} — and it names the hour the day arrives`, /7/.test(morning), morning);
+  }
+
+  // ── WHO GETS NAMED: one rule, two apps (packages/db/src/account-owner.ts) ──
+  // Ordered created_at ASCENDING, so the newest NAMED row wins. Every branch is
+  // asserted because the two failures are opposite and both silent: the wrong
+  // colleague's name, or a placeholder where a name should be.
+  eq(
+    'the newest named profile is the one credited',
+    pickAccountOwnerName([{ full_name: 'Velho' }, { full_name: 'Novo' }]),
+    'Novo',
+  );
+  eq(
+    'a newer profile with no name does not blank out an older one',
+    pickAccountOwnerName([{ full_name: 'Federico' }, { full_name: null }, { full_name: '   ' }]),
+    'Federico',
+  );
+  eq('no profiles at all is null, not a placeholder', pickAccountOwnerName([]), null);
+  eq('and neither is a company whose only names are blank', pickAccountOwnerName([{ full_name: ' ' }]), null);
 
   // The thread note (issue #47's boundary, one more source). Crew names only,
   // and they are text the MANAGER typed.
@@ -3314,9 +3589,9 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
 // produced "I tried 3 times now. Is not working" and five days with no
 // task_photos row.
 //
-// Three things here are worth a check rather than a comment: the FOURTH tappable
-// codec (nothing about the handler layout keeps four payload shapes apart, only
-// that their prefixes do not overlap), the two path builders (segment 1 is the
+// Three things here are worth a check rather than a comment: this tappable
+// codec (nothing about the handler layout keeps the five payload shapes apart,
+// only that their prefixes do not overlap), the two path builders (segment 1 is the
 // tenant boundary the storage policies read, and the inbox prefix has to be
 // unmistakable), and the expiry (enforced by the reader, because nothing sweeps
 // the table).
@@ -3334,7 +3609,7 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   // settles comes from the tapper's phone-derived worker id, never the payload.
   check('a photo batch payload contains no uuid', !done.includes(uuid), done);
 
-  // SIX MORE DIRECTIONS. Three of the four shapes now arrive under
+  // SIX MORE DIRECTIONS. Three of the five shapes arrive under
   // `type: 'interactive'`, and two of those three read the SAME member of the
   // envelope (`button_reply.id`) — the approval card and this one. Nothing but
   // the prefixes keeps a manager's approval from being read as a crew member's
@@ -3351,6 +3626,24 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   eq('a photo tap is not an approval id', parseProposalButtonId(done), null);
   eq('a photo tap is not a check-in payload', parseCheckinPayload(done), null);
   eq('a photo tap is not a menu row', parseWorkerMenuRowId(done), null);
+
+  // ── AND THE FIFTH SHAPE, which landed in the same integration ────────────
+  // The welcome's "Say hi" (capo:hi) is asserted against the three OLDER
+  // codecs in its own block above, and this codec against the same three here.
+  // These four directions are the pair the two blocks would otherwise leave
+  // uncovered, and it is the pair that matters most: capo:hi and capo:photos:
+  // share this envelope field EXACTLY — both arrive as
+  // `interactive.button_reply.id` — so nothing but the prefixes keeps a hello
+  // from being read as "that's everything, attach them".
+  const hi5 = hiPayload();
+  eq('a hi is not a photo tap', parsePhotoBatchPayload(hi5), null);
+  check('a photo tap is not a hi', !isHiPayload(done));
+  check('nor is the other photo tap', !isHiPayload(more));
+  check(
+    'and a photo tap reads as a hi tap in neither envelope',
+    !isHiTap({ type: 'interactive', interactive: { button_reply: { id: done } } }) &&
+      !isHiTap({ type: 'button', button: { payload: done } }),
+  );
 }
 
 // ── the two object keys ─────────────────────────────────────────────────────
