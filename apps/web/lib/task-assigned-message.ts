@@ -47,12 +47,21 @@ export function renderAssignmentMessage(
   options: { dayLinkUrl?: string } = {},
 ): string {
   const t = getCatalog(briefing.locale).reminders;
-  const marked: BriefingTask[] = briefing.tasks.map(task =>
-    newTaskIds.has(task.id) ? { ...task, title: t.taskNewlyAssigned(task.title) } : task,
-  );
+  let marks = 0;
+  const marked: BriefingTask[] = briefing.tasks.map(task => {
+    if (!newTaskIds.has(task.id)) return task;
+    marks += 1;
+    return { ...task, title: t.taskNewlyAssigned(task.title) };
+  });
+  // The count comes from what was actually MARKED, never from the size of the
+  // id set: a queued task that has left this person's board is not marked, so
+  // counting the ids would open with "2 tarefas novas" above a day showing one.
   return renderWorkerFreeForm(
     { ...briefing, tasks: marked },
-    { greeting: t.assignmentGreeting(briefing.name), dayLinkUrl: options.dayLinkUrl },
+    {
+      greeting: t.assignmentGreeting({ name: briefing.name, count: marks }),
+      dayLinkUrl: options.dayLinkUrl,
+    },
   );
 }
 

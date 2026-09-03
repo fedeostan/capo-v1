@@ -2455,6 +2455,14 @@ export async function POST(request: NextRequest) {
           });
           await sendWhatsAppText(t.whatsapp.proposalError, sendConfig).catch(() => {});
         }
+
+        // ── the crew hears about a new task now, not tomorrow at 07:00 (W7) ─
+        // The card path is a door too: `apply_plan` can assign a whole obra in
+        // one tap. Symmetric with the web proposals route — without this line
+        // a manager approving over WhatsApp waits for the fifteen-minute cron.
+        // Outside the try/catch, because the write has already happened even
+        // if the confirmation failed to send. It never throws.
+        await drainAssignmentNotices({ companyId });
       });
       continue;
     }

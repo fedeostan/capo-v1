@@ -1839,8 +1839,13 @@ export interface Catalog {
      * whole day in one message rather than a task with no context.
      *
      * Newlines are fine — this is free-form text, never a template parameter.
+     *
+     * `count` is how many tasks were just handed over, and it is not always 1:
+     * a manager assigning several in a row has the follow-ups folded into ONE
+     * message by the coalescing window, so a hard-coded "uma tarefa nova"
+     * would be wrong in exactly the case that mechanism creates.
      */
-    assignmentGreeting(name: string): string;
+    assignmentGreeting(args: { name: string; count: number }): string;
     /**
      * The marker on the task that was JUST assigned, inside a day that also
      * contains work the person already knew about.
