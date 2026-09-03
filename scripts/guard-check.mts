@@ -382,6 +382,8 @@ for (const posture of CONFIRM_POSTURES) {
     userId: '33333333-3333-3333-3333-333333333333',
     confirmPosture: posture,
     appUrl: 'https://www.construcapo.com',
+    // No channel in a credential-free check. The guard never consults it.
+    messageWorker: null,
     locales: { user: 'pt-PT', company: 'pt-PT' },
   });
 

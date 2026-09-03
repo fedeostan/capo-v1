@@ -230,6 +230,18 @@ import {
   urgencyRank,
   type RequestUrgency,
 } from '../apps/web/lib/worker-request.ts';
+// THE MANAGER REACHING ONE CREW MEMBER (issue #123). The delivery ladder's
+// decision half: which rung a crew row lands on. Pure — `now` is injected —
+// which is what lets the one branch with no visible symptom be pinned here:
+// taking the free rung when the window is actually shut earns Meta's 131047 and
+// the crew member receives nothing at all.
+import {
+  MESSAGE_WAITING_KIND,
+  MESSAGE_WAITING_TEMPLATE,
+  messageWaitingParams,
+  renderCrewMessage,
+  routeCrewMessage,
+} from '../apps/web/lib/worker-message.ts';
 // The fifth crew tool's date guard. In @capo/core because the tool is, and
 // re-exported from the worker roster's index for exactly this import.
 import { neededByIsSane } from '@capo/core/capabilities/worker';
@@ -4085,6 +4097,147 @@ for (const locale of LOCALES) {
     check('an empty batch touches nothing at all', order.length === 0, order.join('|'));
     check('and sends nothing', !result.sent);
   }
+// ── the manager reaching one crew member (issue #123) ───────────────────────
+//
+// Capo could not put a single word in front of a crew member: the manager said
+// "pergunta-lhes de que material precisam" and got an apology. `message_worker`
+// fixes that, and the part worth pinning is not the send, it is the LADDER.
+//
+// Three properties, and the first two are the ones with no visible symptom:
+//   - the consent gate is partitionCrew's, so an opt-out is honoured on the
+//     FREE rung as well as the paid one. A message a manager asks for is still
+//     a message the crew member did not ask for;
+//   - the window predicate fails CLOSED toward the paid template, because
+//     guessing "open" earns 131047 and the person receives nothing;
+//   - the template is a WINDOW REOPENER and carries none of the manager's
+//     words, which is why `nudged` may never be rounded up to `sent`.
+{
+  const NOW = Date.parse('2026-09-03T10:00:00Z');
+  const at = (agoMs: number) => new Date(NOW - agoMs).toISOString();
+  const HOUR = 60 * 60 * 1000;
+
+  // The shape of an addressable, consenting, active crew member.
+  const base = {
+    active: true,
+    phone: '+351912345678',
+    whatsapp_opt_in_at: '2026-08-01T09:00:00Z',
+    whatsapp_opt_out_at: null,
+    last_inbound_at: at(HOUR),
+  };
+
+  const fresh = routeCrewMessage(base, NOW);
+  eq('somebody who wrote an hour ago gets the FREE rung', fresh.rung, 'free_form');
+  check('and the free rung carries the recipient', fresh.rung === 'free_form' && fresh.recipient.kind === 'phone');
+
+  eq(
+    'somebody who last wrote 25 hours ago gets the PAID rung',
+    routeCrewMessage({ ...base, last_inbound_at: at(25 * HOUR) }, NOW).rung,
+    'template',
+  );
+  // Every ambiguity resolves toward the template. Being wrong that way costs
+  // one paid send; being wrong the other way costs the message entirely.
+  eq('never having written gets the PAID rung', routeCrewMessage({ ...base, last_inbound_at: null }, NOW).rung, 'template');
+  eq(
+    'a column a deploy has not seen yet gets the PAID rung',
+    routeCrewMessage({ active: true, phone: base.phone, whatsapp_opt_in_at: base.whatsapp_opt_in_at }, NOW).rung,
+    'template',
+  );
+  eq(
+    'an unparseable stamp gets the PAID rung',
+    routeCrewMessage({ ...base, last_inbound_at: 'ontem de manhã' }, NOW).rung,
+    'template',
+  );
+  eq(
+    'a stamp in the FUTURE gets the PAID rung',
+    routeCrewMessage({ ...base, last_inbound_at: at(-HOUR) }, NOW).rung,
+    'template',
+  );
+
+  // ── the consent gate, on BOTH rungs ───────────────────────────────────────
+  // The one a reviewer is most likely to talk themselves out of: the crew
+  // member wrote an hour ago, so the window is open and the send is free, and
+  // it still must not go out. They did not ask for this message; the manager
+  // did. It is exactly the class of message an opt-out exists to stop.
+  const optedOut = routeCrewMessage(
+    { ...base, whatsapp_opt_out_at: '2026-08-20T09:00:00Z' },
+    NOW,
+  );
+  eq('an opt-out is refused even INSIDE the free window', optedOut.rung, 'blocked');
+  check('and the reason says so', optedOut.rung === 'blocked' && optedOut.reason === 'no_consent');
+
+  const neverOptedIn = routeCrewMessage({ ...base, whatsapp_opt_in_at: null }, NOW);
+  eq('no recorded opt-in at all is refused', neverOptedIn.rung, 'blocked');
+  check('fail-closed: no opt-in reads as no consent', neverOptedIn.rung === 'blocked' && neverOptedIn.reason === 'no_consent');
+
+  const garbled = routeCrewMessage({ ...base, whatsapp_opt_in_at: 'sim, ele disse que sim' }, NOW);
+  check('an unparseable opt-in reads as NO consent', garbled.rung === 'blocked' && garbled.reason === 'no_consent');
+
+  // The three exclusions partition the crew, so the reason is the FIRST thing
+  // that failed rather than whichever branch happened to be tested first.
+  const inactive = routeCrewMessage({ ...base, active: false }, NOW);
+  check('an inactive crew row is blocked, and says inactive', inactive.rung === 'blocked' && inactive.reason === 'inactive');
+  const nullActive = routeCrewMessage({ ...base, active: null }, NOW);
+  check('a NULL active falls on the blocked side too', nullActive.rung === 'blocked' && nullActive.reason === 'inactive');
+  const noNumber = routeCrewMessage({ ...base, phone: null }, NOW);
+  check('no phone and no BSUID is unreachable', noNumber.rung === 'blocked' && noNumber.reason === 'unreachable');
+
+  // A BSUID-only crew member is reachable, and the recipient must carry the
+  // BSUID kind — `buildSendBody` puts it in `recipient`, never in `to`.
+  const bsuidOnly = routeCrewMessage(
+    { ...base, phone: null, whatsapp_user_id: 'PT.13491208655302741918' },
+    NOW,
+  );
+  check(
+    'a username adopter is reachable, addressed as a BSUID',
+    bsuidOnly.rung === 'free_form' && bsuidOnly.recipient.kind === 'bsuid',
+  );
+
+  // ── the two envelopes ─────────────────────────────────────────────────────
+  for (const locale of LOCALES) {
+    const body = renderCrewMessage({ company: 'Construções Silva', text: 'traz mais tinta amanhã' }, locale);
+    check(`${locale}: the crew member is told WHO is asking`, body.includes('Construções Silva'), body);
+    check(`${locale}: and reads the manager's words`, body.includes('traz mais tinta amanhã'), body);
+    // The attribution has to come BEFORE the words, or the message reads as
+    // Capo giving an instruction of its own.
+    check(
+      `${locale}: the attribution comes first`,
+      body.indexOf('Construções Silva') < body.indexOf('traz mais tinta amanhã'),
+      body,
+    );
+  }
+
+  // capo_message_waiting's body is FROZEN at Meta's approval: {{1}} is the
+  // name, {{2}} is who is asking. The manager's words are deliberately absent,
+  // and that absence is the reason `nudged` is not `sent`.
+  const params = messageWaitingParams({ workerName: 'Miguel', company: 'Construções Silva' });
+  eq('the reopener takes exactly two parameters', params.length, 2);
+  eq('{{1}} is the crew member', params[0], 'Miguel');
+  eq('{{2}} is who is asking', params[1], 'Construções Silva');
+  check(
+    'and NONE of them can carry the message itself',
+    !params.some(p => p.includes('tinta')),
+    JSON.stringify(params),
+  );
+  check(
+    'the reopener is a template this repo actually submits',
+    MANAGED_TEMPLATE_NAMES.includes(MESSAGE_WAITING_TEMPLATE),
+    MESSAGE_WAITING_TEMPLATE,
+  );
+  check(
+    'and it is declared in all three locales, or a send to one of them fails whole with 132001',
+    TEMPLATE_LANGUAGES.every(lang =>
+      allTemplates().some(t => t.name === MESSAGE_WAITING_TEMPLATE && t.language === lang),
+    ),
+  );
+
+  // notification_log's unique key is (kind, audience, worker_id, profile_id,
+  // notification_date). A nudge filed under either daily send's kind would
+  // silently cancel that send for the day.
+  check('the paid nudge has its OWN kind', MESSAGE_WAITING_KIND === 'manager_message');
+  check(
+    'and it collides with neither daily send',
+    MESSAGE_WAITING_KIND !== 'daily_briefing' && MESSAGE_WAITING_KIND !== 'task_checkin' && MESSAGE_WAITING_KIND !== 'welcome',
+  );
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

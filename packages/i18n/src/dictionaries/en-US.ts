@@ -247,6 +247,11 @@ const dict: Catalog = {
     },
   },
 
+  crewMessage: {
+    whatsapp: ({ company, text }) =>
+      `Message from ${company}:\n\n“${text}”\n\nYou can reply here and I will pass it back.`,
+  },
+
   automations: {
     title: 'Automatic messages',
     subtitle: 'What Capo sends your crew on its own, at what time, and what happened each day.',

@@ -371,6 +371,39 @@ export interface Catalog {
   };
 
   /**
+   * ── The manager reaching ONE crew member on purpose (issue #123). ──
+   *
+   * The mirror of `requests` above. That one carries a crew member's words UP
+   * to the manager; this one carries the manager's words DOWN to one named
+   * crew member, through `message_worker`.
+   *
+   * Two rules, and both are about not letting Capo be mistaken for the boss.
+   *
+   * FIRST: the envelope ATTRIBUTES the message to the company before the words
+   * start. A bare line arriving from Capo's number reads as Capo giving an
+   * instruction, and a crew member has no way to tell an order from a robot's
+   * suggestion. Naming who is asking is the whole job of the first line.
+   *
+   * SECOND: it INVITES a reply. A crew member who answers opens their own
+   * 24-hour window, which is what makes the next message free and immediate
+   * instead of a paid template. The invitation is not politeness, it is the
+   * mechanism.
+   *
+   * The words themselves are the MANAGER's, so unlike `requests` there is no
+   * boundary about where they may travel. They still never enter
+   * `worker_messages`: this is a message to a phone, not a turn in the crew
+   * member's conversation with Capo.
+   */
+  crewMessage: {
+    /**
+     * The whole free-form WhatsApp message a crew member reads, in THEIR
+     * language (`workers.language ?? companies.language`, the third dial).
+     * `company` is `companies.name`; `text` is what the manager said.
+     */
+    whatsapp(args: { company: string; text: string }): string;
+  };
+
+  /**
    * ── FEDERICO: Perfil → Mensagens automáticas (issue #51). ──
    *
    * The screen that answers "what does Capo send my crew, when, and did it
