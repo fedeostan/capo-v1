@@ -95,6 +95,8 @@ import {
   toTemplateParam,
   toWhatsAppMarkdown,
   workerMenuRowId,
+  hiPayload,
+  isHiPayload,
   WhatsAppSendError,
   withinFreeFormWindow,
   type ApprovalLabels,
@@ -148,6 +150,15 @@ import {
   decideWelcomeRetry,
   WELCOME_MAX_ATTEMPTS,
 } from '../apps/web/lib/welcome-retry.ts';
+// Which Meta template the welcome goes out under, per locale, and whether that
+// name carries the "Say hi" button. Pure and dependency-free for exactly
+// briefing-template.ts's reason — and the two facts come back TOGETHER because
+// getting them out of step is a 132000 or an unparseable tap, neither of which
+// looks like a failure.
+import {
+  WELCOME_V2_APPROVED_LANGUAGES,
+  welcomeTemplateFor,
+} from '../apps/web/lib/welcome-template.ts';
 // CREW REQUESTS (issue #152). The urgency arithmetic and the two envelopes the
 // manager reads. Pure — `today` arrives as a string — which is what lets this
 // file pin the rule that replaces "the model decides how urgent this sounds",
@@ -1725,30 +1736,59 @@ for (const def of defs) {
   eq(`${label} — supplies two example values`, body.example.body_text[0]?.length, 2);
 
   // Buttons are asymmetric ON PURPOSE and the asymmetry is load-bearing.
-  // capo_task_checkin is answered by tapping; capo_daily_briefing is answered
-  // with free text (PT/ES/EN/STOP). Declaring a button component on a send
-  // whose approved template has none earns a 132000 on every send, so a stray
-  // BUTTONS block here would take the whole 07:00 briefing down.
+  // capo_task_checkin is answered by tapping, capo_welcome_v2 offers one
+  // "Say hi"; capo_daily_briefing is answered with free text (PT/ES/EN/STOP).
+  // Declaring a button component on a send whose approved template has none
+  // earns a 132000 on every send, so a stray BUTTONS block here would take the
+  // whole 07:00 briefing down — and the reverse is worse than it looks: Meta
+  // accepts a send that OMITS the component for a template that declares one
+  // and echoes the button's own LABEL back as the payload, so the tap comes
+  // back unparseable.
+  //
+  // An ALLOWLIST rather than a single name, grown deliberately: adding a
+  // template here is a decision, and the default for anything not named stays
+  // "no buttons".
+  const BUTTONED_TEMPLATES = ['capo_task_checkin', 'capo_welcome_v2'];
   const buttonComponent = def.components.find(c => c.type === 'BUTTONS') as
     | { buttons: { type: string; text: string }[] }
     | undefined;
-  if (def.name !== 'capo_task_checkin') {
+  if (!BUTTONED_TEMPLATES.includes(def.name)) {
     check(`${label} — declares no buttons`, buttonComponent === undefined);
     continue;
   }
 
   const buttons = buttonComponent!.buttons;
+  check(`${label} — every button is a quick reply`, buttons.every(b => b.type === 'QUICK_REPLY'));
+  for (const b of buttons) {
+    check(`${label} — "${b.text}" is 1..25 chars`, b.text.length >= 1 && b.text.length <= 25, `${b.text.length}`);
+  }
+
+  if (def.name === 'capo_welcome_v2') {
+    // ONE button, and it must stay one. The check-in's two buttons are an
+    // ANSWER whose ORDER is a contract; this one carries a single payload with
+    // no id, so there is nothing to invert — a second button here would
+    // silently acquire that contract without the comments that police it.
+    eq(`${label} — exactly one button`, buttons.length, 1);
+    // Meta caps a quick-reply label at 25 and an interactive reply-button
+    // TITLE at 20, and this same label rides both envelopes (the approved
+    // template and the free-form twin's reply button). Held to the tighter of
+    // the two, so the free-form copy is never the truncated one.
+    check(
+      `${label} — the label fits an interactive reply button too`,
+      buttons[0].text.length <= 20,
+      `${buttons[0].text.length}`,
+    );
+    eq(`${label} — the label is the catalog's`, buttons[0].text, getCatalog(locale!).reminders.welcomeButton);
+    continue;
+  }
+
   eq(`${label} — exactly two buttons`, buttons.length, 2);
-  check(`${label} — both are quick replies`, buttons.every(b => b.type === 'QUICK_REPLY'));
   // The labels must be the catalog's, in done-then-notDone order — the same
   // order /api/cron/checkin mints payloads in.
   const t = getCatalog(locale!).whatsapp;
   eq(`${label} — button 0 is the done label`, buttons[0].text, t.checkinDoneButton);
   eq(`${label} — button 1 is the not-done label`, buttons[1].text, t.checkinNotDoneButton);
   check(`${label} — labels differ`, buttons[0].text !== buttons[1].text);
-  for (const b of buttons) {
-    check(`${label} — "${b.text}" is 1..25 chars`, b.text.length >= 1 && b.text.length <= 25, `${b.text.length}`);
-  }
 }
 
 // ── outbound planning ───────────────────────────────────────────────────────
@@ -2001,6 +2041,31 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   eq('the manager row is not a check-in payload', parseCheckinPayload(menuManager), null);
   eq('a menu row is not a proposal id', parseProposalButtonId(menuTask), null);
   eq('the manager row is not a proposal id', parseProposalButtonId(menuManager), null);
+
+  // ── the FOURTH codec: the welcome's "Say hi" (issue #45 follow-up) ────────
+  // It arrives under BOTH `type: 'button'` (the template envelope) and
+  // `type: 'interactive'` (the free-form twin's reply button), so it has to be
+  // disjoint from three shapes rather than two — and one of those, the check-in,
+  // shares its envelope field exactly.
+  const hi = hiPayload();
+  check('the hi payload round-trips', isHiPayload(hi));
+  check('and is case-insensitive, like the other three', isHiPayload('CAPO:HI'));
+  // It carries NO id, for workerMenuRowId('manager')'s reason: nothing can be
+  // looked up from it, so nothing can leak through it.
+  check('the hi payload carries no uuid', !hi.includes(uuid), hi);
+  check('and nothing else parses as it', !isHiPayload(''));
+  check('a foreign prefix is not a hi', !isHiPayload('evil:hi'));
+  // A PREFIX match would accept every other codec, since all four start
+  // 'capo:'. Exact whole-string is what makes the six directions below hold.
+  check('a longer string starting with it is not a hi', !isHiPayload(`${hi}:${uuid}`));
+
+  eq('a hi is not a check-in payload', parseCheckinPayload(hi), null);
+  eq('a hi is not a proposal id', parseProposalButtonId(hi), null);
+  eq('a hi is not a menu row', parseWorkerMenuRowId(hi), null);
+  check('a check-in payload is not a hi', !isHiPayload(checkin));
+  check('a proposal id is not a hi', !isHiPayload(approve));
+  check('a menu task row is not a hi', !isHiPayload(menuTask));
+  check('the menu manager row is not a hi', !isHiPayload(menuManager));
 }
 
 // ── the keyword tables in front of the agent ────────────────────────────────
@@ -2777,11 +2842,47 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   eq('a crew member is addressed as a worker', worker.audience, 'worker');
   eq('a profile is addressed as a manager', manager.audience, 'manager');
 
+  // WHO ADDED THEM. The account owner's name opens the crew sentence, and it is
+  // read off the SAME ordered profiles list the ledger uses rather than a
+  // second query. `.order('created_at')` is ascending, so the newest NAMED
+  // profile wins — 'Sócio' here, who joined after Federico.
+  eq('the welcome names the most recently created manager', audience.managerName, 'Sócio');
+  eq(
+    'a company with no named profile answers null rather than a placeholder',
+    (
+      await loadPendingWelcomes(
+        fakeBriefingDb({ workers: [], profiles: [{ id: 'p9', full_name: '   ', language: 'pt-PT', phone: null, whatsapp_opt_in_at: null }], notification_log: [] }),
+        { id: 'co2', name: 'Sem Nome', language: 'pt-PT' },
+        today,
+      )
+    ).managerName,
+    null,
+  );
+
   for (const locale of LOCALES) {
     const t2 = getCatalog(locale).reminders;
     const target = { ...worker, locale };
-    const [name, middle] = renderWelcome(target, 'Construções Silva');
-    const [, managerMiddle] = renderWelcome({ ...manager, locale }, 'Construções Silva');
+    const [name, middle] = renderWelcome(target, 'Construções Silva', 'João');
+    const [, managerMiddle] = renderWelcome({ ...manager, locale }, 'Construções Silva', 'João');
+    const [, anonymous] = renderWelcome(target, 'Construções Silva', null);
+
+    // ── the opening clause (the immediate-welcome work) ───────────────────
+    // It is what makes the first message land as a real thing a real person
+    // did, rather than as software introducing itself, so it must come FIRST:
+    // that is the sentence a crew member reads in the notification preview.
+    check(`${locale} — the crew welcome names who added them`, middle.includes('João'), middle);
+    check(`${locale} — and does so before anything else`, middle.indexOf('João') < 40, middle);
+    // The null is a REAL case (no profile yet, or a blank full_name) and the
+    // clause is OMITTED rather than filled with a placeholder naming nobody.
+    check(`${locale} — with no manager on file the clause simply goes`, !anonymous.includes('João'), anonymous);
+    check(`${locale} — and the company is still named`, anonymous.includes('Construções Silva'), anonymous);
+    check(`${locale} — and nothing leaks`, !/undefined|null|,\s*,/.test(anonymous), anonymous);
+    eq(`${locale} — the anonymous sentence still needs no flattening`, toTemplateParam(anonymous), anonymous);
+    // A pasted paragraph in a manager's full_name must not blow {{2}} apart
+    // either — it is manager-authored free text on exactly the same road as
+    // the company name.
+    const [, messyManager] = renderWelcome(target, 'Construções Silva', 'João\nSilva\tPereira dos Santos e Filhos, Lda, encarregado geral');
+    eq(`${locale} — a multi-line manager name is flattened`, toTemplateParam(messyManager), messyManager);
 
     // (c) Template parameters survive Meta's rules untouched. If toTemplateParam
     // has to CHANGE either of them, the copy contains something Meta would have
@@ -2807,7 +2908,7 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
     // re-derivation, so a change to either side fails here.
     const def = allTemplates().find(d => d.name === 'capo_welcome' && d.language === t2.templateLanguage)!;
     const body = (def.components.find(c => c.type === 'BODY') as { text: string }).text;
-    const freeForm = renderWelcomeFreeForm(target, 'Construções Silva');
+    const freeForm = renderWelcomeFreeForm(target, 'Construções Silva', 'João');
     eq(
       `${locale} — the free-form welcome is the template body, rejoined`,
       freeForm.replace(/\n+/g, ' '),
@@ -2818,6 +2919,42 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
     check(`${locale} — the free-form welcome still states the opt-out`, freeForm.includes(t2.welcomeStop), freeForm);
     check(`${locale} — and leaks no undefined`, !freeForm.includes('undefined'), freeForm);
   }
+
+  // ── capo_welcome_v2 is capo_welcome plus a button, and nothing else ──────
+  // The body was already right, so v2 re-uses it byte for byte. Asserting the
+  // equality is what stops a change to the welcome's wording landing on one
+  // name and not the other — which would mean two crew members in the same
+  // company reading two different introductions depending on which locale Meta
+  // had got round to approving.
+  for (const language of TEMPLATE_LANGUAGES) {
+    const v1 = allTemplates().find(d => d.name === 'capo_welcome' && d.language === language)!;
+    const v2 = allTemplates().find(d => d.name === 'capo_welcome_v2' && d.language === language)!;
+    eq(
+      `${language} — capo_welcome_v2's body is capo_welcome's, byte for byte`,
+      (v2.components.find(c => c.type === 'BODY') as { text: string }).text,
+      (v1.components.find(c => c.type === 'BODY') as { text: string }).text,
+    );
+  }
+
+  // ── the approval gate (briefing-template.ts's shape, and its reasoning) ──
+  // Meta approves per name+language pair, so naming an unapproved template is a
+  // 132001 refusal and a person who hears nothing. The gate and the BUTTON must
+  // move together: a button component against capo_welcome (which declares
+  // none) is a 132000 on every send, and no button component against
+  // capo_welcome_v2 makes Meta echo the LABEL back as the payload, so the tap
+  // parses as nothing. One call returns both, which is what makes that
+  // impossible to get half right.
+  for (const language of TEMPLATE_LANGUAGES) {
+    const chosen = welcomeTemplateFor(language);
+    eq(
+      `${language} — the chosen welcome template matches the approval set`,
+      chosen.name,
+      WELCOME_V2_APPROVED_LANGUAGES.has(language) ? 'capo_welcome_v2' : 'capo_welcome',
+    );
+    eq(`${language} — the button rides v2 and only v2`, chosen.hasButton, chosen.name === 'capo_welcome_v2');
+  }
+  eq('an unknown locale code falls back to the approved-everywhere template', welcomeTemplateFor('de_DE').name, 'capo_welcome');
+  check('and carries no button with it', !welcomeTemplateFor('de_DE').hasButton);
 
   // A pasted paragraph in the company name must not blow the parameter apart.
   const [, messy] = renderWelcome({ ...worker, locale: 'pt-PT' }, 'Obras\nSilva\t& Filhos, Lda, a maior empresa de construção civil de toda a região norte de Portugal');

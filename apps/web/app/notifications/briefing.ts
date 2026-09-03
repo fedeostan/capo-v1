@@ -854,6 +854,27 @@ export interface WorkerFreeFormOptions {
    * missing table or a revoked grant costs the line and never the briefing.
    */
   dayLinkUrl?: string;
+  /**
+   * Replaces the "Bom dia, Miguel." opening block.
+   *
+   * ── WHY THIS EXISTS, AND WHY IT IS NOT A SECOND RENDERER ───────────────────
+   * The default greeting is a GOOD MORNING, which is correct for the only two
+   * callers it had: the 07:00 briefing and the OK/DETALHE reply to it. The
+   * welcome's "Say hi" tap (issue #45 follow-up) is the first caller that can
+   * arrive at any hour between 08:00 and 21:59, so "bom dia" would be wrong for
+   * most of the day.
+   *
+   * Building a second renderer for it was the alternative and is the thing to
+   * avoid: a crew member reading their tasks in the morning message and the
+   * same tasks after tapping hello must read the SAME sentences, or they have
+   * no way to tell which one is right. Only the opening differs, so only the
+   * opening is a parameter.
+   *
+   * It is a BLOCK, not a word: it may hold more than one line, and the two
+   * lines the hi-tap passes ("Olá Miguel! 👋" and "write to me any time") are
+   * exactly the case that shape exists for.
+   */
+  opening?: string;
 }
 
 export function renderWorkerFreeForm(
@@ -861,7 +882,7 @@ export function renderWorkerFreeForm(
   options: WorkerFreeFormOptions = {},
 ): string {
   const t = getCatalog(briefing.locale).reminders;
-  const greeting = t.freeFormGreeting(briefing.name);
+  const greeting = options.opening ?? t.freeFormGreeting(briefing.name);
   /**
    * Two lines, because that is how a link reads on a phone: a sentence saying
    * what is behind it, then the bare URL on its own line so WhatsApp renders it

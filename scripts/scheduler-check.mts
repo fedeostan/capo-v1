@@ -39,6 +39,17 @@ import {
 // env at module scope, and the Lisbon-vs-UTC arithmetic in it is exactly the
 // class of defect this file exists to catch.
 import { lisbonDayEnd } from '../apps/web/lib/day-link';
+// The welcome's TWO quiet-hours gates (issue #45, and the immediate trigger).
+// Imported for lib/cron.ts's reason: this is the seam the cron route and the
+// immediate trigger both read, it touches no env at module scope, and a copy
+// here could drift from the numbers the routes actually run on.
+import {
+  WELCOME_IMMEDIATE_HOUR,
+  WELCOME_IMMEDIATE_WINDOW_HOURS,
+  WELCOME_SEND_HOUR,
+  WELCOME_WINDOW_HOURS,
+  welcomeWindowFor,
+} from '../apps/web/lib/welcome-window';
 import {
   dependentsClosure,
   recomputeSchedule,
@@ -623,14 +634,17 @@ eq('/api/cron/push still runs all day, ungated', pushEntries[0]?.schedule, '*/10
 // message from an unknown business number at 03:00 is how that number earns a
 // block report.
 //
-// So it carries a WIDE gate (Lisbon 09:00–19:59) fed by a minute-based
+// So it carries a WIDE gate (Lisbon 09:00-19:59) fed by a minute-based
 // schedule, which is why the "one UTC entry per window hour under both DST
 // offsets" sweep above does not apply to it: every quarter of an hour covers
-// every hour in every season by construction. These numbers are duplicated from
-// the route for the same reason BRIEFING_HOUR and CHECKIN_HOUR are — a route
-// that moved alone would fail here on the next pull request.
-const WELCOME_HOUR = 9;
-const WELCOME_WINDOW_HOURS = 11;
+// every hour in every season by construction.
+//
+// Since the immediate trigger landed there are TWO of these windows, and they
+// are IMPORTED rather than re-declared — apps/web/lib/welcome-window.ts is the
+// seam both the cron and the trigger read, it touches no env at module scope,
+// and having the pair in one place is what stops somebody widening the sweep
+// while leaving the trigger where it was.
+const WELCOME_HOUR = WELCOME_SEND_HOUR;
 
 eq('the welcome window ends at Lisbon 19', sendWindowEnd(WELCOME_HOUR, WELCOME_WINDOW_HOURS), 19);
 check('a welcome may go out at 09', withinSendWindow(WELCOME_HOUR, WELCOME_HOUR, WELCOME_WINDOW_HOURS));
@@ -660,6 +674,79 @@ check(
   WELCOME_WINDOW_HOURS >= 4,
   `${WELCOME_WINDOW_HOURS} hours`,
 );
+
+// ── the IMMEDIATE welcome's own window ──────────────────────────────────────
+// The second gate, and the reason there are two. A manager who has just typed
+// somebody's number into Capo is standing next to them, on site, at whatever
+// hour a construction day actually runs — before the vans leave, or when the
+// paperwork gets done. Making that person wait until 09:00 tomorrow because
+// their manager added them at 20:15 is the exact complaint the trigger answers.
+//
+// It is therefore WIDER AT BOTH ENDS than the sweep's, and that relationship is
+// asserted rather than described: collapsing the two into one number is the
+// change that would silently take the evening half of the feature away.
+eq('the immediate welcome window ends at Lisbon 21', sendWindowEnd(WELCOME_IMMEDIATE_HOUR, WELCOME_IMMEDIATE_WINDOW_HOURS), 21);
+check(
+  'an immediate welcome may go out at 08, an hour before the sweep opens',
+  withinSendWindow(8, WELCOME_IMMEDIATE_HOUR, WELCOME_IMMEDIATE_WINDOW_HOURS) &&
+    !withinSendWindow(8, WELCOME_HOUR, WELCOME_WINDOW_HOURS),
+);
+check(
+  'and at 21, two hours after the sweep closes',
+  withinSendWindow(21, WELCOME_IMMEDIATE_HOUR, WELCOME_IMMEDIATE_WINDOW_HOURS) &&
+    !withinSendWindow(21, WELCOME_HOUR, WELCOME_WINDOW_HOURS),
+);
+// The two directions quiet hours exist for. Nobody's first ever contact from
+// Capo arrives while they are asleep, however fast their manager types.
+check('no immediate welcome at 22:00', !withinSendWindow(22, WELCOME_IMMEDIATE_HOUR, WELCOME_IMMEDIATE_WINDOW_HOURS));
+check('no immediate welcome at 03:00', !withinSendWindow(3, WELCOME_IMMEDIATE_HOUR, WELCOME_IMMEDIATE_WINDOW_HOURS));
+// ⚠ IT OVERLAPS THE BRIEFING'S DRIFT TAIL BY EXACTLY ONE HOUR, KNOWINGLY.
+// The sweep starts at 09 so a crew member added OVERNIGHT cannot be welcomed
+// and briefed inside the same hour in an order nobody chose. The immediate
+// trigger cannot be swept up in that: it only ever fires because a manager did
+// something a moment ago, so at 08:00 the 07:00 briefing has already gone (08
+// is the drift tail, not the target). What is genuinely possible is a crew
+// member added at 08:05 reading their tasks and then, a minute later, an
+// introduction — the same cosmetic misordering /api/cron/welcome already
+// records as known-and-not-fixed, reachable one hour earlier.
+//
+// Two properties are pinned instead of the sweep's, and the second is the one
+// that matters: the immediate window must never open at or before the
+// briefing's TARGET hour, where the two sends would genuinely collide.
+check(
+  'the immediate window opens after the briefing has been SENT, not merely scheduled',
+  WELCOME_IMMEDIATE_HOUR > BRIEFING_HOUR,
+  `immediate starts at ${WELCOME_IMMEDIATE_HOUR}, the briefing targets ${BRIEFING_HOUR}`,
+);
+check(
+  'and overlaps the briefing window by at most its drift tail',
+  sendWindowEnd(BRIEFING_HOUR) - WELCOME_IMMEDIATE_HOUR <= 0,
+  `immediate ${WELCOME_IMMEDIATE_HOUR}, briefing window ends ${sendWindowEnd(BRIEFING_HOUR)}`,
+);
+// The containment property, in both directions and derived rather than pinned:
+// every hour the sweep may send in, the trigger may too. If it were ever
+// otherwise, a person added inside the sweep's window would be refused by the
+// trigger and then picked up minutes later by the cron anyway — a gap nobody
+// could see and nobody would report.
+for (let hour = 0; hour <= 23; hour += 1) {
+  if (!withinSendWindow(hour, WELCOME_HOUR, WELCOME_WINDOW_HOURS)) continue;
+  check(
+    `the immediate trigger may also send at Lisbon ${hour}`,
+    withinSendWindow(hour, WELCOME_IMMEDIATE_HOUR, WELCOME_IMMEDIATE_WINDOW_HOURS),
+  );
+}
+// And the no-wrap property the whole family depends on: sendWindowEnd clamps at
+// 23, and a window that wrapped past midnight would roll lisbon_today() over
+// and make the once-ever ledger read a fresh unclaimed day.
+check(
+  'neither welcome window can wrap past midnight',
+  sendWindowEnd(WELCOME_IMMEDIATE_HOUR, WELCOME_IMMEDIATE_WINDOW_HOURS) <= 23 &&
+    WELCOME_IMMEDIATE_HOUR + WELCOME_IMMEDIATE_WINDOW_HOURS - 1 <= 23,
+);
+eq('welcomeWindowFor gives the cron its own hours', welcomeWindowFor('cron').sendHour, WELCOME_SEND_HOUR);
+eq('and the immediate path its own', welcomeWindowFor('immediate').sendHour, WELCOME_IMMEDIATE_HOUR);
+eq('and the widths do not cross over', welcomeWindowFor('cron').windowHours, WELCOME_WINDOW_HOURS);
+eq('either', welcomeWindowFor('immediate').windowHours, WELCOME_IMMEDIATE_WINDOW_HOURS);
 
 // ── the nightly memory review (issue #48) ───────────────────────────────────
 // The FOURTH shape, and the first that sends nothing to anybody. It still has

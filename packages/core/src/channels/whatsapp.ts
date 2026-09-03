@@ -481,6 +481,41 @@ export function parseWorkerMenuRowId(id: string): WorkerMenuRow | null {
   return match ? { kind: 'task', taskId: match[1] } : null;
 }
 
+// ── the welcome's "Say hi" payload (issue #45 follow-up) ────────────────────
+// The FOURTH tappable shape, and the first that arrives under BOTH envelopes:
+//
+//   approval card   `interactive.button_reply.id`  `capo:approve|reject:<uuid>`  MANAGER
+//   check-in        `button.payload`               `capo:checkin:done|not_done:` WORKER
+//   worker menu     `interactive.list_reply.id`    `capo:wm:…`                   WORKER
+//   say hi          `button.payload` (template)    `capo:hi`                     BOTH
+//                   `interactive.button_reply.id` (free-form twin)
+//
+// The welcome goes out in two envelopes — the approved template capo_welcome_v2
+// and, for anybody already inside their 24-hour window, an interactive
+// reply-button message — so the SAME tap comes back on two different fields.
+// One payload for both is what keeps "the person tapped hello" a single fact
+// with a single handler; splitting it per envelope would give the two halves of
+// one message two answers that could drift.
+//
+// It carries NO id, for workerMenuRowId('manager')'s reason: "hello" is not
+// about any particular row, and giving it one would invite a handler that
+// looked the row up and leaked whether it existed. Who tapped is already known
+// from sender resolution, which is the only identity on this path that is not
+// attacker-supplied.
+//
+// Disjoint from the other three by construction: it is an exact whole-string
+// match with no third segment, so no parser here can accept another's value.
+// scripts/whatsapp-check.mts asserts every direction.
+const HI_PAYLOAD = 'capo:hi';
+
+export function hiPayload(): string {
+  return HI_PAYLOAD;
+}
+
+export function isHiPayload(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.toLowerCase() === HI_PAYLOAD;
+}
+
 // ── business-scoped user ids ────────────────────────────────────────────────
 // Meta's answer to WhatsApp usernames. When a person adopts a username, the
 // inbound message's `from` (their phone) is OMITTED entirely and `from_user_id`
@@ -1325,6 +1360,41 @@ export function buildListPayload(list: WhatsAppList): Record<string, unknown> {
       },
     },
   };
+}
+
+/**
+ * An interactive REPLY-BUTTONS message, sent directly rather than through the
+ * sink (issue #45 follow-up).
+ *
+ * The sink already builds this shape for an approval card, but only as the tail
+ * of an assistant STREAM. The welcome's free-form twin has no stream: it is a
+ * sentence we already hold plus one button, decided before anything ran, which
+ * is the same reason sendWhatsAppText is public.
+ *
+ * Session message, so it is FREE and, for the same reason, REFUSED outright
+ * (131047) outside the 24 hours the recipient's own message opened. Every
+ * caller must have established the window first and must have a template or a
+ * silence to fall back to.
+ *
+ * Clamps rather than throws, matching what planAssistantMessages already does
+ * with the same two constants: a translator lengthening a button label must
+ * degrade to a truncated word, never to a failed delivery.
+ */
+export async function sendWhatsAppButtons(
+  message: { body: string; buttons: { id: string; title: string }[] },
+  config: WhatsAppSendConfig,
+): Promise<void> {
+  await sendInteractive(
+    {
+      kind: 'interactive',
+      body: message.body.slice(0, MAX_INTERACTIVE_BODY),
+      buttons: message.buttons.map(button => ({
+        id: button.id,
+        title: button.title.slice(0, MAX_BUTTON_TITLE),
+      })),
+    },
+    config,
+  );
 }
 
 /** Session message, never billable — and refused outright outside the window. */
