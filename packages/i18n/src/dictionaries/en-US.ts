@@ -920,6 +920,14 @@ const dict: Catalog = {
       "Tell me what's wrong with the app or my messages — your next message gets logged for the Capo team.",
     reportAck: 'Got it, thanks. Logged for the Capo team to look at.',
     reportFailed: "I couldn't log your report just now. Please try again in a bit.",
+    photoBatchAsk: count =>
+      count === 1
+        ? 'Got the photo. Any more, or is that everything?'
+        : `I've got ${count} photos from you now. Any more, or is that everything?`,
+    photoBatchMoreButton: 'More photos',
+    photoBatchDoneButton: "That's everything",
+    photoBatchMoreAck: 'Go ahead, send it.',
+    photoBatchNone: "I haven't got any photos waiting from you. Send it and tell me which job it's of.",
   },
 
   dia: {

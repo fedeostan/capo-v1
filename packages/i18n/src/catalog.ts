@@ -1464,6 +1464,36 @@ export interface Catalog {
     /** Filing failed (the likeliest cause: migration 0042 not yet applied).
      *  Honest, asks to try again — never pretends it was registered. */
     reportFailed: string;
+
+    // ── "more photos, or is that everything?" (0047) ─────────────────────────
+    // A crew member who sends a photo with no caption used to get a model turn
+    // that asked which task it was for, and by the time they answered the photo
+    // was gone. Now every photo is kept, and this is the deterministic reply
+    // that goes out instead: a receipt with a running count and two buttons.
+    // Zero model calls, and free by SHAPE rather than by policy, because an
+    // interactive message is a session message and their own photo opened the
+    // window a second ago.
+
+    /**
+     * The receipt with the count. `count` is every photo of theirs still
+     * waiting for a task, not just this one, so somebody sending four in a row
+     * watches the number climb and knows all four landed.
+     *
+     * ⚠ It must NOT say the work is recorded, claimed or done. Nothing has been
+     * filed at this point: a photo waiting is a photo waiting.
+     */
+    photoBatchAsk(count: number): string;
+    /** "More photos" — max 20 characters, clamped by the sender if longer. */
+    photoBatchMoreButton: string;
+    /** "That's everything" — max 20 characters, clamped by the sender. */
+    photoBatchDoneButton: string;
+    /** After "more photos": one line, nothing else. They are holding a phone
+     *  in one hand on a building site. */
+    photoBatchMoreAck: string;
+    /** They tapped "that's everything" and nothing is waiting: the photos were
+     *  already attached, or they expired. Says what to do rather than what went
+     *  wrong, and never accuses them of not sending anything. */
+    photoBatchNone: string;
   };
 
   /**
