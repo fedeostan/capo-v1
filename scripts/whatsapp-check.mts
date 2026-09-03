@@ -2709,7 +2709,7 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   // explicitly approved falls to the OLD name, which all three locales have.
   eq('pt_PT sends the v2 template', briefingTemplateFor('pt_PT'), 'capo_daily_briefing_v2');
   eq('en_US sends the v2 template', briefingTemplateFor('en_US'), 'capo_daily_briefing_v2');
-  eq('es_ES stays on the old template until Meta approves', briefingTemplateFor('es_ES'), 'capo_daily_briefing');
+  eq('es_ES moved to v2 once Meta approved it (2026-09-03)', briefingTemplateFor('es_ES'), 'capo_daily_briefing_v2');
   eq('an unknown locale falls back to the old template', briefingTemplateFor('fr_FR'), 'capo_daily_briefing');
   for (const language of BRIEFING_V2_APPROVED_LANGUAGES) {
     check(`approved code ${language} is one this repo submits`, TEMPLATE_LANGUAGES.includes(language), language);
