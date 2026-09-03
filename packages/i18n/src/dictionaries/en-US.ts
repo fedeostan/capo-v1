@@ -633,14 +633,14 @@ const dict: Catalog = {
     yourName: 'Your name',
     yourNamePlaceholder: 'John Smith',
     phone: 'Your mobile',
-    phonePlaceholder: '+1 555 123 4567',
+    phonePlaceholder: '555 123 4567',
     phoneHint: 'This is how you can talk to Capo on WhatsApp, without opening the app.',
     language: 'Language',
     languageHint: 'You can change this later — just tell Capo.',
     submit: 'Get started',
     errors: {
       dados: 'Fill in the company name and your name.',
-      telemovel: 'Invalid number. Use the full international format, e.g. +1 555 123 4567.',
+      telemovel: 'Invalid number. Pick the country and type just the number, e.g. 555 123 4567.',
       'telemovel-usado': "That number is already linked to another account.",
       guardar: "Couldn't save that. Try again.",
     },
@@ -680,7 +680,7 @@ const dict: Catalog = {
     errors: {
       companyName: 'The company name must be between 1 and 120 characters.',
       fullName: 'Your name must be between 1 and 120 characters.',
-      phone: 'Invalid number. Use the full international format, e.g. +15551234567.',
+      phone: 'Invalid number. Pick the country and type just the number, e.g. 555 123 4567.',
       phoneTaken: 'That number is already linked to another account.',
       save: "Couldn't save that. Try again.",
     },
@@ -1007,6 +1007,18 @@ const dict: Catalog = {
     welcomeEvent: ({ notified, names }) => {
       const who = names ? `: ${names}` : '';
       return `I introduced myself on WhatsApp to ${notified} new ${notified === 1 ? 'person' : 'people'} on the team${who}.`;
+    },
+  },
+
+  phone: {
+    country: 'Country',
+    hint: 'Just the number, no country code.',
+    countries: {
+      PT: 'Portugal',
+      ES: 'Spain',
+      AR: 'Argentina',
+      BR: 'Brazil',
+      US: 'United States',
     },
   },
 };

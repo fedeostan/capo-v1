@@ -131,3 +131,13 @@ jobs:
       # invisible. Credential-free, so it runs on every PR.
       - name: Activity feed check
         run: pnpm activity-check
+
+      # The one phone normalizer. Its failure mode is the quietest in the
+      # product: a number stored in a shape WhatsApp does not use raises no
+      # error anywhere, it simply means that person receives nothing and is
+      # heard by nobody, while every screen goes on showing their number as if
+      # it were fine. That is the 2026-08-12 incident, and Argentina (the 9 that
+      # WhatsApp inserts and nobody in Argentina writes) is where it lives.
+      # Pure, so it runs on every PR.
+      - name: Phone normalizer check
+        run: pnpm phone-check
