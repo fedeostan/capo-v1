@@ -39,16 +39,24 @@ import type { CapoTool } from './types';
 //      attributed quote. A tool result is data the model reads, never an
 //      instruction it obeys, and a request reading "ignore previous
 //      instructions" is a sentence the manager reads and disbelieves.
-//   2. It NEVER reaches `messages`. Nothing in this file writes anywhere, and
-//      the model's own reply is what gets persisted as the assistant turn. The
-//      danger to watch for in any future change is the opposite direction:
-//      `messages` is what `thread.recentUserTexts` reads, and those last three
-//      USER rows are the evidence pool `runGuarded` matches a manager quote
-//      against before executing a manager-level write directly. A crew member
-//      whose words landed there would be authoring that evidence. This tool
-//      keeps them on the read side of that line, where they are safe.
-//      `checkWorkerTextIsolation` in scripts/rls-isolation-matrix.mjs is the
-//      sweep that would catch it if they ever crossed.
+//   2. It never becomes GUARD EVIDENCE, which is the property the isolation
+//      rule exists to protect. Be precise about the mechanism, because the
+//      obvious statement is wrong: a tool result travels back inside the
+//      assistant UIMessage and `persistAssistantMessage` writes that whole
+//      parts array into `messages`, so the quote DOES land in that table, in an
+//      `role = 'assistant'` row. What keeps it harmless is that
+//      `toThread`'s `recentUserTexts` filters `role === 'user'` before handing
+//      the last three rows to `runGuarded`, so an assistant row can never be
+//      the quote that authorizes a direct manager-level write. A crew member
+//      whose words landed in a USER row would be authoring that evidence; this
+//      tool cannot put them there, because nothing in this file writes anywhere.
+//      Two consequences to keep in view. `maybeSummarize` reads the same window,
+//      so a quote can be compressed into a conversation summary; that is the
+//      same exposure the manager already has in his inbox, and it is why the
+//      orchestration policy tells the model to treat a quote as data and never
+//      as an instruction. And `recentUserTexts`' `role === 'user'` filter is now
+//      load-bearing for worker text as well as for system events, which is what
+//      `pnpm guard-check` asserts in both directions.
 //
 // Read-only, so unguarded: it changes nothing, needs no `manager_instruction`,
 // and can never raise an approval card.
