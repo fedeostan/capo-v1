@@ -12,6 +12,8 @@ import { propose } from './propose';
 import { generatePlan } from './plan';
 import { rescheduleTools } from './reschedule-propose';
 import { jobPauseTools } from './job-pause';
+// #123: reaching one crew member. Unguarded on purpose — see message-worker.ts.
+import { crewMessageTools } from './message-worker';
 import { managerInstructionField, runGuarded } from './guard';
 import type { CapoTool, ToolContext } from './types';
 
@@ -38,6 +40,7 @@ export const roster: CapoTool[] = [
   ...translationTools,
   ...rescheduleTools,
   ...jobPauseTools,
+  ...crewMessageTools,
   propose,
   generatePlan,
 ];

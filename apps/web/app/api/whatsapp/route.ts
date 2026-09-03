@@ -66,6 +66,7 @@ import {
 } from '../../notifications/briefing';
 import { readThreadLocale, recordThreadEvent } from '../../notifications/thread';
 import { pingManagersAboutRequests } from '../../notifications/worker-request-ping';
+import { whatsappWorkerMessenger } from '../../notifications/worker-message';
 
 // WhatsApp manager channel — Meta Cloud API webhook (see
 // docs/whatsapp-cloud-api-runbook.md for the one-time Meta setup).
@@ -2606,6 +2607,12 @@ export async function POST(request: NextRequest) {
             userId,
             locales,
             confirmPosture,
+            // Reaching one crew member (issue #123). `db` is already the
+            // service client on this path, and `accessToken`/`phoneNumberId`
+            // are the same pair this route sends every other message with, so
+            // the messenger writes to the same ledger the crons do. See
+            // notifications/worker-message.ts for the delivery ladder.
+            messageWorker: whatsappWorkerMessenger(() => db, { accessToken, phoneNumberId }),
             inbound: { channel: 'whatsapp', text, transcribed },
             sink,
           });

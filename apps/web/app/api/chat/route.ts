@@ -1,8 +1,11 @@
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from 'ai';
 import { handleInbound } from '@capo/core/agent';
 import { webSink } from '@capo/core/channels/web';
+import { getDb } from '@capo/db/client';
 import { getApiAuth } from '@capo/db/session';
 import { assertNotBlocked, BillingBlockedError } from '@/lib/billing';
+import { whatsappSendEnv } from '@/lib/whatsapp';
+import { whatsappWorkerMessenger } from '../../notifications/worker-message';
 import { logEvent } from '../../../lib/log';
 
 export const maxDuration = 120;
@@ -48,6 +51,18 @@ export async function POST(req: Request) {
         // getApiAuth, so the posture costs no extra query and cannot disagree
         // with what /perfil shows.
         confirmPosture: auth.confirmPosture,
+        // Reaching one crew member (issue #123). The SERVICE client, and
+        // deliberately not `auth.db`: a WhatsApp send has to claim a row in
+        // notification_log, which is deny-all for tenants (0016), and the paid
+        // ledger is a system concern. What keeps it inside this tenant is
+        // `companyId`, which the messenger scopes every read by, and which
+        // comes off the session rather than off anything the model wrote.
+        //
+        // Env is read HERE, inside the handler, never at module scope: a
+        // module-scope read of a secret breaks `next build` in CI. A missing
+        // WhatsApp config yields null, and Capo says it cannot reach the crew
+        // rather than pretending it did.
+        messageWorker: whatsappWorkerMessenger(getDb, whatsappSendEnv()),
         locales: { user: auth.locale, company: auth.companyLocale },
         inbound: { channel: 'web', text },
         sink: webSink(writer),

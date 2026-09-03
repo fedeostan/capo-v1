@@ -317,6 +317,13 @@ export async function resolveProposal(
       // real posture here: it would let one manager's trust_quote setting change
       // what a card another manager is looking at does.
       confirmPosture: 'always_ask',
+      // No channel on this path, and structurally there is nothing to give one
+      // to: `message_worker` is unguarded, so it is not in `proposable` and can
+      // never be the tool executing here. If some future proposable tool wants
+      // to reach a crew member, this has to be threaded down from the route
+      // that resolved the card, and that route also has to be able to tell the
+      // manager the outcome — which today it cannot. See message-worker.ts.
+      messageWorker: null,
       locales,
     };
     const result = await target.execute(parsed.data, ctx);

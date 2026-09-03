@@ -222,7 +222,7 @@ unwelcomed for 17 days (issue #121).
 | `capo_task_checkin` | late-afternoon check-in (`api/cron/checkin`) | §6b; two quick-reply buttons, order is a contract |
 | `capo_welcome` | welcome sweep (`api/cron/welcome`) | §6c; approved in all three locales 31 Aug 2026 |
 | `capo_daily_briefing_v2` | nothing yet | submitted 31 Aug 2026 (issue #108); {{2}} on its own paragraph |
-| `capo_message_waiting` | nothing yet | submitted 31 Aug 2026 (issue #123 B); the window-reopener |
+| `capo_message_waiting` | `message_worker`, when the crew member's 24h window is shut | §6d; the window-reopener. ⚠ **submitted 31 Aug 2026 and approval NOT confirmed** |
 
 All five are in `MANAGED_TEMPLATE_NAMES`, so `pnpm whatsapp-template status`
 checks every name × locale pair and is the way to verify approval actually
@@ -491,6 +491,42 @@ deploy does not introduce Capo to people who have been using it for a month, and
 creates `welcome_ledger_ready()` — a marker function the sweep asks for before
 it sends anything, so shipping the code without the migration produces silence
 rather than a mass mailing.
+
+### 6d. `capo_message_waiting`
+
+The window-reopener (issue #123). Sent by `message_worker`, the manager tool
+that puts one message in front of one crew member, and ONLY when that person's
+own 24-hour window is shut. Definition: `capoMessageWaiting()` in
+`scripts/whatsapp-templates.ts`. Delivery ladder:
+`apps/web/app/notifications/worker-message.ts`.
+
+> ⚠ **MANUAL GO-LIVE STEP, AND IT IS NOT DONE.** This template was submitted on
+> 31 Aug 2026 and **its approval has never been confirmed**. Until every one of
+> the three languages is APPROVED, a send to somebody whose window is shut fails
+> with **132001** and Capo tells the manager, truthfully, that nothing was
+> delivered. Verify with `pnpm whatsapp-template status` before assuming this
+> rung works at all. The other rung, free-form inside the window, needs no
+> template and works today.
+
+- Name `capo_message_waiting`, category **Utility**, `parameter_format`
+  **POSITIONAL**, three languages.
+- Body: two parameters. `{{1}}` is the crew member's name; `{{2}}` is WHO IS
+  ASKING, which is `companies.name`. **The manager's actual words are not in it
+  and cannot be.** A template body is frozen at approval, so this one says a
+  message is waiting and asks the person to reply; their reply opens the free
+  window and the manager can then say it for real. That is why the tool reports
+  this outcome as `nudged` rather than `sent`, and why Capo must never describe
+  it to the manager as delivered.
+- **No buttons.** Any reply reopens the window, so a quick-reply would be a
+  fourth tappable payload shape to keep disjoint from the other three for no
+  gain.
+- **Ledger and cap.** The send claims a `notification_log` row under
+  `kind = 'manager_message'` before the Graph call, so it is idempotent and
+  capped at ONE nudge per crew member per Lisbon day. That kind collides with
+  neither daily send. The FREE rung writes nothing there: that table is the paid
+  template ledger and its unique key is what prevents a double-billed send.
+- A failed nudge keeps the claim for the rest of the day, like both daily sends.
+  To force a retry, delete that person's `manager_message` row for today.
 
 ## Opt-in and opt-out (migration `0025`)
 
