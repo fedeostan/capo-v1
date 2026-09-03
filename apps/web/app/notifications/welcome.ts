@@ -83,6 +83,25 @@ export interface CompanyWelcomes {
   companyId: string;
   companyLocale: Locale;
   companyName: string;
+  /**
+   * The name of the person who owns this company's account, for the welcome's
+   * opening clause ("O teu gerente na Silva, Miguel, acabou de te adicionar").
+   *
+   * ── NULL IS A REAL ANSWER, NOT A MISSING ONE ─────────────────────────────
+   * A company can have no readable owner name: no profile row yet (the crew
+   * were seeded before anybody signed in), or a blank full_name. The clause is
+   * then OMITTED entirely rather than filled with "the person who added you",
+   * which names nobody and makes a first message sound like a form letter.
+   *
+   * ── WHICH PROFILE, WHEN THERE ARE SEVERAL ────────────────────────────────
+   * The MOST RECENTLY CREATED one with a name. Capo has no owner column: every
+   * profile in a company is a manager and any of them can add crew. The newest
+   * is the closest thing to "whoever is running this account now" that the
+   * schema can answer, and being wrong costs a crew member the wrong colleague's
+   * name in one sentence, never a wrong send or a wrong tenant. The profiles
+   * read is already ordered by created_at for the ledger, so this costs nothing.
+   */
+  managerName: string | null;
   /** Everyone who may be welcomed right now, crew first, then managers. */
   pending: WelcomeTarget[];
   /** Crew dropped for want of a recorded opt-in. The dominant reason, by far. */
@@ -244,10 +263,20 @@ export async function loadPendingWelcomes(
     });
   }
 
+  // Read off the SAME ordered profiles list the ledger used — never a second
+  // query, which could disagree with it. `.order('created_at')` is ascending,
+  // so the newest named profile is the last one that has a name.
+  let managerName: string | null = null;
+  for (const manager of managers ?? []) {
+    const named = manager.full_name?.trim();
+    if (named) managerName = named;
+  }
+
   return {
     companyId: company.id,
     companyName: company.name,
     companyLocale,
+    managerName,
     pending,
     excludedNoConsent,
     excludedUnreachable,
@@ -271,6 +300,14 @@ export async function loadPendingWelcomes(
 const MAX_COMPANY_NAME = 60;
 
 /**
+ * The same cap for the MANAGER's name, and it is the same cap the chat-thread
+ * notes use for a person's name. It is manager-authored free text travelling
+ * into the same Meta parameter as everything else in {{2}}, so it gets the same
+ * flattening and the same ceiling.
+ */
+const MAX_MANAGER_NAME = 40;
+
+/**
  * ── FEDERICO: this is the product-voice dial for the first thing Capo ever
  * says to somebody. ──
  *
@@ -284,11 +321,21 @@ const MAX_COMPANY_NAME = 60;
  * where a sentence in the frozen half went out to every worker every morning
  * for months with nothing in the code able to stop it.
  */
-export function renderWelcome(target: WelcomeTarget, companyName: string): [name: string, middle: string] {
+export function renderWelcome(
+  target: WelcomeTarget,
+  companyName: string,
+  /** Who owns the account, for the crew opening clause. Null omits it — see
+   *  CompanyWelcomes.managerName for why the null is a real case. */
+  managerName: string | null = null,
+): [name: string, middle: string] {
   const t = getCatalog(target.locale).reminders;
   const company = clamp(companyName, MAX_COMPANY_NAME);
-  const middle = target.audience === 'worker' ? t.welcomeWorker(company) : t.welcomeManager(company);
-  return [clamp(target.name, 40), middle];
+  // Trimmed to null rather than passed through: a profile whose full_name is
+  // whitespace must take the no-manager branch, not render "na Silva, ,".
+  const manager = managerName?.trim() ? clamp(managerName, MAX_MANAGER_NAME) : null;
+  const middle =
+    target.audience === 'worker' ? t.welcomeWorker({ company, manager }) : t.welcomeManager(company);
+  return [clamp(target.name, MAX_MANAGER_NAME), middle];
 }
 
 /**
@@ -304,9 +351,13 @@ export function renderWelcome(target: WelcomeTarget, companyName: string): [name
  * The only difference is shape: free-form text may have newlines, so it gets
  * three short paragraphs instead of one run-on line.
  */
-export function renderWelcomeFreeForm(target: WelcomeTarget, companyName: string): string {
+export function renderWelcomeFreeForm(
+  target: WelcomeTarget,
+  companyName: string,
+  managerName: string | null = null,
+): string {
   const t = getCatalog(target.locale).reminders;
-  const [name, middle] = renderWelcome(target, companyName);
+  const [name, middle] = renderWelcome(target, companyName, managerName);
   return [t.welcomeGreeting(name), middle, t.welcomeStop].join('\n\n');
 }
 

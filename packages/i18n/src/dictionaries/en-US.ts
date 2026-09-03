@@ -920,6 +920,11 @@ const dict: Catalog = {
       "Tell me what's wrong with the app or my messages — your next message gets logged for the Capo team.",
     reportAck: 'Got it, thanks. Logged for the Capo team to look at.',
     reportFailed: "I couldn't log your report just now. Please try again in a bit.",
+    hiWorkerGreeting: name => `Hi ${name}! 👋`,
+    hiWorkerWriteAnyTime: 'Write to me here whenever you need to, in português, español or English.',
+    hiWorkerMorning: 'Nothing scheduled for you today. Every morning at 7am I send you your day here.',
+    hiManager: appUrl =>
+      `Hi! Talk to me here whenever you need to. Your sites and tasks are in the app: ${appUrl}`,
   },
 
   dia: {
@@ -998,8 +1003,12 @@ const dict: Catalog = {
     detailOverdue: title => `${title} — overdue`,
     languageHint: 'Reply PT, ES or EN to change language',
     dayLinkCta: '🔗 See your full list here:',
-    welcomeWorker: company =>
-      `${company} added your number to Capo: from now on you get your daily tasks here, and you can reply to me with questions. Write PT, ES or EN to change language.`,
+    welcomeWorker: ({ company, manager }) => {
+      const added = manager
+        ? `Your manager at ${company}, ${manager}, has just added you to Capo.`
+        : `${company} has just added you to Capo.`;
+      return `${added} Every morning I send you the day's tasks here; when you finish one, send me a photo; and if you run short of materials, ask me. Write PT, ES or EN to change language.`;
+    },
     welcomeManager: company =>
       `Your ${company} account is ready: you get each morning's summary here, and you can talk to me on WhatsApp just as you do in the app.`,
     welcomeGreeting: name => `Hi ${name}, I am Capo, your site assistant.`,
@@ -1008,6 +1017,7 @@ const dict: Catalog = {
       const who = names ? `: ${names}` : '';
       return `I introduced myself on WhatsApp to ${notified} new ${notified === 1 ? 'person' : 'people'} on the team${who}.`;
     },
+    welcomeButton: 'Say hi 👋',
   },
 };
 
