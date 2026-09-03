@@ -301,6 +301,27 @@
 // client that could name it could tick tomorrow), `checked_by` and
 // `checked_at` (both stamped by triggers). The UPDATE grant reaches `status`
 // ALONE. tsc will happily let you set any of them; the database answers 42501.
+//
+// ── PENDING 0047 (issue: photos from the crew), WRITTEN BY HAND ────────────
+// worker_photo_inbox — every photo a crew member sends, staged in the
+// task-photos bucket the moment it arrives so it stops living for exactly one
+// turn. Added by hand for the standing reason: regenerating against a project
+// that lacks the table would silently DELETE this block rather than add it.
+//
+// One consequence while the migration is unapplied, and the code is written to
+// survive it: every query answers 42P01 ("relation does not exist"). Staging
+// (stageInboxPhoto, packages/core/src/media/photo-inbox.ts) logs
+// `task_photo.store_failed` and answers null, the reader answers an empty list,
+// and the whole feature degrades to the pre-0047 product: a photo lives for one
+// turn, a bare photo with no open check-in request reaches the agent exactly as
+// it did before. Nothing about a check-in claim or a completion claim depends
+// on this table existing.
+//
+// Invisible here as usual: this table is deny-all under RLS with ZERO policies
+// and every grant revoked from `authenticated` (checkin_photo_requests'
+// posture). tsc will let a tenant-scoped client select from it; the database
+// refuses at the grant layer. The only writer is the WhatsApp webhook on the
+// service role.
 export type Json =
   | string
   | number
@@ -2285,6 +2306,70 @@ export type Database = {
           },
           {
             foreignKeyName: "worker_day_links_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      worker_photo_inbox: {
+        Row: {
+          attached_at: string | null
+          attached_task_id: string | null
+          byte_size: number
+          caption: string | null
+          company_id: string
+          expires_at: string
+          id: string
+          mime: string
+          received_at: string
+          storage_path: string
+          worker_id: string
+        }
+        Insert: {
+          attached_at?: string | null
+          attached_task_id?: string | null
+          byte_size: number
+          caption?: string | null
+          company_id: string
+          expires_at: string
+          id?: string
+          mime: string
+          received_at?: string
+          storage_path: string
+          worker_id: string
+        }
+        Update: {
+          attached_at?: string | null
+          attached_task_id?: string | null
+          byte_size?: number
+          caption?: string | null
+          company_id?: string
+          expires_at?: string
+          id?: string
+          mime?: string
+          received_at?: string
+          storage_path?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_photo_inbox_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_photo_inbox_attached_task_id_fkey"
+            columns: ["attached_task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "worker_photo_inbox_worker_id_fkey"
             columns: ["worker_id"]
             isOneToOne: false
             referencedRelation: "workers"
