@@ -414,9 +414,12 @@ async function deliver(
 export async function sendAuthEmail(input: SendAuthEmailInput): Promise<AuthEmailResult> {
   const emailLower = input.email.trim().toLowerCase();
 
-  const key = resendKey();
-  if (!key) return sendThroughLegacyMailer(input, emailLower);
-
+  // The throttle runs BEFORE the Resend/legacy fork, on purpose: it used to
+  // sit only on the Resend branch, which meant that for as long as
+  // RESEND_API_KEY is unset (the live production state today) /registar and
+  // /recuperar had no application-level rate limit at all. Both doors mail an
+  // arbitrary address on an unauthenticated request, so the legacy mailer is
+  // exactly the path this throttle exists to cover, not an exception to it.
   const throttle = await readThrottle(emailLower);
   if (throttle.status === 'error') {
     // The table is there and unreadable. Refuse rather than send blind.
@@ -436,6 +439,9 @@ export async function sendAuthEmail(input: SendAuthEmailInput): Promise<AuthEmai
       return 'throttled';
     }
   }
+
+  const key = resendKey();
+  if (!key) return sendThroughLegacyMailer(input, emailLower);
 
   // A resend is for an existing, UNCONFIRMED account and nothing else. Every
   // other state (confirmed, no account, or a lookup we could not complete)
@@ -495,13 +501,20 @@ async function sendThroughLegacyMailer(
   const supabase = await createUserClient();
   const emailRedirectTo = `${siteUrl()}/auth/confirm?next=${NEXT[input.kind]}`;
 
+  // recordSend is called on every success below so the throttle counts this
+  // path too — the caller already checked it before choosing this branch, and
+  // a count that never grows would make that check a formality rather than a
+  // limit.
   if (input.kind === 'confirm') {
     const { error } = await supabase.auth.signUp({
       email: emailLower,
       password: input.password,
       options: { emailRedirectTo },
     });
-    if (!error) return 'sent';
+    if (!error) {
+      await recordSend(emailLower, input.kind);
+      return 'sent';
+    }
     // Signups turned off at the dashboard. Only this path can still see it (the
     // admin API ignores the toggle), so it is recorded as its own log line and
     // then answered like every other non-send: the screen must not change.
@@ -519,13 +532,21 @@ async function sendThroughLegacyMailer(
       email: emailLower,
       options: { emailRedirectTo },
     });
-    if (error) console.error('resend signup confirmation failed:', error.message);
-    return error ? 'skipped' : 'sent';
+    if (error) {
+      console.error('resend signup confirmation failed:', error.message);
+      return 'skipped';
+    }
+    await recordSend(emailLower, input.kind);
+    return 'sent';
   }
 
   const { error } = await supabase.auth.resetPasswordForEmail(emailLower, {
     redirectTo: emailRedirectTo,
   });
-  if (error) console.error('resetPasswordForEmail failed:', error.message);
-  return error ? 'skipped' : 'sent';
+  if (error) {
+    console.error('resetPasswordForEmail failed:', error.message);
+    return 'skipped';
+  }
+  await recordSend(emailLower, input.kind);
+  return 'sent';
 }

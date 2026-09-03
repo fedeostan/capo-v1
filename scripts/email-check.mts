@@ -17,6 +17,13 @@
 //      that improvement is dropping somebody's language entirely, which only
 //      the person who cannot read the email finds out about.
 //
+//   3. THE REDIRECT AFTER VERIFICATION. Every one of these links ends at
+//      /auth/confirm, which decides where to send the now-authenticated
+//      session from a `next` query parameter that rides the same link an
+//      attacker can reuse or rewrite. `safeNextPath` (apps/web/lib/safe-next.ts)
+//      is what stands between that value and an open redirect to a different
+//      host; it is pinned directly here.
+//
 // Run with `pnpm email-check`. Exit 0 = green, 1 = at least one failure.
 
 import { getCatalog } from '../packages/i18n/src/catalogs.ts';
@@ -24,6 +31,7 @@ import { LOCALES, type Locale } from '../packages/i18n/src/locale.ts';
 import { renderConfirmEmail } from '../apps/web/lib/emails/confirm.ts';
 import { renderResetEmail } from '../apps/web/lib/emails/reset.ts';
 import { escapeHtml } from '../apps/web/lib/emails/shell.ts';
+import { safeNextPath } from '../apps/web/lib/safe-next.ts';
 
 let failures = 0;
 const lines: string[] = [];
@@ -131,6 +139,28 @@ check(
   'a confirm render carries the link it was given, not a fixed one',
   !renderConfirmEmail({ locale: 'pt-PT', link: CONFIRM_LINK }).text.includes(RESET_LINK),
 );
+
+// ── the open-redirect guard on `next` (/auth/confirm) ───────────────────────
+// The redirect at the end of /auth/confirm used to be plain string
+// concatenation onto `origin`, which let a `next` of `@evil.com/` resolve to
+// a different host entirely. `safeNextPath` is the pure half of the fix; this
+// pins it directly, the same way the link shapes above are pinned as
+// literals rather than derived from the code under test.
+const NEXT_FALLBACK = '/';
+check('safeNextPath: an ordinary destination passes through', safeNextPath('/onboarding', NEXT_FALLBACK) === '/onboarding');
+check(
+  'safeNextPath: a destination carrying its own query string passes through',
+  safeNextPath('/nova-password?x=1', NEXT_FALLBACK) === '/nova-password?x=1',
+);
+check('safeNextPath: the userinfo@host trick is refused', safeNextPath('@evil.com/', NEXT_FALLBACK) === NEXT_FALLBACK);
+check('safeNextPath: protocol-relative is refused', safeNextPath('//evil.com', NEXT_FALLBACK) === NEXT_FALLBACK);
+check('safeNextPath: an absolute URL is refused', safeNextPath('https://evil.com', NEXT_FALLBACK) === NEXT_FALLBACK);
+check(
+  'safeNextPath: the backslash variant of protocol-relative is refused',
+  safeNextPath('/\\evil.com', NEXT_FALLBACK) === NEXT_FALLBACK,
+);
+check('safeNextPath: a javascript: scheme is refused', safeNextPath('javascript:alert(1)', NEXT_FALLBACK) === NEXT_FALLBACK);
+check('safeNextPath: a null next value falls back', safeNextPath(null, NEXT_FALLBACK) === NEXT_FALLBACK);
 
 for (const line of lines) console.log(`  ${line}`);
 console.log(`\nchecked ${lines.length} assertions`);

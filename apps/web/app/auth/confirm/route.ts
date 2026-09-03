@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import type { EmailOtpType } from '@supabase/supabase-js';
 import { createUserClient } from '@capo/db/user-client';
 import { PENDING_EMAIL_COOKIE } from '@/lib/pending-email';
+import { safeNextPath } from '@/lib/safe-next';
 
 // Where every account email lands: signup confirmation, the resend, and
 // password recovery. `next` decides where the now-authenticated session goes
@@ -25,12 +26,27 @@ import { PENDING_EMAIL_COOKIE } from '@/lib/pending-email';
 // RESEND_API_KEY is unset on the deployment, because sendAuthEmail's documented
 // fallback in that state is Supabase's built-in mailer, whose links are exactly
 // this shape. Do not delete it before that fallback goes.
+//
+// `next` names where BOTH shapes land once verification succeeds, and it is
+// caller-controlled: it rides the query string, which means a reused or
+// rewritten link can carry anything. `${origin}${next}` used to be plain
+// string concatenation, which a value like `@evil.com/` turns into a redirect
+// to a different host entirely (see lib/safe-next.ts for the mechanism). Two
+// layers now stand between that value and the redirect: `safeNextPath` refuses
+// anything that is not a plain same-app path, and the `new URL(...).origin`
+// check below refuses anything that still resolves off this host.
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = request.nextUrl;
   const tokenHash = searchParams.get('token_hash');
   const type = searchParams.get('type') as EmailOtpType | null;
   const code = searchParams.get('code');
-  const next = searchParams.get('next') ?? '/';
+  const candidateNext = safeNextPath(searchParams.get('next'), '/');
+  let next = '/';
+  try {
+    next = new URL(candidateNext, origin).origin === origin ? candidateNext : '/';
+  } catch {
+    next = '/';
+  }
 
   const supabase = await createUserClient();
 
