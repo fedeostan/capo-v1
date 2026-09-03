@@ -26,6 +26,7 @@
     "./capabilities/plan-quality": "./src/capabilities/plan-quality.ts",
     "./capabilities/workdays": "./src/capabilities/workdays.ts",
     "./capabilities/collaborators": "./src/capabilities/collaborators.ts",
+    "./capabilities/request-urgency": "./src/capabilities/request-urgency.ts",
     "./capabilities/reschedule": "./src/capabilities/reschedule.ts",
     "./capabilities/reschedule-propose": "./src/capabilities/reschedule-propose.ts",
     "./translation": "./src/translation/index.ts",
