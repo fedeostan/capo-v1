@@ -30,7 +30,10 @@ Esta empresa já tem alguma coisa registada, mas ${gaps.join(' e ')}. Se ainda n
 
   onboardingDone: 'FEITO',
   onboardingMissing: 'FALTA',
-  onboardingAbout: value => (value === null ? 'ainda não sabes o que a empresa faz' : `"${value}"`),
+  // `trim()`, so a whitespace-only value renders as missing and cannot make
+  // the status word and the detail contradict each other.
+  onboardingAbout: value =>
+    value === null || value.trim() === '' ? 'ainda não sabes o que a empresa faz' : `"${value.trim()}"`,
   onboardingJobs: (count, withClient, withAddress) =>
     count === 0
       ? 'nenhuma obra registada'

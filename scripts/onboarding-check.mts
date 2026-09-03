@@ -19,7 +19,12 @@
 //
 //   1. THE COLUMN DECIDES, NOT THE COUNTS. `onboarded_at` null means the
 //      checklist runs whatever the rows say; set means it never runs again,
-//      whatever the rows say. That is the whole point of the column.
+//      whatever the rows say. That is the whole point of the column. And an
+//      ABSENT column (the code live, 0046 not applied yet) reads as ALREADY
+//      ONBOARDED, never as "still onboarding": a deploy landing early must
+//      degrade to the product before the migration, and the one thing it must
+//      never do is drop every established customer into a setup conversation
+//      whose two tools cannot run.
 //   2. EVERY STATE RENDERS SOMETHING TRUE. Fresh, part-done, and complete but
 //      unstamped each produce a block, in all three languages, naming exactly
 //      the items that are missing — and the complete-but-unstamped one still
@@ -119,6 +124,36 @@ const snap = (over: Partial<CompanySnapshot>): CompanySnapshot => ({ ...EMPTY, .
     'the rule ignores onboarded_at entirely',
     missingOnboardingItems(snap({ onboardedAt: '2026-01-01T00:00:00Z' })).length === 4,
     'the stamp is a decision, the rule is about the rows',
+  );
+}
+
+// ── 1b. an ABSENT column is not a NULL one ──────────────────────────────────
+//
+// The deploy-ordering hazard, pinned in both directions. `undefined` is what a
+// `select('*')` row carries when 0046 has not been applied; `null` is what the
+// column itself says while a company is being set up. Collapsing the first into
+// the second (a `??`, the obvious way to write it) puts every live tenant back
+// into onboarding for the whole window between the deploy and the migration.
+for (const locale of LOCALES) {
+  const absent = snap({ onboardedAt: undefined, activeObras: 2, activeWorkers: 3, openTasks: 5, about: null });
+  eq(
+    `${locale}/column-absent: a healthy tenant gets NO onboarding block`,
+    buildOnboardingBlock(absent, locale),
+    null,
+  );
+  const absentGap = { ...absent, activeObras: 0 };
+  check(
+    `${locale}/column-absent: a gap is the pre-0046 soft nudge, never the checklist`,
+    (buildOnboardingBlock(absentGap, locale) ?? '').startsWith(NUDGE_HEADING[locale]),
+  );
+  check(
+    `${locale}/column-absent: and never the checklist, even with nothing on record at all`,
+    !(buildOnboardingBlock(snap({ onboardedAt: undefined }), locale) ?? '').includes(CHECKLIST_HEADING[locale]),
+  );
+  // The same company, one state apart: an explicit SQL NULL.
+  check(
+    `${locale}/column-null: the SAME company with an explicit NULL DOES get the checklist`,
+    (buildOnboardingBlock({ ...absent, onboardedAt: null }, locale) ?? '').startsWith(CHECKLIST_HEADING[locale]),
   );
 }
 
@@ -265,6 +300,24 @@ for (const locale of LOCALES) {
     };
   };
 
+  /** A Db whose every write answers with one Postgres error. */
+  const ctxErroring = (error: { code: string; message: string }): ToolContext => {
+    const stub = (): unknown =>
+      new Proxy(
+        {},
+        {
+          get(_t, prop) {
+            if (prop === 'then') return (resolve: (v: unknown) => void) => resolve({ data: null, error });
+            return () => stub();
+          },
+        },
+      );
+    return {
+      ...ctxWith({ name: 'Casa Nova Lda' }, {}),
+      db: { from: () => stub(), rpc: async () => ({ data: null, error: null }) } as unknown as Db,
+    };
+  };
+
   const notReady = (await (finish as CapoTool).execute(
     {},
     ctxWith({ name: 'Casa Nova Lda', onboarded_at: null, about: null }, { jobs: 0, workers: 0, tasks: 0 }),
@@ -281,6 +334,42 @@ for (const locale of LOCALES) {
   )) as { status: string; dashboard_url?: string };
   eq('an already-finished company is not an error', already.status, 'already_finished');
   eq('and still hands back the dashboard link', already.dashboard_url, 'https://www.construcapo.com');
+
+  // The branch that actually writes: the compare-and-set UPDATE, and the only
+  // path that returns the link a manager has been waiting the whole setup for.
+  const finished = (await (finish as CapoTool).execute(
+    {},
+    ctxWith(
+      { name: 'Casa Nova Lda', onboarded_at: null, about: 'Pinturas' },
+      { jobs: 1, workers: 2, tasks: 4 },
+    ),
+  )) as { status: string; dashboard_url?: string };
+  eq('a complete company is stamped', finished.status, 'finished');
+  eq('and the dashboard link comes back with it', finished.dashboard_url, 'https://www.construcapo.com');
+
+  // Deploy ordering: the code live, 0046 unapplied. Neither tool may hand the
+  // model a raw driver error it will simply retry.
+  const absentColumn = await (finish as CapoTool)
+    .execute({}, ctxWith({ name: 'Casa Nova Lda' }, { jobs: 1, workers: 1, tasks: 1 }))
+    .then(() => null)
+    .catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+  check(
+    'finish_onboarding refuses clearly when the 0046 columns are not there yet',
+    absentColumn !== null && absentColumn.includes('0046') && absentColumn.includes('not available yet'),
+    String(absentColumn),
+  );
+
+  const aboutOnMissingColumn = await (setAbout as CapoTool)
+    .execute({ about: 'Pinturas' }, ctxErroring({ code: '42703', message: 'column "about" does not exist' }))
+    .then(() => null)
+    .catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+  check(
+    'set_company_about turns a 42703 into a plain answer rather than a driver error',
+    aboutOnMissingColumn !== null &&
+      aboutOnMissingColumn.includes('0046') &&
+      aboutOnMissingColumn.includes('not available yet'),
+    String(aboutOnMissingColumn),
+  );
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

@@ -26,7 +26,8 @@ Esta empresa ya tiene algo registrado, pero ${gaps.join(' y ')}. Si aún no lo h
 
   onboardingDone: 'HECHO',
   onboardingMissing: 'FALTA',
-  onboardingAbout: value => (value === null ? 'todavía no sabes a qué se dedica la empresa' : `"${value}"`),
+  onboardingAbout: value =>
+    value === null || value.trim() === '' ? 'todavía no sabes a qué se dedica la empresa' : `"${value.trim()}"`,
   onboardingJobs: (count, withClient, withAddress) =>
     count === 0
       ? 'ninguna obra registrada'

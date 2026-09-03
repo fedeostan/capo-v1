@@ -76,13 +76,29 @@ export interface CompanySnapshot {
   // ── the onboarding facts (migration 0046) ────────────────────────────────
   // `onboardedAt` is the whole reason this is a column and not a count: it
   // records a decision that was taken once, and no arrangement of today's rows
-  // can reconstruct it. NULL means the initial setup is still running, which is
-  // what turns the checklist block on.
+  // can reconstruct it.
+  //
+  // THREE STATES, and the third one is load-bearing:
+  //   string      the setup was declared finished, at that moment.
+  //   null        an explicit SQL NULL: the setup is still running. This is the
+  //               only state that turns the checklist on.
+  //   undefined   the COLUMN IS NOT THERE. The code is live and 0046 has not
+  //               been applied yet.
+  //
+  // `undefined` must read as ALREADY ONBOARDED, never as "still onboarding",
+  // and collapsing it into `null` with a `??` is exactly the bug that rule
+  // exists to stop. This repo has shipped an app half three weeks ahead of its
+  // migration (0038, which is why scripts/migration-drift.mts exists); in that
+  // window a collapsed undefined would drop EVERY established customer into an
+  // onboarding conversation whose two tools cannot run, which is the precise
+  // harm the migration's backfill exists to prevent, arriving through another
+  // door. The pending-column rule in AGENTS.md is that a deploy landing early
+  // degrades to the PRE-migration product; here that means "onboarded".
   //
   // The tallies below are the DETAIL of the checklist rather than its state:
   // "3 jobs, 1 with an address" is what lets Capo ask for the missing address
   // instead of asking again whether there is a job.
-  onboardedAt: string | null;
+  onboardedAt: string | null | undefined;
   about: string | null;
   jobsWithClient: number;
   jobsWithAddress: number;
@@ -105,10 +121,10 @@ const ONBOARDING_TALLY_LIMIT = 200;
 // `select('*')` on companies rather than a column list, and that is the 0031
 // rule rather than laziness: `about` and `onboarded_at` are columns migration
 // 0046 adds, and naming a pending column makes a deploy landing before its
-// migration answer 42703 on EVERY turn. Absent fields read as undefined, which
-// the coercion below turns into "no description, not onboarded" — i.e. the
-// pre-0046 product, plus a checklist that will simply be rendered until the
-// migration lands.
+// migration answer 42703 on EVERY turn. The `in` test below is the other half
+// of that rule: an ABSENT key is kept absent rather than coerced to null, so a
+// deploy landing early degrades to the pre-0046 product (see the three states
+// on CompanySnapshot.onboardedAt).
 //
 // EXPORTED because finish_onboarding re-reads exactly these facts before it
 // stamps the company as set up. One loader rather than two: a second query
@@ -126,7 +142,7 @@ export async function loadCompanySnapshot(db: Db, companyId: string): Promise<Co
       db.from('workers').select('phone, whatsapp_opt_in_at, whatsapp_opt_out_at').eq('company_id', companyId).eq('active', true).limit(ONBOARDING_TALLY_LIMIT),
     ]);
     if (company.error || !company.data) return null;
-    const row = company.data as { name: string; about?: string | null; onboarded_at?: string | null };
+    const row = company.data as Record<string, unknown> & { name: string };
     const jobs = jobRows.data ?? [];
     const crew = workerRows.data ?? [];
     return {
@@ -135,8 +151,11 @@ export async function loadCompanySnapshot(db: Db, companyId: string): Promise<Co
       activeWorkers: workers.count ?? 0,
       openTasks: tasks.count ?? 0,
       pendingProposals: proposals.count ?? 0,
-      onboardedAt: row.onboarded_at ?? null,
-      about: row.about ?? null,
+      // `in`, never `??`: the difference between "the column says NULL" and
+      // "there is no such column" is the difference between onboarding an
+      // established customer and leaving him alone.
+      onboardedAt: 'onboarded_at' in row ? ((row.onboarded_at as string | null) ?? null) : undefined,
+      about: 'about' in row ? ((row.about as string | null) ?? null) : null,
       jobsWithClient: jobs.filter(j => j.client_name !== null && j.client_name !== '').length,
       jobsWithAddress: jobs.filter(j => j.address !== null && j.address !== '').length,
       workersWithPhone: crew.filter(w => w.phone !== null && w.phone !== '').length,
@@ -251,6 +270,10 @@ export function missingOnboardingItems(snapshot: CompanySnapshot): OnboardingIte
  *                         byte-for-byte, for a live tenant that happens to have
  *                         no active obra this week. A finished tenant is never
  *                         re-onboarded, whatever their counts say today.
+ *   COLUMN ABSENT         (undefined) the same soft nudge. `=== null` and not a
+ *                         falsy test, deliberately: a deploy landing ahead of
+ *                         0046 must behave like the product before it, and the
+ *                         one thing it must never do is onboard everybody.
  *
  * `firstUse` is deliberately left unreferenced rather than deleted: it is the
  * pre-0046 opening block, and the copy stays in the catalog so a rollback of
@@ -390,10 +413,21 @@ export async function buildSystemPrompt({
     snapshot ? `${t.snapshotActiveWorkers}: ${snapshot.activeWorkers}` : null,
     snapshot ? `${t.snapshotOpenTasks}: ${snapshot.openTasks}` : null,
     snapshot ? `${t.snapshotPendingProposals}: ${snapshot.pendingProposals}` : null,
-    // Not conditional on the snapshot: it comes from the caller, not the
-    // database, so a failed count read is no reason to stop telling the model
-    // where the app is.
-    `${t.snapshotApp}: ${appUrl}`,
+    // WITHHELD WHILE THE SETUP IS RUNNING, and that is a structural guard
+    // rather than a tidiness rule. `finish_onboarding` RETURNS the dashboard
+    // address, which is what makes "share it only once the setup succeeded" a
+    // property of the mechanism instead of the model's goodwill. Left in the
+    // prompt from turn one, the model has the link in front of it for the whole
+    // conversation with nothing telling it to wait, and the plausible failure is
+    // the original bug wearing a different hat: "meanwhile you can see
+    // everything at construcapo.com", the manager leaves, and the company is
+    // never finished being set up.
+    //
+    // A FAILED snapshot read also withholds it. Not knowing whether this
+    // company is mid-setup is a reason to say nothing, not a reason to guess:
+    // the cost is one turn in which Capo cannot name the app, and
+    // `pnpm onboarding-check` pins the absence.
+    snapshot && snapshot.onboardedAt !== null ? `${t.snapshotApp}: ${appUrl}` : null,
   ].filter((line): line is string => line !== null);
   const snapshotBlock = factLines.length > 0 ? `${t.snapshotHeading}\n${factLines.join('\n')}` : null;
   const onboardingBlock = snapshot ? buildOnboardingBlock(snapshot, locales.user) : null;

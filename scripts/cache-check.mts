@@ -284,6 +284,49 @@ for (const locale of LOCALES) {
     'the cached half is still exactly persona ⊕ policy ⊕ language directive',
     cached === joinBlocks(managerStableBlocks({ user: 'pt-PT', company: 'pt-PT' })),
   );
+  // The dashboard link is WITHHELD until finish_onboarding returns it, and this
+  // is where that stops being a promise in the copy and becomes a property of
+  // the prompt: the string is in NEITHER half while the setup is running. Left
+  // in the snapshot from turn one, the model has it in front of it for the whole
+  // conversation with nothing telling it to wait, and the plausible failure is
+  // the original bug in a new shape: "meanwhile you can see everything at
+  // construcapo.com", the manager leaves, the company is never finished.
+  check(
+    'the dashboard URL reaches NEITHER half while onboarded_at is null',
+    !cached.includes('https://www.construcapo.com') && !uncached.includes('https://www.construcapo.com'),
+  );
+}
+
+// Deploy ordering (0046 unapplied): the companies row simply has no
+// `onboarded_at` key. That must degrade to the PRE-migration product, so no
+// checklist, and the dashboard line comes back — an established tenant is
+// exactly who it is for.
+{
+  const preMigration = stubDb({
+    companies: { data: { name: 'Construções Silva' }, error: null },
+    profiles: { data: { full_name: 'Aníbal Gatsby' }, error: null },
+    jobs: { count: 3, error: null, data: [] },
+    workers: { count: 7, error: null, data: [] },
+    tasks: { count: 12, error: null },
+    proposals: { count: 1, error: null },
+  });
+  const msgs = await buildSystemPrompt({
+    db: preMigration,
+    companyId: 'company-1',
+    userId: 'profile-1',
+    appUrl: 'https://www.construcapo.com',
+    summary: null,
+    locales: { user: 'pt-PT', company: 'pt-PT' },
+  });
+  const whole = `${msgs[0]?.content ?? ''}\n${msgs[1]?.content ?? ''}`;
+  check(
+    'an ABSENT onboarded_at column renders no checklist at all',
+    !whole.includes('# Configuração inicial em curso'),
+  );
+  check(
+    'and the tenant is treated as onboarded, so the dashboard line is present',
+    whole.includes('https://www.construcapo.com'),
+  );
 }
 
 // The two live-fact reads fail INDEPENDENTLY (issue #62). If a transient

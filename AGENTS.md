@@ -1453,9 +1453,29 @@ Structural invariants (do not regress):
   up by counting rows, and the count switched the whole onboarding block off the
   moment one obra and one worker existed: a manager who had answered two
   questions was told "done" and left with an empty company. Seven things:
-  - **NULL means still being onboarded, and the null is the INHERIT case**, the
-    same shape as `workers.language` and `memories.profile_id`. `finish_onboarding`
-    is the only thing that ever stamps it.
+  - **THREE STATES, and the third is a deploy-ordering rule.** A string is the
+    moment the setup was declared finished; an explicit SQL NULL means it is
+    still running, and is the ONLY state that turns the checklist on; an ABSENT
+    column (`select('*')` on a database where 0046 has not been applied) reads
+    as ALREADY ONBOARDED. `CompanySnapshot.onboardedAt` is therefore
+    `string | null | undefined` and the loader uses `'onboarded_at' in row`,
+    never `??`. Collapsing absent into null is the obvious way to write it and
+    is the bug: with the code live and the migration pending it drops EVERY
+    established customer into a setup conversation whose two tools cannot run,
+    which is exactly the harm the backfill exists to prevent, arriving through
+    another door (0038 sat merged and unapplied for three weeks on this repo).
+    Both tools answer a 42703 with a plain "not available yet" sentence rather
+    than a driver error the model would retry, and `pnpm onboarding-check` pins
+    absent and null side by side.
+  - **The dashboard URL is WITHHELD from the prompt while `onboarded_at` is
+    null.** `finish_onboarding` RETURNS it, which is what makes "share it only
+    once the setup succeeded" a property of the mechanism rather than of the
+    model's goodwill. The `snapshotApp` line renders only for a company that is
+    not mid-setup (and not at all when the snapshot read failed: not knowing is
+    a reason to say nothing). Left in from turn one, the plausible failure is
+    the original bug in a new shape: Capo offers the link, the manager leaves
+    for the dashboard, and the company is never finished being set up.
+    `pnpm cache-check` asserts the string reaches neither half.
   - **The backfill was mandatory**, exactly as `0026`'s `pushed_at` and `0033`'s
     welcome ledger were: every company with at least one job AND one worker is
     stamped `now()` by the migration itself. Without it the first deploy tells

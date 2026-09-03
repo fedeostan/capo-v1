@@ -29,6 +29,23 @@ import type { CapoTool } from './types';
 // what an approval card is, would be a card asking him to confirm the sentence
 // he had just typed. The onboarding conversation would be made of them.
 
+/**
+ * Postgres' "column does not exist". It is what BOTH tools get if this code is
+ * live and migration 0046 has not been applied yet, which on this repository is
+ * a real window rather than a theoretical one (0038 sat merged and unapplied
+ * for three weeks). Left unhandled the model receives a raw driver error and
+ * will retry it; named, it is told plainly that the feature is not switched on
+ * yet, so it can carry on with the conversation instead.
+ */
+const UNDEFINED_COLUMN = '42703';
+
+function missingColumnError(tool: string, error: { code?: string; message: string }): Error | null {
+  if (error.code !== UNDEFINED_COLUMN) return null;
+  return new Error(
+    `${tool} is not available yet: the onboarding columns (migration 0046) are not in the database. Carry on with the conversation and do not call it again.`,
+  );
+}
+
 export const setCompanyAboutInput = z.object({
   about: z
     .string()
@@ -56,7 +73,7 @@ export const setCompanyAbout: CapoTool<z.infer<typeof setCompanyAboutInput>> = {
       // statement in Postgres, not an error).
       .select('id')
       .maybeSingle();
-    if (error) throw new Error(`set_company_about failed: ${error.message}`);
+    if (error) throw missingColumnError('set_company_about', error) ?? new Error(`set_company_about failed: ${error.message}`);
     if (!data) throw new Error('set_company_about failed: company not found');
     return { about: input.about };
   },
@@ -76,6 +93,16 @@ export const finishOnboarding: CapoTool<Record<string, never>> = {
     // can never disagree about what is missing.
     const snapshot = await loadCompanySnapshot(ctx.db, ctx.companyId);
     if (!snapshot) throw new Error('finish_onboarding failed: could not read the company');
+
+    // `undefined`, not null: the column is not in the database yet. Answered
+    // before the checklist, because on that deploy there is nothing to stamp and
+    // no block asking for one either (buildOnboardingBlock reads the same three
+    // states and renders the pre-0046 product).
+    if (snapshot.onboardedAt === undefined) {
+      throw new Error(
+        'finish_onboarding is not available yet: the onboarding columns (migration 0046) are not in the database. Carry on with the conversation and do not call it again.',
+      );
+    }
 
     if (snapshot.onboardedAt !== null) {
       // Already finished. Not an error: the honest answer is the link, because
@@ -103,8 +130,12 @@ export const finishOnboarding: CapoTool<Record<string, never>> = {
       .is('onboarded_at', null)
       .select('id')
       .maybeSingle();
-    if (error) throw new Error(`finish_onboarding failed: ${error.message}`);
-    if (!data) throw new Error('finish_onboarding failed: the company was not updated');
+    if (error) throw missingColumnError('finish_onboarding', error) ?? new Error(`finish_onboarding failed: ${error.message}`);
+    // Nothing matched, which after the read above means somebody else stamped
+    // the company in between. That is a race, not a failure: the honest answer
+    // is the same one an already-finished company gets, because the setup is in
+    // fact finished and the manager is waiting for a link.
+    if (!data) return { status: 'already_finished' as const, dashboard_url: ctx.appUrl };
 
     return { status: 'finished' as const, dashboard_url: ctx.appUrl };
   },

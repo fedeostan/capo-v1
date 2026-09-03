@@ -26,7 +26,8 @@ This company has some data on record, but ${gaps.join(' and ')}. If you have not
 
   onboardingDone: 'DONE',
   onboardingMissing: 'MISSING',
-  onboardingAbout: value => (value === null ? 'you do not know what this company does yet' : `"${value}"`),
+  onboardingAbout: value =>
+    value === null || value.trim() === '' ? 'you do not know what this company does yet' : `"${value.trim()}"`,
   onboardingJobs: (count, withClient, withAddress) =>
     count === 0
       ? 'no job on record'
