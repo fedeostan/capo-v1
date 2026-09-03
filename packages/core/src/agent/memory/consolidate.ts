@@ -4,7 +4,6 @@ import type { Db } from '@capo/db/client';
 import type { Locale } from '@capo/i18n/locale';
 import { getModel } from '../models';
 import { localeName } from '../prompts/language';
-import { rowText } from './conversation';
 import { MEMORY_CONTENT_MAX_CHARS, selectPromptMemories, type MemoryRow } from './prompt-memories';
 
 // ── THE NIGHT SHIFT (issue #48) ─────────────────────────────────────────────
@@ -33,6 +32,18 @@ import { MEMORY_CONTENT_MAX_CHARS, selectPromptMemories, type MemoryRow } from '
 // reported success rate above 95% and no visible change in behaviour. The
 // separate-tables design (0027) is what makes the rule structural here: this
 // file has no query that could reach a worker's text.
+//
+// There is a SECOND route into this file that 0027 does not cover, and it is
+// not a query at all. A manager tool can RETURN a worker's words: `crew_requests`
+// exists so the manager can ask "what did they ask me for?" and read the crew's
+// own sentences back. That answer rides home inside Capo's assistant message,
+// and `persistAssistantMessage` stores the whole message, tool parts included.
+// So a row in `messages` whose role is `assistant` and whose author is Capo can
+// still contain, verbatim, something a crew member typed. Nothing about that is
+// wrong for the live turn, which is the entire feature. It is wrong HERE,
+// because what this file writes is permanent and unreviewed. `transcriptText`
+// below is the answer: an allowlist of one part type, owned by this file, and
+// gated by `pnpm memory-check` so widening it cannot be silent.
 //
 // ── FOUR THINGS THAT LOOK LIKE DETAILS AND ARE NOT ─────────────────────────
 //  1. IT WRITES MEMORIES, NOT PROSE. The summarizer beside it writes a paragraph
@@ -124,6 +135,60 @@ export interface ConsolidationRejections {
 export interface FilteredCandidates {
   accepted: ConsolidationCandidate[];
   rejected: ConsolidationRejections;
+}
+
+/**
+ * The ONLY thing the night agent is allowed to read out of a stored message:
+ * the parts whose `type` is exactly `text`. That is an allowlist of one, and it
+ * is a boundary rather than tidiness.
+ *
+ * WHAT IT KEEPS OUT, AND WHY IT MATTERS HERE MORE THAN ANYWHERE ELSE.
+ * A row in `messages` is a whole AI SDK `UIMessage`, persisted wholesale by
+ * `persistAssistantMessage`. Alongside Capo's spoken text that carries the tool
+ * traffic of the turn: `tool-<name>` and `dynamic-tool` parts holding the exact
+ * `input` the model sent and the exact `output` the tool returned, plus
+ * `reasoning`, `file` and provider `data-*` parts. Tool output is database rows
+ * verbatim, and some of those rows are prose a CREW MEMBER typed.
+ * `crew_requests` is the worked example: it exists so the manager can ask "what
+ * did they ask me for?" and get their own words back, which is the whole point
+ * of the feature and must not change.
+ *
+ * A worker's words reaching the manager's live context for one turn is what
+ * that feature is FOR. A worker's words reaching this file is a different
+ * thing, because what this file produces is permanent: an accepted candidate
+ * becomes a row in `memories`, is injected into every future system prompt for
+ * that company, and is never re-checked by anything. AGENTS.md states the rule
+ * this function makes true ("reads `messages` and nothing else, never
+ * `worker_messages` ... a memory written from one would be that rule broken
+ * PERMANENTLY rather than for one turn"), and the separate-tables design of
+ * 0027 enforces it against the obvious route. A tool result is the route that
+ * design does not cover, because it does not come from `worker_messages` at
+ * read time at all: it arrives inside the manager's OWN assistant row.
+ *
+ * WHY THIS IS NOT `rowText`, WHICH ALREADY DOES THE SAME FILTERING.
+ * It does today, and that is exactly the problem. `rowText` serves the live
+ * window (`toThread`) and the duplicate-apology check in `turn-failure.ts`,
+ * where widening it is a local, reasonable-looking change with no visible
+ * memory consequence: rendering a tool result into an event line, or picking up
+ * `reasoning` parts, would be a one-line edit in a file that says nothing about
+ * permanence. Sharing one helper made this exclusion an ACCIDENT of another
+ * function's job. Two functions is the correct amount of duplication here
+ * because they answer two different questions: `rowText` asks "what was said in
+ * this thread", and this asks "what may become permanent". Do not merge them
+ * back together, and do not widen this one to add context for the night agent.
+ * If a future reader genuinely needs tool output in the transcript, the thing
+ * to change first is the promise in AGENTS.md, not this filter.
+ *
+ * `pnpm memory-check` drives this function with a row carrying crew prose in a
+ * tool result and asserts none of it comes back out.
+ */
+export function transcriptText(content: unknown): string {
+  const parts = (content as { parts?: Array<{ type?: unknown; text?: unknown }> } | null)?.parts;
+  if (!Array.isArray(parts)) return '';
+  return parts
+    .filter(part => part?.type === 'text' && typeof part.text === 'string' && part.text.length > 0)
+    .map(part => part.text as string)
+    .join('\n');
 }
 
 /**
@@ -321,7 +386,7 @@ export async function consolidateCompanyMemory(input: ConsolidationInput): Promi
     .map(row => {
       const day = row.created_at.slice(0, 10);
       const speaker = row.role === 'user' ? 'Manager' : 'Capo';
-      return `[${day}] ${speaker}: ${rowText(row) || '(no text)'}`;
+      return `[${day}] ${speaker}: ${transcriptText(row.content) || '(no text)'}`;
     })
     .join('\n');
 

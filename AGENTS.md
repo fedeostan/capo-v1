@@ -2047,6 +2047,25 @@ Structural invariants (do not regress):
     reason: since #47 they are several a day of our own copy about data already
     in `tasks`, so consolidating them is paying a model to consider writing down
     what the database already holds.
+  - **And it reads only the `text` PARTS of those rows, through
+    `transcriptText` in `consolidate.ts`, which is an allowlist of one.** 0027's
+    separate tables close the query route into this pass; they do not close the
+    TOOL-RESULT route, which is not a query at all. A row in `messages` is a
+    whole `UIMessage`, persisted wholesale by `persistAssistantMessage`, so it
+    carries the turn's `tool-*` parts with their `input` and `output` verbatim
+    — and a manager tool may legitimately return a crew member's own words
+    (`crew_requests`, #152/#166, exists precisely so the manager can read them).
+    That is right for one live turn and wrong as the seed of a permanent note.
+    `transcriptText` is a SECOND copy of the filtering `rowText` happens to do,
+    and the duplication is the point: `rowText` serves the live window and the
+    duplicate-apology check, where widening it looks local and harmless, so
+    sharing it made this exclusion an accident of another function's job. Do not
+    merge them back together. `pnpm memory-check` drives `transcriptText` with a
+    tool result carrying crew prose and asserts none of it comes back.
+    Known and NOT changed: the SUMMARIZER is the other permanent-output reader
+    of `messages` (each pass merges the previous summary forward indefinitely)
+    and still goes through `rowText`. It is safe today for the same incidental
+    reason, and is ungated.
   - **It writes MEMORIES, not prose**, which is what makes the manager's
     see-and-forget screen possible at all. A paragraph cannot be deleted a
     sentence at a time.
