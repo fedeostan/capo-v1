@@ -676,6 +676,18 @@ export interface PendingReview {
    * who took them or when.
    */
   photoCount: number;
+  /**
+   * True when this claim was filed WITHOUT a photo on purpose (0049).
+   *
+   * Different from `photoCount === 0`, and the two are read together. A count
+   * of zero is "nothing has arrived yet", which is ordinary and often
+   * temporary: on the check-in path Capo has not even asked yet. This flag is
+   * "there will not be one" — the crew member was asked twice, said they could
+   * not, and their reason is in `note`. Stored on the row rather than counted,
+   * because unlike the photo count it is a fact about the moment the claim was
+   * filed and can never stop being true.
+   */
+  photoWaived: boolean;
 }
 
 /**
@@ -696,9 +708,15 @@ export async function loadPendingReviews(
 ): Promise<Map<string, PendingReview>> {
   if (taskIds.length === 0) return new Map();
 
+  // `select('*')` rather than a column list, and the reason is 0049's
+  // `photo_waived`: naming a column a pending migration adds couples this read
+  // to that migration, and a deploy landing first answers 42703 — which here
+  // THROWS and takes down the whole Tarefas board. With a star select the field
+  // is simply absent and `=== true` reads it as false, which is the pre-0049
+  // product. Same rule as the view-extension one in AGENTS.md.
   const { data: reviews, error } = await db
     .from('task_reviews')
-    .select('id, task_id, note, declared_at, declared_by_worker_id')
+    .select('*')
     .eq('company_id', companyId)
     .eq('status', 'pending')
     .in('task_id', taskIds);
@@ -736,6 +754,8 @@ export async function loadPendingReviews(
         declaredByWorker: Boolean(r.declared_by_worker_id),
         declaredByName: r.declared_by_worker_id ? (names.get(r.declared_by_worker_id) ?? null) : null,
         photoCount: photos.get(r.task_id) ?? 0,
+        // `=== true`, never a bare read: see the select('*') note above.
+        photoWaived: r.photo_waived === true,
       },
     ]),
   );

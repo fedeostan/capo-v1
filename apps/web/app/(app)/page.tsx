@@ -115,7 +115,18 @@ function DecisionCard({ home, t }: { home: HomeData; t: Catalog }) {
     <Section title={t.home.decision}>
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <Badge tone="review">{t.dashboard.taskStatus.pending_review}</Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="review">{t.dashboard.taskStatus.pending_review}</Badge>
+            {/* The claim was filed with no photo, on purpose, after Capo asked
+                twice (0049). The SAME two catalog keys the board's review
+                control renders, so the two surfaces cannot say different
+                things about one claim. Danger tone here and nowhere else on
+                this card: it is the one fact that changes what the manager
+                does next. */}
+            {review.photoWaived && review.photoCount === 0 && (
+              <Badge tone="danger">{t.screens.taskReview.proofWaivedBadge}</Badge>
+            )}
+          </div>
           <span className="text-micro text-fg-faint">
             {activityTime(review.declaredAt, t)}
             {more > 0 && ` · ${t.home.decisionMore(more)}`}
@@ -132,6 +143,9 @@ function DecisionCard({ home, t }: { home: HomeData; t: Catalog }) {
           <p className="mt-2 border-l-2 border-hairline pl-3 text-callout text-fg-muted italic">
             “{review.note}”
           </p>
+        )}
+        {review.photoWaived && review.photoCount === 0 && (
+          <p className="mt-2 text-caption text-danger">{t.screens.taskReview.proofWaived}</p>
         )}
         <div className="mt-3">
           <ButtonLink href={task ? `/tarefas/${task.id}` : '/tarefas'} variant="secondary">

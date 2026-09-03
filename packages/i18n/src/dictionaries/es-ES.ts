@@ -205,6 +205,7 @@ const dict: Catalog = {
     kind: {
       review_pending: subject => `“${subject}” está pendiente de tu control.`,
       worker_request: subject => `${subject} ha pedido algo para la obra.`,
+      review_no_photo: subject => `“${subject}” se dio por terminada sin foto.`,
     },
     noSubject: 'Una tarea',
     noteLabel: 'Lo que han escrito:',
@@ -434,6 +435,8 @@ const dict: Catalog = {
       failed: 'No se pudo resolver el control',
       proofNone: 'Sin fotos adjuntas.',
       proofPhotos: n => (n === 1 ? '1 foto adjunta.' : `${n} fotos adjuntas.`),
+      proofWaived: 'Sin foto. Capo la pidió dos veces y sigue haciendo falta una.',
+      proofWaivedBadge: 'Sin foto',
     },
     taskDetail: {
       fallbackTitle: 'Tarea',
