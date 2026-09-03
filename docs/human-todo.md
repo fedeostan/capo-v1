@@ -166,9 +166,29 @@ not code. See §2.
 ## 2. Supabase auth (self-serve signup, password reset, Google OAuth)
 
 1. Supabase dashboard → Authentication → Providers → Email: enable "Allow
-   new users to sign up". Until this is on, `/registar` shows "Os registos
-   abrem em breve" for every signup attempt (env-gated failure mode, by
-   design).
+   new users to sign up".
+
+   ⚠ **Since W1 this toggle FAILS SILENTLY, and what it does depends on which
+   mailer is live.** It used to show "Os registos abrem em breve" on
+   `/registar`; that message and its copy were deleted, so there is now no
+   visible symptom at all.
+
+   - **On the legacy Supabase mailer** (the live path today, until
+     `RESEND_API_KEY` is added to Vercel — see step 2): the toggle still binds.
+     A visitor signing up gets the ordinary "check your inbox" success screen,
+     **no account is created and no email is ever sent**. Nothing on screen
+     says so. The only trace is `auth_email.signups_disabled` in the server
+     log. So if signups are off and somebody tells you they signed up and never
+     got the email, this is the first thing to check.
+   - **On the Resend path** (once the key is set): the toggle **does not bind
+     at all**. Capo creates accounts through Supabase's admin API, which
+     ignores it, so signups stay open no matter what this switch says.
+
+   The screen is deliberately identical in every case, because a signup form
+   that answers differently for different addresses becomes a way to test who
+   has a Capo account. If you ever need to genuinely close signups, that needs
+   a Capo-side setting rather than this dashboard switch; it is a small piece
+   of work, not currently built.
 2. ~~Supabase dashboard → Authentication → Emails: configure production SMTP
    and set EU-PT copy for the "Confirm signup" and "Reset password"
    templates.~~ **DONE DIFFERENTLY, and this step is now obsolete (W1).**
