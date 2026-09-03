@@ -97,6 +97,7 @@ import {
   workerMenuRowId,
   hiPayload,
   isHiPayload,
+  isHiTap,
   WhatsAppSendError,
   withinFreeFormWindow,
   type ApprovalLabels,
@@ -159,6 +160,16 @@ import {
   WELCOME_V2_APPROVED_LANGUAGES,
   welcomeTemplateFor,
 } from '../apps/web/lib/welcome-template.ts';
+// The one rule that must give the SAME answer in two apps: which manager the
+// welcome credits. It lives in @capo/db because apps may not import each other
+// (i18n ← db ← core ← {web, operator}), and the drift it prevents is invisible.
+import { pickAccountOwnerName } from '@capo/db/account-owner';
+// apps/operator's resend renderer. Imported for the same reason the two welcome
+// renderers are: it is pure — no Db, no clock, no env at module scope — and it
+// is the second place the welcome's words are assembled. The FIRST check in
+// this file that reaches into the operator app, and it is here because the
+// alternative is that the two renderings drift with nothing able to notice.
+import { planWelcomeResend } from '../apps/operator/app/welcome-resend.ts';
 // CREW REQUESTS (issue #152). The urgency arithmetic and the two envelopes the
 // manager reads. Pure — `today` arrives as a string — which is what lets this
 // file pin the rule that replaces "the model decides how urgent this sounds",
@@ -2073,6 +2084,38 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   check('a proposal id is not a hi', !isHiPayload(approve));
   check('a menu task row is not a hi', !isHiPayload(menuTask));
   check('the menu manager row is not a hi', !isHiPayload(menuManager));
+
+  // ── THE TWO ENVELOPES, which is the claim the whole button rests on ──────
+  // The welcome goes out as an approved TEMPLATE (the tap returns
+  // `type: 'button'` with `button.payload`) and, inside the free 24-hour
+  // window, as an interactive reply-buttons message (the tap returns
+  // `type: 'interactive'` with `interactive.button_reply.id`). isHiTap is the
+  // whole of what maps those two shapes onto one fact, and the failure of
+  // EITHER half is silent: the other envelope goes on working, so the button
+  // simply stops answering for one population of recipients.
+  check('a template quick reply is a hi tap', isHiTap({ type: 'button', button: { payload: hi } }));
+  check(
+    'an interactive reply button is the same hi tap',
+    isHiTap({ type: 'interactive', interactive: { button_reply: { id: hi } } }),
+  );
+  check('and case does not matter on either', isHiTap({ type: 'button', button: { payload: 'CAPO:HI' } }));
+  // The envelope FIELD is part of the shape: a payload on the wrong field is
+  // not a hi, or a check-in tap could be read as one by a future edit that
+  // stopped looking at `type`.
+  check('a payload on the interactive field is not a button tap', !isHiTap({ type: 'button', interactive: { button_reply: { id: hi } } }));
+  check('an id on the button field is not an interactive tap', !isHiTap({ type: 'interactive', button: { payload: hi } }));
+  // Everything else must fall through, or a hello would swallow a real message.
+  check('a text message is not a hi tap', !isHiTap({ type: 'text' }));
+  check('an empty envelope is not a hi tap', !isHiTap({}));
+  check('a check-in tap is not a hi tap', !isHiTap({ type: 'button', button: { payload: checkin } }));
+  check(
+    'a menu tap is not a hi tap',
+    !isHiTap({ type: 'interactive', interactive: { button_reply: { id: menuTask } } }),
+  );
+  check(
+    "a manager's approval tap is not a hi tap",
+    !isHiTap({ type: 'interactive', interactive: { button_reply: { id: approve } } }),
+  );
 }
 
 // ── the keyword tables in front of the agent ────────────────────────────────
@@ -2967,6 +3010,92 @@ eq('prose is markdown-converted and then flattened', converted[0]?.body, 'Obra c
   const [, messy] = renderWelcome({ ...worker, locale: 'pt-PT' }, 'Obras\nSilva\t& Filhos, Lda, a maior empresa de construção civil de toda a região norte de Portugal');
   eq('a multi-line company name is flattened before it reaches Meta', toTemplateParam(messy), messy);
   check('and clamped rather than allowed to run on', messy.includes('…'), messy);
+
+  // ── THE OPERATOR'S RESEND MUST SAY THE SAME THING ───────────────────────
+  // apps/operator's "resend a failed welcome" button renders the message a
+  // second time, because apps may not import each other's modules. Its own
+  // comment claims it is "built from the same catalog keys renderWelcome uses",
+  // and this is the only thing that can keep that claim true: the population it
+  // serves is, by definition, people whose FIRST welcome failed, so a drift
+  // here means the coldest wording reaching the people who have had the worst
+  // experience of Capo so far.
+  //
+  // WHICH manager is named is NOT duplicated — pickAccountOwnerName in
+  // @capo/db is one rule with two callers, and it is pinned below.
+  for (const locale of LOCALES) {
+    const t3 = getCatalog(locale).reminders;
+    for (const audience of ['worker', 'manager'] as const) {
+      const [name, middle] = renderWelcome(
+        { ...worker, audience, name: 'Miguel', locale },
+        'Construções Silva',
+        'João',
+      );
+      const plan = planWelcomeResend({
+        audience,
+        personName: 'Miguel',
+        companyName: 'Construções Silva',
+        managerName: 'João',
+        locale,
+      });
+      eq(`${locale} ${audience} — the resend's {{1}} is the sweep's`, plan.bodyParams[0], name);
+      eq(`${locale} ${audience} — the resend's {{2}} is the sweep's`, plan.bodyParams[1], middle);
+      eq(`${locale} ${audience} — and it goes out in this person's language`, plan.languageCode, t3.templateLanguage);
+    }
+    // The null case has to travel too: a resend for a company with no readable
+    // owner name omits the clause rather than rendering a placeholder.
+    const [, anonymousResend] = planWelcomeResend({
+      audience: 'worker',
+      personName: 'Miguel',
+      companyName: 'Construções Silva',
+      managerName: null,
+      locale,
+    }).bodyParams;
+    const [, anonymousSweep] = renderWelcome({ ...worker, locale }, 'Construções Silva', null);
+    eq(`${locale} — and the no-manager wording matches too`, anonymousResend, anonymousSweep);
+    // ⚠ The resend stays on the BUTTON-LESS template on purpose: giving it
+    // capo_welcome_v2 would put a second copy of the approval gate in the
+    // operator app, whose failure mode is a 132000 on every resend.
+    eq(
+      `${locale} — a resend uses the button-less template`,
+      planWelcomeResend({ audience: 'worker', personName: 'Miguel', companyName: 'X', managerName: null, locale })
+        .templateName,
+      'capo_welcome',
+    );
+  }
+
+  // ── THE EMPTY-DAY ANSWER MUST NOT SAY THE SAME THING TWICE ──────────────
+  // A crew member who taps "Olá!" with nothing scheduled reads two sentences:
+  // reminders.workerNothing ("Nada agendado para hoje.") from the shared
+  // briefing renderer, then whatsapp.hiWorkerMorning. This is the FIRST thing
+  // Capo ever writes to them, and it shipped repeating itself in the first
+  // three lines — exactly the machine tell voice-check exists to remove, and
+  // invisible to voice-check because neither sentence is wrong on its own.
+  for (const locale of LOCALES) {
+    const nothing = getCatalog(locale).reminders.workerNothing;
+    const morning = getCatalog(locale).whatsapp.hiWorkerMorning;
+    check(`${locale} — the 07:00 line does not repeat "nothing scheduled"`, !morning.includes(nothing), morning);
+    check(`${locale} — nor the other way round`, !nothing.includes(morning), nothing);
+    // What it IS for: saying when the next message arrives, so an empty first
+    // answer does not read as "this thing does nothing".
+    check(`${locale} — and it names the hour the day arrives`, /7/.test(morning), morning);
+  }
+
+  // ── WHO GETS NAMED: one rule, two apps (packages/db/src/account-owner.ts) ──
+  // Ordered created_at ASCENDING, so the newest NAMED row wins. Every branch is
+  // asserted because the two failures are opposite and both silent: the wrong
+  // colleague's name, or a placeholder where a name should be.
+  eq(
+    'the newest named profile is the one credited',
+    pickAccountOwnerName([{ full_name: 'Velho' }, { full_name: 'Novo' }]),
+    'Novo',
+  );
+  eq(
+    'a newer profile with no name does not blank out an older one',
+    pickAccountOwnerName([{ full_name: 'Federico' }, { full_name: null }, { full_name: '   ' }]),
+    'Federico',
+  );
+  eq('no profiles at all is null, not a placeholder', pickAccountOwnerName([]), null);
+  eq('and neither is a company whose only names are blank', pickAccountOwnerName([{ full_name: ' ' }]), null);
 
   // The thread note (issue #47's boundary, one more source). Crew names only,
   // and they are text the MANAGER typed.

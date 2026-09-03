@@ -1,4 +1,5 @@
 import type { Db } from '@capo/db/client';
+import { pickAccountOwnerName } from '@capo/db/account-owner';
 import type { WhatsAppRecipient } from '@capo/core/channels/whatsapp';
 import { coerceLocale, type Locale } from '@capo/i18n/locale';
 import { getCatalog } from '@capo/i18n/catalog';
@@ -264,13 +265,11 @@ export async function loadPendingWelcomes(
   }
 
   // Read off the SAME ordered profiles list the ledger used — never a second
-  // query, which could disagree with it. `.order('created_at')` is ascending,
-  // so the newest named profile is the last one that has a name.
-  let managerName: string | null = null;
-  for (const manager of managers ?? []) {
-    const named = manager.full_name?.trim();
-    if (named) managerName = named;
-  }
+  // query, which could disagree with it. The rule itself lives in @capo/db
+  // because apps/operator's "resend a failed welcome" button has to reach the
+  // identical answer and apps may not import each other; see
+  // packages/db/src/account-owner.ts.
+  const managerName = pickAccountOwnerName(managers ?? []);
 
   return {
     companyId: company.id,
@@ -300,10 +299,20 @@ export async function loadPendingWelcomes(
 const MAX_COMPANY_NAME = 60;
 
 /**
- * The same cap for the MANAGER's name, and it is the same cap the chat-thread
- * notes use for a person's name. It is manager-authored free text travelling
- * into the same Meta parameter as everything else in {{2}}, so it gets the same
- * flattening and the same ceiling.
+ * The RECIPIENT's own name, which is {{1}}.
+ *
+ * 40 characters, the cap this parameter has always had. It is a separate
+ * constant from MAX_MANAGER_NAME below even though the two numbers agree
+ * today: the person being greeted and the person being credited are different
+ * decisions, and sharing one constant would mean whoever widens one silently
+ * widens the other.
+ */
+const MAX_PERSON_NAME = 40;
+
+/**
+ * The MANAGER's name, which travels inside {{2}}. Manager-authored free text on
+ * exactly the same road as the company name, so it gets the same flattening and
+ * a ceiling of its own.
  */
 const MAX_MANAGER_NAME = 40;
 
@@ -335,7 +344,7 @@ export function renderWelcome(
   const manager = managerName?.trim() ? clamp(managerName, MAX_MANAGER_NAME) : null;
   const middle =
     target.audience === 'worker' ? t.welcomeWorker({ company, manager }) : t.welcomeManager(company);
-  return [clamp(target.name, MAX_MANAGER_NAME), middle];
+  return [clamp(target.name, MAX_PERSON_NAME), middle];
 }
 
 /**

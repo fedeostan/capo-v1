@@ -923,6 +923,15 @@ Structural invariants (do not regress):
     already orders. NULL is a real answer (no profile yet, a blank `full_name`)
     and the clause is then OMITTED, never filled with a placeholder naming
     nobody. It lives in `{{2}}`, so it needs no Meta re-approval.
+    **The rule is `pickAccountOwnerName` in `@capo/db`, not in either app**
+    (`posture.ts`'s slot and reasoning): the operator's "resend a failed
+    welcome" button renders this message a SECOND time and apps may not import
+    each other, so without one shared home the two would drift — and the people
+    who would read the colder wording are exactly the people whose first
+    welcome failed. It is pure and takes a created_at-ASCENDING list, which is
+    what lets the sweep answer it from the profiles it already fetched.
+    `pnpm whatsapp-check` asserts the two renderings are byte-identical, which
+    is the ONE assertion in that file that reaches into apps/operator.
 - **The welcome ends in a "Say hi" button, and `capo:hi` is the FOURTH tappable
   payload.** `capo_welcome_v2` is `capo_welcome`'s body byte for byte plus ONE
   quick reply; the free-form twin sends the same button as an interactive
@@ -950,6 +959,17 @@ Structural invariants (do not regress):
     paths: below the other handlers, every hello would log
     `whatsapp.unknown_checkin_payload` or `whatsapp.unknown_button`, which are
     the two lines that are supposed to mean a template lost its buttons.
+    **`isHiTap` lives beside the payload in `channels/whatsapp.ts`**, not in the
+    route, for `parseProposalButtonId`'s reason: it is the only place
+    `pnpm whatsapp-check` can pin BOTH envelopes with no credentials, and the
+    free-form half's failure is otherwise silent because the template half goes
+    on working.
+  - **A proactive send records its `provider_message_id`, whatever the
+    envelope.** `sendWhatsAppButtons` returns it exactly as
+    `sendWhatsAppText`/`sendWhatsAppTemplate`/`sendWhatsAppList` do, because
+    `recordDeliveryStatuses` matches Meta's delivered/read/failed callbacks
+    against `notification_log` by that column alone. A send that dropped it
+    would look successful and be permanently un-stampable.
   - **The answer is deterministic, with zero model calls**
     (`apps/web/app/notifications/welcome-hi.ts`), and it renders the crew
     member's tasks through the SAME `loadWorkerBriefing` / `renderWorkerFreeForm`
